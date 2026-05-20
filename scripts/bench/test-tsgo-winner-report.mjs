@@ -1,0 +1,325 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
+const SCRIPT = path.join(ROOT, "scripts", "bench", "tsgo-winner-report.mjs");
+const BENCH_WORKFLOW = path.join(ROOT, ".github", "workflows", "bench.yml");
+const GH_PAGES_WORKFLOW = path.join(ROOT, ".github", "workflows", "gh-pages.yml");
+const WEBSITE_ELEVENTY = path.join(ROOT, "crates", "tsz-website", ".eleventy.js");
+
+function withTempDir(fn) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-tsgo-winner-report-"));
+  try {
+    return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function writeJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+const { createTsgoWinnerReport } = await import(pathToFileURL(SCRIPT));
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  const output = path.join(dir, "report.json");
+  writeJson(input, {
+    benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+    quick_mode: true,
+    filter: "project|single",
+    results: [
+      {
+        name: "ts-toolbelt-project",
+        lines: 8044,
+        kb: 216,
+        project_files: 242,
+        tsz_ms: 873.92,
+        tsgo_ms: 106.15,
+        winner: "tsgo",
+        factor: 8.23,
+        status: null,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          files_reached: 242,
+          peak_memory_bytes: 734003200,
+          semantic_owner_family: "recursive type evaluation pressure",
+        },
+      },
+      {
+        name: "vite-vanilla-ts-app",
+        lines: 100,
+        kb: 20,
+        project_files: 12,
+        tsz_ms: 165.15,
+        tsgo_ms: 54.51,
+        winner: "tsgo",
+        factor: 3.03,
+        status: null,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          files_reached: 12,
+          peak_memory_bytes: 209715200,
+          semantic_owner_family: "generated Vite dependency graph",
+        },
+      },
+      {
+        name: "single-file-loss",
+        lines: 50,
+        kb: 2,
+        tsz_ms: 20,
+        tsgo_ms: 10,
+        winner: "tsgo",
+        factor: 2,
+        status: null,
+      },
+      {
+        name: "tsz-wins",
+        tsz_ms: 5,
+        tsgo_ms: 10,
+        winner: "tsz",
+        factor: 2,
+      },
+      {
+        name: "red-project",
+        tsz_ms: null,
+        tsgo_ms: 10,
+        winner: "error",
+        factor: 0,
+        status: "tsz error",
+        compatibility: {
+          exit_class: "nonzero exit",
+          diagnostic_status: "compiler error",
+          semantic_owner_family: "not counted",
+        },
+      },
+      {
+        name: "yellow-project",
+        tsz_ms: 40,
+        tsgo_ms: 20,
+        winner: "tsgo",
+        factor: 2,
+        status: null,
+        compatibility: {
+          state: "yellow",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "diagnostic mismatch",
+          semantic_owner_family: "not counted",
+        },
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, input, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(report.source.quick_mode, true);
+  assert.equal(report.totals.rows, 6);
+  assert.equal(report.totals.green_tsgo_winners, 3);
+  assert.equal(report.totals.project_green_tsgo_winners, 2);
+  assert.equal(report.totals.green_tsgo_winners_with_closure, 2);
+  assert.deepEqual(report.totals.missing_loss_closure_rows, ["single-file-loss"]);
+  assert.equal(report.totals.incomplete_compat_excluded, 0);
+  assert.equal(report.worst.name, "ts-toolbelt-project");
+  assert.equal(report.worst.exit_class, "exit success");
+  assert.equal(report.worst.files_reached, 242);
+  assert.equal(report.worst.peak_memory_bytes, 734003200);
+  assert.deepEqual(report.worst.loss_closure, {
+    owner: "Track 1/2 recursive type evaluation",
+    operation: "recursive conditional, mapped/indexed access, repeated instantiation and relation cache pressure",
+    command: "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^ts-toolbelt-project$' --json-file <artifact>.json",
+    issue: 8356,
+    url: "https://github.com/mohsen1/tsz/issues/8356",
+  });
+  assert.deepEqual(
+    report.rows.map((row) => row.name),
+    ["ts-toolbelt-project", "vite-vanilla-ts-app", "single-file-loss"],
+  );
+  assert.equal(report.rows[1].loss_closure.issue, 7378);
+  assert.equal(report.rows[2].loss_closure, null);
+  assert.deepEqual(report.by_owner_family, [
+    {
+      family: "recursive type evaluation pressure",
+      rows: 1,
+      worst_factor: 8.23,
+      worst_row: "ts-toolbelt-project",
+    },
+    {
+      family: "generated Vite dependency graph",
+      rows: 1,
+      worst_factor: 3.03,
+      worst_row: "vite-vanilla-ts-app",
+    },
+  ]);
+
+  const importedReport = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+  assert.equal(importedReport.totals.green_tsgo_winners, 3);
+  assert.equal(importedReport.worst.name, "ts-toolbelt-project");
+});
+
+// Rows with missing required phase/exit metadata must not appear as speed wins.
+// Each sub-case below verifies that a row with one specific missing field is
+// excluded from the green winner list and counted in incomplete_compat_excluded.
+withTempDir((dir) => {
+  const baseCompatibility = {
+    state: "green",
+    exit_class: "exit success",
+    phase: "check",
+    last_successful_phase: "check",
+    diagnostic_status: "none",
+    semantic_owner_family: "test family",
+  };
+
+  function withoutField(field) {
+    const { [field]: _dropped, ...rest } = baseCompatibility;
+    return rest;
+  }
+
+  const input = path.join(dir, "bench.json");
+  writeJson(input, {
+    results: [
+      { name: "complete-project", winner: "tsgo", factor: 5, status: null, tsz_ms: 100, tsgo_ms: 20, compatibility: baseCompatibility },
+      { name: "missing-state", winner: "tsgo", factor: 4, status: null, tsz_ms: 100, tsgo_ms: 25, compatibility: withoutField("state") },
+      { name: "missing-phase", winner: "tsgo", factor: 3, status: null, tsz_ms: 100, tsgo_ms: 33, compatibility: withoutField("phase") },
+      { name: "missing-last-phase", winner: "tsgo", factor: 2, status: null, tsz_ms: 100, tsgo_ms: 50, compatibility: withoutField("last_successful_phase") },
+      { name: "missing-exit-class", winner: "tsgo", factor: 2, status: null, tsz_ms: 100, tsgo_ms: 50, compatibility: withoutField("exit_class") },
+      { name: "missing-diag-status", winner: "tsgo", factor: 2, status: null, tsz_ms: 100, tsgo_ms: 50, compatibility: withoutField("diagnostic_status") },
+      { name: "artifact-missing", winner: "tsgo", factor: 2, status: null, tsz_ms: 100, tsgo_ms: 50, artifact_missing: true },
+      // single-file rows without compatibility are always eligible — no metadata required
+      { name: "single-file-win", winner: "tsgo", factor: 1.5, status: null, tsz_ms: 15, tsgo_ms: 10 },
+    ],
+  });
+
+  const report = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+
+  assert.equal(report.totals.rows, 8);
+  // Only complete-project and single-file-win are green winners
+  assert.equal(report.totals.green_tsgo_winners, 2);
+  assert.equal(report.totals.project_green_tsgo_winners, 1);
+  assert.equal(report.totals.green_tsgo_winners_with_closure, 0);
+  assert.deepEqual(report.totals.missing_loss_closure_rows, ["complete-project", "single-file-win"]);
+  // 6 rows excluded due to missing phase/exit metadata or artifact_missing
+  assert.equal(report.totals.incomplete_compat_excluded, 6);
+  assert.deepEqual(
+    report.rows.map((r) => r.name),
+    ["complete-project", "single-file-win"],
+  );
+});
+
+const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
+assert.match(
+  benchWorkflow,
+  /node scripts\/bench\/tsgo-winner-report\.mjs\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-tsgo-winners\.json"/,
+  "bench workflow should generate the green tsgo winner report from merged results",
+);
+assert.match(
+  benchWorkflow,
+  /bench-results\.json\s*\n\s+bench-results-tsgo-winners\.json/,
+  "merged benchmark artifact should upload the green tsgo winner report",
+);
+assert.match(
+  benchWorkflow,
+  /bench-runs\/\$\{TIMESTAMP\}\.tsgo-winners\.json/,
+  "benchmark publish step should write timestamped green tsgo winner reports",
+);
+assert.match(
+  benchWorkflow,
+  /bench-runs\/latest\.tsgo-winners\.json/,
+  "benchmark publish step should write latest green tsgo winner reports",
+);
+assert.match(
+  benchWorkflow,
+  /JSON\.parse\(fs\.readFileSync\("bench-results-tsgo-winners\.json", "utf8"\)\)/,
+  "severe benchmark alert should read the generated green tsgo winner report",
+);
+assert.match(
+  benchWorkflow,
+  /row\.semantic_owner_family \|\| "n\/a"/,
+  "severe benchmark alert should include semantic owner family from the winner report",
+);
+
+const ghPagesWorkflow = fs.readFileSync(GH_PAGES_WORKFLOW, "utf8");
+assert.match(
+  ghPagesWorkflow,
+  /mv artifacts\/bench-results-tsgo-winners\.json artifacts\/bench-vs-tsgo-github-latest\.tsgo-winners\.json/,
+  "GitHub Pages workflow should preserve the downloaded green tsgo winner report",
+);
+assert.match(
+  ghPagesWorkflow,
+  /rm -f artifacts\/bench-results\.json artifacts\/bench-results-tsgo-winners\.json/,
+  "GitHub Pages workflow should drop stale winner reports when benchmark data is stale or empty",
+);
+
+const eleventyConfig = fs.readFileSync(WEBSITE_ELEVENTY, "utf8");
+assert.match(
+  eleventyConfig,
+  /latestBenchmarkArtifact\?\.replace\(\s*\/\\\.json\$\/,\s*"\.tsgo-winners\.json",\s*\)/,
+  "website should derive the green tsgo winner artifact path from the selected benchmark data",
+);
+assert.match(
+  eleventyConfig,
+  /"benchmark-data\/latest\.tsgo-winners\.json"/,
+  "website should publish the green tsgo winner report beside benchmark-data/latest.json",
+);
+assert.match(
+  eleventyConfig,
+  /createTsgoWinnerReport\(benchmarkData, latestBenchmarkArtifact\)/,
+  "website should synthesize the green tsgo winner report when the selected benchmark has no prebuilt report",
+);
+
+withTempDir((dir) => {
+  const script = [
+    "import assert from 'node:assert/strict';",
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    "import configure from './.eleventy.js';",
+    "const callbacks = [];",
+    "const passthrough = [];",
+    "configure({",
+    "  addPassthroughCopy(copy) { passthrough.push(copy); },",
+    "  addWatchTarget() {},",
+    "  setServerOptions() {},",
+    "  on(event, callback) { if (event === 'eleventy.after') callbacks.push(callback); },",
+    "});",
+    "assert.ok(passthrough.some((copy) => copy['bench-snapshot.json'] === 'benchmark-data/latest.json'));",
+    "fs.mkdirSync(process.env.TSZ_TEST_DIST, { recursive: true });",
+    "for (const callback of callbacks) callback({ dir: { output: process.env.TSZ_TEST_DIST } });",
+    "const reportPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'latest.tsgo-winners.json');",
+    "const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));",
+    "assert.equal(report.worst.name, 'ts-toolbelt-project');",
+    "assert.equal(report.totals.green_tsgo_winners, 6);",
+    "",
+  ].join("\n");
+
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: path.join(ROOT, "crates", "tsz-website"),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TSZ_TEST_DIST: path.join(dir, "dist"),
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});

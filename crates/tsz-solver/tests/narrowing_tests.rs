@@ -1,0 +1,2255 @@
+use super::*;
+use crate::TypeInterner;
+use crate::def::resolver::TypeResolver;
+use crate::{TypeDatabase, types::SymbolRef};
+
+// =============================================================================
+// Discriminant Detection Tests
+// =============================================================================
+
+#[test]
+fn test_find_discriminants_basic() {
+    let interner = TypeInterner::new();
+    let type_name = interner.intern_string("type");
+
+    // type Action = { type: "add" } | { type: "remove" }
+    let type_add = interner.literal_string("add");
+    let type_remove = interner.literal_string("remove");
+
+    let member1 = interner.object(vec![PropertyInfo::new(type_name, type_add)]);
+    let member2 = interner.object(vec![PropertyInfo::new(type_name, type_remove)]);
+
+    let union = interner.union(vec![member1, member2]);
+
+    let discriminants = find_discriminants(&interner, union);
+
+    assert_eq!(discriminants.len(), 1);
+    assert_eq!(discriminants[0].property_name, type_name);
+    assert_eq!(discriminants[0].variants.len(), 2);
+}
+
+#[test]
+fn test_find_discriminants_multiple_props() {
+    let interner = TypeInterner::new();
+    let kind_name = interner.intern_string("kind");
+    let type_name = interner.intern_string("type");
+
+    // type Action = { kind: "a", type: 1 } | { kind: "b", type: 2 }
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+    let type_1 = interner.literal_number(1.0);
+    let type_2 = interner.literal_number(2.0);
+
+    let member1 = interner.object(vec![
+        PropertyInfo::new(kind_name, kind_a),
+        PropertyInfo::new(type_name, type_1),
+    ]);
+    let member2 = interner.object(vec![
+        PropertyInfo::new(kind_name, kind_b),
+        PropertyInfo::new(type_name, type_2),
+    ]);
+
+    let union = interner.union(vec![member1, member2]);
+
+    let discriminants = find_discriminants(&interner, union);
+
+    // Both "kind" and "type" are discriminants
+    assert_eq!(discriminants.len(), 2);
+}
+
+#[test]
+fn test_find_discriminants_non_literal() {
+    let interner = TypeInterner::new();
+    let type_name = interner.intern_string("type");
+
+    // type T = { type: string } | { type: string }
+    // Not a discriminated union - type is not literal
+    let member1 = interner.object(vec![PropertyInfo::new(type_name, TypeId::STRING)]);
+    let member2 = interner.object(vec![PropertyInfo::new(type_name, TypeId::STRING)]);
+
+    let union = interner.union(vec![member1, member2]);
+
+    let discriminants = find_discriminants(&interner, union);
+
+    // No discriminants - not literal types
+    assert_eq!(discriminants.len(), 0);
+}
+
+#[test]
+fn test_find_discriminants_missing_property() {
+    let interner = TypeInterner::new();
+    let type_name = interner.intern_string("type");
+    let kind_name = interner.intern_string("kind");
+
+    // type T = { type: "a" } | { kind: "b" }
+    // Not a discriminated union - no common property
+    let type_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let member1 = interner.object(vec![PropertyInfo::new(type_name, type_a)]);
+    let member2 = interner.object(vec![PropertyInfo::new(kind_name, kind_b)]);
+
+    let union = interner.union(vec![member1, member2]);
+
+    let discriminants = find_discriminants(&interner, union);
+
+    assert_eq!(discriminants.len(), 0);
+}
+
+// =============================================================================
+// Nullish Helper Tests
+// =============================================================================
+
+#[test]
+fn test_nullish_helpers_basic() {
+    let interner = TypeInterner::new();
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+
+    assert!(is_nullish_type(&interner, TypeId::NULL));
+    assert!(is_nullish_type(&interner, TypeId::UNDEFINED));
+    assert!(!is_nullish_type(&interner, TypeId::STRING));
+    assert!(is_nullish_type(&interner, union));
+    assert!(type_contains_undefined(&interner, union));
+
+    let removed = remove_nullish(&interner, union);
+    assert_eq!(removed, TypeId::STRING);
+}
+
+#[test]
+fn test_split_nullish_type() {
+    let interner = TypeInterner::new();
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+
+    let (non_null, cause) = split_nullish_type(&interner, union);
+    assert_eq!(non_null, Some(TypeId::STRING));
+    let cause = cause.expect("expected nullish cause");
+    assert!(is_nullish_type(&interner, cause));
+    assert!(type_contains_undefined(&interner, cause));
+}
+
+#[test]
+fn test_split_nullish_type_non_union_and_nullable_literals() {
+    let interner = TypeInterner::new();
+
+    let (non_null, cause) = split_nullish_type(&interner, TypeId::STRING);
+    assert_eq!(non_null, Some(TypeId::STRING));
+    assert_eq!(cause, None);
+
+    let (non_null, cause) = split_nullish_type(&interner, TypeId::UNDEFINED);
+    assert_eq!(non_null, None);
+    assert_eq!(cause, Some(TypeId::UNDEFINED));
+}
+
+#[test]
+fn test_definitely_nullish_union() {
+    let interner = TypeInterner::new();
+
+    let union = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
+    assert!(is_definitely_nullish(&interner, union));
+}
+
+#[test]
+fn test_narrowing_cache_contains_type_parameters_cache_starts_empty() {
+    let cache = NarrowingCache::new();
+    assert!(cache.contains_type_parameters_cache.borrow().is_empty());
+}
+
+#[test]
+fn test_narrow_type_cache_keys_predicate_payload_flags_and_resolver_generation() {
+    struct GenerationResolver(u64);
+
+    impl TypeResolver for GenerationResolver {
+        fn resolver_generation(&self) -> u64 {
+            self.0
+        }
+
+        fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            None
+        }
+    }
+
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let string_predicate = TypeGuard::Predicate {
+        type_id: Some(TypeId::STRING),
+        asserts: false,
+    };
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    assert_eq!(
+        ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
+        TypeId::STRING
+    );
+    assert_eq!(
+        ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
+        TypeId::STRING
+    );
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 1);
+
+    assert_eq!(
+        ctx.narrow_type(
+            TypeId::UNKNOWN,
+            &TypeGuard::Typeof(TypeofKind::String),
+            GuardSense::Positive
+        ),
+        TypeId::STRING
+    );
+    assert_eq!(
+        cache.narrow_type_cache.borrow().len(),
+        1,
+        "non-predicate guards keep their existing dynamic narrowing path"
+    );
+
+    let number_predicate = TypeGuard::Predicate {
+        type_id: Some(TypeId::NUMBER),
+        asserts: false,
+    };
+    assert_eq!(
+        ctx.narrow_type(TypeId::UNKNOWN, &number_predicate, GuardSense::Positive),
+        TypeId::NUMBER
+    );
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 2);
+
+    interner.set_no_unchecked_indexed_access(true);
+    let flags_ctx = NarrowingContext::with_cache(&interner, &cache);
+    assert_eq!(
+        flags_ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
+        TypeId::STRING
+    );
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 3);
+
+    let resolver_one = GenerationResolver(1);
+    let resolver_ctx = NarrowingContext::with_cache(&interner, &cache).with_resolver(&resolver_one);
+    assert_eq!(
+        resolver_ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
+        TypeId::STRING
+    );
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 4);
+
+    let resolver_two = GenerationResolver(2);
+    let resolver_ctx = NarrowingContext::with_cache(&interner, &cache).with_resolver(&resolver_two);
+    assert_eq!(
+        resolver_ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
+        TypeId::STRING
+    );
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 5);
+}
+
+#[test]
+fn test_in_property_narrowing_reuses_property_cache() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let kind_name = interner.intern_string("kind");
+
+    let obj = interner.object(vec![PropertyInfo::new(kind_name, TypeId::STRING)]);
+    let union = interner.union(vec![obj, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(kind_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrowed, obj);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    let narrow_again = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrow_again, obj);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    let resolver_generation = ctx.resolver_generation();
+
+    let ctx_false = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed_false = ctx_false.narrow_type(union, &guard, GuardSense::Negative);
+    let expected = TypeId::NUMBER;
+    assert_eq!(narrowed_false, expected);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    // Ensure the property cache includes the resolved object-shape lookup path
+    // and can be reused across guard sense changes.
+    let kind_key = (obj, resolver_generation, kind_name);
+    let cached_kind = cache
+        .property_cache
+        .borrow()
+        .get(&kind_key)
+        .and_then(|entry| *entry)
+        .expect("expected cached explicit property lookup");
+    assert_eq!(cached_kind.type_id, TypeId::STRING);
+    assert!(!cached_kind.from_index_signature);
+}
+
+#[test]
+fn test_in_property_narrowing_preserves_index_signature_cache_origin() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let key_name = interner.intern_string("dynamic");
+
+    let record_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    let union = interner.union(vec![record_type, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(key_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrowed, record_type);
+
+    let key = (record_type, ctx.resolver_generation(), key_name);
+    let cached_entry = cache
+        .property_cache
+        .borrow()
+        .get(&key)
+        .and_then(|entry| *entry)
+        .expect("expected cached index-signature property lookup");
+    assert_eq!(cached_entry.type_id, TypeId::STRING);
+    assert!(cached_entry.from_index_signature);
+}
+
+#[test]
+fn test_negative_in_property_narrowing_reuses_required_property_cache() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let kind_name = interner.intern_string("kind");
+
+    let required_prop = PropertyInfo {
+        name: kind_name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let optional_prop = PropertyInfo {
+        name: kind_name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+
+    let required_obj = interner.object(vec![required_prop]);
+    let optional_obj = interner.object(vec![optional_prop]);
+    let union = interner.union(vec![required_obj, optional_obj, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(kind_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let required_direct = ctx.is_property_required(required_obj, kind_name);
+    let optional_direct = ctx.is_property_required(optional_obj, kind_name);
+    let number_direct = ctx.is_property_required(TypeId::NUMBER, kind_name);
+    assert!(required_direct);
+    assert!(!optional_direct);
+    assert!(!number_direct);
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
+    let expected = interner.union(vec![optional_obj, TypeId::NUMBER]);
+    assert_eq!(narrowed, expected);
+
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+    let required_cached =
+        cache
+            .required_property_cache
+            .borrow()
+            .iter()
+            .any(|((type_id, _, prop), is_required)| {
+                *type_id == required_obj && *prop == kind_name && *is_required
+            });
+    assert!(required_cached);
+
+    let optional_cached = cache
+        .required_property_cache
+        .borrow()
+        .iter()
+        .filter(|((type_id, _, prop), _)| *type_id == optional_obj && *prop == kind_name)
+        .all(|(_, is_required)| !*is_required);
+    assert!(optional_cached);
+
+    let narrowed_again = ctx.narrow_type(union, &guard, GuardSense::Negative);
+    assert_eq!(narrowed_again, expected);
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+}
+
+// =============================================================================
+// Narrowing by Discriminant Tests
+// =============================================================================
+
+#[test]
+fn test_narrow_by_discriminant() {
+    let interner = TypeInterner::new();
+    let type_name = interner.intern_string("type");
+
+    // type Action = { type: "add", value: number } | { type: "remove", id: string }
+    let type_add = interner.literal_string("add");
+    let type_remove = interner.literal_string("remove");
+
+    let member_add = interner.object(vec![
+        PropertyInfo::new(type_name, type_add),
+        PropertyInfo::new(interner.intern_string("value"), TypeId::NUMBER),
+    ]);
+    let member_remove = interner.object(vec![
+        PropertyInfo::new(type_name, type_remove),
+        PropertyInfo::new(interner.intern_string("id"), TypeId::STRING),
+    ]);
+
+    let union = interner.union(vec![member_add, member_remove]);
+
+    // Narrow to "add" variant
+    let narrowed = narrow_by_discriminant(&interner, union, &[type_name], type_add);
+    assert_eq!(narrowed, member_add);
+
+    // Narrow to "remove" variant
+    let narrowed = narrow_by_discriminant(&interner, union, &[type_name], type_remove);
+    assert_eq!(narrowed, member_remove);
+}
+
+#[test]
+fn test_narrow_by_discriminant_no_match() {
+    let interner = TypeInterner::new();
+    let type_name = interner.intern_string("type");
+
+    let type_add = interner.literal_string("add");
+    let type_unknown = interner.literal_string("unknown");
+
+    let member = interner.object(vec![PropertyInfo::new(type_name, type_add)]);
+
+    let union = interner.union(vec![member]);
+
+    // Narrowing {type: "add"} by (type === "unknown") results in never
+    // because "add" can never equal "unknown"
+    let narrowed = narrow_by_discriminant(&interner, union, &[type_name], type_unknown);
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_excluding_discriminant() {
+    let interner = TypeInterner::new();
+    let type_name = interner.intern_string("type");
+
+    // type Action = { type: "a" } | { type: "b" } | { type: "c" }
+    let type_a = interner.literal_string("a");
+    let type_b = interner.literal_string("b");
+    let type_c = interner.literal_string("c");
+
+    let member_a = interner.object(vec![PropertyInfo::new(type_name, type_a)]);
+    let member_b = interner.object(vec![PropertyInfo::new(type_name, type_b)]);
+    let member_c = interner.object(vec![PropertyInfo::new(type_name, type_c)]);
+
+    let union = interner.union(vec![member_a, member_b, member_c]);
+
+    let ctx = NarrowingContext::new(&interner);
+
+    // Exclude "a" - should get "b" | "c"
+    let narrowed = ctx.narrow_by_excluding_discriminant(union, &[type_name], type_a);
+    let expected = interner.union(vec![member_b, member_c]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn test_constructor_identity_false_branch_does_not_exclude_instance() {
+    let interner = TypeInterner::new();
+    let prop = interner.intern_string("property1");
+    let class_instance = interner.object(vec![PropertyInfo::new(prop, TypeId::STRING)]);
+    let source = interner.union(vec![class_instance, TypeId::NUMBER]);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(
+        source,
+        &TypeGuard::Constructor(class_instance),
+        GuardSense::Negative,
+    );
+
+    assert_eq!(
+        narrowed, source,
+        "constructor identity inequality is a positive-only guard; \
+         `x.constructor !== C` must not remove C from the source union"
+    );
+}
+
+// =============================================================================
+// Typeof Narrowing Tests
+// =============================================================================
+
+#[test]
+fn test_narrow_by_typeof_string() {
+    let interner = TypeInterner::new();
+
+    // string | number narrowed by typeof "string" -> string
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "string");
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_narrow_by_typeof_number() {
+    let interner = TypeInterner::new();
+
+    // string | number narrowed by typeof "number" -> number
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "number");
+    assert_eq!(narrowed, TypeId::NUMBER);
+}
+
+#[test]
+fn test_narrow_by_typeof_no_match() {
+    let interner = TypeInterner::new();
+
+    // string narrowed by typeof "number" -> never
+    let narrowed = narrow_by_typeof(&interner, TypeId::STRING, "number");
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_by_typeof_literal() {
+    let interner = TypeInterner::new();
+
+    // "hello" | 42 narrowed by typeof "string" -> "hello"
+    let hello = interner.literal_string("hello");
+    let forty_two = interner.literal_number(42.0);
+    let union = interner.union(vec![hello, forty_two]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "string");
+    assert_eq!(narrowed, hello);
+}
+
+#[test]
+fn test_narrow_by_typeof_template_literal() {
+    let interner = TypeInterner::new();
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix")),
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("suffix")),
+    ]);
+    let union = interner.union(vec![template, TypeId::NUMBER]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "string");
+    assert_eq!(narrowed, template);
+}
+
+#[test]
+fn test_narrow_by_typeof_any() {
+    let interner = TypeInterner::new();
+
+    // TypeScript allows narrowing 'any' based on typeof checks
+    // When typeof x === "string", x is narrowed to string within that block
+    let narrowed = narrow_by_typeof(&interner, TypeId::ANY, "string");
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_narrow_by_typeof_unknown_string() {
+    let interner = TypeInterner::new();
+
+    let narrowed = narrow_by_typeof(&interner, TypeId::UNKNOWN, "string");
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_narrow_by_typeof_unknown_object() {
+    let interner = TypeInterner::new();
+
+    let narrowed = narrow_by_typeof(&interner, TypeId::UNKNOWN, "object");
+    let expected = interner.union(vec![TypeId::OBJECT, TypeId::NULL]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn test_narrow_by_typeof_unknown_function() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = narrow_by_typeof(&interner, TypeId::UNKNOWN, "function");
+    assert_eq!(narrowed, ctx.function_type());
+}
+
+#[test]
+fn test_narrow_by_typeof_object_function() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = narrow_by_typeof(&interner, TypeId::OBJECT, "function");
+    assert_eq!(narrowed, ctx.function_type());
+}
+
+#[test]
+fn test_narrow_by_typeof_empty_object_function() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let empty_object = interner.object(vec![]);
+    let narrowed = narrow_by_typeof(&interner, empty_object, "function");
+    assert_eq!(narrowed, ctx.function_type());
+}
+
+#[test]
+fn test_narrow_by_typeof_negation_function() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
+    let union = interner.union(vec![func, obj]);
+
+    let narrowed = ctx.narrow_excluding_function(union);
+    assert_eq!(narrowed, obj);
+}
+
+#[test]
+fn test_narrow_by_typeof_negation_function_branded_intersection() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let brand = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__brand"),
+        interner.literal_string("Tagged"),
+    )]);
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let branded = interner.intersection(vec![func, brand]);
+    let union = interner.union(vec![branded, TypeId::NUMBER]);
+
+    let narrowed = ctx.narrow_excluding_function(union);
+    assert_eq!(narrowed, TypeId::NUMBER);
+}
+
+#[test]
+fn test_narrow_by_typeof_negation_function_type_param_with_union_constraint() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let constraint = interner.union(vec![func, TypeId::STRING]);
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    }));
+    let union = interner.union(vec![param, TypeId::BOOLEAN]);
+
+    let narrowed = ctx.narrow_excluding_function(union);
+    let expected_param = interner.intersection(vec![param, TypeId::STRING]);
+    let expected = interner.union(vec![expected_param, TypeId::BOOLEAN]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn test_narrow_by_typeof_negation_function_type_param_to_never() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(func),
+        default: None,
+        is_const: false,
+    }));
+
+    let narrowed = ctx.narrow_excluding_function(param);
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_by_typeof_type_param_with_union_constraint() {
+    let interner = TypeInterner::new();
+    let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    }));
+    let union = interner.union(vec![param, TypeId::BOOLEAN]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "string");
+    let expected = interner.intersection(vec![param, TypeId::STRING]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn test_narrow_by_typeof_function_type_param_with_union_constraint() {
+    let interner = TypeInterner::new();
+
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let constraint = interner.union(vec![func, TypeId::STRING]);
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    }));
+    let union = interner.union(vec![param, TypeId::BOOLEAN]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "function");
+    let expected = interner.intersection(vec![param, func]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn test_narrow_by_typeof_function_type_param_with_non_function_constraint() {
+    let interner = TypeInterner::new();
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::NUMBER),
+        default: None,
+        is_const: false,
+    }));
+
+    let narrowed = narrow_by_typeof(&interner, param, "function");
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_by_typeof_function_unconstrained_type_param() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let narrowed = narrow_by_typeof(&interner, param, "function");
+    let expected = interner.intersection(vec![param, ctx.function_type()]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn test_narrow_by_typeof_type_param_with_non_overlapping_constraint() {
+    let interner = TypeInterner::new();
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::NUMBER),
+        default: None,
+        is_const: false,
+    }));
+
+    let narrowed = narrow_by_typeof(&interner, param, "string");
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_by_typeof_unconstrained_type_param() {
+    let interner = TypeInterner::new();
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let narrowed = narrow_by_typeof(&interner, param, "string");
+    let expected = interner.intersection(vec![param, TypeId::STRING]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn test_narrow_by_typeof_branded_string_intersection() {
+    let interner = TypeInterner::new();
+
+    let brand = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__brand"),
+        interner.literal_string("UserId"),
+    )]);
+    let branded = interner.intersection(vec![TypeId::STRING, brand]);
+    let union = interner.union(vec![branded, TypeId::NUMBER]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "string");
+    assert_eq!(narrowed, branded);
+}
+
+#[test]
+fn test_narrow_by_typeof_branded_function_intersection() {
+    let interner = TypeInterner::new();
+
+    let brand = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__brand"),
+        interner.literal_string("Tagged"),
+    )]);
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let branded = interner.intersection(vec![func, brand]);
+    let union = interner.union(vec![branded, TypeId::NUMBER]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "function");
+    assert_eq!(narrowed, branded);
+}
+
+#[test]
+fn test_narrow_by_typeof_object_excludes_branded_function_intersection() {
+    let interner = TypeInterner::new();
+
+    let brand = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__brand"),
+        interner.literal_string("Tagged"),
+    )]);
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let branded = interner.intersection(vec![func, brand]);
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
+    let union = interner.union(vec![branded, obj]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "object");
+    assert_eq!(narrowed, obj);
+}
+
+#[test]
+fn test_narrow_by_typeof_object_with_object_literal() {
+    let interner = TypeInterner::new();
+
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
+    let union = interner.union(vec![obj, TypeId::NUMBER]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "object");
+    assert_eq!(narrowed, obj);
+}
+
+#[test]
+fn test_narrow_by_typeof_object_excludes_function() {
+    let interner = TypeInterner::new();
+
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let union = interner.union(vec![obj, func]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "object");
+    assert_eq!(narrowed, obj);
+}
+
+#[test]
+fn test_narrow_by_typeof_function_includes_callable() {
+    let interner = TypeInterner::new();
+
+    let sig = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_method: false,
+    };
+    let callable = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+    let union = interner.union(vec![callable, TypeId::NUMBER]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "function");
+    assert_eq!(narrowed, callable);
+}
+
+// =============================================================================
+// General Narrowing Tests
+// =============================================================================
+
+#[test]
+fn test_narrow_to_type() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | number | boolean narrowed to string -> string
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+
+    let narrowed = ctx.narrow_to_type(union, TypeId::STRING);
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_narrow_excluding_type() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | number | boolean excluding string -> number | boolean
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+
+    let narrowed = ctx.narrow_excluding_type(union, TypeId::STRING);
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::BOOLEAN]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn test_narrow_excluding_type_param_with_union_constraint() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    }));
+    let union = interner.union(vec![param, TypeId::BOOLEAN]);
+
+    let narrowed = ctx.narrow_excluding_type(union, TypeId::STRING);
+    let expected_param = interner.intersection(vec![param, TypeId::NUMBER]);
+    let expected = interner.union(vec![expected_param, TypeId::BOOLEAN]);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn test_narrow_excluding_type_param_with_non_overlapping_constraint() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::NUMBER),
+        default: None,
+        is_const: false,
+    }));
+
+    let narrowed = ctx.narrow_excluding_type(param, TypeId::STRING);
+    assert_eq!(narrowed, param);
+}
+
+#[test]
+fn test_narrow_excluding_type_param_to_never() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    }));
+
+    let narrowed = ctx.narrow_excluding_type(param, TypeId::STRING);
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_to_never() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string excluding string -> never
+    let narrowed = ctx.narrow_excluding_type(TypeId::STRING, TypeId::STRING);
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_single_member_union() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | number excluding string -> number (not a union)
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    let narrowed = ctx.narrow_excluding_type(union, TypeId::STRING);
+    assert_eq!(narrowed, TypeId::NUMBER);
+}
+
+// =============================================================================
+// Type Predicate Structure Tests
+// =============================================================================
+// These tests verify TypePredicate structures are correctly created.
+// Actual narrowing with type predicates happens at the checker level.
+
+#[test]
+fn test_type_predicate_basic_structure() {
+    use super::TypePredicate;
+    use super::TypePredicateTarget;
+
+    let interner = TypeInterner::new();
+    let x_name = interner.intern_string("x");
+
+    // x is string
+    let predicate = TypePredicate {
+        asserts: false,
+        target: TypePredicateTarget::Identifier(x_name),
+        type_id: Some(TypeId::STRING),
+        parameter_index: None,
+    };
+
+    assert!(!predicate.asserts);
+    assert_eq!(predicate.target, TypePredicateTarget::Identifier(x_name));
+    assert_eq!(predicate.type_id, Some(TypeId::STRING));
+}
+
+#[test]
+fn test_type_predicate_asserts_structure() {
+    use super::TypePredicate;
+    use super::TypePredicateTarget;
+
+    let interner = TypeInterner::new();
+    let x_name = interner.intern_string("x");
+
+    // asserts x is string
+    let predicate = TypePredicate {
+        asserts: true,
+        target: TypePredicateTarget::Identifier(x_name),
+        type_id: Some(TypeId::STRING),
+        parameter_index: None,
+    };
+
+    assert!(predicate.asserts);
+    assert_eq!(predicate.target, TypePredicateTarget::Identifier(x_name));
+    assert_eq!(predicate.type_id, Some(TypeId::STRING));
+}
+
+#[test]
+fn test_type_predicate_this_target() {
+    use super::TypePredicate;
+    use super::TypePredicateTarget;
+
+    let interner = TypeInterner::new();
+
+    // Create an object type for the predicate
+    let foo_name = interner.intern_string("foo");
+    let foo_type = interner.object(vec![PropertyInfo::new(foo_name, TypeId::STRING)]);
+
+    // this is Foo
+    let predicate = TypePredicate {
+        asserts: false,
+        target: TypePredicateTarget::This,
+        type_id: Some(foo_type),
+        parameter_index: None,
+    };
+
+    assert!(!predicate.asserts);
+    assert_eq!(predicate.target, TypePredicateTarget::This);
+    assert_eq!(predicate.type_id, Some(foo_type));
+}
+
+#[test]
+fn test_type_predicate_asserts_without_type() {
+    use super::TypePredicate;
+    use super::TypePredicateTarget;
+
+    let interner = TypeInterner::new();
+    let x_name = interner.intern_string("x");
+
+    // asserts x (no type - just assertion that x is truthy)
+    let predicate = TypePredicate {
+        asserts: true,
+        target: TypePredicateTarget::Identifier(x_name),
+        type_id: None,
+        parameter_index: None,
+    };
+
+    assert!(predicate.asserts);
+    assert_eq!(predicate.target, TypePredicateTarget::Identifier(x_name));
+    assert_eq!(predicate.type_id, None);
+}
+
+#[test]
+fn test_function_shape_with_type_predicate() {
+    use super::{FunctionShape, ParamInfo, TypePredicate, TypePredicateTarget};
+
+    let interner = TypeInterner::new();
+    let x_name = interner.intern_string("x");
+
+    // function isString(x: any): x is string
+    let shape = FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::required(x_name, TypeId::ANY)],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(x_name),
+            type_id: Some(TypeId::STRING),
+            parameter_index: None,
+        }),
+        is_constructor: false,
+        is_method: false,
+    };
+
+    assert!(shape.type_predicate.is_some());
+    let pred = shape.type_predicate.unwrap();
+    assert!(!pred.asserts);
+    assert_eq!(pred.type_id, Some(TypeId::STRING));
+}
+
+#[test]
+fn test_call_signature_with_type_predicate() {
+    use super::{CallSignature, ParamInfo, TypePredicate, TypePredicateTarget};
+
+    let interner = TypeInterner::new();
+    let x_name = interner.intern_string("x");
+
+    // Overload: (x: any): x is number
+    let sig = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo::required(x_name, TypeId::ANY)],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(x_name),
+            type_id: Some(TypeId::NUMBER),
+            parameter_index: None,
+        }),
+        is_method: false,
+    };
+
+    assert!(sig.type_predicate.is_some());
+    let pred = sig.type_predicate.unwrap();
+    assert_eq!(pred.type_id, Some(TypeId::NUMBER));
+}
+
+#[test]
+fn test_narrow_to_type_simulates_type_predicate_narrowing() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // Simulating what happens after a type predicate check:
+    // if (isString(x)) { /* x is narrowed to string here */ }
+
+    // Start with x: string | number
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    // After type predicate `x is string` returns true:
+    // Narrow to string (the predicate type)
+    let narrowed = ctx.narrow_to_type(union, TypeId::STRING);
+
+    // Should be narrowed to string
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_narrow_excluding_type_simulates_type_predicate_false_branch() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // Simulating the else branch after a type predicate check:
+    // if (isString(x)) { ... } else { /* x is NOT string here */ }
+
+    // Start with x: string | number
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    // After type predicate `x is string` returns false:
+    // Narrow by excluding string
+    let narrowed = ctx.narrow_excluding_type(union, TypeId::STRING);
+
+    // Should be narrowed to number
+    assert_eq!(narrowed, TypeId::NUMBER);
+}
+
+#[test]
+fn test_narrow_to_interface_type() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // Simulating interface narrowing:
+    // interface Cat { meow(): void }
+    // interface Dog { bark(): void }
+    // function isCat(x: Cat | Dog): x is Cat
+
+    let meow_name = interner.intern_string("meow");
+    let bark_name = interner.intern_string("bark");
+
+    let cat_type = interner.object(vec![PropertyInfo::method(meow_name, TypeId::VOID)]);
+
+    let dog_type = interner.object(vec![PropertyInfo::method(bark_name, TypeId::VOID)]);
+
+    let union = interner.union(vec![cat_type, dog_type]);
+
+    // After type predicate `x is Cat` returns true:
+    let narrowed = ctx.narrow_to_type(union, cat_type);
+
+    // Should be narrowed to Cat
+    assert_eq!(narrowed, cat_type);
+}
+
+// =============================================================================
+// TypeGuard and narrow_type() Tests
+// =============================================================================
+
+use crate::narrowing::{GuardSense, NarrowingContext, TypeGuard, TypeofKind};
+
+#[test]
+fn test_type_guard_typeof_string() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | number
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    // typeof x === "string"
+    let guard = TypeGuard::Typeof(TypeofKind::String);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+
+    // Should narrow to string
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_type_guard_typeof_string_negated() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | number
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    // typeof x !== "string" (sense=false)
+    let guard = TypeGuard::Typeof(TypeofKind::String);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
+
+    // Should narrow to number (exclude string)
+    assert_eq!(narrowed, TypeId::NUMBER);
+}
+
+#[test]
+fn test_type_guard_literal_equality() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // "foo" | "bar"
+    let foo = interner.literal_string("foo");
+    let bar = interner.literal_string("bar");
+    let union = interner.union(vec![foo, bar]);
+
+    // x === "foo"
+    let guard = TypeGuard::LiteralEquality(foo);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+
+    // Should narrow to "foo"
+    assert_eq!(narrowed, foo);
+}
+
+#[test]
+fn test_type_guard_literal_equality_negated() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // "foo" | "bar"
+    let foo = interner.literal_string("foo");
+    let bar = interner.literal_string("bar");
+    let union = interner.union(vec![foo, bar]);
+
+    // x !== "foo" (sense=false)
+    let guard = TypeGuard::LiteralEquality(foo);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
+
+    // Should narrow to "bar" (exclude "foo")
+    assert_eq!(narrowed, bar);
+}
+
+#[test]
+fn test_type_guard_nullish_equality() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | null
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL]);
+
+    // x == null
+    let guard = TypeGuard::NullishEquality;
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+
+    // Should narrow to null | undefined
+    let nullish = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
+    assert_eq!(narrowed, nullish);
+}
+
+#[test]
+fn test_type_guard_nullish_equality_negated() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | null
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL]);
+
+    // x != null (sense=false)
+    let guard = TypeGuard::NullishEquality;
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
+
+    // Should narrow to string (exclude null and undefined)
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_type_guard_discriminant() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+    let kind_name = interner.intern_string("kind");
+
+    // { kind: "a" } | { kind: "b" }
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let member1 = interner.object(vec![PropertyInfo::new(kind_name, kind_a)]);
+    let member2 = interner.object(vec![PropertyInfo::new(kind_name, kind_b)]);
+
+    let union = interner.union(vec![member1, member2]);
+
+    // x.kind === "a"
+    let guard = TypeGuard::Discriminant {
+        property_path: vec![kind_name],
+        value_type: kind_a,
+    };
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+
+    // Should narrow to { kind: "a" }
+    assert_eq!(narrowed, member1);
+}
+
+#[test]
+fn test_type_guard_discriminant_negated() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+    let kind_name = interner.intern_string("kind");
+
+    // { kind: "a" } | { kind: "b" }
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    let member1 = interner.object(vec![PropertyInfo::new(kind_name, kind_a)]);
+    let member2 = interner.object(vec![PropertyInfo::new(kind_name, kind_b)]);
+
+    let union = interner.union(vec![member1, member2]);
+
+    // x.kind !== "a" (sense=false)
+    let guard = TypeGuard::Discriminant {
+        property_path: vec![kind_name],
+        value_type: kind_a,
+    };
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
+
+    // Should narrow to { kind: "b" }
+    assert_eq!(narrowed, member2);
+}
+
+#[test]
+fn test_type_guard_truthy() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // string | null
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL]);
+
+    // if (x) { ... }  (truthy check)
+    let guard = TypeGuard::Truthy;
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+
+    // Should narrow to string (exclude null and undefined)
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_narrow_by_typeof_indexed_access() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // Create T[K] indexed access type
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let indexed_access = interner.intern(TypeData::IndexAccess(t_param, k_param));
+
+    // typeof fn === 'function' should narrow to T[K] & Function
+    let narrowed = narrow_by_typeof(&interner, indexed_access, "function");
+
+    // Should be an intersection of indexed_access and function type
+    let function_type = ctx.function_type();
+    let expected = interner.intersection2(indexed_access, function_type);
+    assert_eq!(narrowed, expected);
+}
+
+#[test]
+fn test_narrow_by_typeof_object_with_index_signature() {
+    // Simulates: typeof x === "object" where x: string | { [key: string]: any }
+    // The ObjectWithIndex type (like Record<string, any>) must survive "object" narrowing.
+    let interner = TypeInterner::new();
+
+    let record_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    let union = interner.union(vec![TypeId::STRING, record_type]);
+
+    let narrowed = narrow_by_typeof(&interner, union, "object");
+
+    // typeof "object" should keep the ObjectWithIndex member, not narrow to never
+    assert_eq!(narrowed, record_type);
+}
+
+// =============================================================================
+// TypeId::OBJECT (non-primitive `object` type) typeof narrowing tests
+// =============================================================================
+
+#[test]
+fn test_narrow_object_intrinsic_by_typeof_number_yields_never() {
+    let interner = TypeInterner::new();
+
+    // `typeof a === "number"` where `a: object` → never
+    // object is not a number type, so narrowing should produce never
+    let narrowed = narrow_by_typeof(&interner, TypeId::OBJECT, "number");
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_object_intrinsic_by_typeof_object_yields_object() {
+    let interner = TypeInterner::new();
+
+    // `typeof a === "object"` where `a: object` → object
+    let narrowed = narrow_by_typeof(&interner, TypeId::OBJECT, "object");
+    assert_eq!(narrowed, TypeId::OBJECT);
+}
+
+#[test]
+fn test_narrow_object_or_null_by_typeof_negation_object_yields_never() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // `typeof b !== "object"` where `b: object | null` → never
+    // Both `object` (typeof === "object") and `null` (typeof === "object") are excluded
+    let union = interner.union(vec![TypeId::OBJECT, TypeId::NULL]);
+    let narrowed = ctx.narrow_by_typeof_negation(union, "object");
+    assert_eq!(narrowed, TypeId::NEVER);
+}
+
+#[test]
+fn test_narrow_object_or_string_by_typeof_negation_object_yields_string() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // `typeof x !== "object"` where `x: object | string` → string
+    let union = interner.union(vec![TypeId::OBJECT, TypeId::STRING]);
+    let narrowed = ctx.narrow_by_typeof_negation(union, "object");
+    assert_eq!(narrowed, TypeId::STRING);
+}
+
+#[test]
+fn test_narrow_object_by_typeof_negation_number_keeps_object() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // `typeof x !== "number"` where `x: object` → object
+    // object is not a number, so it survives the exclusion
+    let narrowed = ctx.narrow_by_typeof_negation(TypeId::OBJECT, "number");
+    assert_eq!(narrowed, TypeId::OBJECT);
+}
+
+// =============================================================================
+// remove_undefined Tests
+// =============================================================================
+
+#[test]
+fn test_remove_undefined_from_union() {
+    let interner = TypeInterner::new();
+    // string | undefined → string
+    let union = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
+    let result = remove_undefined(&interner, union);
+    assert_eq!(result, TypeId::STRING);
+}
+
+#[test]
+fn test_remove_undefined_from_triple_union() {
+    let interner = TypeInterner::new();
+    // string | number | undefined → string | number
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]);
+    let result = remove_undefined(&interner, union);
+    let expected = interner.union2(TypeId::STRING, TypeId::NUMBER);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_remove_undefined_preserves_null() {
+    let interner = TypeInterner::new();
+    // string | null | undefined → string | null
+    let union = interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+    let result = remove_undefined(&interner, union);
+    let expected = interner.union2(TypeId::STRING, TypeId::NULL);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_remove_undefined_no_undefined_noop() {
+    let interner = TypeInterner::new();
+    // string | number → string | number (unchanged)
+    let union = interner.union2(TypeId::STRING, TypeId::NUMBER);
+    let result = remove_undefined(&interner, union);
+    assert_eq!(result, union);
+}
+
+#[test]
+fn test_remove_undefined_bare_undefined() {
+    let interner = TypeInterner::new();
+    // undefined → never
+    let result = remove_undefined(&interner, TypeId::UNDEFINED);
+    assert_eq!(result, TypeId::NEVER);
+}
+
+#[test]
+fn test_remove_undefined_non_union_noop() {
+    let interner = TypeInterner::new();
+    // string → string (unchanged)
+    let result = remove_undefined(&interner, TypeId::STRING);
+    assert_eq!(result, TypeId::STRING);
+}
+
+// =============================================================================
+// Instanceof: Constructor Returning `any`
+// =============================================================================
+
+/// Regression: when the extracted instance type is `any`, instanceof narrowing
+/// must NOT filter union members. tsc keeps the source type unchanged because
+/// every type is assignable to `any` so the check provides no information.
+///
+/// Mirrors the `interface FConstructor { new (): any }` case in
+/// `typeGuardsWithInstanceOfByConstructorSignature.ts`. Before this fix,
+/// `narrow_by_instance_type` dropped primitive members (e.g., `string`),
+/// wrongly narrowing `F | string` to `F` and silencing the expected TS2339
+/// diagnostics on `obj11.foo` / `obj11.bar`.
+#[test]
+fn test_narrow_by_instance_type_any_target_returns_source_unchanged() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // Build an interface-like object type to stand in for `F`.
+    let foo_name = interner.intern_string("foo");
+    let f_like = interner.object(vec![PropertyInfo::new(foo_name, TypeId::STRING)]);
+
+    let union = interner.union2(f_like, TypeId::STRING);
+
+    // Instance type extracted from `new (): any` is `any`.
+    let narrowed = ctx.narrow_by_instance_type(union, TypeId::ANY);
+
+    // Both members must be preserved — string MUST NOT be filtered out.
+    assert_eq!(
+        narrowed, union,
+        "narrow_by_instance_type should preserve the union when the instance type is `any` \
+         (got {narrowed:?}, expected {union:?})"
+    );
+}
+
+/// When two non-class union members are mutually-incompatible interfaces and
+/// the instance-type filter rules out both directions of structural
+/// assignability, the unrelated member must be **dropped** — not preserved as
+/// `member & instance_type`. The earlier intersection fallback was leaking
+/// forms like `C2 & C1` into TS2322 displays for the
+/// `typeGuardOfFormInstanceOfOnInterface` repro (interfaces with conflicting
+/// `prototype` and named property shapes), where tsc drops the unrelated
+/// member and prints `'false | D1'` instead of `'false | D1 | C2 & C1'`.
+///
+/// The two interfaces here mirror the test's `C1` / `C2` shapes — disjoint
+/// `prototype` literal types and a clashing named property — so neither
+/// direction of `is_assignable_to` succeeds. The narrowed result must be the
+/// related member alone (the one whose `prototype` matches the instance
+/// type), with no intersection of the unrelated member.
+#[test]
+fn test_narrow_by_instance_type_drops_unrelated_interface_member() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let prototype_name = interner.intern_string("prototype");
+    let p1_name = interner.intern_string("p1");
+    let p2_name = interner.intern_string("p2");
+
+    // `C1 = { prototype: number; p1: string }` — stand-in for the
+    // self-referential `prototype: C1` shape that comes through the binder
+    // for the conformance repro. The structural details (number vs symbol)
+    // don't matter; what matters is that the two interfaces have *disjoint*
+    // prototype types AND distinct extra properties so neither direction of
+    // assignability holds.
+    let c1 = interner.object(vec![
+        PropertyInfo::new(prototype_name, TypeId::NUMBER),
+        PropertyInfo::new(p1_name, TypeId::STRING),
+    ]);
+    let c2 = interner.object(vec![
+        PropertyInfo::new(prototype_name, TypeId::SYMBOL),
+        PropertyInfo::new(p2_name, TypeId::NUMBER),
+    ]);
+
+    let union = interner.union2(c1, c2);
+
+    // Use C1 itself as the instance type. C2 is structurally unrelated to C1
+    // (incompatible prototype and a different extra property), so C2 must be
+    // dropped from the narrowed result rather than retained as `C2 & C1`.
+    let narrowed = ctx.narrow_by_instance_type(union, c1);
+
+    assert_eq!(
+        narrowed, c1,
+        "narrow_by_instance_type should drop the unrelated interface member \
+         (got {narrowed:?}, expected {c1:?})"
+    );
+}
+
+/// Same regression via the public `narrow_type` API with `TypeGuard::Instanceof`.
+/// Confirms the fix is reachable through the checker's actual entry point.
+#[test]
+fn test_narrow_type_instanceof_any_target_returns_source_unchanged() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let foo_name = interner.intern_string("foo");
+    let f_like = interner.object(vec![PropertyInfo::new(foo_name, TypeId::STRING)]);
+    let union = interner.union2(f_like, TypeId::STRING);
+
+    let guard = TypeGuard::Instanceof(TypeId::ANY, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+
+    assert_eq!(
+        narrowed, union,
+        "TypeGuard::Instanceof(any) on the true branch should not filter union members"
+    );
+}
+
+// =============================================================================
+// Symbol.hasInstance-aware instanceof narrowing
+// =============================================================================
+//
+// Structural rule: when the right operand of `instanceof` declares a non-asserting
+// `[Symbol.hasInstance](value: ...): value is T` type predicate, the predicate
+// target `T` is the instance type — overriding `prototype` and construct
+// signature return types. Mirrors tsc's `getNarrowedTypeForInstanceofPredicate`.
+
+/// Build a constructor whose `[Symbol.hasInstance]` method has the given
+/// predicate target, with an optional construct signature return type.
+fn make_constructor_with_has_instance(
+    interner: &TypeInterner,
+    construct_return: Option<TypeId>,
+    predicate_target: Option<TypeId>,
+    predicate_asserts: bool,
+    param_name: &str,
+) -> TypeId {
+    use crate::types::{
+        CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypePredicate,
+        TypePredicateTarget,
+    };
+
+    let name_atom = interner.intern_string(param_name);
+    let has_instance_atom = interner.intern_string("[Symbol.hasInstance]");
+
+    let has_instance_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::required(name_atom, TypeId::UNKNOWN)],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: predicate_target.map(|target| TypePredicate {
+            asserts: predicate_asserts,
+            target: TypePredicateTarget::Identifier(name_atom),
+            type_id: Some(target),
+            parameter_index: Some(0),
+        }),
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let construct_signatures = construct_return
+        .map(|ret| vec![CallSignature::new(vec![], ret)])
+        .unwrap_or_default();
+
+    interner.callable(CallableShape {
+        construct_signatures,
+        properties: vec![PropertyInfo::method(has_instance_atom, has_instance_fn)],
+        ..CallableShape::default()
+    })
+}
+
+/// `x instanceof RHS` where `RHS` has `[Symbol.hasInstance](v: unknown): value is STRING`
+/// narrows by `STRING` and ignores the construct signature return type (`NUMBER`).
+#[test]
+fn test_narrow_by_instanceof_uses_symbol_has_instance_predicate() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let constructor = make_constructor_with_has_instance(
+        &interner,
+        Some(TypeId::NUMBER), // construct sig says new (): NUMBER
+        Some(TypeId::STRING), // hasInstance says value is STRING
+        false,
+        "value",
+    );
+
+    let source = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+    assert_eq!(
+        narrowed,
+        TypeId::STRING,
+        "narrow_by_instanceof must use the [Symbol.hasInstance] predicate target \
+         (STRING) instead of the construct signature return (NUMBER)"
+    );
+}
+
+/// The structural rule is parameter-name-independent: renaming `value` to `x`
+/// must not change the narrowed result. Locks in §25 of `CLAUDE.md` (no
+/// hardcoded user-chosen names).
+#[test]
+fn test_narrow_by_instanceof_has_instance_independent_of_param_name() {
+    for param_name in ["value", "x", "v"] {
+        let interner = TypeInterner::new();
+        let ctx = NarrowingContext::new(&interner);
+
+        let constructor = make_constructor_with_has_instance(
+            &interner,
+            None,
+            Some(TypeId::NUMBER),
+            false,
+            param_name,
+        );
+
+        let source = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+        assert_eq!(
+            narrowed,
+            TypeId::NUMBER,
+            "predicate narrowing must not depend on parameter name (got param={param_name})"
+        );
+    }
+}
+
+/// `asserts value is T` predicates do NOT participate in instanceof narrowing
+/// per tsc — only non-asserting predicates carry through.
+#[test]
+fn test_narrow_by_instanceof_ignores_asserts_has_instance_predicate() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let constructor = make_constructor_with_has_instance(
+        &interner,
+        Some(TypeId::NUMBER),
+        Some(TypeId::STRING),
+        true, // asserts
+        "value",
+    );
+
+    let source = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+    assert_eq!(
+        narrowed,
+        TypeId::NUMBER,
+        "asserts-only predicate must NOT drive instanceof narrowing — \
+         construct signature return must be used instead"
+    );
+}
+
+/// When the constructor has no `[Symbol.hasInstance]` method, narrowing falls
+/// back to the construct signature return type.
+#[test]
+fn test_narrow_by_instanceof_without_has_instance_uses_construct_return() {
+    use crate::types::{CallSignature, CallableShape};
+
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let constructor = interner.callable(CallableShape {
+        construct_signatures: vec![CallSignature::new(vec![], TypeId::NUMBER)],
+        ..CallableShape::default()
+    });
+
+    let source = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+    assert_eq!(
+        narrowed,
+        TypeId::NUMBER,
+        "Without Symbol.hasInstance, narrowing must use the construct signature return"
+    );
+}
+
+/// Union of constructors where EVERY member has `[Symbol.hasInstance]` —
+/// `instance_type_from_symbol_has_instance` returns the union of predicate
+/// targets, and narrowing must filter by that union.
+///
+/// Uses primitive predicate targets (STRING / NUMBER) so the assertion is
+/// unaffected by interface-overlap intersection fallbacks.
+#[test]
+fn test_narrow_by_instanceof_union_constructor_both_have_has_instance() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // Member A: [Symbol.hasInstance]: value is STRING.
+    let a_constructor =
+        make_constructor_with_has_instance(&interner, None, Some(TypeId::STRING), false, "value");
+
+    // Member B: [Symbol.hasInstance]: value is NUMBER. Renamed param ("v")
+    // ensures the rule isn't keyed on parameter name across union members.
+    let b_constructor =
+        make_constructor_with_has_instance(&interner, None, Some(TypeId::NUMBER), false, "v");
+
+    let union_constructor = interner.union2(a_constructor, b_constructor);
+    let source = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+
+    let narrowed = ctx.narrow_by_instanceof(source, union_constructor, true);
+
+    // Predicate union STRING | NUMBER, applied to STRING | NUMBER | BOOLEAN.
+    let expected_union = interner.union2(TypeId::STRING, TypeId::NUMBER);
+    assert_eq!(
+        narrowed, expected_union,
+        "Union constructor where both members carry Symbol.hasInstance must \
+         narrow by the union of predicate targets"
+    );
+}
+
+/// When the `[Symbol.hasInstance]` predicate target erases to `any` (e.g., the
+/// predicate is generic and its type parameter collapses), tsc's
+/// `getInstanceType` falls back to the erased generic construct return rather
+/// than letting `any` widen the source. This test pins that precedence at the
+/// narrowing layer so the solver entry point can't diverge from
+/// `instance_type_from_constructor` (see #8670 review feedback).
+#[test]
+fn test_narrow_by_instanceof_collapsed_any_predicate_falls_back_to_generic_construct() {
+    use crate::def::DefId;
+    use crate::types::{
+        CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypeParamInfo,
+        TypePredicate, TypePredicateTarget,
+    };
+
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let value_atom = interner.intern_string("value");
+    let t_name = interner.intern_string("T");
+    let t_info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_info);
+    let box_base = interner.lazy(DefId(4242));
+    let box_t = interner.application(box_base, vec![t_type]);
+    let box_any = interner.application(box_base, vec![TypeId::ANY]);
+    let has_instance_atom = interner.intern_string("[Symbol.hasInstance]");
+
+    // hasInstance predicate collapses to `any`.
+    let has_instance_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::required(value_atom, TypeId::UNKNOWN)],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(value_atom),
+            type_id: Some(TypeId::ANY),
+            parameter_index: Some(0),
+        }),
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // Constructor with both `any`-collapsing predicate AND a generic construct
+    // signature returning Box<T>. The any-fallback rule should select Box<any>
+    // (the erased generic construct return) rather than letting `any` widen.
+    let constructor = interner.callable(CallableShape {
+        construct_signatures: vec![CallSignature {
+            type_params: vec![t_info],
+            params: vec![],
+            this_type: None,
+            return_type: box_t,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![PropertyInfo::method(has_instance_atom, has_instance_fn)],
+        ..CallableShape::default()
+    });
+
+    let source = interner.union2(TypeId::STRING, box_any);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+    assert_eq!(
+        narrowed, box_any,
+        "Collapsed-any predicate must defer to the erased generic construct \
+         return (Box<any>) rather than narrowing source by `any`"
+    );
+}
+
+// =============================================================================
+// Enum narrowing tests (narrow_to_type for enum sources)
+// =============================================================================
+
+#[test]
+fn test_narrow_to_type_enum_preserves_nominal_wrapper() {
+    // When v: E1 (enum) and we narrow to literal 1, the result should be Enum(E1_def, 1)
+    // not raw literal 1. This preserves the nominal identity of the enum.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let enum_def = crate::def::DefId(100);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let inner_union = interner.union(vec![lit1, lit2]);
+
+    // E1 = Enum(E1_def, 1 | 2)
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_union));
+
+    // narrow_to_type(E1, 1) should yield Enum(E1_def, 1), not raw literal 1
+    let narrowed = ctx.narrow_to_type(e1, lit1);
+    let expected = interner.intern(crate::types::TypeData::Enum(enum_def, lit1));
+    assert_eq!(
+        narrowed, expected,
+        "narrow_to_type(Enum(D,1|2), 1) should produce Enum(D,1), not raw 1"
+    );
+
+    // Verify that the result is NOT the raw literal (the regression we fixed)
+    assert_ne!(
+        narrowed, lit1,
+        "narrow_to_type on an enum source must not drop the nominal wrapper"
+    );
+}
+
+#[test]
+fn test_narrow_to_type_enum_value_not_in_enum_returns_never() {
+    // When v: E1 = {a=1,b=2} and we narrow to 3, result is NEVER (3 not in E1)
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let enum_def = crate::def::DefId(100);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let lit3 = interner.literal_number(3.0);
+    let inner_union = interner.union(vec![lit1, lit2]);
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_union));
+
+    let narrowed = ctx.narrow_to_type(e1, lit3);
+    assert_eq!(
+        narrowed,
+        TypeId::NEVER,
+        "narrow_to_type(E1, 3) where 3 is not in E1 should be NEVER"
+    );
+}
+
+#[test]
+fn test_enum_union_parts_merge_on_join() {
+    // When control flow produces Enum(D,2) | Enum(D,1), the union should
+    // merge to Enum(D, 1|2) rather than staying as two separate enum types.
+    // This verifies the merge_same_enum_parts step in normalize_union.
+    let interner = TypeInterner::new();
+
+    let enum_def = crate::def::DefId(100);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+
+    let part_a = interner.intern(crate::types::TypeData::Enum(enum_def, lit2));
+    let part_b = interner.intern(crate::types::TypeData::Enum(enum_def, lit1));
+
+    // Building Enum(D,2) | Enum(D,1) should give Enum(D, 1|2) = E1
+    let joined = interner.union(vec![part_a, part_b]);
+
+    let inner_12 = interner.union(vec![lit1, lit2]);
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_12));
+
+    assert_eq!(
+        joined, e1,
+        "Enum(D,2) | Enum(D,1) should merge to Enum(D, 1|2)"
+    );
+}
+
+#[test]
+fn test_enum_narrowing_join_roundtrip() {
+    // Full roundtrip: E1 excluding 1 | narrow_to(E1, 1) should recover E1.
+    // This is the join after `if (v: E1) { v !== 1 } {}`.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let enum_def = crate::def::DefId(200);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let inner_union = interner.union(vec![lit1, lit2]);
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_union));
+
+    // True branch: v !== 1 → exclude 1 → Enum(D, 2)
+    let true_branch = ctx.narrow_excluding_type(e1, lit1);
+    // False branch: v === 1 → narrow to 1 → Enum(D, 1)
+    let false_branch = ctx.narrow_to_type(e1, lit1);
+
+    // Join: Enum(D,2) | Enum(D,1) → should merge to E1
+    let joined = interner.union(vec![true_branch, false_branch]);
+    assert_eq!(
+        joined, e1,
+        "join(E1 excl 1, narrow_to(E1, 1)) should recover E1"
+    );
+}
+
+#[test]
+fn test_enum_narrowing_two_names_same_fix() {
+    // Regression coverage: the fix must not depend on any specific variable
+    // name, enum name, or type parameter name. Verify with different DefIds.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    for def_raw in [77u32, 888, 12345] {
+        let enum_def = crate::def::DefId(def_raw);
+        let inner_a = interner.literal_number(10.0);
+        let inner_b = interner.literal_number(20.0);
+        let inner = interner.union(vec![inner_a, inner_b]);
+        let e = interner.intern(crate::types::TypeData::Enum(enum_def, inner));
+
+        let narrowed_to_a = ctx.narrow_to_type(e, inner_a);
+        let expected = interner.intern(crate::types::TypeData::Enum(enum_def, inner_a));
+        assert_eq!(
+            narrowed_to_a, expected,
+            "narrow_to_type with DefId={def_raw} should produce Enum(D,10)"
+        );
+    }
+}
+
+// =============================================================================
+// Array.isArray narrowing - ReadonlyArray<T> application form
+// =============================================================================
+
+/// Register a dummy `ReadonlyArray` base in the interner and return its `TypeId`.
+fn register_readonly_array_base(interner: &TypeInterner) -> TypeId {
+    let base = interner.object(vec![]);
+    interner.set_readonly_array_base_type(base);
+    base
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_application_truthy() {
+    let interner = TypeInterner::new();
+    let base = register_readonly_array_base(&interner);
+    let readonly_numbers = interner.application(base, vec![TypeId::NUMBER]);
+    let union = interner.union2(readonly_numbers, TypeId::NUMBER);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Positive);
+
+    assert_eq!(
+        narrowed, readonly_numbers,
+        "Array.isArray truthy branch should keep ReadonlyArray<number>"
+    );
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_application_different_element_types() {
+    let interner = TypeInterner::new();
+    let base = register_readonly_array_base(&interner);
+    let ctx = NarrowingContext::new(&interner);
+
+    let readonly_strings = interner.application(base, vec![TypeId::STRING]);
+    let string_union = interner.union2(readonly_strings, TypeId::STRING);
+    let narrowed_strings = ctx.narrow_type(string_union, &TypeGuard::Array, GuardSense::Positive);
+    assert_eq!(
+        narrowed_strings, readonly_strings,
+        "Array.isArray truthy branch should keep ReadonlyArray<string>"
+    );
+
+    let readonly_booleans = interner.application(base, vec![TypeId::BOOLEAN]);
+    let boolean_union = interner.union2(readonly_booleans, TypeId::BOOLEAN);
+    let narrowed_booleans = ctx.narrow_type(boolean_union, &TypeGuard::Array, GuardSense::Positive);
+    assert_eq!(
+        narrowed_booleans, readonly_booleans,
+        "Array.isArray truthy branch should keep ReadonlyArray<boolean>"
+    );
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_application_falsy() {
+    let interner = TypeInterner::new();
+    let base = register_readonly_array_base(&interner);
+    let readonly_numbers = interner.application(base, vec![TypeId::NUMBER]);
+    let union = interner.union2(readonly_numbers, TypeId::NUMBER);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Negative);
+
+    assert_eq!(
+        narrowed,
+        TypeId::NUMBER,
+        "!Array.isArray should exclude ReadonlyArray<number>"
+    );
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_application_alone() {
+    let interner = TypeInterner::new();
+    let base = register_readonly_array_base(&interner);
+    let readonly_numbers = interner.application(base, vec![TypeId::NUMBER]);
+    let ctx = NarrowingContext::new(&interner);
+
+    let truthy = ctx.narrow_type(readonly_numbers, &TypeGuard::Array, GuardSense::Positive);
+    let falsy = ctx.narrow_type(readonly_numbers, &TypeGuard::Array, GuardSense::Negative);
+
+    assert_eq!(
+        truthy, readonly_numbers,
+        "Array.isArray should keep a bare ReadonlyArray<number>"
+    );
+    assert_eq!(
+        falsy,
+        TypeId::NEVER,
+        "!Array.isArray should exclude a bare ReadonlyArray<number>"
+    );
+}
+
+#[test]
+fn array_isarray_keeps_mutable_and_readonly_array_members() {
+    let interner = TypeInterner::new();
+    let mutable_numbers = interner.array(TypeId::NUMBER);
+    let base = register_readonly_array_base(&interner);
+    let readonly_strings = interner.application(base, vec![TypeId::STRING]);
+    let union = interner.union(vec![mutable_numbers, readonly_strings, TypeId::BOOLEAN]);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Positive);
+    let expected = interner.union2(mutable_numbers, readonly_strings);
+
+    assert_eq!(
+        narrowed, expected,
+        "Array.isArray should keep mutable and readonly array members"
+    );
+}

@@ -1,0 +1,2533 @@
+use super::super::Printer;
+use crate::transforms::private_fields_es5::get_private_field_name;
+use tsz_parser::parser::{
+    NodeIndex,
+    node::{AccessExprData, Node, NodeAccess},
+    syntax_kind_ext,
+};
+use tsz_scanner::SyntaxKind;
+
+impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn emit_es5_super_property_base(&mut self) {
+        if self.es5_super_home_function_depth == Some(self.function_scope_depth)
+            && !self.es5_super_home_is_static
+        {
+            self.write("_super.prototype");
+        } else {
+            self.write("_super");
+        }
+    }
+
+    pub(super) fn emit_scoped_static_super_receiver(&mut self) {
+        if let Some(alias) = self.scoped_static_this_alias.as_ref().cloned() {
+            self.write(&alias);
+        } else {
+            self.write("this");
+        }
+    }
+
+    pub(super) fn emit_scoped_static_super_property_name(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            self.write("\"\"");
+            return;
+        };
+
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(identifier) = self.arena.get_identifier(name_node) {
+                    self.emit_string_literal_text(&identifier.escaped_text);
+                } else {
+                    self.write("\"\"");
+                }
+            }
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                if let Some(text) = self.arena.get_literal_text(name_idx) {
+                    self.emit_string_literal_text(text);
+                } else {
+                    self.write("\"\"");
+                }
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                self.emit(name_idx);
+            }
+            _ => self.emit(name_idx),
+        }
+    }
+
+    pub(in crate::emitter) fn emit_property_access(&mut self, node: &Node) {
+        let Some(access) = self.arena.get_access_expr(node) else {
+            return;
+        };
+
+        if let Some(base_alias) = self.scoped_static_super_base_alias.as_ref().cloned()
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            if self.scoped_static_super_direct_access {
+                self.write(&base_alias);
+                self.write(".");
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
+                return;
+            }
+            self.write("Reflect.get(");
+            self.write(&base_alias);
+            self.write(", ");
+            self.emit_scoped_static_super_property_name(access.name_or_argument);
+            self.write(", ");
+            self.emit_scoped_static_super_receiver();
+            self.write(")");
+            return;
+        }
+
+        if self.ctx.target_es5
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.emit_es5_super_property_base();
+            self.write(".");
+            self.emit_property_name_without_import_substitution(access.name_or_argument);
+            return;
+        }
+
+        // Private field lowering: `this.#field` → `__classPrivateFieldGet(this, _C_field, "f")`
+        if !self.private_field_weakmaps.is_empty()
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+            && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+            && let Some(field_name) = get_private_field_name(self.arena, access.name_or_argument)
+        {
+            let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+            if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned() {
+                self.write_helper("__classPrivateFieldGet");
+                self.write("(");
+                self.emit_private_receiver(access.expression, clean_name);
+                self.write(", ");
+                // For methods/accessors/static fields, use the state_var instead of weakmap_name
+                if let Some(info) = self.private_member_info.get(clean_name).cloned() {
+                    if let Some(ref state_var) = info.state_var {
+                        self.write(state_var);
+                    } else {
+                        self.write(&weakmap_name);
+                    }
+                    self.write(", \"");
+                    self.write(info.kind);
+                    self.write("\"");
+                    if let Some(ref fn_ref) = info.fn_ref {
+                        self.write(", ");
+                        self.write(fn_ref);
+                    }
+                } else {
+                    self.write(&weakmap_name);
+                    self.write(", \"f\"");
+                }
+                self.write(")");
+                return;
+            }
+        }
+
+        // Const enum inlining: replace `EnumName.Member` with `value /* EnumName.Member */`
+        if !self.const_enum_values.is_empty()
+            && let Some(inlined) = self.try_inline_const_enum_property_access(access)
+        {
+            self.write(&inlined);
+            return;
+        }
+
+        if access.question_dot_token {
+            if self.ctx.options.target.supports_es2020() {
+                self.emit_optional_property_access(access, "?.");
+            } else {
+                self.emit_optional_property_access_downlevel(access);
+            }
+            return;
+        }
+
+        if self.emit_parenthesized_object_literal_access(access.expression, |this| {
+            this.write_dot_token(access.expression);
+            this.emit_property_name_without_import_substitution(access.name_or_argument);
+        }) {
+            return;
+        }
+
+        // Wrap negative const enum inline values in parens to avoid
+        // ambiguity: `(-1 /* Foo.A */).toString()` vs `-1.toString()`.
+        let needs_negative_parens =
+            self.expression_is_negative_const_enum_inline(access.expression);
+
+        if needs_negative_parens {
+            self.write("(");
+        }
+
+        // In System.register modules, `import.meta` is replaced with `context_1.meta`.
+        // The parser represents `import.meta` as PropertyAccessExpression with
+        // expression=ImportKeyword, name=meta.
+        if self.in_system_execute_body
+            && let Some(expr_node) = self.arena.get(access.expression)
+            && expr_node.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16
+            && self
+                .get_identifier_text_opt(access.name_or_argument)
+                .as_deref()
+                == Some("meta")
+        {
+            self.write("context_1");
+            self.write_dot_token(access.expression);
+            self.emit_property_name_without_import_substitution(access.name_or_argument);
+            return;
+        }
+
+        // Signal that the expression is in access position so `emit_parenthesized`
+        // preserves parens around `new` expressions: `(new a).b` vs `new a.b`.
+        let prev = self.paren_in_access_position;
+        self.paren_in_access_position = true;
+        // When the base expression is ExpressionWithTypeArguments (e.g.,
+        // `List<number>.makeChild()`), unwrap it without parens since the
+        // property access already provides grouping: emit `List.makeChild()`
+        // not `(List).makeChild()`.
+        self.emit_unwrapping_type_args(access.expression);
+        self.paren_in_access_position = prev;
+
+        if needs_negative_parens {
+            self.write(")");
+        }
+
+        let dot_pos = if let Some(expr_node) = self.arena.get(access.expression) {
+            if let Some(name_node) = self.arena.get(access.name_or_argument) {
+                self.find_char_after_skipping_comments(expr_node.end, name_node.pos, b'.')
+                    .or_else(|| {
+                        self.find_char_after_skipping_comments(expr_node.end, node.end, b'.')
+                    })
+                    .or_else(|| self.property_access_dot_position_from_span(node, access))
+            } else {
+                self.find_char_after(expr_node.end, node.end, b'.')
+            }
+        } else {
+            None
+        };
+
+        if let Some(dot_pos) = dot_pos
+            && let Some(expr_node) = self.arena.get(access.expression)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+            && self.emit_property_access_commented_dot(access, expr_node, name_node, dot_pos)
+        {
+            return;
+        }
+
+        // Preserve multi-line property access chains from the original source.
+        // TypeScript preserves the original line break pattern. If there's a
+        // newline between expression end and the property name, we need to
+        // reproduce the original layout:
+        // - If dot is before newline: `expr.\n    name` -> emit ".\n    name"
+        // - If dot is after newline: `expr\n    .name` -> emit "\n    .name"
+        if let Some(dot_before_newline) = self.property_access_line_break_position(node, access) {
+            if dot_before_newline {
+                // Dot before newline: `expr.\n    name`
+                self.write_property_access_dot_token(access.expression, dot_pos);
+                self.write_line();
+                self.increase_indent();
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
+                self.decrease_indent();
+            } else {
+                // Newline before dot: `expr\n    .name`
+                let mut comment_wrote_newline = false;
+                if let Some(expr_node) = self.arena.get(access.expression)
+                    && let Some(name_node) = self.arena.get(access.name_or_argument)
+                    && let Some(dot_pos) =
+                        self.find_char_after_skipping_comments(expr_node.end, name_node.pos, b'.')
+                {
+                    let expr_token_end =
+                        self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
+                    comment_wrote_newline =
+                        self.emit_comments_before_multiline_property_dot(expr_token_end, dot_pos);
+                }
+                if !comment_wrote_newline {
+                    self.write_line();
+                }
+                self.increase_indent();
+                self.write_property_access_dot_token(access.expression, dot_pos);
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
+                self.decrease_indent();
+            }
+            return;
+        }
+
+        if let Some(text) = self.source_text
+            && let Some(expr_node) = self.arena.get(access.expression)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+        {
+            let expr_end = expr_node.end as usize;
+            let name_start = name_node.pos as usize;
+            let between_end = std::cmp::min(name_start, text.len());
+            let between_start = std::cmp::min(expr_end, between_end);
+            let between = &text[between_start..between_end];
+            let has_comment_between = self
+                .all_comments
+                .iter()
+                .any(|comment| comment.pos >= expr_node.end && comment.end <= name_node.pos);
+            if between.contains('\n') && !has_comment_between {
+                self.write_dot_token(access.expression);
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
+                return;
+            }
+        }
+
+        if let Some(expr_node) = self.arena.get(access.expression)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+        {
+            let comments_before_dot_end = dot_pos.unwrap_or(name_node.pos);
+            self.emit_comments_in_range(expr_node.end, comments_before_dot_end, true, false);
+        }
+
+        // Map the `.` token to its source position
+        if let Some(dot_pos) = dot_pos {
+            self.map_source_offset(dot_pos);
+        } else if let Some(expr_node) = self.arena.get(access.expression) {
+            self.map_token_after(expr_node.end, node.end, b'.');
+        }
+        self.write_property_access_dot_token(access.expression, dot_pos);
+
+        if let Some(dot_pos) = dot_pos
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+        {
+            self.emit_comments_in_range(dot_pos + 1, name_node.pos, true, false);
+        }
+        // When the property name is missing (error recovery), the source layout
+        // determines whether tsc breaks to a new line:
+        // - `bar.\n}` -> emit `bar.\n    ;` (newline preserved when source had a
+        //   line break between the dot and the next significant token)
+        // - `window. ` (EOF, no newline) -> emit `window.;` on a single line
+        // We detect a newline by inspecting the source text between the
+        // expression end (just before the dot) and the property access end
+        // (where the missing name would have been emitted).
+        if access.name_or_argument.is_none() {
+            let mut emit_newline = false;
+            if let Some(text) = self.source_text
+                && let Some(expr_node) = self.arena.get(access.expression)
+            {
+                // Iterate over raw bytes — the only character we look for is
+                // ASCII `\n` (0x0A), which never appears inside a multibyte
+                // UTF-8 sequence, so byte iteration is safe regardless of
+                // node-end / character boundary alignment.
+                let bytes = text.as_bytes();
+                let start = std::cmp::min(expr_node.end as usize, bytes.len());
+                let end = std::cmp::min(node.end as usize, bytes.len());
+                if start <= end && bytes[start..end].contains(&b'\n') {
+                    emit_newline = true;
+                }
+            }
+            if emit_newline {
+                self.write_line();
+            }
+            return;
+        }
+        self.emit_property_name_without_import_substitution(access.name_or_argument);
+    }
+
+    fn property_access_line_break_position(
+        &self,
+        node: &Node,
+        access: &AccessExprData,
+    ) -> Option<bool> {
+        let text = self.source_text?;
+        let name = self.get_identifier_text_idx(access.name_or_argument);
+        if name.is_empty() {
+            return None;
+        }
+
+        let bytes = text.as_bytes();
+        let span_start = std::cmp::min(node.pos as usize, bytes.len());
+        let span_end = std::cmp::min(node.end as usize, bytes.len());
+        if span_start >= span_end {
+            return None;
+        }
+
+        let span = &text[span_start..span_end];
+        let name_abs = span.rfind(&name).map(|rel| span_start + rel)?;
+
+        let mut cursor = name_abs;
+        while cursor > span_start && matches!(bytes[cursor - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            cursor -= 1;
+        }
+        if cursor == span_start || bytes[cursor - 1] != b'.' {
+            return None;
+        }
+        let dot_abs = cursor - 1;
+
+        let mut before_dot = dot_abs;
+        while before_dot > span_start
+            && matches!(bytes[before_dot - 1], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            before_dot -= 1;
+        }
+
+        let newline_before_dot = bytes[before_dot..dot_abs]
+            .iter()
+            .any(|b| matches!(b, b'\r' | b'\n'));
+        let expression_gap_has_newline = self
+            .arena
+            .get(access.expression)
+            .map(|expr_node| self.find_token_end_before_trivia(expr_node.pos, expr_node.end))
+            .is_some_and(|expr_token_end| {
+                self.source_range_has_newline_local(expr_token_end, dot_abs as u32)
+            });
+        let newline_after_dot = bytes[dot_abs + 1..name_abs]
+            .iter()
+            .any(|b| matches!(b, b'\r' | b'\n'));
+
+        if newline_after_dot {
+            Some(true)
+        } else if newline_before_dot || expression_gap_has_newline {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn property_access_dot_position_from_span(
+        &self,
+        node: &Node,
+        access: &AccessExprData,
+    ) -> Option<u32> {
+        let text = self.source_text?;
+        let name = self.get_identifier_text_idx(access.name_or_argument);
+        if name.is_empty() {
+            return None;
+        }
+
+        let bytes = text.as_bytes();
+        let span_start = std::cmp::min(node.pos as usize, bytes.len());
+        let span_end = std::cmp::min(node.end as usize, bytes.len());
+        if span_start >= span_end {
+            return None;
+        }
+
+        let span = &text[span_start..span_end];
+        let name_abs = span.rfind(&name).map(|rel| span_start + rel)?;
+        let mut cursor = name_abs;
+        while cursor > span_start && matches!(bytes[cursor - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            cursor -= 1;
+        }
+        if cursor == span_start || bytes[cursor - 1] != b'.' {
+            return None;
+        }
+        Some((cursor - 1) as u32)
+    }
+
+    fn find_char_after_skipping_comments(&self, from: u32, to: u32, ch: u8) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let end = std::cmp::min(to as usize, bytes.len());
+        let mut i = std::cmp::min(from as usize, end);
+
+        while i < end {
+            match bytes[i] {
+                b'/' if i + 1 < end && bytes[i + 1] == b'/' => {
+                    i += 2;
+                    while i < end && !matches!(bytes[i], b'\r' | b'\n') {
+                        i += 1;
+                    }
+                }
+                b'/' if i + 1 < end && bytes[i + 1] == b'*' => {
+                    i += 2;
+                    while i + 1 < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    i = std::cmp::min(i + 2, end);
+                }
+                byte if byte == ch => return Some(i as u32),
+                _ => i += 1,
+            }
+        }
+
+        None
+    }
+
+    fn emit_comments_before_multiline_property_dot(&mut self, from_pos: u32, dot_pos: u32) -> bool {
+        if self.ctx.options.remove_comments || from_pos >= dot_pos {
+            return false;
+        }
+
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(comment) = self
+            .all_comments
+            .iter()
+            .skip(self.comment_emit_idx)
+            .find(|comment| comment.pos >= from_pos && comment.end <= dot_pos)
+        else {
+            return false;
+        };
+
+        let gap_start = std::cmp::min(from_pos as usize, text.len());
+        let gap_end = std::cmp::min(comment.pos as usize, text.len());
+        if text.as_bytes()[gap_start..gap_end]
+            .iter()
+            .any(|&b| b == b'\n' || b == b'\r')
+        {
+            let (_, _, had_trailing_newline) =
+                self.emit_comments_in_range(from_pos, dot_pos, true, false);
+            had_trailing_newline
+        } else {
+            self.write_space();
+            self.emit_unemitted_comments_between(from_pos, dot_pos)
+        }
+    }
+
+    /// Write the `.` token for property access, adding an extra `.` when the
+    /// expression is a numeric literal without a decimal point or exponent.
+    /// Without this, `0.toString()` would be parsed as the float `0.` followed
+    /// by `toString()`, which is a syntax error.  tsc emits `0..toString()`.
+    pub(in crate::emitter) fn write_dot_token(&mut self, expr_idx: NodeIndex) {
+        let (idx, is_parenthesized) = self.property_access_dot_base_after_erasure(expr_idx);
+        if let Some(inner_node) = self.arena.get(idx) {
+            if inner_node.kind == SyntaxKind::NumericLiteral as u16 {
+                let needs_extra_dot = self
+                    .numeric_literal_emit_text(inner_node)
+                    .is_some_and(|text| text.bytes().all(|b| b.is_ascii_digit()));
+                // If the numeric literal is wrapped in parentheses (or a type
+                // assertion that was erased), the parens already disambiguate and
+                // a single dot suffices: `(1).toString()` not `(1)..toString()`.
+                if needs_extra_dot && !is_parenthesized {
+                    self.write("..");
+                    return;
+                }
+            }
+            // After const enum inlining, the expression is still a PropertyAccess/
+            // ElementAccess AST node but the output is a plain integer like `100`.
+            // We need `100..toString()`, not `100.toString()` (syntax error).
+            // Only needed when comments are removed — with comments the inline
+            // comment `/* Foo.X */` separates the number from the dot.
+            if self.ctx.options.remove_comments
+                && !is_parenthesized
+                && self.resolve_const_enum_needs_double_dot(idx, inner_node)
+            {
+                self.write("..");
+                return;
+            }
+        }
+        self.write(".");
+    }
+
+    fn property_access_dot_base_after_erasure(&self, expr_idx: NodeIndex) -> (NodeIndex, bool) {
+        // Unwrap parentheses, type assertions, and `as`/`satisfies`
+        // expressions to find the expression that will still be immediately
+        // before the property dot. After type erasure, `(<any>1)` becomes
+        // just `1`.
+        let mut idx = expr_idx;
+        let mut is_parenthesized = false;
+        while let Some(node) = self.arena.get(idx) {
+            match node.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    is_parenthesized = true;
+                    if let Some(paren) = self.arena.get_parenthesized(node) {
+                        idx = paren.expression;
+                        continue;
+                    }
+                }
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    // Type assertions are fully erased during emit; they and
+                    // any surrounding parens do not survive in the output.
+                    // `(<any>1).foo` becomes `1.foo`, which needs `1..foo`.
+                    is_parenthesized = false;
+                    if let Some(assert) = self.arena.get_type_assertion(node) {
+                        idx = assert.expression;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            break;
+        }
+        (idx, is_parenthesized)
+    }
+
+    pub(in crate::emitter) fn write_property_access_dot_token(
+        &mut self,
+        expr_idx: NodeIndex,
+        dot_pos: Option<u32>,
+    ) {
+        if self.numeric_property_access_has_surviving_separator(expr_idx, dot_pos) {
+            self.write(".");
+        } else {
+            self.write_dot_token(expr_idx);
+        }
+    }
+
+    fn numeric_property_access_has_surviving_separator(
+        &self,
+        expr_idx: NodeIndex,
+        dot_pos: Option<u32>,
+    ) -> bool {
+        let Some(dot_pos) = dot_pos else {
+            return false;
+        };
+        let (runtime_expr_idx, _) = self.property_access_dot_base_after_erasure(expr_idx);
+        let Some(expr_node) = self.arena.get(runtime_expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != SyntaxKind::NumericLiteral as u16 {
+            return false;
+        }
+        if !self
+            .numeric_literal_emit_text(expr_node)
+            .is_some_and(|text| text.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return false;
+        }
+        let expr_token_end = self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
+        if self.source_range_has_newline_local(expr_token_end, dot_pos) {
+            return true;
+        }
+        !self.ctx.options.remove_comments
+            && self
+                .all_comments
+                .iter()
+                .any(|comment| comment.pos >= expr_token_end && comment.end <= dot_pos)
+    }
+
+    pub(in crate::emitter) fn emit_element_access(&mut self, node: &Node) {
+        let Some(access) = self.arena.get_access_expr(node) else {
+            return;
+        };
+
+        if let Some(index_alias) = self.scoped_static_super_index_alias.as_ref().cloned()
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.write(&index_alias);
+            self.write("(");
+            self.emit(access.name_or_argument);
+            self.write(")");
+            if self.scoped_static_super_index_value_access {
+                self.write(".value");
+            }
+            return;
+        }
+
+        if let Some(base_alias) = self.scoped_static_super_base_alias.as_ref().cloned()
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            if self.scoped_static_super_direct_access {
+                if let Some(index_alias) = self.scoped_static_super_index_alias.as_ref().cloned() {
+                    self.write(&index_alias);
+                    self.write("(");
+                    self.emit(access.name_or_argument);
+                    self.write(")");
+                    if self.scoped_static_super_index_value_access {
+                        self.write(".value");
+                    }
+                    return;
+                }
+                self.write(&base_alias);
+                self.write("[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+                return;
+            }
+            self.write("Reflect.get(");
+            self.write(&base_alias);
+            self.write(", ");
+            self.emit(access.name_or_argument);
+            self.write(", ");
+            self.emit_scoped_static_super_receiver();
+            self.write(")");
+            return;
+        }
+
+        if self.ctx.target_es5
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.emit_es5_super_property_base();
+            self.write("[");
+            self.emit(access.name_or_argument);
+            self.write("]");
+            return;
+        }
+
+        // Const enum inlining: replace `EnumName["Member"]` with `value /* EnumName["Member"] */`
+        if !self.const_enum_values.is_empty()
+            && let Some(inlined) = self.try_inline_const_enum_element_access(access)
+        {
+            self.write(&inlined);
+            return;
+        }
+
+        if access.question_dot_token {
+            if self.ctx.options.target.supports_es2020() {
+                self.emit(access.expression);
+                self.write("?.[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+            } else {
+                self.emit_optional_element_access_downlevel(access);
+            }
+            return;
+        }
+
+        if self.emit_parenthesized_object_literal_access(access.expression, |this| {
+            this.write("[");
+            this.emit(access.name_or_argument);
+            this.write("]");
+        }) {
+            return;
+        }
+
+        let prev = self.paren_in_access_position;
+        self.paren_in_access_position = true;
+        self.emit(access.expression);
+        self.paren_in_access_position = prev;
+        if let (Some(expr_node), Some(arg_node)) = (
+            self.arena.get(access.expression),
+            self.arena.get(access.name_or_argument),
+        ) && let Some(open_bracket_pos) =
+            self.find_element_access_open_bracket_position(expr_node, arg_node)
+        {
+            let close_bracket_pos =
+                self.find_element_access_close_bracket_position(open_bracket_pos, node);
+            self.emit_element_access_internal_comments(expr_node.end, open_bracket_pos);
+            self.write("[");
+            self.emit_element_access_internal_comments(open_bracket_pos + 1, arg_node.pos);
+            self.emit(access.name_or_argument);
+            if let Some(close_bracket_pos) = close_bracket_pos {
+                self.emit_element_access_internal_comments(arg_node.end, close_bracket_pos);
+                self.write("]");
+                if let Some(semicolon_pos) =
+                    self.find_element_access_following_semicolon(close_bracket_pos)
+                {
+                    self.emit_element_access_internal_comments(
+                        close_bracket_pos + 1,
+                        semicolon_pos,
+                    );
+                }
+            } else {
+                self.write("]");
+            }
+            return;
+        }
+        self.write("[");
+        self.emit(access.name_or_argument);
+        self.write("]");
+    }
+
+    fn find_element_access_open_bracket_position(
+        &self,
+        expr_node: &Node,
+        arg_node: &Node,
+    ) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut pos = std::cmp::min(expr_node.end as usize, bytes.len());
+        let end = std::cmp::min(arg_node.pos as usize, bytes.len());
+
+        while pos < end {
+            match bytes[pos] {
+                b'[' => return Some(pos as u32),
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < end {
+                        if bytes[pos] == b'\\' {
+                            pos += 2;
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < end && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < end {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+
+        None
+    }
+
+    fn find_element_access_close_bracket_position(
+        &self,
+        open_bracket_pos: u32,
+        node: &Node,
+    ) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut pos = std::cmp::min(open_bracket_pos as usize, bytes.len());
+        let end = std::cmp::min(node.end as usize, bytes.len());
+        let mut depth = 0i32;
+
+        while pos < end {
+            match bytes[pos] {
+                b'[' => {
+                    depth += 1;
+                    pos += 1;
+                }
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(pos as u32);
+                    }
+                    pos += 1;
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < end {
+                        if bytes[pos] == b'\\' {
+                            pos += 2;
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < end && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < end && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < end {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+
+        None
+    }
+
+    fn find_element_access_following_semicolon(&self, close_bracket_pos: u32) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut pos = std::cmp::min(close_bracket_pos as usize + 1, bytes.len());
+
+        while pos < bytes.len() {
+            match bytes[pos] {
+                b';' => return Some(pos as u32),
+                b'/' if pos + 1 < bytes.len() && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < bytes.len() {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                b' ' | b'\t' => pos += 1,
+                _ => return None,
+            }
+        }
+
+        None
+    }
+
+    fn emit_element_access_internal_comments(&mut self, from_pos: u32, to_pos: u32) -> bool {
+        if self.ctx.options.remove_comments || from_pos >= to_pos {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+
+        let bytes = text.as_bytes();
+        let mut scan_idx = self.comment_emit_idx;
+        let mut previous_pos = from_pos;
+        let mut previous_comment_had_trailing_newline = false;
+        let mut emitted_any = false;
+
+        while scan_idx < self.all_comments.len() {
+            let comment_pos = self.all_comments[scan_idx].pos;
+            let comment_end = self.all_comments[scan_idx].end;
+            let has_trailing_new_line = self.all_comments[scan_idx].has_trailing_new_line;
+            if comment_end <= from_pos {
+                scan_idx += 1;
+                continue;
+            }
+            if comment_pos >= to_pos {
+                break;
+            }
+            if comment_pos < from_pos || comment_end > to_pos {
+                scan_idx += 1;
+                continue;
+            }
+
+            if previous_comment_had_trailing_newline {
+                // The previous comment already moved to the next output line.
+            } else if self.element_access_range_contains_newline(previous_pos, comment_pos, bytes) {
+                self.write_line();
+            } else {
+                self.write_space();
+            }
+
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+                emitted_any = true;
+                if has_trailing_new_line {
+                    self.write_line();
+                }
+            }
+
+            previous_pos = comment_end;
+            previous_comment_had_trailing_newline = has_trailing_new_line;
+            self.comment_emit_idx = scan_idx + 1;
+            scan_idx += 1;
+        }
+
+        emitted_any
+    }
+
+    fn element_access_range_contains_newline(
+        &self,
+        from_pos: u32,
+        to_pos: u32,
+        bytes: &[u8],
+    ) -> bool {
+        let start = std::cmp::min(from_pos as usize, bytes.len());
+        let end = std::cmp::min(to_pos as usize, bytes.len());
+        bytes[start..end].iter().any(|&b| b == b'\n' || b == b'\r')
+    }
+
+    fn emit_parenthesized_object_literal_access<F>(
+        &mut self,
+        expr: NodeIndex,
+        emit_suffix: F,
+    ) -> bool
+    where
+        F: FnOnce(&mut Self),
+    {
+        let Some(expr_node) = self.arena.get(expr) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return false;
+        }
+        let Some(paren) = self.arena.get_parenthesized(expr_node) else {
+            return false;
+        };
+        if !self.type_assertion_wraps_object_literal(paren.expression) {
+            return false;
+        }
+
+        // Whether we want to delegate the parens to the inner emit (it will
+        // produce its own `({...})`) or wrap them ourselves. When the AS
+        // chain unwraps to *another* parenthesized expression (e.g. `(({}) as
+        // any).foo` — source already wrote inner parens around the literal),
+        // the inner emit will produce `({...})` and adding our own `(` would
+        // double-wrap as `(({}).foo)`. tsc emits the cleaner `({}).foo`.
+        let inner_already_parens = self.type_assertion_result_is_parenthesized(paren.expression);
+        if inner_already_parens {
+            self.emit(paren.expression);
+            emit_suffix(self);
+            return true;
+        }
+
+        // Type assertion that erases away to a bare object literal:
+        // `(<Type>{}).foo` -> `{}.foo` in expression positions. If that
+        // access is the whole expression statement, `emit_expression_statement`
+        // owns the leading-token disambiguation and wraps the whole expression:
+        // `(<Type>{}).foo;` -> `({}.foo);`.
+        let inner_is_erasable = if let Some(inner) = self.arena.get(paren.expression) {
+            inner.kind == syntax_kind_ext::TYPE_ASSERTION
+                || inner.kind == syntax_kind_ext::AS_EXPRESSION
+                || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+                || inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+        } else {
+            false
+        };
+
+        if inner_is_erasable {
+            self.emit(paren.expression);
+            emit_suffix(self);
+        } else {
+            self.write("(");
+            self.emit(paren.expression);
+            self.write(")");
+            emit_suffix(self);
+        }
+        true
+    }
+
+    fn emit_optional_property_access(&mut self, access: &AccessExprData, token: &str) {
+        if let Some(text) = self.source_text
+            && let Some(expr_node) = self.arena.get(access.expression)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+        {
+            let expr_end = expr_node.end as usize;
+            let name_start = name_node.pos as usize;
+            let between_end = std::cmp::min(name_start, text.len());
+            let between_start = std::cmp::min(expr_end, between_end);
+            let between = &text[between_start..between_end];
+            if between.contains('\n')
+                && let Some(dot_pos) = between.find('.')
+            {
+                let after_dot = &between[dot_pos + 1..];
+                if after_dot.contains('\n') {
+                    self.emit(access.expression);
+                    self.write(token);
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_property_name_without_import_substitution(access.name_or_argument);
+                    self.decrease_indent();
+                    return;
+                }
+                self.emit(access.expression);
+                self.write(token);
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
+                return;
+            }
+        }
+
+        self.emit(access.expression);
+        self.write(token);
+        self.emit_property_name_without_import_substitution(access.name_or_argument);
+    }
+
+    fn emit_optional_property_access_downlevel(&mut self, access: &AccessExprData) {
+        // When the lowered ternary appears inside a prefix/postfix unary or
+        // conditional condition, wrap in parens to preserve precedence.
+        let needs_parens = self.ctx.flags.optional_chain_needs_parens;
+        if needs_parens {
+            self.write("(");
+            self.ctx.flags.optional_chain_needs_parens = false;
+        }
+        let base_simple = self.is_simple_nullish_expression(access.expression);
+        if base_simple {
+            let suffix_parts = self
+                .arena
+                .get(access.expression)
+                .zip(self.arena.get(access.name_or_argument))
+                .and_then(|(expr_node, name_node)| {
+                    self.find_char_after_skipping_comments(expr_node.end, name_node.pos, b'.')
+                        .map(|dot_pos| (*expr_node, *name_node, dot_pos))
+                });
+
+            self.emit(access.expression);
+            if let Some((expr_node, _, dot_pos)) = suffix_parts.as_ref() {
+                self.emit_optional_chain_inline_gap_comments_untracked(expr_node.end, *dot_pos);
+            }
+            self.write(" === null || ");
+            self.emit(access.expression);
+            if let Some((expr_node, _, dot_pos)) = suffix_parts.as_ref() {
+                self.emit_optional_chain_inline_gap_comments_untracked(expr_node.end, *dot_pos);
+            }
+            self.write(" === void 0 ? void 0 : ");
+            self.emit(access.expression);
+            if let Some((expr_node, name_node, dot_pos)) = suffix_parts.as_ref() {
+                self.emit_optional_property_access_downlevel_suffix(
+                    access, expr_node, name_node, *dot_pos,
+                );
+            } else {
+                self.write(".");
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
+            }
+        } else {
+            let before = self.writer.len();
+            self.emit(access.expression);
+            let after = self.writer.len();
+            let full = self.writer.get_output().to_string();
+            let base_expr = full[before..after].trim_start().to_string();
+            self.writer.truncate(before);
+            let base_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.write(&base_expr);
+            self.write(")");
+            self.write(" === null || ");
+            self.write(&base_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(&base_temp);
+            self.write(".");
+            self.emit_property_name_without_import_substitution(access.name_or_argument);
+        }
+        if needs_parens {
+            self.write(")");
+        }
+    }
+
+    fn emit_optional_element_access_downlevel(&mut self, access: &AccessExprData) {
+        // When the lowered ternary appears inside a prefix/postfix unary or
+        // conditional condition, wrap in parens to preserve precedence.
+        let needs_parens = self.ctx.flags.optional_chain_needs_parens;
+        if needs_parens {
+            self.write("(");
+            self.ctx.flags.optional_chain_needs_parens = false;
+        }
+        let base_simple = self.is_simple_nullish_expression(access.expression);
+        if base_simple {
+            self.emit(access.expression);
+            self.write(" === null || ");
+            self.emit(access.expression);
+            self.write(" === void 0 ? void 0 : ");
+            self.emit(access.expression);
+            self.write("[");
+            self.emit(access.name_or_argument);
+            self.write("]");
+        } else {
+            let before = self.writer.len();
+            self.emit(access.expression);
+            let after = self.writer.len();
+            let full = self.writer.get_output().to_string();
+            let base_expr = full[before..after].trim_start().to_string();
+            self.writer.truncate(before);
+            let base_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.write(&base_expr);
+            self.write(")");
+            self.write(" === null || ");
+            self.write(&base_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(&base_temp);
+            self.write("[");
+            self.emit(access.name_or_argument);
+            self.write("]");
+        }
+        if needs_parens {
+            self.write(")");
+        }
+    }
+
+    pub(super) fn emit_property_name_without_import_substitution(&mut self, node: NodeIndex) {
+        let prev_import = self.suppress_commonjs_named_import_substitution;
+        let prev_ns = self.suppress_ns_qualification;
+        self.suppress_commonjs_named_import_substitution = true;
+        self.suppress_ns_qualification = true;
+        self.emit(node);
+        self.suppress_commonjs_named_import_substitution = prev_import;
+        self.suppress_ns_qualification = prev_ns;
+    }
+
+    /// Look up const enum member values for the given name, scoped to the position
+    /// of the access expression. When multiple scoped entries exist for the same name,
+    /// the tightest (most specific) scope containing `access_pos` is preferred.
+    fn lookup_scoped_const_enum_values(
+        &self,
+        enum_path: &str,
+        access_pos: u32,
+    ) -> Option<&rustc_hash::FxHashMap<String, crate::enums::evaluator::EnumValue>> {
+        if let Some(r) = self.lookup_scoped_const_enum_values_direct(enum_path, access_pos) {
+            return Some(r);
+        }
+        if let Some(current_namespace) = self.current_namespace_source_path.as_deref() {
+            let qualified = format!("{current_namespace}.{enum_path}");
+            if let Some(r) = self.lookup_scoped_const_enum_values_direct(&qualified, access_pos) {
+                return Some(r);
+            }
+        }
+        if let Some(current_namespace) = self.current_namespace_source_path.as_deref()
+            && let Some(target) = self
+                .const_enum_import_aliases
+                .get(&format!("{current_namespace}.{enum_path}"))
+            && let Some(r) =
+                self.lookup_scoped_const_enum_alias_target_values(target, None, access_pos)
+        {
+            return Some(r);
+        }
+        if let Some(current_namespace) = self.current_namespace_name.as_deref()
+            && let Some(local_path) = enum_path.strip_prefix(&format!("{current_namespace}."))
+        {
+            if let Some(source_namespace) = self.current_namespace_source_path.as_deref()
+                && let Some(target) = self
+                    .const_enum_import_aliases
+                    .get(&format!("{source_namespace}.{local_path}"))
+                && let Some(r) =
+                    self.lookup_scoped_const_enum_alias_target_values(target, None, access_pos)
+            {
+                return Some(r);
+            }
+            if let Some(target) = self.const_enum_import_aliases.get(local_path)
+                && let Some(r) =
+                    self.lookup_scoped_const_enum_alias_target_values(target, None, access_pos)
+            {
+                return Some(r);
+            }
+        }
+        if let Some(dot_pos) = enum_path.find('.') {
+            let first = &enum_path[..dot_pos];
+            let rest = &enum_path[dot_pos + 1..];
+            if let Some(current_namespace) = self.current_namespace_source_path.as_deref()
+                && let Some(target) = self
+                    .const_enum_import_aliases
+                    .get(&format!("{current_namespace}.{first}"))
+                && let Some(r) = self.lookup_scoped_const_enum_alias_target_values(
+                    target,
+                    Some(rest),
+                    access_pos,
+                )
+            {
+                return Some(r);
+            }
+            if let Some(target) = self.const_enum_import_aliases.get(first) {
+                if let Some(r) = self.lookup_scoped_const_enum_alias_target_values(
+                    target,
+                    Some(rest),
+                    access_pos,
+                ) {
+                    return Some(r);
+                }
+            }
+        } else if let Some(target) = self.const_enum_import_aliases.get(enum_path)
+            && let Some(r) =
+                self.lookup_scoped_const_enum_alias_target_values(target, None, access_pos)
+        {
+            return Some(r);
+        }
+        None
+    }
+
+    fn lookup_scoped_const_enum_alias_target_values(
+        &self,
+        target: &str,
+        rest: Option<&str>,
+        access_pos: u32,
+    ) -> Option<&rustc_hash::FxHashMap<String, crate::enums::evaluator::EnumValue>> {
+        let resolved = rest.map_or_else(|| target.to_string(), |rest| format!("{target}.{rest}"));
+        if let Some(r) = self.lookup_scoped_const_enum_values_direct(&resolved, access_pos) {
+            return Some(r);
+        }
+
+        if let Some(current_namespace) = self.current_namespace_source_path.as_deref() {
+            let qualified = format!("{current_namespace}.{resolved}");
+            if let Some(r) = self.lookup_scoped_const_enum_values_direct(&qualified, access_pos) {
+                return Some(r);
+            }
+        }
+
+        None
+    }
+
+    fn lookup_scoped_const_enum_values_direct(
+        &self,
+        enum_path: &str,
+        access_pos: u32,
+    ) -> Option<&rustc_hash::FxHashMap<String, crate::enums::evaluator::EnumValue>> {
+        let entries = self.const_enum_values.get(enum_path)?;
+        let mut best: Option<&crate::emitter::core::ScopedConstEnum> = None;
+        for entry in entries {
+            if access_pos >= entry.scope_start && access_pos < entry.scope_end {
+                if let Some(prev) = best {
+                    if (entry.scope_end - entry.scope_start) < (prev.scope_end - prev.scope_start) {
+                        best = Some(entry);
+                    }
+                } else {
+                    best = Some(entry);
+                }
+            }
+        }
+        best.map(|e| &e.values)
+    }
+    fn build_access_chain_path(&self, idx: NodeIndex) -> Option<String> {
+        if let Some(text) = self.arena.identifier_text_owned(idx) {
+            return Some(text);
+        }
+        let node = self.arena.get(idx)?;
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(node)?;
+            let left = self.build_access_chain_path(access.expression)?;
+            let right = self.arena.identifier_text_owned(access.name_or_argument)?;
+            return Some(format!("{left}.{right}"));
+        }
+        None
+    }
+
+    /// Try to inline a property access to a const enum member.
+    /// Returns `Some("value /* EnumName.Member */")` if the access targets a const enum.
+    fn try_inline_const_enum_property_access(&self, access: &AccessExprData) -> Option<String> {
+        let expr_node = self.arena.get(access.expression)?;
+        let name_node = self.arena.get(access.name_or_argument)?;
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let member_name = &self.arena.get_identifier(name_node)?.escaped_text;
+        let expr_path = self.build_access_chain_path(access.expression)?;
+        let members = self.lookup_scoped_const_enum_values(expr_path.as_str(), expr_node.pos)?;
+        let value = members.get(member_name.as_str())?;
+        let dq = expr_path.clone();
+        if self.ctx.options.remove_comments {
+            Some(value.to_js_literal())
+        } else {
+            Some(format!(
+                "{} /* {}.{} */",
+                value.to_js_literal(),
+                dq,
+                member_name
+            ))
+        }
+    }
+
+    /// Try to inline an element access to a const enum member.
+    /// Returns `Some("value /* EnumName[\"Member\"] */")` if the access targets a const enum.
+    fn try_inline_const_enum_element_access(&self, access: &AccessExprData) -> Option<String> {
+        // The expression must be a simple identifier (the enum name)
+        let expr_node = self.arena.get(access.expression)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let enum_name = &self.arena.get_identifier(expr_node)?.escaped_text;
+
+        // Look up in const enum values, scoped to the access position
+        let members = self.lookup_scoped_const_enum_values(enum_name.as_str(), expr_node.pos)?;
+
+        // The argument must be a string literal or no-substitution template literal
+        let arg_node = self.arena.get(access.name_or_argument)?;
+        let is_template = arg_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16;
+        if arg_node.kind != SyntaxKind::StringLiteral as u16 && !is_template {
+            return None;
+        }
+        let member_name = &self.arena.get_literal(arg_node)?.text;
+
+        let value = members.get(member_name.as_str())?;
+        if self.ctx.options.remove_comments {
+            Some(value.to_js_literal())
+        } else {
+            // Use the original source text for the argument to preserve escape
+            // sequences (e.g., "\u{44}") and quote style (backticks vs quotes).
+            let arg_text = self
+                .source_text
+                .and_then(|text| {
+                    let start = arg_node.pos as usize;
+                    let end = arg_node.end as usize;
+                    if end <= text.len() && start < end {
+                        Some(text[start..end].trim())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or({
+                    if is_template {
+                        // Can't get source text; fall back
+                        ""
+                    } else {
+                        ""
+                    }
+                });
+            if !arg_text.is_empty() {
+                let comment = format!("{enum_name}[{arg_text}]").replace("*/", "*_/");
+                Some(format!("{} /* {} */", value.to_js_literal(), comment))
+            } else if is_template {
+                Some(format!(
+                    "{} /* {}[`{}`] */",
+                    value.to_js_literal(),
+                    enum_name,
+                    member_name
+                ))
+            } else {
+                Some(format!(
+                    "{} /* {}[\"{}\"] */",
+                    value.to_js_literal(),
+                    enum_name,
+                    member_name
+                ))
+            }
+        }
+    }
+
+    /// Check if a node expression would inline to a negative const enum value.
+    /// Used to determine if parentheses are needed around the expression
+    /// (e.g., `(-1 /* Foo.A */).toString()` vs `100 /* Foo.X */.toString()`).
+    fn expression_is_negative_const_enum_inline(&self, idx: NodeIndex) -> bool {
+        if self.const_enum_values.is_empty() {
+            return false;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+            && let Some(ep) = self.build_access_chain_path(access.expression)
+            && let Some(expr) = self.arena.get(access.expression)
+            && let Some(name) = self.arena.get(access.name_or_argument)
+            && name.kind == SyntaxKind::Identifier as u16
+            && let Some(mi) = self.arena.get_identifier(name)
+            && let Some(members) = self.lookup_scoped_const_enum_values(&ep, expr.pos)
+            && let Some(value) = members.get(mi.escaped_text.as_str())
+        {
+            return value.is_negative();
+        }
+        // Check element access: EnumName["Member"] or EnumName[`Member`]
+        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+        {
+            let expr_node = self.arena.get(access.expression);
+            let arg_node = self.arena.get(access.name_or_argument);
+            if let (Some(expr), Some(arg)) = (expr_node, arg_node)
+                && expr.kind == SyntaxKind::Identifier as u16
+                && (arg.kind == SyntaxKind::StringLiteral as u16
+                    || arg.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                && let Some(enum_ident) = self.arena.get_identifier(expr)
+                && let Some(lit) = self.arena.get_literal(arg)
+                && let Some(members) =
+                    self.lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos)
+                && let Some(value) = members.get(lit.text.as_str())
+            {
+                return value.is_negative();
+            }
+        }
+        false
+    }
+
+    /// Check if a const enum access expression resolves to a non-negative integer,
+    /// which would need double-dot for property access (e.g., `100..toString()`).
+    fn resolve_const_enum_needs_double_dot(&self, idx: NodeIndex, node: &Node) -> bool {
+        if self.const_enum_values.is_empty() {
+            return false;
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+            && let Some(ep) = self.build_access_chain_path(access.expression)
+            && let Some(expr) = self.arena.get(access.expression)
+            && let Some(name) = self.arena.get(access.name_or_argument)
+            && name.kind == SyntaxKind::Identifier as u16
+            && let Some(mi) = self.arena.get_identifier(name)
+            && let Some(members) = self.lookup_scoped_const_enum_values(&ep, expr.pos)
+            && let Some(value) = members.get(mi.escaped_text.as_str())
+        {
+            return value.needs_double_dot();
+        }
+        // Check element access: EnumName["Member"] or EnumName[`Member`]
+        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(node)
+            && let Some(expr) = self.arena.get(access.expression)
+            && let Some(arg) = self.arena.get(access.name_or_argument)
+            && expr.kind == SyntaxKind::Identifier as u16
+            && (arg.kind == SyntaxKind::StringLiteral as u16
+                || arg.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+            && let Some(enum_ident) = self.arena.get_identifier(expr)
+            && let Some(lit) = self.arena.get_literal(arg)
+            && let Some(members) =
+                self.lookup_scoped_const_enum_values(enum_ident.escaped_text.as_str(), expr.pos)
+            && let Some(value) = members.get(lit.text.as_str())
+        {
+            return value.needs_double_dot();
+        }
+        let _ = idx; // suppress unused warning
+        false
+    }
+
+    /// Check if a type assertion/as/satisfies chain ultimately wraps an object literal.
+    pub(in crate::emitter) fn type_assertion_wraps_object_literal(
+        &self,
+        mut idx: NodeIndex,
+    ) -> bool {
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    if let Some(ta) = self.arena.get_type_assertion(node) {
+                        idx = ta.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    if let Some(p) = self.arena.get_parenthesized(node) {
+                        idx = p.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
+                _ => return false,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::output::printer::{PrintOptions, Printer};
+    fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        (parser, root)
+    }
+
+    fn emit_es6(source: &str) -> String {
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        printer.finish().code
+    }
+
+    fn emit_js(source: &str) -> String {
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = EmitterPrinter::with_options(&parser.arena, PrinterOptions::default());
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
+    }
+
+    #[test]
+    fn js_emit_comment_positions_around_names_and_property_access() {
+        let output = emit_js(
+            "function /*1*/makePoint(x: number) {}\nvar /*2*/point = makePoint(2);\nvar y = point./*3*/x;\n",
+        );
+
+        assert!(
+            output.contains("function makePoint(x)"),
+            "Comment before a function declaration name should be erased, not reattached to the first parameter.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var /*2*/ point = makePoint(2);"),
+            "Comment before a variable declaration name should stay after `var`.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("point. /*3*/x"),
+            "Comment after a property-access dot should stay after the dot.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn property_access_preserves_comments_between_base_and_dot() {
+        let output = emit_es6(
+            r#"let z = this.then(x => result)/*S*/.then(x => "abc")/*string*/.then(x => x.length)/*number*/;"#,
+        );
+
+        assert!(
+            output.contains(
+                r#"this.then(x => result) /*S*/.then(x => "abc") /*string*/.then(x => x.length) /*number*/"#
+            ),
+            "Comments between a property-access base and dot must stay before the dot.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn property_access_dot_locator_skips_comment_dots() {
+        let output = emit_es6(r#"const y = point/* has . in comment */.x;"#);
+
+        assert!(
+            output.contains("/* has . in comment */.x")
+                || output.contains("/* has . in comment */ .x"),
+            "Dot lookup should skip dots inside comments and keep the member-access dot after the comment.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains(". /* has . in comment */x"),
+            "Dot lookup must not treat comment text as the member-access dot.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn property_access_line_comment_before_dot_stays_with_callee_chain() {
+        let output = emit_es6(
+            "const result = values.map((arr) => arr // keep with arr\n    .filter((obj) => obj) // keep with body\n);\n",
+        );
+
+        assert!(
+            output.contains("arr // keep with arr\n    .filter((obj) => obj)"),
+            "Line comments before a member-access dot should stay before the dot, not move into the call arguments.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains(".filter(// keep with arr"),
+            "Call argument comment scanning must start at the actual argument-list paren.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(".filter((obj) => obj) // keep with body"),
+            "Trailing comments on concise arrow body expressions should stay with the body before the outer call closes.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn property_access_own_line_comment_before_dot_uses_single_newline() {
+        let output = emit_es6(
+            "const result = values.map((arr) => arr\n    // keep with arr\n    .filter((obj) => obj));\n",
+        );
+
+        assert!(
+            output.contains("arr\n    // keep with arr\n    .filter((obj) => obj)"),
+            "Own-line comments before a member-access dot should keep exactly the source line break before the dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("arr\n\n    // keep with arr"),
+            "Property-access comment emission should not pre-write a newline and replay the same leading trivia.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn erased_object_literal_assertion_call_keeps_call_inside_grouping() {
+        let output = emit_js("class A { }\n(<A>{}).toString();\n");
+
+        assert!(
+            output.contains("({}.toString());"),
+            "Call on erased object-literal assertion should stay inside object-literal grouping.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(({}.toString)())"),
+            "Call on erased object-literal assertion should not parenthesize the callee separately.\nOutput:\n{output}"
+        );
+    }
+
+    /// When lowering optional property access (`?.`) to ES2019 and below for
+    /// complex base expressions, the emitter uses a temp variable:
+    /// `(temp = expr) === null || temp === void 0 ? void 0 : temp.prop`
+    /// This temp must be declared as `var _a;` at the top of the enclosing scope.
+    #[test]
+    fn optional_chain_emits_hoisted_temp_var_decl() {
+        // Multi-line function body to exercise the function-scoped hoisting path
+        let source = "function h() {\n    let x = getObj()?.value;\n    return x;\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::es6());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var _a;"),
+            "Optional chain lowering must emit `var _a;` for the hoisted temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_a = getObj())"),
+            "Optional chain lowering must use temp in assignment.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn invalid_new_optional_chain_lowers_as_optional_access_on_new_base() {
+        let source = "class A { b(x?: number) {} }\nnew A?.b();\nnew A?.b(1);\nnew A?.b.c;\nnew A?.[\"b\"].c;\nnew A()?.b();\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(_a = new A) === null || _a === void 0 ? void 0 : _a.b();"),
+            "Invalid `new A?.b()` should lower as optional access on `new A`.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_b = new A) === null || _b === void 0 ? void 0 : _b.b(1);"),
+            "Invalid `new A?.b(1)` should keep call arguments on the optional tail.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_c = new A) === null || _c === void 0 ? void 0 : _c.b.c;"),
+            "Invalid `new A?.b.c` should keep the non-optional property tail in the branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_d = new A) === null || _d === void 0 ? void 0 : _d[\"b\"].c;"),
+            "Invalid `new A?.[\"b\"].c` should keep element and property tails in the branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_e = new A()) === null || _e === void 0 ? void 0 : _e.b();"),
+            "Valid `new A()?.b()` should keep the constructed base expression.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn invalid_new_optional_chain_preserves_parent_context_and_callee_grouping() {
+        let source =
+            "declare function makeCtor(): any;\nnew A?.b() + 1;\nnew (makeCtor() as any)?.b();\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("((_a = new A) === null || _a === void 0 ? void 0 : _a.b()) + 1;"),
+            "Invalid-new optional chain should be grouped as a binary operand.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_b = new (makeCtor())) === null || _b === void 0 ? void 0 : _b.b();"),
+            "Invalid-new optional chain should preserve call grouping in the constructed base.\nOutput:\n{output}"
+        );
+    }
+
+    /// Optional method call on a simple identifier should NOT use a temp variable.
+    /// `o?.b()` → `o === null || o === void 0 ? void 0 : o.b()` (no `_a`).
+    #[test]
+    fn optional_method_call_simple_identifier_no_temp() {
+        let source = "declare const o: any;\no?.b();\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("o === null || o === void 0 ? void 0 : o.b()"),
+            "Simple identifier should be used directly, no temp var.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_a"),
+            "No temp variable should be allocated for simple identifier.\nOutput:\n{output}"
+        );
+    }
+
+    /// Optional method call with `.call()` on a simple identifier should use the
+    /// identifier directly as the `.call()` receiver.
+    /// `o.b?.()` → `(_a = o.b) === null || _a === void 0 ? void 0 : _a.call(o)`
+    #[test]
+    fn optional_call_simple_receiver_uses_identifier_in_call() {
+        let source = "declare const o: any;\no.b?.();\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(".call(o)"),
+            "Simple identifier should be used directly as .call() receiver.\nOutput:\n{output}"
+        );
+        // Should only have one temp (_a for the method), not two
+        assert!(
+            !output.contains("_b"),
+            "Only one temp var should be allocated.\nOutput:\n{output}"
+        );
+    }
+
+    /// A normal call whose callee is a parenthesized optional member access
+    /// still needs tsc's method-call binding preservation:
+    /// `(o?.b)(x)` -> `(o === null || o === void 0 ? void 0 : o.b).call(o, x)`.
+    #[test]
+    fn parenthesized_optional_member_call_preserves_simple_receiver() {
+        let source = "const o = { b(n: number) { return n; } };\n(o?.b)(1);\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.b).call(o, 1)"),
+            "Parenthesized optional member callee must preserve `this` with .call(o).\nOutput:\n{output}"
+        );
+    }
+
+    /// When the final member receiver is produced inside the optional branch,
+    /// capture that receiver once and use it as the `.call(...)` receiver.
+    #[test]
+    fn parenthesized_optional_member_call_preserves_nested_receiver() {
+        let source = "\
+const o = { nested() { return { b(n: number) { return n; } }; } };
+(o?.nested().b)(2);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(
+                "(o === null || o === void 0 ? void 0 : (_a = o.nested()).b).call(_a, 2)"
+            ),
+            "Parenthesized optional member callee must capture the nested receiver for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn parenthesized_optional_element_call_preserves_nested_receiver() {
+        let source = "\
+const o = { nested() { return { b(n: number) { return n; } }; } };
+(o?.nested()[\"b\"])(2);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains(
+                "(o === null || o === void 0 ? void 0 : (_a = o.nested())[\"b\"]).call(_a, 2)"
+            ),
+            "Parenthesized optional element callee must capture the nested receiver for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn parenthesized_optional_tail_property_call_preserves_tail_receiver() {
+        let source = "\
+const o = { a: { b(n: number) { return n; } } };
+(o?.a.b)(1);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : (_a = o.a).b).call(_a, 1)"),
+            "Parenthesized optional tail property callee must capture `o.a` for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn parenthesized_optional_tail_element_call_preserves_tail_receiver() {
+        let source = "\
+const o = { a: { b(n: number) { return n; } } };
+(o?.a[\"b\"])(1);
+";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output
+                .contains("(o === null || o === void 0 ? void 0 : (_a = o.a)[\"b\"]).call(_a, 1)"),
+            "Parenthesized optional tail element callee must capture `o.a` for .call(_a).\nOutput:\n{output}"
+        );
+    }
+
+    /// Complex (non-identifier) expression in optional method call MUST use a temp.
+    /// `f()?.b()` needs a temp to avoid calling `f()` twice.
+    #[test]
+    fn optional_method_call_complex_expr_uses_temp() {
+        let source = "declare function f(): any;\nf()?.b();\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("_a = f()"),
+            "Complex expression must be captured in temp var.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("=== null"),
+            "Must have null check.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a downlevel optional chain is used as a ternary condition,
+    /// the lowered ternary must be wrapped in parens to preserve precedence.
+    /// `o?.b ? 1 : 0` → `(o === null || o === void 0 ? void 0 : o.b) ? 1 : 0`
+    /// Without parens: `o === null || o === void 0 ? void 0 : o.b ? 1 : 0`
+    /// would parse as the wrong ternary nesting.
+    #[test]
+    fn optional_chain_in_ternary_condition_gets_parens() {
+        let source = "declare const o: any;\no?.b ? 1 : 0;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.b) ? 1 : 0"),
+            "Lowered optional chain in ternary condition must be wrapped in parens.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a downlevel optional chain is used as an operand of `===`,
+    /// the lowered ternary must be wrapped in parens.
+    /// `o?.x === 1` → `(o === null || o === void 0 ? void 0 : o.x) === 1`
+    #[test]
+    fn optional_chain_in_binary_equals_gets_parens() {
+        let source = "declare const o: any;\no?.x === 1;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.x) === 1"),
+            "Lowered optional chain in === operand must be wrapped in parens.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a downlevel optional chain is used with postfix `++`,
+    /// the lowered ternary must be wrapped in parens.
+    /// `o?.a++` → `(o === null || o === void 0 ? void 0 : o.a)++`
+    #[test]
+    fn optional_chain_in_postfix_increment_gets_parens() {
+        let source = "declare const o: any;\no?.a++;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.a)++"),
+            "Lowered optional chain in postfix ++ must be wrapped in parens.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a downlevel optional chain with a non-optional tail is used with
+    /// postfix `++`/`--`, the whole access path remains in the ternary branch.
+    /// `o?.a.b++` -> `(o === null || o === void 0 ? void 0 : o.a.b)++`
+    #[test]
+    fn optional_chain_in_postfix_update_keeps_tail_inside_branch() {
+        let source = "declare const o: any;\no?.a.b++;\no?.a[0]--;\no?.[\"a\"]++;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.a.b)++"),
+            "Postfix update must keep property tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.a[0])--"),
+            "Postfix update must keep element tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o[\"a\"])++"),
+            "Postfix update must support optional element roots.\nOutput:\n{output}"
+        );
+    }
+
+    /// Prefix `++`/`--` also wraps the complete lowered optional-chain path.
+    /// `++o?.a.b` -> `++(o === null || o === void 0 ? void 0 : o.a.b)`
+    #[test]
+    fn optional_chain_in_prefix_update_keeps_tail_inside_branch() {
+        let source = "declare const o: any;\n++o?.a.b;\n--o?.a[0];\n++o?.[\"a\"];\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("++(o === null || o === void 0 ? void 0 : o.a.b)"),
+            "Prefix update must keep property tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("--(o === null || o === void 0 ? void 0 : o.a[0])"),
+            "Prefix update must keep element tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("++(o === null || o === void 0 ? void 0 : o[\"a\"])"),
+            "Prefix update must support optional element roots.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn optional_chain_array_rest_assignment_uses_rest_lowering() {
+        let source = "declare const obj: any;\ndeclare const foo: any;\n[...obj?.[\"a\"]] = [];\n[...obj?.a[\"b\"]] = [];\n[...obj[foo?.bar]] = [];\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("obj === null || obj === void 0 ? void 0 : obj[\"a\"] = [].slice(0);"),
+            "Optional element rest targets should still use ES5 rest-assignment lowering.\nOutput:\n{output}"
+        );
+        assert!(
+            output
+                .contains("obj === null || obj === void 0 ? void 0 : obj.a[\"b\"] = [].slice(0);"),
+            "Optional-chain rest targets should keep non-optional tails inside the lowered assignment target.\nOutput:\n{output}"
+        );
+        assert!(
+            output
+                .contains("obj[foo === null || foo === void 0 ? void 0 : foo.bar] = [].slice(0);"),
+            "Optional chains inside computed keys are valid element targets and must stay on the normal rest-lowering path.\nOutput:\n{output}"
+        );
+    }
+
+    // =====================================================================
+    // write_dot_token: numeric literal double-dot disambiguation
+    // =====================================================================
+
+    /// Plain integer property access needs `..` to disambiguate from float literal.
+    /// `1.toString()` is a syntax error; `1..toString()` is correct.
+    #[test]
+    fn numeric_literal_property_access_plain_integer() {
+        let source = "1 .foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1..foo"),
+            "Plain integer property access must use `..`.\nOutput:\n{output}"
+        );
+    }
+
+    /// A source newline between an integer literal and the property dot
+    /// already disambiguates the access, so tsc keeps a single emitted dot.
+    #[test]
+    fn numeric_literal_property_access_newline_before_dot_uses_single_dot() {
+        let source = "3\n    .foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3\n    .foo"),
+            "Newline before property dot should use one dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("..foo"),
+            "Newline-separated numeric access must not use `..`.\nOutput:\n{output}"
+        );
+    }
+
+    /// A preserved comment between an integer literal and `.` also separates
+    /// the tokens, so the property access writes one dot.
+    #[test]
+    fn numeric_literal_property_access_preserved_comment_before_dot_uses_single_dot() {
+        let source = "0 /* comment */.foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("0 /* comment */.foo"),
+            "Preserved comment should separate integer literal from property dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("/* comment */..foo"),
+            "Comment-separated numeric access must not use `..` while comments are preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// A line comment before the dot stays attached to the numeric literal;
+    /// only the following property dot moves to the next line.
+    #[test]
+    fn numeric_literal_property_access_preserved_line_comment_stays_inline() {
+        let source = "3 // comment\n    .foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3 // comment\n    .foo"),
+            "Line comment before property dot should stay on the numeric literal line.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("3\n    // comment"),
+            "Line comment must not be moved to its own line.\nOutput:\n{output}"
+        );
+    }
+
+    /// When comments are removed, the separator disappears and integer
+    /// property access must go back to `..`.
+    #[test]
+    fn numeric_literal_property_access_removed_comment_before_dot_uses_double_dot() {
+        let source = "0 /* comment */.foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            remove_comments: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("0..foo"),
+            "Removed comment should require `..` for integer property access.\nOutput:\n{output}"
+        );
+    }
+
+    /// Removing comments must not erase a source newline that separated an
+    /// integer literal from the property dot.
+    #[test]
+    fn numeric_literal_property_access_removed_comment_after_newline_uses_single_dot() {
+        let source = "3\n    /* comment */ .foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            remove_comments: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3\n    .foo"),
+            "Source newline should still separate integer literal from property dot when comments are removed.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("3..foo"),
+            "Removed comment after newline must not collapse numeric access to `..`.\nOutput:\n{output}"
+        );
+    }
+
+    /// Erased type wrappers should use the inner numeric literal when deciding
+    /// whether source trivia still separates the number from the property dot.
+    #[test]
+    fn numeric_literal_property_access_erased_wrapper_preserved_comment_uses_single_dot() {
+        let source = "(<any>3) /* comment */.foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3 /* comment */.foo"),
+            "Preserved comment after erased type assertion should separate integer literal from property dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("/* comment */..foo"),
+            "Comment-separated erased wrapper access must not use `..` while comments are preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// If comments are removed and no source newline survives, an erased
+    /// wrapper around an integer literal still needs the double-dot form.
+    #[test]
+    fn numeric_literal_property_access_erased_wrapper_removed_comment_uses_double_dot() {
+        let source = "(3 as any) /* comment */.foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            remove_comments: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3..foo"),
+            "Removed comment after erased `as` expression should require `..` for integer property access.\nOutput:\n{output}"
+        );
+    }
+
+    /// A source newline survives comment removal even when it crosses an erased
+    /// `satisfies` wrapper.
+    #[test]
+    fn numeric_literal_property_access_erased_wrapper_removed_comment_keeps_newline_separator() {
+        let source = "(3 satisfies number)\n    /* comment */.foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            remove_comments: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3\n    .foo"),
+            "Source newline after erased `satisfies` expression should keep a single property dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("3..foo"),
+            "Surviving newline after erased wrapper must not collapse numeric access to `..`.\nOutput:\n{output}"
+        );
+    }
+
+    /// Float literals already have a `.`, so they need only one dot for property access.
+    #[test]
+    fn numeric_literal_property_access_float() {
+        let source = "1.0 .foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1.0.foo"),
+            "Float literal should use single dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("1.0..foo"),
+            "Float literal must NOT use double-dot.\nOutput:\n{output}"
+        );
+    }
+
+    /// Exponent literals (e.g., `1e0`) don't need `..` because the exponent
+    /// part prevents the parser from treating the dot as part of the number.
+    #[test]
+    fn numeric_literal_property_access_exponent() {
+        let source = "1e0 .foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("1e0..foo"),
+            "Exponent literal must NOT use double-dot.\nOutput:\n{output}"
+        );
+    }
+
+    /// Downleveled decimal/exponent spellings can emit as plain integers.
+    /// The dot decision must be based on emitted text: `08.8e5.foo` becomes
+    /// `880000..foo`, not `880000.foo`.
+    #[test]
+    fn downleveled_numeric_literal_property_access_plain_integer() {
+        let source = "08.8e5 .foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("880000..foo"),
+            "Downleveled numeric literal property access must use `..` when emitted as an integer.\nOutput:\n{output}"
+        );
+    }
+
+    /// Hex literal `0xff` doesn't need `..` because the `0x` prefix disambiguates.
+    #[test]
+    fn numeric_literal_property_access_hex() {
+        let source = "0xff .foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("0xff..foo"),
+            "Hex literal must NOT use double-dot.\nOutput:\n{output}"
+        );
+    }
+
+    /// Type assertion wrapping a numeric literal: `(<any>1).foo` → `1..foo`
+    /// after type erasure removes the assertion and redundant parens.
+    #[test]
+    fn numeric_literal_property_access_through_type_assertion() {
+        let source = "(<any>1).foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1..foo"),
+            "Type-asserted integer must use `..` after erasure.\nOutput:\n{output}"
+        );
+    }
+
+    /// `as` assertion wrapping a numeric literal: `(1 as any).foo` → `1..foo`
+    #[test]
+    fn numeric_literal_property_access_through_as_expression() {
+        let source = "(1 as any).foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1..foo"),
+            "`as` asserted integer must use `..` after erasure.\nOutput:\n{output}"
+        );
+    }
+
+    // =====================================================================
+    // Const enum inlining
+    // =====================================================================
+
+    /// Const enum property access is inlined: `G.A` → `1 /* G.A */`
+    #[test]
+    fn const_enum_property_access_inlined() {
+        let source = "const enum G { A = 1, B = 2, C = A + B }\nvar a = G.A;\nvar c = G.C;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1 /* G.A */"),
+            "Const enum property access must be inlined with comment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("3 /* G.C */"),
+            "Computed const enum member (A+B=3) must be folded.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("= G.A"),
+            "Original property access must not appear in output.\nOutput:\n{output}"
+        );
+    }
+
+    /// Const enum element access is inlined: `G["A"]` → `1 /* G["A"] */`
+    #[test]
+    fn const_enum_element_access_inlined() {
+        let source = "const enum G { A = 1, B = 2 }\nvar a = G[\"A\"];\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("1 /* G[\"A\"] */"),
+            "Const enum element access must be inlined with comment.\nOutput:\n{output}"
+        );
+    }
+
+    /// Const enum declaration is erased (not emitted) when `preserve_const_enums` is false.
+    #[test]
+    fn const_enum_declaration_erased() {
+        let source = "const enum Direction { Up = 1, Down = 2 }\nvar x = Direction.Up;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("Direction)"),
+            "Const enum IIFE must not appear in output.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("1 /* Direction.Up */"),
+            "Const enum usage must be inlined.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn const_enum_access_through_namespace_import_alias_inlined() {
+        let source = "namespace Outer {\n    export var x = 1;\n}\n\nnamespace Outer {\n    export const enum A { X }\n}\n\nnamespace B {\n    import O = Outer;\n    var x = O.A.X;\n    var y = O.x;\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var x = 0 /* O.A.X */;"),
+            "Const enum access through namespace import alias must be inlined.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var y = O.x;"),
+            "Non-enum namespace member access through the same alias must be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn const_enum_declared_in_namespace_inlines_local_and_qualified_access() {
+        let source =
+            "namespace N {\n    export const enum E { A }\n    var x = E.A;\n}\nvar y = N.E.A;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("var x = 0 /* E.A */;"),
+            "Namespace-local const enum access must be inlined by simple name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var y = 0 /* N.E.A */;"),
+            "Qualified namespace const enum access must still be inlined outside the namespace.\nOutput:\n{output}"
+        );
+    }
+
+    /// String const enum values are inlined with proper quoting.
+    #[test]
+    fn const_enum_string_values_inlined() {
+        let source = "const enum S { Hello = \"hello\", World = \"world\" }\nvar x = S.Hello;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("\"hello\" /* S.Hello */"),
+            "String const enum must be inlined with quoted value.\nOutput:\n{output}"
+        );
+    }
+}

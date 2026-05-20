@@ -1,0 +1,1183 @@
+//! Module Resolution Implementation
+//!
+//! This module implements TypeScript's module resolution algorithms:
+//! - Node (classic Node.js resolution)
+//! - Node16/NodeNext (modern Node.js with ESM support)
+//! - Bundler (for webpack/vite-style resolution)
+//!
+//! The resolver handles:
+//! - Relative imports (./foo, ../bar)
+//! - Bare specifiers (lodash, @scope/pkg)
+//! - Path mapping from tsconfig (paths, baseUrl)
+//! - Package.json exports/imports fields
+//! - TypeScript-specific extensions (.ts, .tsx, .d.ts)
+//!
+//! Resolver invariants:
+//! - Module existence truth comes from `resolve_with_kind` outcomes.
+//! - Diagnostic code selection for module-not-found family (TS2307/TS2792/TS2834/TS2835/TS5097/TS2732)
+//!   is owned here and propagated to checker via resolution records.
+//! - Callers should not recompute not-found codes/messages from partial checker state.
+
+// Sub-modules by responsibility
+mod diagnostics;
+mod exports_imports;
+mod file_probing;
+mod node_modules_resolution;
+mod package_json;
+mod path_mapping;
+mod relative_resolution;
+mod request_types;
+mod self_reference;
+
+// Re-export public API
+pub use diagnostics::*;
+pub use request_types::*;
+
+use crate::config::{JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
+use crate::diagnostics::DiagnosticBag;
+use crate::emitter::ModuleKind;
+use crate::module_resolver_helpers::PackageJson;
+use crate::span::Span;
+use rustc_hash::FxHashMap;
+use std::cell::Cell;
+use std::path::{Path, PathBuf};
+
+type ResolutionCacheKey = (PathBuf, String, ImportingModuleKind, ImportKind);
+const HASH_BUCKET_OVERHEAD_BYTES: usize = 16;
+
+/// Entry counts and size estimates for module resolver-owned caches.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ModuleResolverCacheStatistics {
+    /// Number of cached module resolution results.
+    pub resolution_cache_entries: usize,
+    /// Number of module resolution cache hits.
+    pub resolution_cache_hits: u64,
+    /// Number of module resolution cache misses.
+    pub resolution_cache_misses: u64,
+    /// Number of cached package type lookups.
+    pub package_type_cache_entries: usize,
+    /// Number of package type cache hits.
+    pub package_type_cache_hits: u64,
+    /// Number of package type cache misses.
+    pub package_type_cache_misses: u64,
+    /// Number of cached `package.json` parse results.
+    pub package_json_cache_entries: usize,
+    /// Number of `package.json` cache hits.
+    pub package_json_cache_hits: u64,
+    /// Number of `package.json` cache misses.
+    pub package_json_cache_misses: u64,
+    /// Number of cached fallback-skip decisions.
+    pub skip_fallback_cache_entries: usize,
+    /// Number of fallback-skip cache hits.
+    pub skip_fallback_cache_hits: u64,
+    /// Number of fallback-skip cache misses.
+    pub skip_fallback_cache_misses: u64,
+    /// Number of cached `node_modules` directory probes.
+    pub node_modules_dir_cache_entries: usize,
+    /// Number of `node_modules` directory cache hits.
+    pub node_modules_dir_cache_hits: u64,
+    /// Number of `node_modules` directory cache misses.
+    pub node_modules_dir_cache_misses: u64,
+}
+
+impl ModuleResolverCacheStatistics {
+    /// Total entries across module resolver-owned caches.
+    pub const fn total_entries(self) -> usize {
+        self.resolution_cache_entries
+            + self.package_type_cache_entries
+            + self.package_json_cache_entries
+            + self.skip_fallback_cache_entries
+            + self.node_modules_dir_cache_entries
+    }
+
+    /// Approximate bytes retained by cache buckets and inline entry payloads.
+    pub const fn estimated_size_bytes(self) -> usize {
+        self.resolution_cache_entries
+            * (HASH_BUCKET_OVERHEAD_BYTES
+                + std::mem::size_of::<ResolutionCacheKey>()
+                + std::mem::size_of::<Result<ResolvedModule, ResolutionFailure>>())
+            + self.package_type_cache_entries
+                * (HASH_BUCKET_OVERHEAD_BYTES
+                    + std::mem::size_of::<PathBuf>()
+                    + std::mem::size_of::<Option<PackageType>>())
+            + self.package_json_cache_entries
+                * (HASH_BUCKET_OVERHEAD_BYTES
+                    + std::mem::size_of::<PathBuf>()
+                    + std::mem::size_of::<Result<PackageJson, String>>())
+            + self.skip_fallback_cache_entries
+                * (HASH_BUCKET_OVERHEAD_BYTES
+                    + std::mem::size_of::<(PathBuf, String, ImportingModuleKind)>()
+                    + std::mem::size_of::<bool>())
+            + self.node_modules_dir_cache_entries
+                * (HASH_BUCKET_OVERHEAD_BYTES
+                    + std::mem::size_of::<PathBuf>()
+                    + std::mem::size_of::<bool>())
+    }
+}
+
+fn explicit_ts_extension(specifier: &str) -> Option<String> {
+    if specifier.ends_with(".d.ts")
+        || specifier.ends_with(".d.mts")
+        || specifier.ends_with(".d.cts")
+    {
+        return None;
+    }
+    for ext in [".ts", ".tsx", ".mts", ".cts"] {
+        if specifier.ends_with(ext) {
+            return Some(ext.to_string());
+        }
+    }
+    None
+}
+
+/// Module resolver that implements TypeScript's resolution algorithms
+#[derive(Debug)]
+pub struct ModuleResolver {
+    /// Resolution strategy to use
+    resolution_kind: ModuleResolutionKind,
+    /// Base URL for path resolution
+    base_url: Option<PathBuf>,
+    /// Path mappings from tsconfig
+    path_mappings: Vec<PathMapping>,
+    /// Virtual root directories from tsconfig rootDirs
+    root_dirs: Vec<PathBuf>,
+    /// Type roots for @types packages
+    type_roots: Vec<PathBuf>,
+    types_versions_compiler_version: Option<String>,
+    resolve_package_json_exports: bool,
+    resolve_package_json_imports: bool,
+    module_suffixes: Vec<String>,
+    resolve_json_module: bool,
+    allow_arbitrary_extensions: bool,
+    allow_importing_ts_extensions: bool,
+    jsx: Option<JsxEmit>,
+    /// Cache of resolved modules
+    resolution_cache: FxHashMap<ResolutionCacheKey, Result<ResolvedModule, ResolutionFailure>>,
+    /// Custom conditions from tsconfig (for customConditions option)
+    custom_conditions: Vec<String>,
+    module_kind: ModuleKind,
+    /// Whether allowJs is enabled (affects extension candidates)
+    allow_js: bool,
+    /// Whether to rewrite relative imports with TypeScript extensions during emit.
+    rewrite_relative_import_extensions: bool,
+    /// Whether to print TypeScript-style module resolution traces.
+    trace_resolution: bool,
+    resolution_cache_hits: Cell<u64>,
+    resolution_cache_misses: Cell<u64>,
+    package_type_cache_hits: Cell<u64>,
+    package_type_cache_misses: Cell<u64>,
+    package_json_cache_hits: Cell<u64>,
+    package_json_cache_misses: Cell<u64>,
+    skip_fallback_cache_hits: Cell<u64>,
+    skip_fallback_cache_misses: Cell<u64>,
+    node_modules_dir_cache_hits: Cell<u64>,
+    node_modules_dir_cache_misses: Cell<u64>,
+    /// Cache for package.json package type lookups
+    package_type_cache: std::cell::RefCell<FxHashMap<PathBuf, Option<PackageType>>>,
+    /// Cache of parsed package.json contents keyed by canonical path.
+    ///
+    /// `RefCell` so `&self` paths in `file_probing` / `exports_imports` /
+    /// `self_reference` can populate it without cascading `&mut self`
+    /// through every helper that touches a `package.json`. The same
+    /// `node_modules/foo/package.json` previously got read from disk +
+    /// parsed by `serde_json` once for every distinct resolution role
+    /// (`package_type`, exports lookup, main-field lookup, types lookup,
+    /// self-reference) — five+ identical read+parse cycles per package
+    /// per resolution. This cache lets the second-and-later visit hit a
+    /// hashmap entry instead of touching the file system.
+    ///
+    /// `Result<PackageJson, String>` is cached so failure paths (missing
+    /// file, invalid JSON) also don't re-stat / re-parse repeatedly.
+    /// `PackageJson` is small (`Option<String>` fields plus a modest exports
+    /// tree) so by-value clones on cache hits are still cheaper than the
+    /// previous read+parse.
+    package_json_cache: std::cell::RefCell<FxHashMap<PathBuf, Result<PackageJson, String>>>,
+    /// Cache for `should_skip_fallback_on_not_found` keyed by
+    /// (`containing_dir`, specifier, `importing_module_kind`). The function does
+    /// an unbounded walk up the directory tree calling `is_dir` and reading
+    /// `package.json` at every `node_modules` ancestor; on multi-package projects
+    /// this is the dominant cost in `read_source_files` BFS. Caching collapses
+    /// repeat checks for the same (dir, specifier) to an `FxHashMap` lookup.
+    /// `RefCell` keeps the function `&self`-callable without cascading
+    /// `&mut self` through the cold-path resolution code.
+    skip_fallback_cache:
+        std::cell::RefCell<FxHashMap<(PathBuf, String, ImportingModuleKind), bool>>,
+    /// Cache for `node_modules.is_dir()` checks during the
+    /// `should_skip_fallback_on_not_found` walk. Each ancestor directory's
+    /// `node_modules` presence is stable for the duration of a build, so
+    /// repeated walks from sibling files do not need to re-stat the same
+    /// ancestors.
+    node_modules_dir_cache: std::cell::RefCell<FxHashMap<PathBuf, bool>>,
+    /// Cached package type for the current resolution
+    current_package_type: Option<PackageType>,
+    /// Root directory for the project (used for TS2209 ambiguous root detection)
+    root_dir: Option<PathBuf>,
+    /// Out directory for the project (also used for TS2209 - if set, root is not ambiguous)
+    out_dir: Option<PathBuf>,
+}
+
+impl ModuleResolver {
+    fn increment_counter(counter: &Cell<u64>) {
+        counter.set(counter.get().saturating_add(1));
+    }
+
+    /// Create a new module resolver with the given options
+    pub fn new(options: &ResolvedCompilerOptions) -> Self {
+        let resolution_kind = options.effective_module_resolution();
+
+        let module_suffixes = if options.module_suffixes.is_empty() {
+            vec![String::new()]
+        } else {
+            options.module_suffixes.clone()
+        };
+
+        Self {
+            resolution_kind,
+            base_url: options.base_url.clone(),
+            path_mappings: options.paths.clone().unwrap_or_default(),
+            root_dirs: options.root_dirs.clone(),
+            type_roots: options.type_roots.clone().unwrap_or_default(),
+            types_versions_compiler_version: options.types_versions_compiler_version.clone(),
+            resolve_package_json_exports: options.resolve_package_json_exports,
+            resolve_package_json_imports: options.resolve_package_json_imports,
+            module_suffixes,
+            resolve_json_module: options.resolve_json_module,
+            allow_arbitrary_extensions: options.allow_arbitrary_extensions,
+            allow_importing_ts_extensions: options.allow_importing_ts_extensions,
+            jsx: options.jsx,
+            resolution_cache: FxHashMap::default(),
+            custom_conditions: options.custom_conditions.clone(),
+            module_kind: options.printer.module,
+            allow_js: options.allow_js,
+            rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
+            trace_resolution: options.trace_resolution,
+            resolution_cache_hits: Cell::new(0),
+            resolution_cache_misses: Cell::new(0),
+            package_type_cache_hits: Cell::new(0),
+            package_type_cache_misses: Cell::new(0),
+            package_json_cache_hits: Cell::new(0),
+            package_json_cache_misses: Cell::new(0),
+            skip_fallback_cache_hits: Cell::new(0),
+            skip_fallback_cache_misses: Cell::new(0),
+            node_modules_dir_cache_hits: Cell::new(0),
+            node_modules_dir_cache_misses: Cell::new(0),
+            package_type_cache: std::cell::RefCell::new(FxHashMap::default()),
+            package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
+            skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
+            node_modules_dir_cache: std::cell::RefCell::new(FxHashMap::default()),
+            current_package_type: None,
+            root_dir: options.root_dir.clone(),
+            out_dir: options.out_dir.clone(),
+        }
+    }
+
+    /// Create a resolver with default Node resolution
+    pub fn node_resolver() -> Self {
+        Self {
+            resolution_kind: ModuleResolutionKind::Node,
+            base_url: None,
+            path_mappings: Vec::new(),
+            root_dirs: Vec::new(),
+            type_roots: Vec::new(),
+            types_versions_compiler_version: None,
+            resolve_package_json_exports: false,
+            resolve_package_json_imports: false,
+            module_suffixes: vec![String::new()],
+            resolve_json_module: false,
+            allow_arbitrary_extensions: false,
+            allow_importing_ts_extensions: false,
+            jsx: None,
+            resolution_cache: FxHashMap::default(),
+            custom_conditions: Vec::new(),
+            module_kind: ModuleKind::CommonJS,
+            allow_js: false,
+            rewrite_relative_import_extensions: false,
+            trace_resolution: false,
+            resolution_cache_hits: Cell::new(0),
+            resolution_cache_misses: Cell::new(0),
+            package_type_cache_hits: Cell::new(0),
+            package_type_cache_misses: Cell::new(0),
+            package_json_cache_hits: Cell::new(0),
+            package_json_cache_misses: Cell::new(0),
+            skip_fallback_cache_hits: Cell::new(0),
+            skip_fallback_cache_misses: Cell::new(0),
+            node_modules_dir_cache_hits: Cell::new(0),
+            node_modules_dir_cache_misses: Cell::new(0),
+            package_type_cache: std::cell::RefCell::new(FxHashMap::default()),
+            package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
+            skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
+            node_modules_dir_cache: std::cell::RefCell::new(FxHashMap::default()),
+            current_package_type: None,
+            root_dir: None,
+            out_dir: None,
+        }
+    }
+
+    /// Resolve a module specifier from a containing file
+    pub fn resolve(
+        &mut self,
+        specifier: &str,
+        containing_file: &Path,
+        specifier_span: Span,
+    ) -> Result<ResolvedModule, ResolutionFailure> {
+        self.resolve_with_kind(
+            specifier,
+            containing_file,
+            specifier_span,
+            ImportKind::EsmImport,
+        )
+    }
+
+    /// Resolve a module specifier from a containing file, with import kind information.
+    /// The `import_kind` is used to determine whether to emit TS2834 (extensionless ESM import)
+    /// or TS2307 (cannot find module) for extensionless imports in Node16/NodeNext.
+    pub fn resolve_with_kind(
+        &mut self,
+        specifier: &str,
+        containing_file: &Path,
+        specifier_span: Span,
+        import_kind: ImportKind,
+    ) -> Result<ResolvedModule, ResolutionFailure> {
+        self.resolve_with_kind_and_module_kind(
+            specifier,
+            containing_file,
+            specifier_span,
+            import_kind,
+            None,
+        )
+    }
+
+    fn resolve_with_kind_and_module_kind(
+        &mut self,
+        specifier: &str,
+        containing_file: &Path,
+        specifier_span: Span,
+        import_kind: ImportKind,
+        importing_module_kind_override: Option<ImportingModuleKind>,
+    ) -> Result<ResolvedModule, ResolutionFailure> {
+        let containing_dir = containing_file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let containing_file_str = containing_file.display().to_string();
+
+        // Determine the module kind of the importing file, honoring any explicit
+        // driver-provided resolution-mode override from import attributes.
+        let importing_module_kind =
+            importing_module_kind_override.unwrap_or_else(|| match import_kind {
+                ImportKind::DynamicImport => ImportingModuleKind::Esm,
+                ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+                ImportKind::EsmImport | ImportKind::EsmReExport => match self.module_kind {
+                    ModuleKind::Preserve => {
+                        let extension = ModuleExtension::from_path(containing_file);
+                        if extension.forces_esm() {
+                            ImportingModuleKind::Esm
+                        } else if extension.forces_cjs() {
+                            ImportingModuleKind::CommonJs
+                        } else {
+                            ImportingModuleKind::Esm
+                        }
+                    }
+                    _ => self.get_importing_module_kind(containing_file),
+                },
+            });
+        self.current_package_type = match self.resolution_kind {
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
+                Some(match importing_module_kind {
+                    ImportingModuleKind::Esm => PackageType::Module,
+                    ImportingModuleKind::CommonJs => PackageType::CommonJs,
+                })
+            }
+            _ => None,
+        };
+        let cache_key = (
+            containing_dir.clone(),
+            specifier.to_string(),
+            importing_module_kind,
+            import_kind,
+        );
+        if let Some(cached) = self.resolution_cache.get(&cache_key) {
+            Self::increment_counter(&self.resolution_cache_hits);
+            return cached.clone();
+        }
+        Self::increment_counter(&self.resolution_cache_misses);
+
+        let (mut result, path_mapping_attempted) = self.resolve_uncached(
+            specifier,
+            &containing_dir,
+            &containing_file_str,
+            specifier_span,
+            importing_module_kind,
+            import_kind,
+        );
+
+        if !self.allow_importing_ts_extensions
+            && !self.allow_arbitrary_extensions
+            && !self.rewrite_relative_import_extensions
+            && (self.base_url.is_some() || self.path_mappings.is_empty())
+            && let Some(extension) = explicit_ts_extension(specifier)
+            && !path_mapping_attempted
+            && matches!(result, Err(ResolutionFailure::NotFound { .. }))
+        {
+            result = Err(ResolutionFailure::ImportingTsExtensionNotAllowed {
+                extension,
+                containing_file: containing_file_str.clone(),
+                span: specifier_span,
+            });
+        }
+
+        if let Ok(resolved) = &result {
+            if matches!(
+                resolved.extension,
+                ModuleExtension::Tsx | ModuleExtension::Jsx
+            ) && self.jsx.is_none()
+            {
+                result = Err(ResolutionFailure::JsxNotEnabled {
+                    specifier: specifier.to_string(),
+                    resolved_path: resolved.resolved_path.clone(),
+                    containing_file: containing_file_str,
+                    span: specifier_span,
+                });
+            } else if resolved.extension == ModuleExtension::Json && !self.resolve_json_module {
+                result = Err(ResolutionFailure::JsonModuleWithoutResolveJsonModule {
+                    specifier: specifier.to_string(),
+                    containing_file: containing_file_str,
+                    span: specifier_span,
+                });
+            }
+        }
+
+        // Cache the result
+        self.resolution_cache.insert(cache_key, result.clone());
+
+        result
+    }
+
+    /// Determine the module kind of the importing file based on extension and package.json type.
+    /// Public so the driver can pre-compute per-file ESM/CJS status for the checker.
+    pub fn get_importing_module_kind(&mut self, file_path: &Path) -> ImportingModuleKind {
+        let extension = ModuleExtension::from_path(file_path);
+
+        // .mts, .mjs force ESM mode
+        if extension.forces_esm() {
+            return ImportingModuleKind::Esm;
+        }
+
+        // .cts, .cjs force CommonJS mode
+        if extension.forces_cjs() {
+            return ImportingModuleKind::CommonJs;
+        }
+
+        // `--module commonjs` and other CJS-style module targets ignore package.json `type`.
+        match self.module_kind {
+            ModuleKind::CommonJS | ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System => {
+                return ImportingModuleKind::CommonJs;
+            }
+            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
+                if !matches!(
+                    self.resolution_kind,
+                    ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+                ) =>
+            {
+                return ImportingModuleKind::Esm;
+            }
+            ModuleKind::None
+            | ModuleKind::ES2015
+            | ModuleKind::ES2020
+            | ModuleKind::ES2022
+            | ModuleKind::ESNext
+            | ModuleKind::Node16
+            | ModuleKind::Node18
+            | ModuleKind::Node20
+            | ModuleKind::NodeNext
+            | ModuleKind::Preserve => {}
+        }
+
+        // Check package.json "type" field
+        if let Some(dir) = file_path.parent() {
+            match self.get_package_type_for_dir(dir) {
+                Some(PackageType::Module) => ImportingModuleKind::Esm,
+                Some(PackageType::CommonJs) | None => ImportingModuleKind::CommonJs,
+            }
+        } else {
+            ImportingModuleKind::CommonJs
+        }
+    }
+
+    /// Resolve without checking cache
+    fn resolve_uncached(
+        &self,
+        specifier: &str,
+        containing_dir: &Path,
+        containing_file: &str,
+        specifier_span: Span,
+        importing_module_kind: ImportingModuleKind,
+        import_kind: ImportKind,
+    ) -> (Result<ResolvedModule, ResolutionFailure>, bool) {
+        // Step 1: Handle #-prefixed imports (package.json imports field)
+        // This is a Node16/NodeNext feature for subpath imports
+        if specifier.starts_with('#') {
+            if Self::is_invalid_package_import_specifier(specifier) {
+                return (
+                    Err(ResolutionFailure::NotFound {
+                        specifier: specifier.to_string(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    }),
+                    false,
+                );
+            }
+            if !self.resolve_package_json_imports {
+                return (
+                    Err(ResolutionFailure::NotFound {
+                        specifier: specifier.to_string(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    }),
+                    false,
+                );
+            }
+            return (
+                self.resolve_package_imports(
+                    specifier,
+                    containing_dir,
+                    containing_file,
+                    specifier_span,
+                    importing_module_kind,
+                ),
+                false,
+            );
+        }
+
+        // Step 2: Try path mappings first (if configured and baseUrl is available).
+        // TypeScript treats `paths` mappings as requiring `baseUrl` to avoid surprising
+        // absolute lookups that behave like relative resolution.
+        let mut path_mapping_attempted = false;
+        if self.base_url.is_some() && !self.path_mappings.is_empty() {
+            let attempt = self.try_path_mappings(specifier, containing_dir);
+            if let Some(resolved) = attempt.resolved {
+                return (Ok(resolved), path_mapping_attempted);
+            }
+            path_mapping_attempted = attempt.attempted;
+        }
+
+        // Step 3: Handle relative imports
+        if is_path_relative(specifier) {
+            return (
+                self.resolve_relative(
+                    specifier,
+                    containing_dir,
+                    containing_file,
+                    specifier_span,
+                    importing_module_kind,
+                    import_kind,
+                ),
+                path_mapping_attempted,
+            );
+        }
+
+        // Step 4: Handle absolute imports (rare but valid)
+        if specifier.starts_with('/') {
+            return (
+                self.resolve_absolute(specifier, containing_file, specifier_span),
+                path_mapping_attempted,
+            );
+        }
+
+        // Step 5: Try baseUrl fallback for non-relative specifiers
+        if let Some(base_url) = &self.base_url {
+            let candidate = base_url.join(specifier);
+            if let Some(resolved) = self.try_file_or_directory(&candidate) {
+                return (
+                    Ok(ResolvedModule {
+                        resolved_path: resolved.clone(),
+                        resolved_using_ts_extension: false,
+                        is_external: false,
+                        package_name: None,
+                        original_specifier: specifier.to_string(),
+                        extension: ModuleExtension::from_path(&resolved),
+                    }),
+                    path_mapping_attempted,
+                );
+            }
+        }
+
+        // Step 6: Classic resolution walks up the directory tree looking for
+        // <specifier>.ts, <specifier>.tsx, <specifier>.d.ts at each level.
+        // It does NOT consult node_modules.
+        let resolved = if matches!(self.resolution_kind, ModuleResolutionKind::Classic) {
+            self.resolve_classic_non_relative(
+                specifier,
+                containing_dir,
+                containing_file,
+                specifier_span,
+            )
+        } else {
+            self.resolve_bare_specifier(
+                specifier,
+                containing_dir,
+                containing_file,
+                specifier_span,
+                importing_module_kind,
+            )
+        };
+
+        if let Err(ResolutionFailure::NotFound { .. }) = &resolved
+            && path_mapping_attempted
+        {
+            return (
+                Err(ResolutionFailure::PathMappingFailed {
+                    message: specifier.to_string(),
+                    containing_file: containing_file.to_string(),
+                    span: specifier_span,
+                }),
+                path_mapping_attempted,
+            );
+        }
+
+        (resolved, path_mapping_attempted)
+    }
+
+    /// Perform a complete module lookup, centralizing all diagnostic code selection.
+    ///
+    /// This is the primary entry point for driver-side module resolution.
+    /// It replaces the scattered driver branches that previously handled:
+    /// - Fallback resolution attempts
+    /// - Node16/NodeNext ESM extension validation on fallback paths
+    /// - JSON module without `resolveJsonModule` (TS2732)
+    /// - Classic resolution TS2792 override
+    /// - Untyped JS module handling (TS7016)
+    /// - Ambient module suppression
+    ///
+    /// The `fallback_resolve` closure lets the driver provide its legacy resolution
+    /// path. The `is_ambient_module` closure lets the driver check program-level
+    /// ambient declarations. All diagnostic code selection stays here.
+    pub fn lookup(
+        &mut self,
+        request: &ModuleLookupRequest<'_>,
+        fallback_resolve: impl FnOnce(&str, &Path) -> Option<PathBuf>,
+        is_ambient_module: impl Fn(&str) -> bool,
+        _known_files: Option<&rustc_hash::FxHashSet<std::path::PathBuf>>,
+    ) -> ModuleLookupResult {
+        let specifier = request.specifier;
+        let containing_file = request.containing_file;
+        let span = request.specifier_span;
+        let import_kind = request.import_kind;
+        let is_ordinary_bare = !specifier.starts_with('.')
+            && !specifier.starts_with('/')
+            && (!specifier.contains(':') || specifier.starts_with("node:"));
+        let ambient_match = is_ordinary_bare && is_ambient_module(specifier);
+        let containing_is_declaration =
+            ModuleExtension::from_path(containing_file).is_declaration();
+        if self.trace_resolution {
+            println!(
+                "======== Resolving module '{}' from '{}'. ========",
+                specifier,
+                containing_file.display()
+            );
+            println!(
+                "Explicitly specified module resolution kind: '{}'.",
+                trace_resolution_name(self.resolution_kind)
+            );
+            if specifier.starts_with('.') || specifier.starts_with('/') {
+                let candidate = if Path::new(specifier).is_absolute() {
+                    PathBuf::from(specifier)
+                } else {
+                    containing_file
+                        .parent()
+                        .unwrap_or_else(|| Path::new(""))
+                        .join(specifier)
+                };
+                println!(
+                    "Loading module as file / folder, candidate module location '{}', target file types: TypeScript, Declaration.",
+                    candidate.display()
+                );
+            }
+        }
+
+        // Declaration files frequently stitch together sibling `declare module "..."`
+        // blocks with bare imports (for example, react16.d.ts declares both
+        // `"react"` and `"prop-types"` in the same file). If the ambient module is
+        // already known project-wide, prefer that over re-running filesystem-based
+        // bare-specifier resolution for each import inside the declaration layer.
+        if containing_is_declaration && ambient_match {
+            return ModuleLookupResult::ambient();
+        }
+
+        let importing_module_kind_for_lookup =
+            request
+                .resolution_mode_override
+                .unwrap_or_else(|| match import_kind {
+                    ImportKind::DynamicImport => ImportingModuleKind::Esm,
+                    ImportKind::CjsRequire => ImportingModuleKind::CommonJs,
+                    ImportKind::EsmImport | ImportKind::EsmReExport => match self.module_kind {
+                        ModuleKind::Preserve => {
+                            let extension = ModuleExtension::from_path(containing_file);
+                            if extension.forces_esm() {
+                                ImportingModuleKind::Esm
+                            } else if extension.forces_cjs() {
+                                ImportingModuleKind::CommonJs
+                            } else {
+                                ImportingModuleKind::Esm
+                            }
+                        }
+                        _ => self.get_importing_module_kind(containing_file),
+                    },
+                });
+
+        // 1. Try primary resolution
+        match self.resolve_with_kind_and_module_kind(
+            specifier,
+            containing_file,
+            span,
+            import_kind,
+            request.resolution_mode_override,
+        ) {
+            Ok(resolved_module) => {
+                if self.trace_resolution {
+                    println!(
+                        "File '{}' exists - use it as a name resolution result.",
+                        resolved_module.resolved_path.display()
+                    );
+                    println!(
+                        "======== Module name '{}' was successfully resolved to '{}'. ========",
+                        specifier,
+                        resolved_module.resolved_path.display()
+                    );
+                }
+                // TS6263: Module resolved to a .d.*.ts arbitrary extension declaration
+                // file but --allowArbitraryExtensions is not set.
+                // Skip this check when the containing file is itself a declaration
+                // file (.d.ts / .d.mts / .d.cts). tsc allows declaration files to
+                // reference arbitrary extension declaration files without the flag
+                // because they are already in the type-declaration layer.
+                let containing_is_declaration =
+                    ModuleExtension::from_path(containing_file).is_declaration();
+                if !self.allow_arbitrary_extensions
+                    && !containing_is_declaration
+                    && is_arbitrary_extension_declaration(specifier, &resolved_module.resolved_path)
+                {
+                    // Compute the resolved name relative to the containing file's directory,
+                    // matching tsc's message format (e.g., "dir/native.d.node.ts").
+                    let resolved_name = containing_file
+                        .parent()
+                        .and_then(|dir| {
+                            resolved_module
+                                .resolved_path
+                                .strip_prefix(dir)
+                                .ok()
+                                .map(|rel| rel.to_string_lossy().to_string())
+                        })
+                        .unwrap_or_else(|| {
+                            resolved_module
+                                .resolved_path
+                                .file_name()
+                                .map(|f| f.to_string_lossy().to_string())
+                                .unwrap_or_default()
+                        });
+                    // Return a result with both the resolved path (so types work)
+                    // and the error diagnostic (TS6263).
+                    return ModuleLookupResult {
+                        resolved_path: Some(resolved_module.resolved_path),
+                        resolved_using_ts_extension: false,
+                        treat_as_resolved: false,
+                        error: Some(ModuleLookupError {
+                            code: MODULE_WAS_RESOLVED_TO_BUT_ALLOW_ARBITRARY_EXTENSIONS_IS_NOT_SET,
+                            message: format!(
+                                "Module '{specifier}' was resolved to '{resolved_name}', but '--allowArbitraryExtensions' is not set."
+                            ),
+                        }),
+                    };
+                }
+
+                // TS7016 emission for imported JS modules.
+                //
+                // Two independent rules apply, in priority order:
+                //
+                // 1. **External CJS `require()` of an untyped JS module** -
+                //    surface TS7016 with the resolved path preserved so the
+                //    import binds to the JS file as `any`. tsc fires this
+                //    regardless of `allowJs` because the message means "no
+                //    type declarations were found", which is an *additive*
+                //    diagnostic to allowJs's "JS files are accepted". The
+                //    test corpus exercises this with `allowJs: true` plus
+                //    `noImplicitAny: true` (e.g.
+                //    `compiler/importNonExportedMember12.ts`,
+                //    `conformance/salsa/namespaceAssignmentToRequireAlias.ts`).
+                //
+                // 2. **Imported JS without `allowJs`** (any other shape -
+                //    relative, extensionless relative, dynamic import,
+                //    re-export, ESM package import) - surface TS7016 at the
+                //    import site (issue #3050). We mark the specifier as
+                //    "resolved" but do not add the JS file to the program
+                //    file list, since the CLI's program-level TS6504 path
+                //    would otherwise re-flag it as a forbidden JS root.
+                //    `allowJs` is the gate here because, with `allowJs:
+                //    true`, the JS file is meant to be type-checked as JS,
+                //    not flagged as "missing declaration file".
+                let is_imported_js =
+                    resolved_module.extension.is_javascript() && request.no_implicit_any;
+                let is_external_cjs_require =
+                    resolved_module.is_external && matches!(import_kind, ImportKind::CjsRequire);
+                if is_imported_js && is_external_cjs_require {
+                    ModuleLookupResult::resolved_untyped_js(
+                        resolved_module.resolved_path,
+                        request.no_implicit_any,
+                        specifier,
+                    )
+                } else if is_imported_js && !self.allow_js {
+                    ModuleLookupResult::resolved_with_error(
+                        COULD_NOT_FIND_DECLARATION_FILE,
+                        format!(
+                            "Could not find a declaration file for module '{}'. '{}' implicitly has an 'any' type.",
+                            specifier,
+                            resolved_module.resolved_path.display()
+                        ),
+                    )
+                } else {
+                    ModuleLookupResult::resolved(resolved_module.resolved_path)
+                        .with_resolved_using_ts_extension(
+                            resolved_module.resolved_using_ts_extension,
+                        )
+                }
+            }
+            Err(failure) => {
+                // JsxNotEnabled: file exists but --jsx is not set.
+                // Mark as resolved (suppress TS2307) but record the JSX error.
+                let jsx_resolved =
+                    if let ResolutionFailure::JsxNotEnabled { resolved_path, .. } = &failure {
+                        Some(resolved_path.clone())
+                    } else {
+                        None
+                    };
+                let skip_fallback_on_not_found =
+                    matches!(failure, ResolutionFailure::NotFound { .. })
+                        && self.should_skip_fallback_on_not_found(
+                            specifier,
+                            containing_file.parent().unwrap_or_else(|| Path::new(".")),
+                            importing_module_kind_for_lookup,
+                        )
+                        || (matches!(failure, ResolutionFailure::NotFound { .. })
+                            && matches!(
+                                self.resolution_kind,
+                                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+                            )
+                            && specifier.contains('*'));
+
+                // 2. Try fallback resolution if this is a "soft" failure
+                if failure.should_try_fallback()
+                    && !skip_fallback_on_not_found
+                    && let Some(fallback_path) = fallback_resolve(specifier, containing_file)
+                {
+                    // 3. Validate Node16/NodeNext ESM extension requirements
+                    if self.fallback_needs_esm_extension_error(
+                        specifier,
+                        containing_file,
+                        import_kind,
+                        importing_module_kind_for_lookup,
+                    ) {
+                        return ModuleLookupResult::failed(
+                            CANNOT_FIND_MODULE,
+                            format!(
+                                "Cannot find module '{specifier}' or its corresponding type declarations."
+                            ),
+                        );
+                    }
+
+                    // Trust the fallback resolver's result. The fallback already validated
+                    // that the path exists (either in known_files or on filesystem).
+                    if self.trace_resolution {
+                        println!(
+                            "======== Module name '{}' was successfully resolved to '{}'. ========",
+                            specifier,
+                            fallback_path.display()
+                        );
+                    }
+                    return ModuleLookupResult::resolved(fallback_path);
+                }
+
+                // Upgrade NotFound → TS2732 for .json imports without resolveJsonModule
+                let failure = if matches!(failure, ResolutionFailure::NotFound { .. })
+                    && specifier.ends_with(".json")
+                    && !self.resolve_json_module
+                {
+                    ResolutionFailure::JsonModuleWithoutResolveJsonModule {
+                        specifier: specifier.to_string(),
+                        containing_file: containing_file.to_string_lossy().to_string(),
+                        span,
+                    }
+                } else {
+                    failure
+                };
+
+                // 4. Check ambient module declarations
+                if ambient_match {
+                    return ModuleLookupResult::ambient();
+                }
+
+                // 5. Probe for untyped JS file (TS7016)
+                if matches!(
+                    failure,
+                    ResolutionFailure::NotFound { .. } | ResolutionFailure::PackageJsonError { .. }
+                ) && let Some(js_path) =
+                    self.probe_js_file(specifier, containing_file, span, import_kind)
+                {
+                    return ModuleLookupResult::untyped_js(
+                        js_path,
+                        request.no_implicit_any,
+                        specifier,
+                    );
+                }
+
+                // 6. Build final error from the failure
+                let mut diag = failure.to_diagnostic();
+
+                // Classic resolution override: TS2307 → TS2792.
+                //
+                // tsc emits the "Did you mean to set 'moduleResolution' to
+                // 'nodenext'..." hint for any bare specifier that fails to
+                // resolve under classic-style resolution — including
+                // `module: amd|system|umd|none` and explicit
+                // `moduleResolution: classic` (issue #3077). The hint is
+                // structural: it prompts the user toward the modern
+                // resolver, regardless of whether a `node_modules/<pkg>`
+                // directory happens to exist locally.
+                //
+                // Relative and absolute specifiers stay on plain TS2307
+                // because the resolution-mode hint can't help them.
+                if diag.code == CANNOT_FIND_MODULE && request.implied_classic_resolution {
+                    let is_bare = !specifier.starts_with('.')
+                        && !specifier.starts_with('/')
+                        && !specifier.contains(':');
+                    if is_bare {
+                        diag.code = MODULE_RESOLUTION_MODE_MISMATCH;
+                        diag.message = format!(
+                            "Cannot find module '{specifier}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
+                        );
+                    }
+                }
+
+                // If the primary resolution found the file but JSX wasn't set,
+                // mark as resolved to suppress TS2307 but record the JSX error.
+                if jsx_resolved.is_some() {
+                    return ModuleLookupResult::resolved_with_error(diag.code, diag.message);
+                }
+
+                ModuleLookupResult::failed(diag.code, diag.message)
+            }
+        }
+    }
+
+    /// Check whether a fallback-resolved file needs an ESM extension error.
+    ///
+    /// In Node16/NodeNext, ESM-context extensionless relative imports are errors
+    /// even when the file exists (because ESM requires explicit extensions).
+    fn fallback_needs_esm_extension_error(
+        &mut self,
+        specifier: &str,
+        containing_file: &Path,
+        _import_kind: ImportKind,
+        importing_module_kind: ImportingModuleKind,
+    ) -> bool {
+        let is_node16_or_next = matches!(
+            self.resolution_kind,
+            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+        );
+        if !is_node16_or_next {
+            return false;
+        }
+
+        // Honor the actual import-site module kind, not just the file extension.
+        // A `.ts` file in a `type: "module"` package may have ESM imports even
+        // though the `.ts` extension alone does not force ESM.
+        let importing_ext = ModuleExtension::from_path(containing_file);
+        let is_esm =
+            importing_ext.forces_esm() || importing_module_kind == ImportingModuleKind::Esm;
+
+        let specifier_has_extension = Path::new(specifier).extension().is_some();
+
+        // In Node16/NodeNext ESM mode, relative imports must have explicit extensions
+        is_esm && !specifier_has_extension && specifier.starts_with('.')
+    }
+
+    /// Probe for a JS file that would resolve for this specifier.
+    ///
+    /// Used for TS7016: when normal resolution fails but a JS file exists,
+    /// we can report "Could not find declaration file" instead of "Cannot find module".
+    /// Returns the resolved JS file path if found.
+    pub fn probe_js_file(
+        &mut self,
+        specifier: &str,
+        containing_file: &Path,
+        specifier_span: Span,
+        import_kind: ImportKind,
+    ) -> Option<PathBuf> {
+        if self.allow_js {
+            return None; // Already tried JS in normal resolution
+        }
+        let containing_dir = containing_file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let containing_file_str = containing_file.display().to_string();
+        let importing_module_kind = self.get_importing_module_kind(containing_file);
+
+        self.allow_js = true;
+        let (result, _) = self.resolve_uncached(
+            specifier,
+            &containing_dir,
+            &containing_file_str,
+            specifier_span,
+            importing_module_kind,
+            import_kind,
+        );
+        self.allow_js = false;
+
+        match result {
+            Ok(resolved)
+                if matches!(
+                    resolved.extension,
+                    ModuleExtension::Js
+                        | ModuleExtension::Jsx
+                        | ModuleExtension::Mjs
+                        | ModuleExtension::Cjs
+                ) =>
+            {
+                Some(resolved.resolved_path)
+            }
+            _ => None,
+        }
+    }
+
+    /// Clear module resolution caches owned by this resolver.
+    ///
+    /// This also clears the current thread's file-existence cache, which is
+    /// shared by resolver helper functions rather than stored on the resolver.
+    pub fn clear_cache(&mut self) {
+        self.resolution_cache.clear();
+        self.package_type_cache.borrow_mut().clear();
+        self.package_json_cache.borrow_mut().clear();
+        self.skip_fallback_cache.borrow_mut().clear();
+        self.node_modules_dir_cache.borrow_mut().clear();
+        self.resolution_cache_hits.set(0);
+        self.resolution_cache_misses.set(0);
+        self.package_type_cache_hits.set(0);
+        self.package_type_cache_misses.set(0);
+        self.package_json_cache_hits.set(0);
+        self.package_json_cache_misses.set(0);
+        self.skip_fallback_cache_hits.set(0);
+        self.skip_fallback_cache_misses.set(0);
+        self.node_modules_dir_cache_hits.set(0);
+        self.node_modules_dir_cache_misses.set(0);
+        crate::resolution::helpers::clear_file_exists_cache();
+    }
+
+    /// Return entry counts for module resolver-owned caches.
+    pub fn cache_statistics(&self) -> ModuleResolverCacheStatistics {
+        ModuleResolverCacheStatistics {
+            resolution_cache_entries: self.resolution_cache.len(),
+            resolution_cache_hits: self.resolution_cache_hits.get(),
+            resolution_cache_misses: self.resolution_cache_misses.get(),
+            package_type_cache_entries: self.package_type_cache.borrow().len(),
+            package_type_cache_hits: self.package_type_cache_hits.get(),
+            package_type_cache_misses: self.package_type_cache_misses.get(),
+            package_json_cache_entries: self.package_json_cache.borrow().len(),
+            package_json_cache_hits: self.package_json_cache_hits.get(),
+            package_json_cache_misses: self.package_json_cache_misses.get(),
+            skip_fallback_cache_entries: self.skip_fallback_cache.borrow().len(),
+            skip_fallback_cache_hits: self.skip_fallback_cache_hits.get(),
+            skip_fallback_cache_misses: self.skip_fallback_cache_misses.get(),
+            node_modules_dir_cache_entries: self.node_modules_dir_cache.borrow().len(),
+            node_modules_dir_cache_hits: self.node_modules_dir_cache_hits.get(),
+            node_modules_dir_cache_misses: self.node_modules_dir_cache_misses.get(),
+        }
+    }
+
+    /// Approximate bytes retained by module resolver-owned cache entries.
+    pub fn cache_estimated_size_bytes(&self) -> usize {
+        let stats = ModuleResolverCacheStatistics {
+            resolution_cache_entries: self.resolution_cache.capacity(),
+            resolution_cache_hits: self.resolution_cache_hits.get(),
+            resolution_cache_misses: self.resolution_cache_misses.get(),
+            package_type_cache_entries: self.package_type_cache.borrow().capacity(),
+            package_type_cache_hits: self.package_type_cache_hits.get(),
+            package_type_cache_misses: self.package_type_cache_misses.get(),
+            package_json_cache_entries: self.package_json_cache.borrow().capacity(),
+            package_json_cache_hits: self.package_json_cache_hits.get(),
+            package_json_cache_misses: self.package_json_cache_misses.get(),
+            skip_fallback_cache_entries: self.skip_fallback_cache.borrow().capacity(),
+            skip_fallback_cache_hits: self.skip_fallback_cache_hits.get(),
+            skip_fallback_cache_misses: self.skip_fallback_cache_misses.get(),
+            node_modules_dir_cache_entries: self.node_modules_dir_cache.borrow().capacity(),
+            node_modules_dir_cache_hits: self.node_modules_dir_cache_hits.get(),
+            node_modules_dir_cache_misses: self.node_modules_dir_cache_misses.get(),
+        };
+        stats.estimated_size_bytes()
+    }
+
+    /// Get the current resolution kind
+    pub const fn resolution_kind(&self) -> ModuleResolutionKind {
+        self.resolution_kind
+    }
+
+    /// Emit TS2307 error for a resolution failure into a diagnostic bag
+    ///
+    /// All module resolution failures emit TS2307 "Cannot find module" error.
+    /// This includes:
+    /// - `NotFound`: Module specifier could not be resolved
+    /// - `InvalidSpecifier`: Module specifier is malformed
+    /// - `PackageJsonError`: Package.json is missing or invalid
+    /// - `CircularResolution`: Circular dependency detected during resolution
+    /// - `PathMappingFailed`: Path mapping from tsconfig did not resolve
+    pub fn emit_resolution_error(
+        &self,
+        diagnostics: &mut DiagnosticBag,
+        failure: &ResolutionFailure,
+    ) {
+        let diagnostic = failure.to_diagnostic();
+        diagnostics.add(diagnostic);
+    }
+}
+
+const fn trace_resolution_name(resolution: ModuleResolutionKind) -> &'static str {
+    match resolution {
+        ModuleResolutionKind::Classic => "Classic",
+        ModuleResolutionKind::Node => "Node10",
+        ModuleResolutionKind::Node16 => "Node16",
+        ModuleResolutionKind::NodeNext => "NodeNext",
+        ModuleResolutionKind::Bundler => "Bundler",
+    }
+}
+
+/// Check if a resolved path is an arbitrary extension declaration file
+/// (e.g., `component.d.html.ts`) that was resolved from a specifier with a
+/// non-standard extension (e.g., `./component.html`).
+///
+/// Returns `true` when the resolved path matches the pattern `<name>.d.<ext>.ts`
+/// where `<ext>` is the original specifier's extension.
+fn is_arbitrary_extension_declaration(specifier: &str, resolved_path: &std::path::Path) -> bool {
+    let spec_path = std::path::Path::new(specifier);
+    let spec_ext = match spec_path.extension().and_then(|e| e.to_str()) {
+        Some(ext) => ext,
+        None => return false,
+    };
+
+    // Standard TS/JS extensions are not arbitrary
+    let standard = ["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs", "json"];
+    if standard.contains(&spec_ext) {
+        return false;
+    }
+
+    // Check if resolved path matches the .d.<ext>.ts pattern
+    let resolved_name = match resolved_path.file_name().and_then(|f| f.to_str()) {
+        Some(name) => name,
+        None => return false,
+    };
+
+    let expected_suffix = format!(".d.{spec_ext}.ts");
+    resolved_name.ends_with(&expected_suffix)
+}
+
+/// Parse a package specifier into package name and subpath
+#[cfg(test)]
+mod tests;

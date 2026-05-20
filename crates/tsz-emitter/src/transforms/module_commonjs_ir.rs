@@ -1,0 +1,421 @@
+//! `CommonJS` Module Transform (IR-based)
+//!
+//! Transforms ES modules to `CommonJS` format, producing IR nodes instead of strings.
+//!
+//! ```typescript
+//! import { foo } from "./module";
+//! export const bar = 42;
+//! export default myFunc;
+//! ```
+//!
+//! Becomes IR that prints as:
+//!
+//! ```javascript
+//! "use strict";
+//! Object.defineProperty(exports, "__esModule", { value: true });
+//! exports.bar = void 0;
+//! var module_1 = require("./module");
+//! var foo = module_1.foo;
+//! exports.bar = 42;
+//! exports.default = myFunc;
+//! ```
+
+use crate::transforms::emit_utils::{
+    identifier_text as get_identifier_text, sanitize_module_name, string_literal_text,
+};
+use crate::transforms::ir::IRNode;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+
+/// Context for `CommonJS` transformation
+pub struct CommonJsTransformContext<'a> {
+    arena: &'a NodeArena,
+    preserve_const_enums: bool,
+}
+
+impl<'a> CommonJsTransformContext<'a> {
+    pub const fn new(arena: &'a NodeArena) -> Self {
+        Self {
+            arena,
+            preserve_const_enums: false,
+        }
+    }
+
+    pub const fn with_preserve_const_enums(mut self, preserve: bool) -> Self {
+        self.preserve_const_enums = preserve;
+        self
+    }
+
+    /// Transform a source file's statements to `CommonJS` IR
+    pub fn transform_source_file(&mut self, statements: &[NodeIndex]) -> Vec<IRNode> {
+        // Collect export names for initialization
+        let other_exports = crate::transforms::module_commonjs::collect_export_names_categorized(
+            self.arena,
+            statements,
+            self.preserve_const_enums,
+            &rustc_hash::FxHashSet::default(),
+        )
+        .other_exports;
+
+        // Transform statements
+        let mut lowered_statements = Vec::new();
+        for &stmt_idx in statements {
+            if let Some(ir) = self.transform_statement(stmt_idx) {
+                lowered_statements.push(ir);
+            }
+        }
+
+        // Fully erased type-only module syntax should produce no runtime IR.
+        if other_exports.is_empty() && lowered_statements.is_empty() {
+            return Vec::new();
+        }
+
+        let mut result = Vec::new();
+
+        // Add preamble
+        result.push(IRNode::UseStrict);
+        result.push(IRNode::EsesModuleMarker);
+
+        // Initialize exports (chunked 50 per line, each chunk reversed, matching tsc)
+        if !other_exports.is_empty() {
+            for chunk in other_exports.chunks(50) {
+                let reversed: Vec<&str> = chunk.iter().rev().map(|s| s.as_str()).collect();
+                result.push(IRNode::Raw(
+                    format!("exports.{} = void 0;", reversed.join(" = exports.")).into(),
+                ));
+            }
+        }
+        result.extend(lowered_statements);
+
+        result
+    }
+
+    /// Transform a single statement to IR
+    fn transform_statement(&mut self, stmt_idx: NodeIndex) -> Option<IRNode> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => self.transform_import(stmt_idx),
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => self.transform_export(stmt_idx),
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                self.transform_variable_statement(stmt_idx)
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.transform_function_statement(stmt_idx)
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.transform_class_statement(stmt_idx)
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => self.transform_enum_statement(stmt_idx),
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.transform_namespace_statement(stmt_idx)
+            }
+            _ => {
+                // Pass through as AST reference
+                Some(IRNode::ASTRef(stmt_idx))
+            }
+        }
+    }
+
+    /// Transform an import declaration
+    fn transform_import(&mut self, import_idx: NodeIndex) -> Option<IRNode> {
+        let import = self.arena.get_import_decl_at(import_idx)?;
+
+        // Get module specifier
+        let module_spec = string_literal_text(self.arena, import.module_specifier)?;
+
+        // Side-effect import: `import "./x";` -> `require("./x");`
+        if import.import_clause.is_none() {
+            return Some(IRNode::Raw(format!("require(\"{module_spec}\");").into()));
+        }
+
+        let module_var = sanitize_module_name(&module_spec);
+        let var_name = format!("{module_var}_1");
+
+        let mut statements = Vec::new();
+
+        // var module_1 = require("./module");
+        statements.push(IRNode::RequireStatement {
+            var_name: var_name.clone().into(),
+            module_spec: module_spec.into(),
+        });
+
+        // Process import bindings
+        let clause_node = self.arena.get(import.import_clause)?;
+        let clause = self.arena.get_import_clause(clause_node)?;
+
+        if clause.is_type_only {
+            return None;
+        }
+
+        // Default import
+        if clause.name.is_some()
+            && let Some(name) = get_identifier_text(self.arena, clause.name)
+        {
+            statements.push(IRNode::DefaultImport {
+                var_name: name.into(),
+                module_var: var_name.clone().into(),
+            });
+        }
+
+        // Named bindings
+        let mut named_bindings_all_type_only = false;
+        if clause.named_bindings.is_some()
+            && let Some(named_node) = self.arena.get(clause.named_bindings)
+            && let Some(named_imports) = self.arena.get_named_imports(named_node)
+        {
+            // Namespace import: import * as ns from "..."
+            if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+                if let Some(name) = get_identifier_text(self.arena, named_imports.name) {
+                    statements.push(IRNode::NamespaceImport {
+                        var_name: name.into(),
+                        module_var: var_name.into(),
+                    });
+                }
+            } else {
+                // Named imports: import { a, b } from "..."
+                let mut saw_value_specifier = false;
+                for &spec_idx in &named_imports.elements.nodes {
+                    if let Some(spec_node) = self.arena.get(spec_idx)
+                        && let Some(spec) = self.arena.get_specifier(spec_node)
+                    {
+                        if spec.is_type_only {
+                            continue;
+                        }
+                        saw_value_specifier = true;
+                        let local_name =
+                            get_identifier_text(self.arena, spec.name).unwrap_or_default();
+                        let import_name = if spec.property_name.is_some() {
+                            get_identifier_text(self.arena, spec.property_name)
+                                .unwrap_or_else(|| local_name.clone())
+                        } else {
+                            local_name.clone()
+                        };
+                        statements.push(IRNode::NamedImport {
+                            var_name: local_name.into(),
+                            module_var: var_name.clone().into(),
+                            import_name: import_name.into(),
+                        });
+                    }
+                }
+
+                if !saw_value_specifier && !named_imports.elements.nodes.is_empty() {
+                    named_bindings_all_type_only = true;
+                }
+            }
+        }
+
+        if statements.len() == 1 {
+            if named_bindings_all_type_only {
+                // `import { type Foo } from "x"` is fully erased in JS output.
+                return None;
+            }
+            // `import {} from "x"` has no value bindings in default TS emit.
+            return None;
+        }
+
+        Some(IRNode::Block(statements))
+    }
+
+    /// Transform an export declaration
+    fn transform_export(&mut self, export_idx: NodeIndex) -> Option<IRNode> {
+        let export_data = self.arena.get_export_decl_at(export_idx)?;
+
+        if export_data.is_type_only {
+            return None;
+        }
+
+        // Default export
+        if export_data.is_default_export {
+            return Some(IRNode::ASTRef(export_idx));
+        }
+
+        // Check for re-exports (export { x } from "./module")
+        if export_data.module_specifier.is_some() {
+            return self.transform_re_export(export_data);
+        }
+
+        // Regular export - transform the inner declaration
+        self.transform_statement(export_data.export_clause)
+    }
+
+    /// Transform a re-export (export { x } from "./module")
+    fn transform_re_export(
+        &mut self,
+        export_data: &tsz_parser::parser::node::ExportDeclData,
+    ) -> Option<IRNode> {
+        let module_spec = string_literal_text(self.arena, export_data.module_specifier)?;
+        let module_var = sanitize_module_name(&module_spec);
+        let var_name = format!("{module_var}_1");
+
+        let mut statements = Vec::new();
+
+        // var module_1 = require("./module");
+        statements.push(IRNode::RequireStatement {
+            var_name: var_name.clone().into(),
+            module_spec: module_spec.into(),
+        });
+
+        // Get exported names
+        let clause_node = self.arena.get(export_data.export_clause)?;
+
+        if let Some(named_exports) = self.arena.get_named_imports(clause_node) {
+            for &spec_idx in &named_exports.elements.nodes {
+                if let Some(spec_node) = self.arena.get(spec_idx)
+                    && let Some(spec) = self.arena.get_specifier(spec_node)
+                {
+                    if spec.is_type_only {
+                        continue;
+                    }
+                    let export_name =
+                        get_identifier_text(self.arena, spec.name).unwrap_or_default();
+                    let import_name = if spec.property_name.is_some() {
+                        get_identifier_text(self.arena, spec.property_name)
+                            .unwrap_or_else(|| export_name.clone())
+                    } else {
+                        export_name.clone()
+                    };
+
+                    statements.push(IRNode::ReExportProperty {
+                        export_name: export_name.into(),
+                        module_var: var_name.clone().into(),
+                        import_name: import_name.into(),
+                    });
+                }
+            }
+        }
+
+        Some(IRNode::Block(statements))
+    }
+
+    /// Transform a variable statement (check for export modifier)
+    fn transform_variable_statement(&mut self, var_idx: NodeIndex) -> Option<IRNode> {
+        let var_data = self.arena.get_variable_at(var_idx)?;
+
+        let is_exported = self
+            .arena
+            .has_modifier(&var_data.modifiers, SyntaxKind::ExportKeyword);
+
+        if is_exported {
+            // Need to add export assignments after the variable statement
+            let mut result = Vec::new();
+
+            // The variable statement itself
+            result.push(IRNode::ASTRef(var_idx));
+
+            // Export assignments for each declared variable
+            for &decl_list_idx in &var_data.declarations.nodes {
+                if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                    && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+                {
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        if let Some(decl_node) = self.arena.get(decl_idx)
+                            && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                            && let Some(name) = get_identifier_text(self.arena, decl.name)
+                        {
+                            result.push(IRNode::ExportAssignment { name: name.into() });
+                        }
+                    }
+                }
+            }
+
+            Some(IRNode::Block(result))
+        } else {
+            Some(IRNode::ASTRef(var_idx))
+        }
+    }
+
+    /// Transform a function statement (check for export modifier)
+    fn transform_function_statement(&mut self, func_idx: NodeIndex) -> Option<IRNode> {
+        let func_data = self.arena.get_function_at(func_idx)?;
+
+        let is_exported = self
+            .arena
+            .has_modifier(&func_data.modifiers, SyntaxKind::ExportKeyword);
+
+        if is_exported {
+            let func_name = get_identifier_text(self.arena, func_data.name)?;
+            let result = vec![
+                IRNode::ASTRef(func_idx),
+                IRNode::ExportAssignment {
+                    name: func_name.into(),
+                },
+            ];
+
+            Some(IRNode::Block(result))
+        } else {
+            Some(IRNode::ASTRef(func_idx))
+        }
+    }
+
+    /// Transform a class statement (check for export modifier)
+    fn transform_class_statement(&mut self, class_idx: NodeIndex) -> Option<IRNode> {
+        let class_data = self.arena.get_class_at(class_idx)?;
+
+        let is_exported = self
+            .arena
+            .has_modifier(&class_data.modifiers, SyntaxKind::ExportKeyword);
+
+        if is_exported {
+            let class_name = get_identifier_text(self.arena, class_data.name)?;
+            let result = vec![
+                IRNode::ASTRef(class_idx),
+                IRNode::ExportAssignment {
+                    name: class_name.into(),
+                },
+            ];
+
+            Some(IRNode::Block(result))
+        } else {
+            Some(IRNode::ASTRef(class_idx))
+        }
+    }
+
+    /// Transform an enum statement (check for export modifier)
+    fn transform_enum_statement(&mut self, enum_idx: NodeIndex) -> Option<IRNode> {
+        let enum_data = self.arena.get_enum_at(enum_idx)?;
+
+        let is_exported = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
+
+        if is_exported {
+            let enum_name = get_identifier_text(self.arena, enum_data.name)?;
+            let result = vec![
+                IRNode::ASTRef(enum_idx),
+                IRNode::ExportAssignment {
+                    name: enum_name.into(),
+                },
+            ];
+
+            Some(IRNode::Block(result))
+        } else {
+            Some(IRNode::ASTRef(enum_idx))
+        }
+    }
+
+    /// Transform a namespace statement (check for export modifier)
+    fn transform_namespace_statement(&mut self, ns_idx: NodeIndex) -> Option<IRNode> {
+        let ns_data = self.arena.get_module_at(ns_idx)?;
+
+        let is_exported = self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
+
+        if is_exported {
+            let ns_name = get_identifier_text(self.arena, ns_data.name)?;
+            let result = vec![
+                IRNode::ASTRef(ns_idx),
+                IRNode::ExportAssignment {
+                    name: ns_name.into(),
+                },
+            ];
+
+            Some(IRNode::Block(result))
+        } else {
+            Some(IRNode::ASTRef(ns_idx))
+        }
+    }
+}

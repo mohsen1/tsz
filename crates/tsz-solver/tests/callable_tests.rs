@@ -1,0 +1,1679 @@
+//! Tests for callable type (overloaded signatures) subtype checking.
+
+use super::*;
+use crate::TypeInterner;
+// =============================================================================
+// Callable Subtype Tests
+// =============================================================================
+
+#[test]
+fn test_callable_same_signature() {
+    let interner = TypeInterner::new();
+
+    // { (x: string): number } <: { (x: string): number }
+    let sig = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig.clone()],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(is_subtype_of(&interner, source, target));
+}
+
+#[test]
+fn test_callable_more_overloads() {
+    let interner = TypeInterner::new();
+
+    // { (x: string): number; (x: number): string } <: { (x: string): number }
+    let sig1 = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let sig2 = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig1.clone(), sig2],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig1],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(is_subtype_of(&interner, source, target));
+}
+
+#[test]
+fn test_callable_missing_overload() {
+    let interner = TypeInterner::new();
+
+    // { (x: string): number } NOT <: { (x: string): number; (x: number): string }
+    let sig1 = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let sig2 = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig1.clone()],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig1, sig2],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(!is_subtype_of(&interner, source, target));
+}
+
+#[test]
+fn test_callable_with_construct() {
+    let interner = TypeInterner::new();
+
+    // { new(): Foo } <: { new(): Foo }
+    let obj_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+
+    let sig = CallSignature {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: obj_type,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![sig.clone()],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![sig],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(is_subtype_of(&interner, source, target));
+}
+
+#[test]
+fn test_callable_covariant_return() {
+    let interner = TypeInterner::new();
+
+    // { (): "hello" } <: { (): string }
+    let hello = interner.literal_string("hello");
+
+    let source_sig = CallSignature {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: hello,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let target_sig = CallSignature {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![source_sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![target_sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(is_subtype_of(&interner, source, target));
+}
+
+#[test]
+fn test_function_to_callable() {
+    let interner = TypeInterner::new();
+
+    // (x: string) => number <: { (x: string): number }
+    let fn_type = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let callable = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::NUMBER,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(is_subtype_of(&interner, fn_type, callable));
+}
+
+#[test]
+fn test_callable_to_function() {
+    let interner = TypeInterner::new();
+
+    // { (x: string): number } <: (x: string) => number
+    // At least one signature must match
+    let callable = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::NUMBER,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let fn_type = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert!(is_subtype_of(&interner, callable, fn_type));
+}
+
+#[test]
+fn test_callable_with_properties() {
+    let interner = TypeInterner::new();
+
+    // { (): void; length: number } <: { (): void; length: number }
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("length"),
+            TypeId::NUMBER,
+        )],
+        ..Default::default()
+    });
+
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("length"),
+            TypeId::NUMBER,
+        )],
+        ..Default::default()
+    });
+
+    assert!(is_subtype_of(&interner, source, target));
+}
+
+#[test]
+fn test_callable_missing_property() {
+    let interner = TypeInterner::new();
+
+    // { (): void } NOT <: { (): void; length: number }
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("length"),
+            TypeId::NUMBER,
+        )],
+        ..Default::default()
+    });
+
+    assert!(!is_subtype_of(&interner, source, target));
+}
+
+// =============================================================================
+// Overload Signature Matching Tests
+// =============================================================================
+
+#[test]
+fn test_overload_signature_exact_match() {
+    // Test: Selecting exact matching overload from multiple signatures
+    let interner = TypeInterner::new();
+
+    let sig_string_to_number = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let sig_number_to_string = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let overloaded = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig_string_to_number.clone(), sig_number_to_string],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let string_only = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig_string_to_number],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(is_subtype_of(&interner, overloaded, string_only));
+}
+
+#[test]
+fn test_overload_signature_order_priority() {
+    // Test: Earlier overload takes priority for matching
+    let interner = TypeInterner::new();
+
+    let special_lit = interner.literal_string("special");
+    let special_return = interner.literal_string("matched-special");
+    let sig_special = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: special_lit,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: special_return,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let general_return = interner.literal_string("matched-general");
+    let sig_general = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: general_return,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let overloaded = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig_special.clone(), sig_general],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let specific = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig_special],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(is_subtype_of(&interner, overloaded, specific));
+}
+
+#[test]
+fn test_overload_multiple_arities() {
+    // Test: Overloads with different parameter counts
+    let interner = TypeInterner::new();
+
+    let sig_0 = CallSignature {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let sig_1 = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let sig_2 = CallSignature {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let overloaded = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig_0.clone(), sig_1.clone(), sig_2.clone()],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let only_sig0 = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig_0],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+    let only_sig1 = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig_1],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+    let only_sig2 = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig_2],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(is_subtype_of(&interner, overloaded, only_sig0));
+    assert!(is_subtype_of(&interner, overloaded, only_sig1));
+    assert!(is_subtype_of(&interner, overloaded, only_sig2));
+}
+
+// =============================================================================
+// Generic Overload Inference Tests
+// =============================================================================
+
+#[test]
+fn test_generic_overload_simple() {
+    // Test: Generic overload with type parameter <T>(x: T): T
+    // Verify the generic callable is correctly structured
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let generic_sig = CallSignature {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_param,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let generic_fn = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![generic_sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    // Verify the callable was created with proper type parameter
+    let key = interner.lookup(generic_fn).expect("Should have callable");
+    match key {
+        TypeData::Callable(shape_id) => {
+            let shape = interner.callable_shape(shape_id);
+            assert_eq!(shape.call_signatures.len(), 1);
+            assert_eq!(shape.call_signatures[0].type_params.len(), 1);
+            assert_eq!(shape.call_signatures[0].params.len(), 1);
+            // Return type should be the same as param type (T)
+            assert_eq!(shape.call_signatures[0].return_type, t_param);
+        }
+        _ => panic!("Expected callable type"),
+    }
+}
+
+#[test]
+fn test_generic_overload_with_constraint() {
+    // Test: <T extends object>(x: T): keyof T
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: Some(TypeId::OBJECT),
+        default: None,
+        is_const: false,
+    }));
+
+    let keyof_t = interner.intern(TypeData::KeyOf(t_param));
+
+    let constrained_sig = CallSignature {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: Some(TypeId::OBJECT),
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: keyof_t,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let generic_fn = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![constrained_sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let key = interner.lookup(generic_fn).expect("Should have callable");
+    match key {
+        TypeData::Callable(shape_id) => {
+            let shape = interner.callable_shape(shape_id);
+            assert_eq!(shape.call_signatures.len(), 1);
+            assert!(shape.call_signatures[0].type_params[0].constraint.is_some());
+        }
+        _ => panic!("Expected callable type"),
+    }
+}
+
+#[test]
+fn test_generic_overload_multiple_type_params() {
+    // Test: <T, U>(x: T, y: U): [T, U]
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let tuple_return = interner.tuple(vec![
+        TupleElement {
+            type_id: t_param,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: u_param,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let multi_param_sig = CallSignature {
+        type_params: vec![
+            TypeParamInfo {
+                name: t_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: u_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+        ],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: t_param,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: u_param,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: tuple_return,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let generic_fn = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![multi_param_sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let key = interner.lookup(generic_fn).expect("Should have callable");
+    match key {
+        TypeData::Callable(shape_id) => {
+            let shape = interner.callable_shape(shape_id);
+            assert_eq!(shape.call_signatures[0].type_params.len(), 2);
+            assert_eq!(shape.call_signatures[0].params.len(), 2);
+        }
+        _ => panic!("Expected callable type"),
+    }
+}
+
+// =============================================================================
+// Optional Parameter Overload Resolution Tests
+// =============================================================================
+
+#[test]
+fn test_optional_param_overload_matching() {
+    // Test: fn(x: string): number; fn(x: string, y?: number): string;
+    let interner = TypeInterner::new();
+
+    let sig_required = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let sig_optional = CallSignature {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: TypeId::NUMBER,
+                optional: true,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let overloaded = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig_required.clone(), sig_optional.clone()],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let only_required = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig_required],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+    let only_optional = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![sig_optional],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(is_subtype_of(&interner, overloaded, only_required));
+    assert!(is_subtype_of(&interner, overloaded, only_optional));
+}
+
+#[test]
+fn test_all_optional_params_overload() {
+    // Test: fn(x?: string, y?: number): void
+    let interner = TypeInterner::new();
+
+    let all_optional_sig = CallSignature {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::STRING,
+                optional: true,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: TypeId::NUMBER,
+                optional: true,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let fn_with_optional = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![all_optional_sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let no_params_sig = CallSignature {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let no_params = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![no_params_sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    // () => void is subtype of (x?: string, y?: number) => void
+    assert!(is_subtype_of(&interner, no_params, fn_with_optional));
+}
+
+#[test]
+fn test_optional_and_rest_param_overload() {
+    // Test: fn(x: string, ...rest: number[]): void
+    let interner = TypeInterner::new();
+
+    let number_array = interner.array(TypeId::NUMBER);
+
+    let rest_sig = CallSignature {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("rest")),
+                type_id: number_array,
+                optional: false,
+                rest: true,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let fn_with_rest = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![rest_sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let single_param_sig = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let single_param = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![single_param_sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    assert!(is_subtype_of(&interner, single_param, fn_with_rest));
+}
+
+#[test]
+fn test_contextual_instantiation_generic_call_signature_with_rest_target() {
+    // Mirrors contextualSigInstantiationRestParams.ts:
+    //   declare function toInstantiate<A, B>(a?: A, b?: B): B;
+    //   declare function contextual(...s: string[]): string;
+    //   var sig: typeof contextual = toInstantiate;
+    let interner = TypeInterner::new();
+
+    let a_name = interner.intern_string("A");
+    let b_name = interner.intern_string("B");
+    let a_param = TypeParamInfo {
+        name: a_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let b_param = TypeParamInfo {
+        name: b_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let a_type = interner.intern(TypeData::TypeParameter(a_param));
+    let b_type = interner.intern(TypeData::TypeParameter(b_param));
+
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![a_param, b_param],
+            params: vec![
+                ParamInfo {
+                    name: Some(interner.intern_string("a")),
+                    type_id: a_type,
+                    optional: true,
+                    rest: false,
+                },
+                ParamInfo {
+                    name: Some(interner.intern_string("b")),
+                    type_id: b_type,
+                    optional: true,
+                    rest: false,
+                },
+            ],
+            this_type: None,
+            return_type: b_type,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("s")),
+                type_id: interner.array(TypeId::STRING),
+                optional: false,
+                rest: true,
+            }],
+            this_type: None,
+            return_type: TypeId::STRING,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    assert!(checker.check_subtype(source, target).is_true());
+}
+
+#[test]
+fn test_contextual_instantiation_generic_source_ignores_unknown_param_signal() {
+    // Mirrors contextualSignatureInstantiation2-style inference where target parameter
+    // side is unknown (uninformative) but return side carries a useful placeholder.
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let source = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let placeholder = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("__infer_src_2"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let target = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("_")),
+            type_id: TypeId::UNKNOWN,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: placeholder,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    assert!(checker.check_subtype(source, target).is_true());
+}
+
+#[test]
+fn test_contextual_instantiation_generic_source_rejects_incomparable_param_candidates() {
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let source = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let target = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::UNKNOWN,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    assert!(!checker.check_subtype(source, target).is_true());
+}
+
+#[test]
+fn test_contextual_instantiation_generic_target_from_source_type_param() {
+    // Mirrors contextualOuterTypeParameters-style assignment where source uses a
+    // contextual free type parameter and target is explicitly generic.
+    // TODO: Currently returns false — contextual instantiation doesn't yet erase
+    // free type params to their constraint when comparing against generic targets.
+    let interner = TypeInterner::new();
+
+    let contextual_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("__ctx_t"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let source = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("t")),
+            type_id: contextual_t,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let target = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = true;
+    // Known limitation: contextual free type params are not erased to constraints yet.
+    assert!(!checker.check_subtype(source, target).is_true());
+}
+
+#[test]
+fn test_contextual_instantiation_callable_to_generic_function_target() {
+    let interner = TypeInterner::new();
+
+    let contextual_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("__ctx_t"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("t")),
+                type_id: contextual_t,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let target = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = true;
+    // Known limitation: contextual free type params in callable shapes are not erased yet.
+    assert!(!checker.check_subtype(source, target).is_true());
+}
+
+#[test]
+fn test_contextual_instantiation_generic_function_to_callable_target() {
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let source = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let placeholder = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("__infer_src_3"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("_")),
+                type_id: TypeId::UNKNOWN,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: placeholder,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    assert!(checker.check_subtype(source, target).is_true());
+}
+
+/// Non-generic construct signature source is NOT assignable to a generic
+/// construct signature target. `new() => MyClass` is not <: `new<T>() => T`
+/// because T is universally quantified: the generic constructor must return
+/// whatever subtype of the constraint the caller chooses, not one concrete
+/// object shape.
+#[test]
+fn test_nongeneric_construct_sig_not_assignable_to_generic_target() {
+    let interner = TypeInterner::new();
+
+    // Create a concrete return type to represent `MyClass` (implements MyInterface)
+    let my_class = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
+
+    // Source: callable with `new() => MyClass`
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type: my_class,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    // Target: callable with `new<T extends { value: number }>() => T`
+    let constraint = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::NUMBER,
+    )]);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![t_param],
+            params: vec![],
+            this_type: None,
+            return_type: t_type,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    checker.erase_generics = true;
+    assert!(checker.check_subtype(source, target).is_false());
+}
+
+#[test]
+fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_target() {
+    let interner = TypeInterner::new();
+
+    let base = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("base"),
+        TypeId::NUMBER,
+    )]);
+    let derived = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("base"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("derived"), TypeId::NUMBER),
+    ]);
+    let derived2 = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("base"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("derived2"), TypeId::NUMBER),
+    ]);
+
+    let source_param = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: base,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: derived,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let source_return = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("r")),
+            type_id: base,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: derived2,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: source_param,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: source_return,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(base),
+        default: None,
+        is_const: false,
+    };
+    let u_param = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(derived),
+        default: None,
+        is_const: false,
+    };
+    let v_param = TypeParamInfo {
+        name: interner.intern_string("V"),
+        constraint: Some(derived2),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+    let u_type = interner.type_param(u_param);
+    let v_type = interner.type_param(v_param);
+    let target_param = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: u_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let target_return = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("r")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: v_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![t_param, u_param, v_param],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: target_param,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: target_return,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    checker.erase_generics = true;
+    assert!(checker.check_subtype(source, target).is_false());
+}
+
+/// Regression test for genericFunctionCallSignatureReturnTypeMismatch.ts (TS2322)
+///
+/// `{ <S>(): S[] }` should NOT be a subtype of `{ <T>(x: T): T }` because:
+/// - After alpha-renaming T → S, target becomes `(x: S) => S`
+/// - Source is `() => S[]`
+/// - Return type: S[] is NOT assignable to S (concrete type not assignable to type param)
+#[test]
+fn test_generic_callable_return_type_mismatch_not_assignable() {
+    let interner = TypeInterner::new();
+
+    let s_param = TypeParamInfo {
+        name: interner.intern_string("S"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let s_type = interner.type_param(s_param);
+    let s_array = interner.array(s_type);
+    let source = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params: vec![s_param],
+            params: vec![],
+            this_type: None,
+            return_type: s_array,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+    let target = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params: vec![t_param],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: t_type,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = true;
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "generic callable with incompatible return type should not be a subtype"
+    );
+}

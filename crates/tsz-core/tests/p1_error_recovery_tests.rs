@@ -1,0 +1,285 @@
+//! P1 Error Recovery Tests
+//!
+//! Test synchronization point improvements for:
+//! 1. Class bodies with unexpected tokens
+//! 2. Interface declarations with malformed extends clauses
+//! 3. Template literal expressions with errors
+//! 4. Object destructuring patterns with missing commas
+
+use crate::test_harness::{TestResult, run_with_timeout};
+use std::time::Duration;
+fn parse_test_source(source: &str) -> (crate::parser::ParserState, crate::parser::NodeIndex) {
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
+
+// ===========================================================================
+// Test 1: Class Body Error Recovery
+// ===========================================================================
+
+/// Test class body with statement keywords used as property/method names
+/// In TypeScript, reserved keywords like `if`, `for`, `while` are valid
+/// property and method names in class bodies.
+#[test]
+fn test_p1_class_body_with_stray_statements() {
+    let source = r#"
+class MyClass {
+    constructor(x) {
+        this.x = x;
+    }
+    if (true) {        // Valid: method named 'if' with parameter 'true'
+        console.log("hi");
+    }
+    getValue() {       // Should also parse normally
+        return this.x;
+    }
+}
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // `if` is a valid method name — no parser errors expected
+    // (type errors may come later from the checker, not the parser)
+    assert!(!parser.arena.is_empty(), "Should parse class members");
+}
+
+/// Test class body with function declaration
+#[test]
+fn test_p1_class_body_with_function_declaration() {
+    let source = r#"
+class MyClass {
+    function helper() {   // Error: function declaration in class body
+        return 42;
+    }
+    getValue() {
+        return 1;
+    }
+}
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // Should parse both members
+    assert!(!parser.arena.is_empty(), "Should parse class members");
+}
+
+// ===========================================================================
+// Test 2: Interface Extends Clause Error Recovery
+// ===========================================================================
+
+/// Test interface with missing comma in extends clause
+#[test]
+fn test_p1_interface_missing_comma_in_extends() {
+    let source = r#"
+interface A extends B C D {
+    x: number;
+}
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // Should parse successfully with errors
+    let diags = parser.get_diagnostics();
+    assert!(!diags.is_empty(), "Should report error for missing comma");
+
+    // Should still parse the interface and member
+    assert!(!parser.arena.is_empty(), "Should parse interface");
+}
+
+/// Test interface with trailing comma in extends clause
+#[test]
+fn test_p1_interface_trailing_comma_in_extends() {
+    let source = r#"
+interface A extends B, C, {
+    x: number;
+}
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // Should parse successfully
+    assert!(!parser.arena.is_empty(), "Should parse interface");
+}
+
+/// Test interface with invalid type in extends clause
+#[test]
+fn test_p1_interface_invalid_type_in_extends() {
+    let source = r#"
+interface A extends 123, B {
+    x: number;
+}
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // Should parse successfully with error
+    let diags = parser.get_diagnostics();
+    assert!(!diags.is_empty(), "Should report error for invalid type");
+
+    // Should still parse B and the interface body
+    assert!(!parser.arena.is_empty(), "Should parse interface");
+}
+
+/// Test interface with malformed extends (missing types)
+#[test]
+fn test_p1_interface_malformed_extends() {
+    let source = r#"
+interface A extends {
+    x: number;
+}
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // Should parse successfully with error
+    let diags = parser.get_diagnostics();
+    assert!(
+        !diags.is_empty(),
+        "Should report error for malformed extends"
+    );
+
+    // Should still parse the interface body
+    assert!(!parser.arena.is_empty(), "Should parse interface body");
+}
+
+// ===========================================================================
+// Test 3: Template Literal Error Recovery
+// ===========================================================================
+
+/// Test template literal with unterminated expression
+#[test]
+fn test_p1_template_unterminated_expression() {
+    let source = r#"
+const x = `hello ${world`;
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // Should parse with error
+    let diags = parser.get_diagnostics();
+    assert!(
+        !diags.is_empty(),
+        "Should report error for unterminated template"
+    );
+
+    // Should still create a template node
+    assert!(!parser.arena.is_empty(), "Should parse template");
+}
+
+/// Test template literal with missing closing backtick
+#[test]
+fn test_p1_template_missing_closing_backtick() {
+    let source = r#"
+const x = `hello ${name};
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // Should parse with error
+    let diags = parser.get_diagnostics();
+    assert!(!diags.is_empty(), "Should report error");
+
+    // Should still create a template node
+    assert!(!parser.arena.is_empty(), "Should parse template");
+}
+
+// ===========================================================================
+// Test 4: Object Destructuring Pattern Error Recovery
+// ===========================================================================
+
+/// Test object destructuring with missing commas
+///
+/// NOTE: Currently ignored - P1 error recovery for destructuring patterns is not
+/// fully implemented. The parser should report errors for missing commas/colons
+/// in destructuring patterns.
+#[test]
+fn test_p1_destructuring_missing_commas() {
+    let source = r#"
+const { x y z } = obj;
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // Should parse with errors
+    let diags = parser.get_diagnostics();
+    assert!(!diags.is_empty(), "Should report error for missing commas");
+
+    // Should still parse the destructuring pattern
+    assert!(!parser.arena.is_empty(), "Should parse destructuring");
+}
+
+/// Test object destructuring with trailing comma
+#[test]
+fn test_p1_destructuring_trailing_comma() {
+    let source = r#"
+const { x, y, z, } = obj;
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // Should parse successfully (trailing comma is valid)
+    assert!(!parser.arena.is_empty(), "Should parse destructuring");
+}
+
+/// Test object destructuring with missing colon
+///
+/// NOTE: Currently ignored - see `test_p1_destructuring_missing_commas`.
+#[test]
+fn test_p1_destructuring_missing_colon() {
+    let source = r#"
+const { x y } = obj;
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // Should parse with errors
+    let diags = parser.get_diagnostics();
+    assert!(!diags.is_empty(), "Should report error");
+
+    // Should still parse the pattern
+    assert!(!parser.arena.is_empty(), "Should parse destructuring");
+}
+
+/// Test nested object destructuring with errors
+///
+/// NOTE: Currently ignored - see `test_p1_destructuring_missing_colon`.
+#[test]
+fn test_p1_nested_destructuring_errors() {
+    let result = run_with_timeout(Duration::from_secs(5), || {
+        let source = r#"
+const { a: { x y }, b } = obj;
+"#;
+        let (parser, _root) = parse_test_source(source);
+
+        // Should parse with errors
+        let diags = parser.get_diagnostics();
+        assert!(!diags.is_empty(), "Should report error");
+
+        // Should still parse the outer pattern
+        assert!(!parser.arena.is_empty(), "Should parse destructuring");
+    });
+
+    match result {
+        TestResult::Passed { .. } => {}
+        other => panic!("Nested destructuring test did not finish: {other:?}"),
+    }
+}
+
+// ===========================================================================
+// Comprehensive Recovery Tests
+// ===========================================================================
+
+/// Test multiple errors in same file - verify parser doesn't crash
+#[test]
+fn test_p1_multiple_errors_recovery() {
+    let source = r#"
+class Foo {
+    if (true) { }
+    getValue() { return 1; }
+}
+
+interface Bar extends A B {
+    x: number;
+}
+
+const { a b } = obj;
+"#;
+    let (parser, _root) = parse_test_source(source);
+
+    // Should parse entire file despite errors
+    let diags = parser.get_diagnostics();
+    assert!(!diags.is_empty(), "Should report errors");
+
+    // Should parse all declarations
+    assert!(!parser.arena.is_empty(), "Should parse all declarations");
+}

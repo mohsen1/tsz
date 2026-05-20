@@ -1,0 +1,1229 @@
+name: Bench
+
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+  schedule:
+    # Daily latest PGO release: submit the Cloud Build prep first, then publish
+    # the finished artifact without fanning out benchmark shards.
+    - cron: '0 3 * * *'
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    inputs:
+      publish_latest_pgo:
+        description: "Publish the latest PGO channel asset from this run"
+        required: false
+        default: false
+        type: boolean
+
+# Do not use workflow-level concurrency here. A queued workflow run would start
+# after the active benchmark finishes and benchmark an old "next" commit. The
+# gate below skips new non-release runs while another Bench run is active
+# instead. Release-only daily runs are allowed to publish the latest artifact
+# without waiting behind benchmark shards.
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+env:
+  _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
+  BENCH_FULL: "1"
+  BENCH_COLD: "1"
+  BENCH_PGO: "1"
+  BENCH_REQUIRE_PGO: "1"
+  HYPERFINE_VER: "1.18.0"
+  GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+  BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+  CARGO_HOME: ${{ github.workspace }}/.ci-cache/cargo-home
+  npm_config_cache: ${{ github.workspace }}/.ci-cache/npm
+  PNPM_STORE_DIR: ${{ github.workspace }}/.ci-cache/pnpm-store
+
+jobs:
+  bench-gate:
+    name: bench-gate
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.gate.outputs.should_run }}
+    steps:
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          should_run=true
+
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
+              echo "CI conclusion was '${{ github.event.workflow_run.conclusion }}'; skipping bench."
+              should_run=false
+            fi
+
+            if [[ "${{ github.event.workflow_run.event }}" != "push" ]]; then
+              echo "CI event was '${{ github.event.workflow_run.event }}'; benchmarks only run for pushes to main."
+              should_run=false
+            fi
+
+            if [[ "${{ github.event.workflow_run.head_branch }}" != "main" ]]; then
+              echo "CI head branch was '${{ github.event.workflow_run.head_branch }}'; skipping non-main benchmark."
+              should_run=false
+            fi
+          fi
+
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
+          release_only=false
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            case "${{ github.event.schedule }}" in
+              "0 3 * * *"|"0 5 * * *") release_only=true ;;
+            esac
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.publish_latest_pgo }}" == "true" ]]; then
+            release_only=true
+          fi
+
+          if [[ "$release_only" != "true" ]]; then
+            main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
+            if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
+              echo "Benchmark target ${target_sha} is stale; current main is ${main_sha}. Skipping obsolete run."
+              should_run=false
+            fi
+          fi
+
+          if [[ "$should_run" == "true" && "$release_only" != "true" ]]; then
+            active_runs_raw="$(
+              {
+                gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status in_progress --limit 20 \
+                  --json databaseId,headSha,url \
+                  --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url] | @tsv'
+                gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status queued --limit 20 \
+                  --json databaseId,headSha,url \
+                  --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url] | @tsv'
+              } | sort -u
+            )"
+            active_runs=""
+            while IFS=$'\t' read -r run_id run_sha run_url; do
+              [[ -n "${run_id:-}" ]] || continue
+              active_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
+            done <<< "$active_runs_raw"
+            if [[ -n "$active_runs" ]]; then
+              echo "Another Bench run is already active; skipping ${target_sha} instead of cancelling or queuing."
+              printf '%s\n' "$active_runs"
+              should_run=false
+            fi
+          fi
+
+          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
+
+  bench-prepare:
+    name: bench-prepare
+    needs: bench-gate
+    if: >-
+      needs.bench-gate.outputs.should_run == 'true' &&
+      vars.TSZ_BENCH_SELF_HOSTED_PREP == '1' &&
+      !((github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+        (github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') ||
+        (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 30
+    outputs:
+      should_run: ${{ steps.prepare-gate.outputs.should_run }}
+      build_id: ${{ steps.cloudbuild-submit.outputs.build_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BENCH_TARGET_SHA }}
+          fetch-depth: 1
+
+      - id: prepare-gate
+        name: Confirm benchmark should proceed
+        shell: bash
+        run: echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+      - id: cloudbuild-submit
+        name: Submit benchmark prep to Cloud Build pool
+        if: steps.prepare-gate.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
+          manifest_value() {
+            local key="$1"
+            awk -v key="$key" '
+              index($0, key "=") == 1 { value = substr($0, length(key) + 2) }
+              END { print value }
+            ' bench-prep.env
+          }
+
+          rm -f bench-prep.env bench-prep.tar
+          if gcloud storage cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.env" \
+              bench-prep.env >/dev/null 2>&1 && \
+            gcloud storage cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.tar" \
+              bench-prep.tar >/dev/null 2>&1; then
+            manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+            manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+            if [[ "${manifest_target_sha}" == "${target_sha}" &&
+                  "${manifest_pgo_optimized}" == "1" ]] && \
+              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null && \
+              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null; then
+              echo "Cloud Build PGO prep artifact already exists for ${target_sha}; skipping submit."
+              exit 0
+            fi
+            echo "Existing Cloud Build PGO prep artifact is incomplete or stale; submitting a fresh build."
+          fi
+
+          submit_output="$(gcloud builds submit \
+            --async \
+            --project=tsz-ci \
+            --region=us-central1 \
+            --config=cloudbuild-bench-prepare.yaml \
+            --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
+            --substitutions=_BENCH_TARGET_SHA="${target_sha}" \
+            --format='value(id)' \
+            .)"
+          build_id="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$submit_output" | tail -n 1 || true)"
+          if [[ -z "$build_id" ]]; then
+            printf '%s\n' "$submit_output"
+            echo "Cloud Build submit did not return a build id." >&2
+            exit 1
+          fi
+          echo "Submitted Cloud Build benchmark prep ${build_id}."
+          echo "build_id=${build_id}" >> "$GITHUB_OUTPUT"
+
+  bench-prepare-cloudbuild:
+    name: bench-prepare-cloudbuild
+    needs: bench-gate
+    if: >-
+      needs.bench-gate.outputs.should_run == 'true' &&
+      !(github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') &&
+      (vars.TSZ_BENCH_SELF_HOSTED_PREP != '1' ||
+       (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 120
+    outputs:
+      should_run: ${{ steps.prepare-gate.outputs.should_run }}
+      build_id: ${{ steps.cloudbuild-submit.outputs.build_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BENCH_TARGET_SHA }}
+          fetch-depth: 1
+
+      - id: prepare-gate
+        name: Confirm benchmark should proceed
+        shell: bash
+        run: |
+          # The bench-gate job handles supersession before Cloud Build submit.
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+      - id: cloudbuild-submit
+        name: Submit benchmark prep to Cloud Build pool
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          prep_prefix="latest"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" &&
+                "${{ inputs.publish_latest_pgo }}" != "true" ]]; then
+            prep_prefix="${BENCH_TARGET_SHA}"
+          fi
+
+          if gcloud storage cp \
+            "gs://tsz-ci_cloudbuild/bench-prep/${prep_prefix}/bench-prep.env" \
+            bench-prep.env >/dev/null 2>&1; then
+            # shellcheck disable=SC1091
+            source bench-prep.env
+            if [[ "${BENCH_TARGET_SHA:-}" == "${{ env.BENCH_TARGET_SHA }}" &&
+                  "${BENCH_BUILD_DATE:-}" == "$(date -u +%F)" ]]; then
+              echo "Cloud Build prep artifact already exists for ${BENCH_TARGET_SHA}; skipping submit."
+              exit 0
+            fi
+          fi
+
+          submit_output="$(gcloud builds submit \
+            --async \
+            --project=tsz-ci \
+            --region=us-central1 \
+            --config=cloudbuild-bench-prepare.yaml \
+            --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
+            --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}" \
+            --format='value(id)' \
+            .)"
+          build_id="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$submit_output" | tail -n 1 || true)"
+          if [[ -z "$build_id" ]]; then
+            printf '%s\n' "$submit_output"
+            echo "Cloud Build submit did not return a build id." >&2
+            exit 1
+          fi
+          echo "Submitted Cloud Build benchmark prep ${build_id}."
+          echo "build_id=${build_id}" >> "$GITHUB_OUTPUT"
+
+  publish-latest-pgo:
+    name: publish-latest-pgo
+    needs: [bench-gate, bench-prepare-cloudbuild]
+    if: >-
+      always() &&
+      needs.bench-gate.outputs.should_run == 'true' &&
+      ((github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 25
+    env:
+      LATEST_TAG: latest
+      LATEST_TARGET: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: cloudbuild-artifact
+        name: Download Cloud Build prep artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          wait_seconds=900
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            wait_seconds=360
+          fi
+
+          storage_cp() {
+            timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
+          }
+
+          manifest_value() {
+            local file="$1"
+            local key="$2"
+            grep -E "^${key}=" "${file}" | tail -n1 | cut -d= -f2-
+          }
+
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
+          deadline=$((SECONDS + wait_seconds))
+          while true; do
+            rm -f latest-bench-prep.env bench-prep.env bench-prep.tar
+            if storage_cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+              latest-bench-prep.env; then
+              latest_target_sha="$(manifest_value latest-bench-prep.env BENCH_TARGET_SHA)"
+              latest_build_date="$(manifest_value latest-bench-prep.env BENCH_BUILD_DATE)"
+              latest_pgo_optimized="$(manifest_value latest-bench-prep.env BENCH_PGO_OPTIMIZED)"
+              if [[ -z "${latest_target_sha}" ]]; then
+                echo "Cloud Build manifest did not include BENCH_TARGET_SHA."
+                exit 1
+              fi
+              if [[ "${latest_pgo_optimized}" != "1" ]]; then
+                echo "Cloud Build latest manifest is not marked PGO optimized."
+                exit 1
+              fi
+
+              if [[ "${{ github.event_name }}" == "workflow_dispatch" &&
+                    "${latest_target_sha}" != "${target_sha}" ]]; then
+                echo "Cloud Build artifact is for ${latest_target_sha}; waiting for ${target_sha}."
+              elif [[ "${{ github.event_name }}" == "schedule" &&
+                      "${latest_build_date}" != "$(date -u +%F)" ]]; then
+                echo "Cloud Build artifact is from ${latest_build_date:-unknown}; waiting for today's build."
+              elif storage_cp \
+                "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.env" \
+                bench-prep.env && \
+                storage_cp \
+                  "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.tar" \
+                  bench-prep.tar; then
+                scoped_target_sha="$(manifest_value bench-prep.env BENCH_TARGET_SHA)"
+                scoped_build_date="$(manifest_value bench-prep.env BENCH_BUILD_DATE)"
+                scoped_pgo_optimized="$(manifest_value bench-prep.env BENCH_PGO_OPTIMIZED)"
+                if [[ "${scoped_target_sha}" != "${latest_target_sha}" ]]; then
+                  echo "SHA-scoped Cloud Build manifest is for ${scoped_target_sha:-unknown}; expected ${latest_target_sha}."
+                  exit 1
+                fi
+                if [[ "${scoped_build_date}" != "${latest_build_date}" ]]; then
+                  echo "SHA-scoped Cloud Build manifest date ${scoped_build_date:-unknown} did not match latest date ${latest_build_date:-unknown}."
+                  exit 1
+                fi
+                if [[ "${scoped_pgo_optimized}" != "1" ]]; then
+                  echo "SHA-scoped Cloud Build manifest is not marked PGO optimized."
+                  exit 1
+                fi
+                tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+                tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+                echo "target_sha=${latest_target_sha}" >> "$GITHUB_OUTPUT"
+                echo "ready=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              else
+                echo "SHA-scoped Cloud Build artifact for ${latest_target_sha} is not available yet."
+              fi
+            fi
+
+            if (( SECONDS >= deadline )); then
+              echo "No finished Cloud Build PGO artifact is available yet."
+              if [[ "${{ github.event_name }}" == "schedule" ]]; then
+                exit 1
+              fi
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "Waiting for Cloud Build PGO artifact..."
+            sleep 30
+          done
+
+      - name: Stage latest PGO release asset
+        if: steps.cloudbuild-artifact.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tar -xf bench-prep.tar
+          test -x .target-bench/dist/tsz
+          test -f .target-bench/dist/.bench-pgo-optimized
+
+          staging="tsz-${LATEST_TAG}-${LATEST_TARGET}"
+          mkdir -p "dist/${staging}"
+          cp .target-bench/dist/tsz "dist/${staging}/"
+          cp README.md LICENSE 2>/dev/null "dist/${staging}/" || true
+          tar -C dist -czf "dist/${staging}.tar.gz" "${staging}"
+          sha256sum "dist/${staging}.tar.gz" | awk '{print $1}' > "dist/${staging}.tar.gz.sha256"
+          (
+            cd dist
+            printf "%s  %s\n" \
+              "$(cat "${staging}.tar.gz.sha256")" \
+              "${staging}.tar.gz" > SHA256SUMS
+          )
+          ls -la dist/
+
+      - name: Publish latest channel release
+        if: steps.cloudbuild-artifact.outputs.ready == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TARGET_SHA: ${{ steps.cloudbuild-artifact.outputs.target_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags --depth=1 origin "${RELEASE_TARGET_SHA}"
+
+          python3 <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          api = "https://api.github.com"
+          repo = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["LATEST_TAG"]
+          token = os.environ["GITHUB_TOKEN"]
+
+          def github_json(method, path, body=None, allow_404=False, expect=None):
+              data = None
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              }
+              if body is not None:
+                  data = json.dumps(body).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(f"{api}{path}", data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      raw = resp.read()
+                      payload = json.loads(raw.decode("utf-8")) if raw else None
+                      if expect is not None and resp.status != expect:
+                          raise RuntimeError(f"{method} {path} returned {resp.status}, expected {expect}")
+                      return resp.status, payload
+              except urllib.error.HTTPError as exc:
+                  if allow_404 and exc.code == 404:
+                      return exc.code, None
+                  detail = exc.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(f"{method} {path} failed with HTTP {exc.code}: {detail}") from exc
+
+          status, release = github_json(
+              "GET",
+              f"/repos/{repo}/releases/tags/{tag}",
+              allow_404=True,
+          )
+          if status == 200:
+              github_json("DELETE", f"/repos/{repo}/releases/{release['id']}", expect=204)
+          PY
+          git tag -f "${LATEST_TAG}" "${RELEASE_TARGET_SHA}"
+          git push origin "refs/tags/${LATEST_TAG}" --force
+
+          python3 <<'PY'
+          import json
+          import mimetypes
+          import os
+          import pathlib
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          api = "https://api.github.com"
+          repo = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["LATEST_TAG"]
+          target = os.environ["LATEST_TARGET"]
+          sha = os.environ["RELEASE_TARGET_SHA"]
+          token = os.environ["GITHUB_TOKEN"]
+
+          def github_request(method, url_or_path, body=None, content_type="application/json", expect=None):
+              url = url_or_path if url_or_path.startswith("https://") else f"{api}{url_or_path}"
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              }
+              data = body
+              if content_type == "application/json":
+                  data = json.dumps(body).encode("utf-8") if body is not None else None
+              if content_type:
+                  headers["Content-Type"] = content_type
+              if data is not None:
+                  headers["Content-Length"] = str(len(data))
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      raw = resp.read()
+                      payload = json.loads(raw.decode("utf-8")) if raw else None
+                      if expect is not None and resp.status != expect:
+                          raise RuntimeError(f"{method} {url} returned {resp.status}, expected {expect}")
+                      return resp.status, payload
+              except urllib.error.HTTPError as exc:
+                  detail = exc.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(f"{method} {url} failed with HTTP {exc.code}: {detail}") from exc
+
+          _, release = github_request(
+              "POST",
+              f"/repos/{repo}/releases",
+              {
+                  "tag_name": tag,
+                  "target_commitish": sha,
+                  "name": "latest",
+                  "body": f"Daily PGO optimized tsz build for {target}, built from {sha}.",
+                  "prerelease": True,
+                  "make_latest": "false",
+              },
+              expect=201,
+          )
+          upload_url = release["upload_url"].split("{", 1)[0]
+          assets = [
+              pathlib.Path(f"dist/tsz-{tag}-{target}.tar.gz"),
+              pathlib.Path(f"dist/tsz-{tag}-{target}.tar.gz.sha256"),
+              pathlib.Path("dist/SHA256SUMS"),
+          ]
+          for asset in assets:
+              name = asset.name
+              content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+              data = asset.read_bytes()
+              params = urllib.parse.urlencode({"name": name})
+              github_request(
+                  "POST",
+                  f"{upload_url}?{params}",
+                  data,
+                  content_type=content_type,
+                  expect=201,
+              )
+          PY
+
+      - name: Smoke test latest installer
+        if: steps.cloudbuild-artifact.outputs.ready == 'true'
+        shell: bash
+        env:
+          TSZ_REPO_OWNER: ${{ github.repository_owner }}
+          TSZ_REPO_NAME: ${{ github.event.repository.name }}
+          TSZ_INSTALL_REQUIRE_LATEST_CHANNEL: "1"
+        run: |
+          set -euo pipefail
+          install_dir="${RUNNER_TEMP}/tsz-latest-install"
+          bash scripts/install.sh --version latest --dir "${install_dir}"
+          "${install_dir}/tsz" --version
+
+  bench-prep-artifact:
+    name: bench-prep-artifact
+    needs: [bench-prepare, bench-prepare-cloudbuild]
+    if: >-
+      always() &&
+      (needs.bench-prepare.outputs.should_run == 'true' ||
+       (!(github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo) &&
+        !(github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') &&
+        !(github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') &&
+        needs.bench-prepare-cloudbuild.outputs.should_run == 'true')) &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 170
+    outputs:
+      should_run: ${{ steps.ready.outputs.should_run }}
+    steps:
+      - id: ready
+        name: Confirm benchmark prep artifact should be staged
+        shell: bash
+        run: echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Download Cloud Build prep artifact
+        if: needs.bench-prepare.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
+          manifest_value() {
+            local key="$1"
+            awk -v key="$key" '
+              index($0, key "=") == 1 { value = substr($0, length(key) + 2) }
+              END { print value }
+            ' bench-prep.env
+          }
+          storage_cp() {
+            timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
+          }
+          copy_from_cloudbuild_manifest() {
+            local target_sha="$1"
+            local manifest_file=cloudbuild-artifacts.json
+            local manifest_paths=cloudbuild-artifacts.env
+
+            [[ -n "$cloudbuild_id" ]] || return 1
+            storage_cp "gs://tsz-ci_cloudbuild/artifacts-${cloudbuild_id}.json" "$manifest_file" || return 1
+            node - "$manifest_file" "$target_sha" > "$manifest_paths" <<'NODE'
+          const fs = require("node:fs");
+
+          const [manifestPath, targetSha] = process.argv.slice(2);
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+          const entries = Array.isArray(manifest) ? manifest : (manifest.location ? [manifest] : (manifest.artifacts || manifest.results || []));
+          const locationOf = (entry) => String(entry.location || "").split("#", 1)[0];
+          const findLocation = (suffixes) => {
+            for (const suffix of suffixes) {
+              const match = entries.find((entry) => locationOf(entry).endsWith(suffix));
+              if (match) return locationOf(match);
+            }
+            return "";
+          };
+          const env = findLocation([
+            `/bench-prep/${targetSha}/bench-prep.env`,
+            `bench-prep/${targetSha}/bench-prep.env`,
+            "/bench-prep/latest/bench-prep.env",
+            "bench-prep/latest/bench-prep.env",
+          ]);
+          const tar = findLocation([
+            `/bench-prep/${targetSha}/bench-prep.tar`,
+            `bench-prep/${targetSha}/bench-prep.tar`,
+            "/bench-prep/latest/bench-prep.tar",
+            "bench-prep/latest/bench-prep.tar",
+          ]);
+          if (!env || !tar) {
+            console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
+            process.exit(1);
+          }
+          console.log(`manifest_env=${JSON.stringify(env)}`);
+          console.log(`manifest_tar=${JSON.stringify(tar)}`);
+          NODE
+            # shellcheck disable=SC1090
+            source "$manifest_paths"
+            storage_cp "$manifest_env" bench-prep.env && storage_cp "$manifest_tar" bench-prep.tar
+          }
+          cloudbuild_status() {
+            local build_id="$1"
+            [[ -n "$build_id" ]] || return 0
+            gcloud builds describe "$build_id" \
+              --project=tsz-ci \
+              --region=us-central1 \
+              --format='value(status)' 2>/dev/null || true
+          }
+          cloudbuild_id="${{ needs.bench-prepare.outputs.build_id }}"
+
+          deadline=$((SECONDS + 9000))
+          while true; do
+            rm -f bench-prep.env bench-prep.tar
+            if storage_cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.env" \
+              bench-prep.env && \
+              storage_cp \
+                "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.tar" \
+                bench-prep.tar; then
+              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+              manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+              manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+              if [[ "${manifest_target_sha}" == "${target_sha}" &&
+                    "${manifest_pgo_optimized}" == "1" ]]; then
+                exit 0
+              fi
+              echo "Cloud Build prep artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; waiting for ${target_sha}."
+            fi
+
+            status="$(cloudbuild_status "$cloudbuild_id")"
+            if [[ "$status" == "SUCCESS" ]] && copy_from_cloudbuild_manifest "$target_sha"; then
+              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+              manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+              manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+              if [[ "${manifest_target_sha}" == "${target_sha}" &&
+                    "${manifest_pgo_optimized}" == "1" ]]; then
+                exit 0
+              fi
+              echo "Cloud Build manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; waiting for ${target_sha}."
+            fi
+            case "$status" in
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build benchmark prep ${cloudbuild_id} ended with status ${status}; artifact is unavailable."
+                exit 1
+                ;;
+            esac
+
+            if (( SECONDS >= deadline )); then
+              echo "No finished Cloud Build PGO prep artifact is available for ${target_sha} after 150 minutes."
+              [[ -z "$status" ]] || echo "Last Cloud Build benchmark prep status: ${status} (${cloudbuild_id})."
+              exit 1
+            fi
+
+            echo "Waiting for Cloud Build benchmark prep artifact..."
+            sleep 30
+          done
+
+      - name: Download Cloud Build prep artifact
+        if: >-
+          needs.bench-prepare.outputs.should_run != 'true' &&
+          needs.bench-prepare-cloudbuild.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          storage_cp() {
+            timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
+          }
+          copy_from_cloudbuild_manifest() {
+            local target_sha="$1"
+            local manifest_file=cloudbuild-artifacts.json
+            local manifest_paths=cloudbuild-artifacts.env
+
+            [[ -n "$cloudbuild_id" ]] || return 1
+            storage_cp "gs://tsz-ci_cloudbuild/artifacts-${cloudbuild_id}.json" "$manifest_file" || return 1
+            node - "$manifest_file" "$target_sha" > "$manifest_paths" <<'NODE'
+          const fs = require("node:fs");
+
+          const [manifestPath, targetSha] = process.argv.slice(2);
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+          const entries = Array.isArray(manifest) ? manifest : (manifest.location ? [manifest] : (manifest.artifacts || manifest.results || []));
+          const locationOf = (entry) => String(entry.location || "").split("#", 1)[0];
+          const findLocation = (suffixes) => {
+            for (const suffix of suffixes) {
+              const match = entries.find((entry) => locationOf(entry).endsWith(suffix));
+              if (match) return locationOf(match);
+            }
+            return "";
+          };
+          const env = findLocation([
+            `/bench-prep/${targetSha}/bench-prep.env`,
+            `bench-prep/${targetSha}/bench-prep.env`,
+            "/bench-prep/latest/bench-prep.env",
+            "bench-prep/latest/bench-prep.env",
+          ]);
+          const tar = findLocation([
+            `/bench-prep/${targetSha}/bench-prep.tar`,
+            `bench-prep/${targetSha}/bench-prep.tar`,
+            "/bench-prep/latest/bench-prep.tar",
+            "bench-prep/latest/bench-prep.tar",
+          ]);
+          if (!env || !tar) {
+            console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
+            process.exit(1);
+          }
+          console.log(`manifest_env=${JSON.stringify(env)}`);
+          console.log(`manifest_tar=${JSON.stringify(tar)}`);
+          NODE
+            # shellcheck disable=SC1090
+            source "$manifest_paths"
+            storage_cp "$manifest_env" bench-prep.env && storage_cp "$manifest_tar" bench-prep.tar
+          }
+          cloudbuild_status() {
+            local build_id="$1"
+            [[ -n "$build_id" ]] || return 0
+            gcloud builds describe "$build_id" \
+              --project=tsz-ci \
+              --region=us-central1 \
+              --format='value(status)' 2>/dev/null || true
+          }
+          cloudbuild_id="${{ needs.bench-prepare-cloudbuild.outputs.build_id }}"
+
+          deadline=$((SECONDS + 9000))
+          while true; do
+            if storage_cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.env" \
+              bench-prep.env && \
+              storage_cp \
+                "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.tar" \
+                bench-prep.tar; then
+              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+              # shellcheck disable=SC1091
+              source bench-prep.env
+              if [[ "${BENCH_TARGET_SHA:-}" == "${{ env.BENCH_TARGET_SHA }}" ]]; then
+                exit 0
+              fi
+              echo "Cloud Build prep artifact is for ${BENCH_TARGET_SHA:-unknown}; waiting for ${{ env.BENCH_TARGET_SHA }}."
+            fi
+
+            status="$(cloudbuild_status "$cloudbuild_id")"
+            if [[ "$status" == "SUCCESS" ]] && copy_from_cloudbuild_manifest "${{ env.BENCH_TARGET_SHA }}"; then
+              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+              # shellcheck disable=SC1091
+              source bench-prep.env
+              if [[ "${BENCH_TARGET_SHA:-}" == "${{ env.BENCH_TARGET_SHA }}" ]]; then
+                exit 0
+              fi
+              echo "Cloud Build manifest artifact is for ${BENCH_TARGET_SHA:-unknown}; waiting for ${{ env.BENCH_TARGET_SHA }}."
+            fi
+            case "$status" in
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build benchmark prep ${cloudbuild_id} ended with status ${status}; artifact is unavailable."
+                exit 1
+                ;;
+            esac
+
+            if (( SECONDS >= deadline )); then
+              echo "No finished Cloud Build benchmark prep artifact is available for ${{ env.BENCH_TARGET_SHA }} after 150 minutes."
+              [[ -z "$status" ]] || echo "Last Cloud Build benchmark prep status: ${status} (${cloudbuild_id})."
+              exit 1
+            fi
+
+            echo "Waiting for Cloud Build benchmark prep artifact..."
+            sleep 30
+          done
+
+      - name: Validate benchmark prep artifact
+        shell: bash
+        run: |
+          tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+          tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+
+      - name: Upload normalized benchmark prep artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-prep-ready
+          path: bench-prep.tar
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 1
+
+  bench:
+    name: bench-${{ matrix.label }}
+    needs: bench-prep-artifact
+    if: needs.bench-prep-artifact.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: compiler-files
+            timeout: 120
+            filter: 'conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable\.ts|manyConstExports\.ts|binderBinaryExpressionStress\.ts|binderBinaryExpressionStressJs\.ts|enumLiteralsSubtypeReduction\.ts|binaryArithmeticControlFlowGraphNotTooLarge\.ts|privacyFunctionParameterDeclFile\.ts|privacyGloFunc\.ts|privacyTypeParameterOfFunctionDeclFile\.ts|typedArrays\.ts|controlFlowArrays\.ts'
+          - label: synthetic
+            timeout: 120
+            filter: '[0-9]+ classes|[0-9]+ generic functions|DeepPartial optional-chain|Shallow optional-chain|[0-9]+ union members'
+          - label: solver-stress
+            timeout: 120
+            filter: 'Recursive generic depth|Conditional dist N|Mapped type keys|Template literal N|Deep subtype depth|Intersection N|Infer stress N|CFA branches'
+          - label: algorithmic-bct
+            timeout: 120
+            filter: 'BCT candidates'
+          - label: algorithmic-constraint
+            timeout: 120
+            filter: 'Constraint conflicts N'
+          - label: algorithmic-mapped
+            timeout: 120
+            filter: 'Mapped complex template keys'
+          - label: projects
+            timeout: 120
+            filter: 'utility-types/|ts-toolbelt/|ts-essentials/|utility-types-project|ts-essentials-project|rxjs-project|type-fest-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
+          - label: large-ts-repo
+            timeout: 120
+            filter: '^large-ts-repo$'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BENCH_TARGET_SHA }}
+          fetch-depth: 1
+
+      - name: Restore tools cache
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: .target-bench/tools
+          key: bench-tools-${{ runner.os }}-hyperfine-${{ env.HYPERFINE_VER }}-${{ hashFiles('scripts/bench/project-fixtures.sh') }}
+
+      - name: Install hyperfine
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .target-bench/tools/bin
+          curl -fsSL "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VER}/hyperfine-v${HYPERFINE_VER}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar xz --strip-components=1 -C .target-bench/tools/bin \
+                "hyperfine-v${HYPERFINE_VER}-x86_64-unknown-linux-musl/hyperfine"
+
+      - name: Add tools bin to PATH
+        run: echo "$GITHUB_WORKSPACE/.target-bench/tools/bin" >> "$GITHUB_PATH"
+
+      - name: Restore external fixture cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .target-bench/external
+            .ci-cache/pnpm-store
+          key: bench-fixtures-${{ matrix.label }}-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh', 'scripts/bench/project-fixtures.sh', 'scripts/bench/project-rows.mjs') }}
+          restore-keys: |
+            bench-fixtures-${{ matrix.label }}-${{ runner.os }}-
+            bench-fixtures-${{ runner.os }}-
+
+      - name: Download benchmark prep artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-prep-ready
+          path: .
+
+      - name: Unpack benchmark prep artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tar -xf bench-prep.tar
+          test -x .target-bench/dist/tsz
+          test -f .target-bench/dist/.bench-pgo-optimized
+
+          # The tarball preserves the binary mtime from bench-prepare. Shard
+          # jobs run after a fresh checkout, so source files can look newer and
+          # make bench-vs-tsgo rebuild the dist binary in every shard.
+          touch .target-bench/dist/tsz
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        run: |
+          if ! command -v pnpm &>/dev/null; then
+            mkdir -p "$HOME/.npm-global"
+            npm config set prefix "$HOME/.npm-global"
+            npm install -g pnpm --silent
+            echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
+          fi
+          pnpm config set store-dir "$PNPM_STORE_DIR"
+
+      - name: Bench shard prelude (cleanup + headroom check)
+        shell: bash
+        run: scripts/ci/bench-shard-prelude.sh prelude --label '${{ matrix.label }}'
+
+      - name: Run benchmark shard
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export TSZ="$GITHUB_WORKSPACE/.target-bench/dist/tsz"
+          export TSZ_BENCH_SHARD_LABEL='${{ matrix.label }}'
+          export TSZ_BENCH_SHARD_FILTER='${{ matrix.filter }}'
+          if [[ '${{ matrix.label }}' == 'projects' ]]; then
+            export NEXTJS_BENCHMARK_ENABLED=1
+          fi
+          echo "Using prepared benchmark TSZ binary: $TSZ"
+
+          # Wrap the bench in safe-run.sh so a runaway shard is killed before
+          # the OS OOM-killer reaches the runner agent (issue #7601). 85%
+          # leaves ~15% headroom for the runner agent and sshd; 30s sampling
+          # is plenty for multi-minute shards.
+          scripts/safe-run.sh --limit "${TSZ_BENCH_MEMORY_LIMIT:-85%}" --interval 30 -- \
+            ./scripts/bench/bench-vs-tsgo.sh \
+              --filter '${{ matrix.filter }}' \
+              --json \
+              --json-file "$GITHUB_WORKSPACE/bench-results-${{ matrix.label }}.json" \
+            2>&1 | tee "$GITHUB_WORKSPACE/bench-run-${{ matrix.label }}.log"
+
+      - name: Capture shard failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          scripts/ci/bench-shard-prelude.sh postmortem \
+            --label '${{ matrix.label }}' \
+            --output "$GITHUB_WORKSPACE/bench-postmortem-${{ matrix.label }}.log"
+
+      - name: Upload benchmark shard artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ matrix.label }}
+          path: |
+            bench-results-${{ matrix.label }}.json
+            bench-run-${{ matrix.label }}.log
+            bench-postmortem-${{ matrix.label }}.log
+          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 1
+
+  publish:
+    name: bench-publish
+    needs: bench
+    if: needs.bench.result == 'success'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BENCH_TARGET_SHA }}
+          fetch-depth: 1
+
+      - name: Download benchmark shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bench-results-*
+          path: bench-artifacts
+          merge-multiple: true
+
+      - name: Download benchmark prep artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-prep-ready
+          path: .
+
+      - name: Run PGO compile canaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tar -xf bench-prep.tar
+          test -x .target-bench/dist/tsz
+          test -f .target-bench/dist/.bench-pgo-optimized
+
+          TSZ_BIN="$GITHUB_WORKSPACE/.target-bench/dist/tsz" \
+          TSZ_PROJECT_COMPILE_SET=canary \
+          TSZ_PROJECT_COMPILE_FILTER='type-challenges-solutions-project' \
+          scripts/ci/project-compile-guard.sh
+
+      - name: Merge benchmark results
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t json_files < <(find bench-artifacts -name 'bench-results-*.json' -type f | sort)
+          if [[ "${#json_files[@]}" -eq 0 ]]; then
+            echo "No benchmark result JSON files found."
+            find bench-artifacts -maxdepth 2 -type f -print || true
+            exit 1
+          fi
+          if [[ "${#json_files[@]}" -ne 8 ]]; then
+            echo "Expected 8 benchmark shard JSON files, found ${#json_files[@]}."
+            printf 'Found JSON files:\n'
+            printf '  %s\n' "${json_files[@]}"
+            find bench-artifacts -maxdepth 2 -type f -print || true
+            exit 1
+          fi
+          node scripts/bench/merge-results.mjs \
+            "$GITHUB_WORKSPACE/bench-results.json" \
+            --require-runner-signature \
+            --compat-jsonl "$GITHUB_WORKSPACE/.target/project-compile-guard/project-compatibility.jsonl" \
+            "${json_files[@]}"
+
+      - name: Summarize green tsgo winners
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bench/tsgo-winner-report.mjs \
+            "$GITHUB_WORKSPACE/bench-results.json" \
+            "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json"
+
+      - name: Compare project winner regressions
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous="$GITHUB_WORKSPACE/bench-results-previous-latest.json"
+          report_json="$GITHUB_WORKSPACE/bench-results-project-winner-regressions.json"
+          report_md="$GITHUB_WORKSPACE/bench-results-project-winner-regressions.md"
+
+          if ! gsutil -q cp "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json" "$previous"; then
+            echo "No previous latest benchmark artifact available; skipping project winner regression comparison." | tee "$report_md"
+            echo '{"schema_version":1,"skipped":true,"reason":"previous latest benchmark artifact unavailable"}' > "$report_json"
+            exit 0
+          fi
+
+          set +e
+          node scripts/bench/project-winner-regression-report.mjs \
+            "$previous" \
+            "$GITHUB_WORKSPACE/bench-results.json" \
+            "$report_json" | tee "$report_md"
+          status="${PIPESTATUS[0]}"
+          set -e
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            cat "$report_md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
+      - name: Upload merged benchmark artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-merged
+          path: |
+            bench-results.json
+            bench-results-tsgo-winners.json
+            bench-results-project-winner-regressions.json
+            bench-results-project-winner-regressions.md
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 1
+
+      - name: Publish results
+        id: publish
+        run: |
+          set -euo pipefail
+
+          TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+          MAIN_SHA="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          TARGET_SHA="${BENCH_TARGET_SHA:-${GITHUB_SHA}}"
+          EVENT_NAME="${{ github.event_name }}"
+
+          gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
+            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
+          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
+          gsutil -q cp "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
+            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.tsgo-winners.json"
+          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.tsgo-winners.json"
+
+          if [[ -n "${MAIN_SHA}" && "${TARGET_SHA}" != "${MAIN_SHA}" ]]; then
+            echo "Bench target ${TARGET_SHA} is behind current main ${MAIN_SHA}; publishing because active benchmark runs are intentionally allowed to finish."
+          fi
+
+          gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
+            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+          gsutil -q cp "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
+            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.tsgo-winners.json"
+          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.tsgo-winners.json"
+          echo "should_redeploy=true" >> "$GITHUB_OUTPUT"
+
+      - name: Report severe benchmark gaps
+        if: steps.publish.outputs.should_redeploy == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.BENCH_ALERT_TOKEN || github.token }}
+          BENCH_ALERT_TSZ_SLOWER_FACTOR: "5"
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const https = require("node:https");
+
+          (async () => {
+            const token = process.env.GH_TOKEN;
+            const repo = process.env.GITHUB_REPOSITORY;
+            const runUrl = `${process.env.GITHUB_SERVER_URL}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            const threshold = Number(process.env.BENCH_ALERT_TSZ_SLOWER_FACTOR || 5);
+            const data = JSON.parse(fs.readFileSync("bench-results.json", "utf8"));
+            const winnerReport = JSON.parse(fs.readFileSync("bench-results-tsgo-winners.json", "utf8"));
+            const rows = (winnerReport.rows || [])
+              .filter((row) => Number(row.factor) >= threshold)
+              .sort((a, b) => Number(b.factor || 0) - Number(a.factor || 0));
+
+            if (!rows.length) {
+              console.log(`No green tsgo wins at or above ${threshold}x.`);
+              return;
+            }
+
+            if (!token) {
+              console.log("No GitHub token available; skipping benchmark alert issue.");
+              return;
+            }
+
+            function github(method, path, body) {
+              const payload = body === undefined ? undefined : JSON.stringify(body);
+              const options = {
+                hostname: "api.github.com",
+                path,
+                method,
+                headers: {
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": `Bearer ${token}`,
+                  "User-Agent": "tsz-bench-alert",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                },
+              };
+              if (payload !== undefined) {
+                options.headers["Content-Type"] = "application/json";
+                options.headers["Content-Length"] = Buffer.byteLength(payload);
+              }
+              return new Promise((resolve, reject) => {
+                const req = https.request(options, (res) => {
+                  let raw = "";
+                  res.setEncoding("utf8");
+                  res.on("data", (chunk) => raw += chunk);
+                  res.on("end", () => {
+                    const parsed = raw ? JSON.parse(raw) : null;
+                    if (res.statusCode < 200 || res.statusCode >= 300) {
+                      reject(new Error(`${method} ${path} failed with ${res.statusCode}: ${raw}`));
+                      return;
+                    }
+                    resolve(parsed);
+                  });
+                });
+                req.on("error", reject);
+                if (payload !== undefined) req.write(payload);
+                req.end();
+              });
+            }
+
+            const title = "benchmark alert: severe tsgo wins on main";
+            const table = rows.slice(0, 12).map((row) => {
+              const tsz = Number(row.tsz_ms || 0).toFixed(2);
+              const tsgo = Number(row.tsgo_ms || 0).toFixed(2);
+              const factor = Number(row.factor || 0).toFixed(2);
+              const owner = row.semantic_owner_family || "n/a";
+              return `| \`${row.name}\` | ${factor}x | ${tsz} | ${tsgo} | ${row.lines || 0} | ${owner} |`;
+            }).join("\n");
+            const body = [
+              `A completed main benchmark found ${rows.length} green row(s) where \`tsgo\` is at least ${threshold}x faster than \`tsz\`.`,
+              "",
+              `Run: ${runUrl}`,
+              `Target SHA: \`${process.env.BENCH_TARGET_SHA || process.env.GITHUB_SHA}\``,
+              `Generated at: \`${winnerReport.generated_at || data.generated_at || "unknown"}\``,
+              "",
+              "| Row | tsgo factor | tsz ms | tsgo ms | lines | owner family |",
+              "|---|---:|---:|---:|---:|---|",
+              table,
+              "",
+              "AgentName: github-actions-bench-alert",
+            ].join("\n");
+
+            const query = encodeURIComponent(`repo:${repo} is:issue is:open in:title "${title}"`);
+            const search = await github("GET", `/search/issues?q=${query}`);
+            const existing = (search.items || []).find((issue) => issue.title === title);
+            if (existing) {
+              await github("POST", `/repos/${repo}/issues/${existing.number}/comments`, { body });
+              console.log(`Commented on existing benchmark alert issue #${existing.number}.`);
+            } else {
+              const issue = await github("POST", `/repos/${repo}/issues`, {
+                title,
+                body,
+                labels: ["urgent", "bench", "performance"],
+              });
+              console.log(`Created benchmark alert issue #${issue.number}.`);
+            }
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Trigger website redeploy
+        if: steps.publish.outputs.should_redeploy == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -fsSL \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/gh-pages.yml/dispatches" \
+            -d '{"ref":"main"}'

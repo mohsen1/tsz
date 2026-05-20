@@ -1,0 +1,868 @@
+//! `SourceWriter` - Abstraction for writing emitter output with source map tracking
+//!
+//! This module separates the concerns of:
+//! - Writing text to an output buffer
+//! - Tracking line/column positions for source maps
+//! - Managing indentation
+//!
+//! The emitter (Printer) delegates all text output to `SourceWriter`,
+//! allowing for accurate source map generation and cleaner separation of concerns.
+
+use crate::emitter::NewLineKind;
+use tsz_common::source_map::{Mapping, SourceMapGenerator};
+
+/// A source position from the original AST
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SourcePosition {
+    /// Byte offset in original source (from Node.pos)
+    pub pos: u32,
+    /// Line number (0-indexed, computed from source text)
+    pub line: u32,
+    /// Column number (0-indexed, computed from source text)
+    pub column: u32,
+}
+
+/// Delimiter pairs that can be written through structured writer helpers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelimiterKind {
+    /// `(` and `)`
+    Paren,
+    /// `[` and `]`
+    Bracket,
+    /// `{` and `}`
+    Brace,
+}
+
+impl DelimiterKind {
+    pub const fn open_char(self) -> char {
+        match self {
+            Self::Paren => '(',
+            Self::Bracket => '[',
+            Self::Brace => '{',
+        }
+    }
+
+    pub const fn close_char(self) -> char {
+        match self {
+            Self::Paren => ')',
+            Self::Bracket => ']',
+            Self::Brace => '}',
+        }
+    }
+}
+
+/// Writer that handles output generation and source map tracking.
+///
+/// This abstraction separates text generation from AST traversal,
+/// enabling accurate source maps for all emitted code including transforms.
+pub struct SourceWriter {
+    /// Output buffer
+    output: String,
+
+    /// Current output line (0-indexed)
+    line: u32,
+
+    /// Current output column (0-indexed)
+    column: u32,
+
+    /// Current indentation level
+    indent_level: u32,
+
+    /// Whether we're at the start of a line (for lazy indentation)
+    at_line_start: bool,
+
+    /// Indentation string (e.g., "    " for 4 spaces)
+    indent_str: String,
+
+    /// New line string ("\n" or "\r\n")
+    new_line: String,
+
+    /// Optional source map generator
+    source_map: Option<SourceMapGenerator>,
+
+    /// Current source file index (for source maps)
+    current_source_index: u32,
+
+    /// Structured delimiter stack for debug/test-only balance checks.
+    #[cfg(debug_assertions)]
+    delimiter_stack: Vec<DelimiterKind>,
+
+    /// Number of delimiter mismatches observed through structured helpers.
+    #[cfg(debug_assertions)]
+    delimiter_mismatch_count: u32,
+}
+
+impl SourceWriter {
+    /// Create a new `SourceWriter` with default settings
+    pub fn new() -> Self {
+        Self::with_capacity(1024)
+    }
+
+    /// Create a `SourceWriter` with pre-allocated capacity
+    /// This reduces allocations when the expected output size is known
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            output: String::with_capacity(capacity),
+            line: 0,
+            column: 0,
+            indent_level: 0,
+            at_line_start: true,
+            indent_str: "    ".to_string(),
+            new_line: "\n".to_string(),
+            source_map: None,
+            current_source_index: 0,
+            #[cfg(debug_assertions)]
+            delimiter_stack: Vec::new(),
+            #[cfg(debug_assertions)]
+            delimiter_mismatch_count: 0,
+        }
+    }
+
+    /// Create a `SourceWriter` with source map generation enabled
+    pub fn with_source_map(output_file: String) -> Self {
+        let mut writer = Self::new();
+        writer.source_map = Some(SourceMapGenerator::new(output_file));
+        writer
+    }
+
+    /// Enable source map generation on an existing writer.
+    pub fn enable_source_map(&mut self, output_file: String) {
+        if self.source_map.is_none() {
+            self.source_map = Some(SourceMapGenerator::new(output_file));
+        }
+    }
+
+    /// Check if source map generation is enabled.
+    pub const fn has_source_map(&self) -> bool {
+        self.source_map.is_some()
+    }
+
+    /// Set the indentation string
+    pub fn set_indent_str(&mut self, indent: &str) {
+        self.indent_str = indent.to_string();
+    }
+
+    /// Set the new line kind
+    pub fn set_new_line_kind(&mut self, kind: NewLineKind) {
+        self.new_line = match kind {
+            NewLineKind::LineFeed => "\n".to_string(),
+            NewLineKind::CarriageReturnLineFeed => "\r\n".to_string(),
+        };
+    }
+
+    /// Add a source file to the source map and set it as current
+    pub fn add_source(&mut self, source_name: String, content: Option<String>) -> u32 {
+        if let Some(ref mut sm) = self.source_map {
+            let idx = if let Some(c) = content {
+                sm.add_source_with_content(source_name, c)
+            } else {
+                sm.add_source(source_name)
+            };
+            self.current_source_index = idx;
+            idx
+        } else {
+            0
+        }
+    }
+
+    // =========================================================================
+    // Core Write Methods
+    // =========================================================================
+
+    /// Write text to output (syntax glue, no source mapping)
+    pub fn write(&mut self, text: &str) {
+        self.ensure_indent();
+        self.raw_write(text);
+    }
+
+    /// Write pre-indented text without adding additional indentation.
+    /// Used for writing output from transforms that manage their own indentation.
+    pub fn write_raw_text(&mut self, text: &str) {
+        self.raw_write(text);
+    }
+
+    /// Write text derived from a source node (maps to original position)
+    pub fn write_node(&mut self, text: &str, source_pos: SourcePosition) {
+        self.ensure_indent();
+
+        // Add source map mapping before writing
+        if let Some(ref mut sm) = self.source_map {
+            sm.add_simple_mapping(
+                self.line,
+                self.column,
+                self.current_source_index,
+                source_pos.line,
+                source_pos.column,
+            );
+        }
+
+        self.raw_write(text);
+    }
+
+    /// Write text derived from a source node with an end-of-token mapping.
+    /// Adds both a start mapping (before the text) and an end mapping (after
+    /// the text) pointing to `source_pos.column + text.len()`.  tsc emits these
+    /// end markers for single-character tokens like `;`, `{`, `}`.
+    pub fn write_node_with_end(&mut self, text: &str, source_pos: SourcePosition) {
+        self.ensure_indent();
+
+        if let Some(ref mut sm) = self.source_map {
+            sm.add_simple_mapping(
+                self.line,
+                self.column,
+                self.current_source_index,
+                source_pos.line,
+                source_pos.column,
+            );
+        }
+
+        self.raw_write(text);
+
+        // End-of-token mapping: generated position is now past the token,
+        // source position advances by the same length.
+        if let Some(ref mut sm) = self.source_map {
+            sm.add_simple_mapping(
+                self.line,
+                self.column,
+                self.current_source_index,
+                source_pos.line,
+                source_pos.column + text.len() as u32,
+            );
+        }
+    }
+
+    /// Write an unsigned integer derived from a source node (maps to original position).
+    pub fn write_node_usize(&mut self, value: usize, source_pos: SourcePosition) {
+        self.ensure_indent();
+
+        if let Some(ref mut sm) = self.source_map {
+            sm.add_simple_mapping(
+                self.line,
+                self.column,
+                self.current_source_index,
+                source_pos.line,
+                source_pos.column,
+            );
+        }
+
+        self.raw_write_usize_digits(value);
+    }
+
+    /// Write text with a name reference (for identifiers)
+    pub fn write_node_with_name(&mut self, text: &str, source_pos: SourcePosition, name: &str) {
+        self.ensure_indent();
+
+        if let Some(ref mut sm) = self.source_map {
+            let name_idx = sm.add_name(name.to_string());
+            sm.add_mapping(
+                self.line,
+                self.column,
+                self.current_source_index,
+                source_pos.line,
+                source_pos.column,
+                Some(name_idx),
+            );
+        }
+
+        self.raw_write(text);
+    }
+
+    /// Write a single character
+    pub fn write_char(&mut self, ch: char) {
+        self.ensure_indent();
+        self.raw_write_char(ch);
+    }
+
+    /// Write an opening delimiter and track it for debug balance checks.
+    pub fn write_open_delimiter(&mut self, delimiter: DelimiterKind) {
+        self.track_open_delimiter(delimiter);
+        self.write_char(delimiter.open_char());
+    }
+
+    /// Write a source-mapped opening delimiter and track it for debug balance checks.
+    pub fn write_open_delimiter_node(
+        &mut self,
+        delimiter: DelimiterKind,
+        source_pos: SourcePosition,
+    ) {
+        self.track_open_delimiter(delimiter);
+        let mut buf = [0u8; 4];
+        let text = delimiter.open_char().encode_utf8(&mut buf);
+        self.write_node(text, source_pos);
+    }
+
+    /// Write a closing delimiter and verify it matches the last structured opener.
+    pub fn write_close_delimiter(&mut self, delimiter: DelimiterKind) {
+        self.track_close_delimiter(delimiter);
+        self.write_char(delimiter.close_char());
+    }
+
+    /// Write a source-mapped closing delimiter and verify it matches the last opener.
+    pub fn write_close_delimiter_node(
+        &mut self,
+        delimiter: DelimiterKind,
+        source_pos: SourcePosition,
+    ) {
+        self.track_close_delimiter(delimiter);
+        let mut buf = [0u8; 4];
+        let text = delimiter.close_char().encode_utf8(&mut buf);
+        self.write_node(text, source_pos);
+    }
+
+    /// Write a newline
+    pub fn write_line(&mut self) {
+        self.output.push_str(&self.new_line);
+        self.line += 1;
+        self.column = 0;
+        self.at_line_start = true;
+    }
+
+    /// Undo the last `write_line()` call, removing the trailing newline from
+    /// the output buffer and restoring line/column state. Returns `true` if
+    /// a newline was successfully removed.
+    ///
+    /// This is used by the statement loop to backtrack a premature newline so
+    /// that trailing comments can be appended to the correct output line.
+    pub fn undo_last_write_line(&mut self) -> bool {
+        if !self.at_line_start || self.line == 0 {
+            return false;
+        }
+        let nl_len = self.new_line.len();
+        if self.output.len() < nl_len {
+            return false;
+        }
+        // Verify the output ends with the newline string
+        if !self.output.ends_with(&self.new_line) {
+            return false;
+        }
+        self.output.truncate(self.output.len() - nl_len);
+        self.line -= 1;
+        self.at_line_start = false;
+        // Restore column: count bytes from last newline to end of output
+        let col = if let Some(last_nl) = self.output.rfind(&self.new_line) {
+            (self.output.len() - last_nl - nl_len) as u32
+        } else {
+            self.output.len() as u32
+        };
+        self.column = col;
+        true
+    }
+
+    /// Write a space
+    pub fn write_space(&mut self) {
+        self.write(" ");
+    }
+
+    /// Write an unsigned integer without allocating.
+    pub fn write_usize(&mut self, value: usize) {
+        self.ensure_indent();
+
+        self.raw_write_usize_digits(value);
+    }
+
+    // =========================================================================
+    // Indentation
+    // =========================================================================
+
+    /// Increase indentation level
+    pub const fn increase_indent(&mut self) {
+        self.indent_level += 1;
+    }
+
+    /// Decrease indentation level
+    pub const fn decrease_indent(&mut self) {
+        if self.indent_level > 0 {
+            self.indent_level -= 1;
+        }
+    }
+
+    /// Get current indentation level
+    pub const fn indent_level(&self) -> u32 {
+        self.indent_level
+    }
+
+    /// Set indentation level directly (for transforms that manage their own indentation)
+    pub const fn set_indent_level(&mut self, level: u32) {
+        self.indent_level = level;
+    }
+
+    /// Get the current indentation width in columns.
+    pub const fn indent_width(&self) -> u32 {
+        self.indent_level
+            .saturating_mul(self.indent_str.len() as u32)
+    }
+
+    /// Get the configured width of one indentation level in columns.
+    pub const fn indent_unit_width(&self) -> u32 {
+        self.indent_str.len() as u32
+    }
+
+    // =========================================================================
+    // Position Tracking
+    // =========================================================================
+
+    /// Get current output line (0-indexed)
+    pub const fn current_line(&self) -> u32 {
+        self.line
+    }
+
+    /// Get current output column (0-indexed)
+    pub const fn current_column(&self) -> u32 {
+        self.column
+    }
+
+    /// Get the indentation level implied by spaces already written on the
+    /// current line. This is useful when a raw transform string started a line
+    /// without synchronizing the writer's logical indentation.
+    pub fn current_line_visual_indent_level(&self) -> u32 {
+        let line = self
+            .output
+            .rsplit_once(&self.new_line)
+            .map_or(self.output.as_str(), |(_, line)| line);
+        let leading_spaces = line.bytes().take_while(|&b| b == b' ').count();
+        (leading_spaces / self.indent_str.len())
+            .try_into()
+            .unwrap_or(0)
+    }
+
+    /// Get current source index for source map entries.
+    pub const fn current_source_index(&self) -> u32 {
+        self.current_source_index
+    }
+
+    /// Whether all structured delimiter helper calls are balanced.
+    ///
+    /// This intentionally tracks only delimiters written through
+    /// `write_open_delimiter` / `write_close_delimiter`; raw text writes remain
+    /// available for existing emitter paths and transform output.
+    pub const fn delimiters_balanced(&self) -> bool {
+        #[cfg(debug_assertions)]
+        {
+            self.delimiter_stack.is_empty() && self.delimiter_mismatch_count == 0
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            true
+        }
+    }
+
+    /// Number of structured delimiter openers that have not been closed.
+    pub const fn unclosed_delimiter_count(&self) -> usize {
+        #[cfg(debug_assertions)]
+        {
+            self.delimiter_stack.len()
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            0
+        }
+    }
+
+    /// Check if we're at the start of a line
+    pub const fn is_at_line_start(&self) -> bool {
+        self.at_line_start
+    }
+
+    /// Return the last non-whitespace byte in the output buffer, if any.
+    pub fn last_non_whitespace_byte(&self) -> Option<u8> {
+        self.output
+            .as_bytes()
+            .iter()
+            .rev()
+            .find(|&&b| !b.is_ascii_whitespace())
+            .copied()
+    }
+
+    // =========================================================================
+    // Output Access
+    // =========================================================================
+
+    /// Get the output as a string slice
+    pub fn get_output(&self) -> &str {
+        &self.output
+    }
+
+    /// Take ownership of the output string
+    pub fn take_output(self) -> String {
+        let unclosed_delimiter_count = self.unclosed_delimiter_count();
+        debug_assert!(
+            self.delimiters_balanced(),
+            "structured delimiter helpers left {unclosed_delimiter_count} unclosed delimiter(s)"
+        );
+        self.output
+    }
+
+    /// Get the output length in bytes
+    pub const fn len(&self) -> usize {
+        self.output.len()
+    }
+
+    /// Truncate the output buffer to the given byte length.
+    /// Used to undo speculatively written content (e.g., JSDoc comments for
+    /// declarations that turn out to be invisible in .d.ts output).
+    pub fn truncate(&mut self, len: usize) {
+        self.output.truncate(len);
+        self.line = self.output.matches(&self.new_line).count() as u32;
+        if self.output.is_empty() || self.output.ends_with(&self.new_line) {
+            self.column = 0;
+            self.at_line_start = true;
+            return;
+        }
+
+        let line_start = self
+            .output
+            .rfind(&self.new_line)
+            .map_or(0, |idx| idx + self.new_line.len());
+        self.column = (self.output.len() - line_start) as u32;
+        self.at_line_start = false;
+    }
+
+    /// Get the output buffer capacity in bytes.
+    pub const fn capacity(&self) -> usize {
+        self.output.capacity()
+    }
+
+    /// Ensure the output buffer can hold at least `capacity` bytes without reallocating.
+    pub fn ensure_output_capacity(&mut self, capacity: usize) {
+        let current = self.output.capacity();
+        if current < capacity {
+            let len = self.output.len();
+            if capacity > len {
+                self.output.reserve(capacity - len);
+            }
+        }
+    }
+
+    /// Check if output is empty
+    pub const fn is_empty(&self) -> bool {
+        self.output.is_empty()
+    }
+
+    /// Insert a complete line (text + newline) at the given byte offset and line number.
+    /// Shifts all source map mappings at or after the given line by 1.
+    /// The inserted text should NOT include a trailing newline (it's added automatically).
+    /// Insert text at a byte offset without adding a newline or shifting lines.
+    /// Used for injecting inline content like `var _a; ` in single-line function bodies.
+    pub fn insert_at(&mut self, byte_offset: usize, text: &str) {
+        self.output.insert_str(byte_offset, text);
+        // Source map column offsets for mappings on the same line would need adjustment,
+        // but for hoisted var declarations the insert point is before all mapped content
+        // on this line, so subsequent mappings shift naturally via the enlarged output.
+    }
+
+    pub fn insert_line_at(&mut self, byte_offset: usize, at_line: u32, text: &str) {
+        let line_with_newline = format!("{}{}", text, self.new_line);
+        self.output.insert_str(byte_offset, &line_with_newline);
+        self.line += 1; // Current line shifted by 1
+
+        // Shift all source map mappings at or after the insertion line
+        if let Some(ref mut sm) = self.source_map {
+            sm.shift_generated_lines(at_line, 1);
+        }
+    }
+
+    /// Take the source map generator (if any)
+    pub fn take_source_map(self) -> Option<SourceMapGenerator> {
+        self.source_map
+    }
+
+    /// Generate source map JSON (if source mapping is enabled)
+    pub fn generate_source_map_json(&mut self) -> Option<String> {
+        self.source_map
+            .as_mut()
+            .map(tsz_common::source_map::SourceMapGenerator::generate_json)
+    }
+
+    /// Add mappings with a base line/column offset. Column offset applies only to the first line.
+    pub fn add_offset_mappings(&mut self, base_line: u32, base_column: u32, mappings: &[Mapping]) {
+        let Some(ref mut sm) = self.source_map else {
+            return;
+        };
+
+        for mapping in mappings {
+            let line = base_line + mapping.generated_line;
+            let column = if mapping.generated_line == 0 {
+                base_column + mapping.generated_column
+            } else {
+                mapping.generated_column
+            };
+            sm.add_mapping(
+                line,
+                column,
+                mapping.source_index,
+                mapping.original_line,
+                mapping.original_column,
+                mapping.name_index,
+            );
+        }
+    }
+
+    /// Add mappings with a base line offset and a column offset applied to every line.
+    pub fn add_mappings_with_line_column_offset(
+        &mut self,
+        base_line: u32,
+        column_offset: u32,
+        mappings: &[Mapping],
+    ) {
+        let Some(ref mut sm) = self.source_map else {
+            return;
+        };
+
+        for mapping in mappings {
+            let line = base_line + mapping.generated_line;
+            let column = column_offset + mapping.generated_column;
+            sm.add_mapping(
+                line,
+                column,
+                mapping.source_index,
+                mapping.original_line,
+                mapping.original_column,
+                mapping.name_index,
+            );
+        }
+    }
+
+    // =========================================================================
+    // Internal Helpers
+    // =========================================================================
+
+    /// Ensure indentation is written if we're at line start
+    #[inline(always)]
+    fn ensure_indent(&mut self) {
+        if self.at_line_start && self.indent_level > 0 {
+            for _ in 0..self.indent_level {
+                self.output.push_str(&self.indent_str);
+                self.column += self.indent_str.len() as u32;
+            }
+            self.at_line_start = false;
+        } else if self.at_line_start {
+            self.at_line_start = false;
+        }
+    }
+
+    /// Raw write - updates position tracking, no indent handling
+    /// Note: Column counting uses UTF-16 code units for source map compatibility
+    ///
+    /// Optimized using memchr for SIMD newline search and ASCII fast-path
+    fn raw_write(&mut self, text: &str) {
+        self.output.push_str(text);
+
+        let bytes = text.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            match memchr::memchr(b'\n', &bytes[i..]) {
+                Some(offset) => {
+                    // Update column for text before newline
+                    let segment_end = i + offset;
+                    let segment = &text[i..segment_end];
+
+                    if segment.is_ascii() {
+                        // Fast path: ASCII strings have 1:1 byte-to-UTF16 mapping
+                        self.column += segment.len() as u32;
+                    } else {
+                        // Slow path: Count UTF-16 code units properly
+                        self.column += segment.chars().map(|c| c.len_utf16() as u32).sum::<u32>();
+                    }
+
+                    // Handle newline
+                    self.line += 1;
+                    self.column = 0;
+                    i = segment_end + 1;
+                }
+                None => {
+                    // No more newlines, just update column for remaining text
+                    let segment = &text[i..];
+
+                    if segment.is_ascii() {
+                        self.column += segment.len() as u32;
+                    } else {
+                        self.column += segment.chars().map(|c| c.len_utf16() as u32).sum::<u32>();
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    fn raw_write_usize_digits(&mut self, mut value: usize) {
+        if value == 0 {
+            self.raw_write_char('0');
+            return;
+        }
+
+        let mut buf = [0u8; 20];
+        let mut i = buf.len();
+        while value > 0 {
+            let digit = (value % 10) as u8;
+            i -= 1;
+            buf[i] = b'0' + digit;
+            value /= 10;
+        }
+
+        for &b in &buf[i..] {
+            self.raw_write_char(b as char);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn track_open_delimiter(&mut self, delimiter: DelimiterKind) {
+        self.delimiter_stack.push(delimiter);
+    }
+
+    #[cfg(not(debug_assertions))]
+    const fn track_open_delimiter(&mut self, _delimiter: DelimiterKind) {}
+
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    fn track_close_delimiter(&mut self, delimiter: DelimiterKind) {
+        let Some(opened) = self.delimiter_stack.pop() else {
+            self.delimiter_mismatch_count += 1;
+            panic!("unbalanced delimiter close: tried to close {delimiter:?} with no opener");
+        };
+        if opened != delimiter {
+            self.delimiter_mismatch_count += 1;
+            panic!("delimiter mismatch: opened {opened:?}, tried to close {delimiter:?}");
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    const fn track_close_delimiter(&mut self, _delimiter: DelimiterKind) {}
+
+    /// Raw write single char - updates position tracking
+    /// Note: Column counting uses UTF-16 code units for source map compatibility
+    fn raw_write_char(&mut self, ch: char) {
+        if ch == '\n' {
+            self.line += 1;
+            self.column = 0;
+        } else {
+            // UTF-16 code units: non-BMP characters (emojis etc.) count as 2
+            self.column += ch.len_utf16() as u32;
+        }
+        self.output.push(ch);
+    }
+}
+
+impl Default for SourceWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/// Precomputed line map for O(log n) line/column lookups from byte offsets.
+///
+/// Without this, computing line/column from a byte offset requires scanning
+/// from the beginning of the file, which is O(pos) per call and leads to
+/// O(n^2) total cost when emitting large files.
+pub struct LineMap {
+    /// Byte offsets of the start of each line (line 0 starts at offset 0).
+    /// `line_starts[i]` is the byte offset of the first character on line `i`.
+    line_starts: Vec<u32>,
+    /// The full source text, needed for UTF-16 column computation.
+    text: String,
+}
+
+impl LineMap {
+    /// Build a line map from source text. O(n) in text length.
+    pub fn new(text: &str) -> Self {
+        let mut line_starts = Vec::with_capacity(text.len() / 40 + 1);
+        line_starts.push(0);
+        for (i, b) in text.as_bytes().iter().enumerate() {
+            if *b == b'\n' {
+                line_starts.push((i + 1) as u32);
+            }
+        }
+        Self {
+            line_starts,
+            text: text.to_string(),
+        }
+    }
+
+    /// Look up (line, column) from a byte offset. O(log n) via binary search.
+    /// Column counting uses UTF-16 code units for source map compatibility.
+    pub fn line_col(&self, pos: u32) -> (u32, u32) {
+        let pos_usize = pos as usize;
+        if pos_usize >= self.text.len() {
+            // End-of-file position
+            let line = (self.line_starts.len() - 1) as u32;
+            let line_start = *self.line_starts.last().unwrap_or(&0) as usize;
+            let col: u32 = self.text[line_start..]
+                .chars()
+                .map(|c| c.len_utf16() as u32)
+                .sum();
+            return (line, col);
+        }
+
+        // Binary search for the line containing `pos`
+        let line = match self.line_starts.binary_search(&pos) {
+            Ok(exact) => exact,
+            Err(insert) => insert - 1,
+        };
+        let line_start = self.line_starts[line] as usize;
+
+        // Compute column in UTF-16 code units
+        let col: u32 = self.text[line_start..pos_usize]
+            .chars()
+            .map(|c| c.len_utf16() as u32)
+            .sum();
+
+        (line as u32, col)
+    }
+
+    /// Create a `SourcePosition` from a byte offset. O(log n).
+    pub fn source_position(&self, pos: u32) -> SourcePosition {
+        let (line, column) = self.line_col(pos);
+        SourcePosition { pos, line, column }
+    }
+}
+
+/// Compute line and column from byte offset in source text
+/// Note: Column counting uses UTF-16 code units for source map compatibility
+pub fn compute_line_col(text: &str, pos: u32) -> (u32, u32) {
+    let pos = pos as usize;
+    if pos >= text.len() {
+        // Return end of file position
+        let line = text.matches('\n').count() as u32;
+        let last_newline = text.rfind('\n').map_or(0, |i| i + 1);
+        // Count UTF-16 code units in the last line
+        let col = text[last_newline..]
+            .chars()
+            .map(|c| c.len_utf16() as u32)
+            .sum();
+        return (line, col);
+    }
+
+    let mut line = 0u32;
+    let mut col = 0u32;
+
+    for (i, ch) in text.char_indices() {
+        if i >= pos {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            // UTF-16 code units: non-BMP characters (emojis etc.) count as 2
+            col += ch.len_utf16() as u32;
+        }
+    }
+
+    (line, col)
+}
+
+/// Create a `SourcePosition` from a byte offset and source text
+pub fn source_position_from_offset(text: &str, pos: u32) -> SourcePosition {
+    let (line, column) = compute_line_col(text, pos);
+    SourcePosition { pos, line, column }
+}
+
+#[cfg(test)]
+#[path = "../../tests/source_writer.rs"]
+mod tests;

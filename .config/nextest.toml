@@ -1,0 +1,76 @@
+# nextest configuration for tsz
+# Run tests with: cargo nextest run
+# Install with: cargo install cargo-nextest
+#
+# Protection against hangs, OOM, and timeouts:
+# - slow-timeout: Warns about slow tests, terminate-after kills after N periods
+# - leak-timeout: Detects tests that don't terminate (infinite loops)
+# - Each test runs in its own process, so one crash doesn't affect others
+
+[profile.default]
+# Kill tests after 60s (30s warning, then terminate)
+slow-timeout = { period = "30s", terminate-after = 2 }
+# Detect leaked handles/threads that prevent test from terminating
+leak-timeout = "5s"
+# Fail fast disabled - run all tests to see full picture
+fail-fast = false
+# No retries - tests should be deterministic
+retries = 0
+# Use all available cores
+test-threads = "num-cpus"
+
+[[profile.default.overrides]]
+filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation) | test(collect_diagnostics_reports_default_lib_breakage)'
+slow-timeout = { period = "120s", terminate-after = 2 }
+
+[[profile.default.overrides]]
+filter = 'test(/^no_false_ts2322_generic_conditional_default_/) | test(real_ts2322_is_still_reported_with_conditional_default) | test(explicit_third_arg_mismatch_still_errors)'
+threads-required = "num-test-threads"
+
+[profile.default.junit]
+path = "target/nextest/default/junit.xml"
+
+# CI profile - stricter timeouts, catches hanging tests faster
+[profile.ci]
+slow-timeout = { period = "30s", terminate-after = 2 }
+leak-timeout = "3s"
+fail-fast = false
+retries = 0
+# Keep CI unit execution below the 8-vCPU runner count. Several checker
+# integration tests are memory-heavy enough that running the full discovered
+# set at num-cpus can SIGKILL otherwise-passing tests after compilation.
+test-threads = 4
+
+[[profile.ci.overrides]]
+filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation) | test(collect_diagnostics_reports_default_lib_breakage)'
+slow-timeout = { period = "120s", terminate-after = 2 }
+
+[[profile.ci.overrides]]
+filter = 'test(/^no_false_ts2322_generic_conditional_default_/) | test(real_ts2322_is_still_reported_with_conditional_default) | test(explicit_third_arg_mismatch_still_errors)'
+threads-required = "num-test-threads"
+
+# Quick profile for fast feedback during development
+[profile.quick]
+slow-timeout = { period = "10s", terminate-after = 1 }
+leak-timeout = "2s"
+fail-fast = true
+test-threads = "num-cpus"
+
+# Pre-commit profile - fast, fail immediately on any issue
+[profile.precommit]
+slow-timeout = { period = "15s", terminate-after = 2 }
+leak-timeout = "2s"
+fail-fast = true
+test-threads = "num-cpus"
+status-level = "fail"
+
+[[profile.precommit.overrides]]
+filter = 'test(test_ts2536_with_lib_mismatched_keyof_source) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
+slow-timeout = { period = "90s", terminate-after = 2 }
+
+# Long-running tests profile (for conformance tests)
+[profile.conformance]
+slow-timeout = { period = "120s", terminate-after = 2 }
+leak-timeout = "10s"
+fail-fast = false
+retries = 1

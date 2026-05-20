@@ -1,0 +1,822 @@
+//! Tuple and array type subtype checking.
+//!
+//! This module handles subtyping for TypeScript's sequence types:
+//! - Tuples: `[number, string, boolean]`
+//! - Arrays: `number[]`, `Array<number>`
+//! - Variadic tuples: `[number, ...string[]]`
+//! - Tuple rest elements and expansion
+//! - Array-to-tuple and tuple-to-array compatibility
+
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::operations::iterators::get_iterator_info;
+use crate::types::{TupleElement, TupleListId, TypeData, TypeId};
+use crate::utils::{self, TupleRestExpansion};
+use crate::visitor::{
+    array_element_type, is_type_parameter, object_shape_id, object_with_index_shape_id,
+    tuple_list_id, type_param_info,
+};
+
+use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+
+impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Check tuple subtyping.
+    ///
+    /// Validates structural compatibility between tuple types, handling:
+    /// - Required element count matching (source must have ≥ required elements than target)
+    /// - Fixed element type compatibility (positional checking)
+    /// - Rest element handling (variadic tuples, e.g., [...string[]])
+    /// - Optional element compatibility
+    /// - Closed tuple constraints (source can't exceed target's length)
+    ///
+    /// ## Tuple Subtyping Rules:
+    /// 1. **Required elements**: Source must have at least as many required (non-optional) elements
+    /// 2. **Rest elements**: When target has a rest element, source must match the expanded pattern
+    /// 3. **Closed tuples**: If target has no rest, source can't have extra elements
+    /// 4. **Type compatibility**: Each element type must be a subtype of the corresponding target
+    ///
+    /// ## Examples:
+    /// - `[number, string]` ≤ `[number, string, boolean]` ✅
+    /// - `[number, ...string[]]` ≤ `[number, ...string[]]` ✅
+    /// - `[number, string]` ≤ `[number]` ❌ (extra element)
+    /// - `[number]` ≤ `[number, string]` ❌ (missing element)
+    pub(crate) fn check_tuple_subtype(
+        &mut self,
+        source: &[TupleElement],
+        target: &[TupleElement],
+    ) -> SubtypeResult {
+        // Fast path: [...S] <: [...T] when both are single-rest-element tuples.
+        // tsc treats these as equivalent to S <: T for assignability.
+        // This handles variadic tuple identity: [...U] <: [...T] when U extends T.
+        if source.len() == 1
+            && target.len() == 1
+            && source[0].rest
+            && target[0].rest
+            && is_type_parameter(self.interner, source[0].type_id)
+            && is_type_parameter(self.interner, target[0].type_id)
+        {
+            return self.check_subtype(source[0].type_id, target[0].type_id);
+        }
+
+        // Count required elements
+        let source_required = crate::utils::required_element_count(source);
+        let target_required = crate::utils::required_element_count(target);
+
+        // Source must have at least as many required elements
+        if source_required < target_required {
+            return SubtypeResult::False;
+        }
+
+        // Check each element
+        for (i, t_elem) in target.iter().enumerate() {
+            if t_elem.rest {
+                let expansion = self.expand_tuple_rest(t_elem.type_id);
+                let outer_tail = &target[i + 1..];
+                // Combined suffix = expansion.tail + outer_tail
+                // We need to match these from the end of the source tuple
+                let combined_suffix: Vec<_> = expansion
+                    .tail
+                    .iter()
+                    .chain(outer_tail.iter())
+                    .cloned()
+                    .collect();
+
+                let mut source_end = source.len();
+                for tail_elem in combined_suffix.iter().rev() {
+                    if source_end <= i {
+                        if !tail_elem.optional {
+                            return SubtypeResult::False;
+                        }
+                        break;
+                    }
+                    // If the tail element is a rest spread of a type parameter
+                    // (e.g., ...P from [...T, ...P]), a concrete source element
+                    // cannot satisfy it — we need a matching rest in the source.
+                    if tail_elem.rest && is_type_parameter(self.interner, tail_elem.type_id) {
+                        // Look for a matching rest element from the source end
+                        let s_elem = &source[source_end - 1];
+                        if s_elem.rest {
+                            // Source rest element must be subtype of the target
+                            // type parameter's array form
+                            let tp_array = self.interner.array(tail_elem.type_id);
+                            if !self.check_subtype(s_elem.type_id, tp_array).is_true() {
+                                return SubtypeResult::False;
+                            }
+                            source_end -= 1;
+                            continue;
+                        }
+                        // No source rest element — source can't match this variadic
+                        return SubtypeResult::False;
+                    }
+                    let s_elem = &source[source_end - 1];
+                    if s_elem.rest {
+                        if !tail_elem.optional {
+                            return SubtypeResult::False;
+                        }
+                        break;
+                    }
+                    let assignable = self
+                        .check_subtype(s_elem.type_id, tail_elem.type_id)
+                        .is_true();
+                    if tail_elem.optional && !assignable {
+                        break;
+                    }
+                    if !assignable {
+                        return SubtypeResult::False;
+                    }
+                    source_end -= 1;
+                }
+
+                let mut source_iter = source.iter().enumerate().take(source_end).skip(i);
+
+                for t_fixed in &expansion.fixed {
+                    match source_iter.next() {
+                        Some((_, s_elem)) => {
+                            if s_elem.rest {
+                                return SubtypeResult::False;
+                            }
+                            if !self
+                                .check_subtype(s_elem.type_id, t_fixed.type_id)
+                                .is_true()
+                            {
+                                return SubtypeResult::False;
+                            }
+                        }
+                        None => {
+                            if !t_fixed.optional {
+                                return SubtypeResult::False;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(variadic) = expansion.variadic {
+                    // When the variadic element is a type parameter (e.g., ...T where
+                    // T extends any[]), concrete source elements cannot match — only
+                    // a source rest element can satisfy the type parameter spread.
+                    // TSC: "Source provides no match for variadic element at position N
+                    //        in target."
+                    let variadic_is_type_param = is_type_parameter(self.interner, variadic);
+                    let variadic_array = self.interner.array(variadic);
+                    for (_, s_elem) in source_iter {
+                        if s_elem.rest {
+                            // When both source and target rest elements are type parameters,
+                            // compare them directly (U <: T) rather than via Array(T).
+                            // This handles [...U] <: [...T] when U extends T.
+                            if variadic_is_type_param
+                                && is_type_parameter(self.interner, s_elem.type_id)
+                            {
+                                if !self.check_subtype(s_elem.type_id, variadic).is_true() {
+                                    return SubtypeResult::False;
+                                }
+                            } else if !self.check_subtype(s_elem.type_id, variadic_array).is_true()
+                            {
+                                return SubtypeResult::False;
+                            }
+                        } else if variadic_is_type_param {
+                            // Concrete element cannot match a type parameter variadic
+                            return SubtypeResult::False;
+                        } else if !self.check_subtype(s_elem.type_id, variadic).is_true() {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    return SubtypeResult::True;
+                }
+
+                if source_iter.next().is_some() {
+                    return SubtypeResult::False;
+                }
+                return SubtypeResult::True;
+            }
+
+            // Target is not rest
+            if let Some(s_elem) = source.get(i) {
+                if s_elem.rest {
+                    // Source has rest but target expects fixed element -> Mismatch
+                    // e.g. Target: [number, number], Source: [number, ...number[]]
+                    return SubtypeResult::False;
+                }
+
+                // Without exact optional types, an optional target slot accepts
+                // `undefined` in addition to its declared type. With
+                // exactOptionalPropertyTypes, tuple optionals mirror property
+                // optionals: absence is allowed, but a present `undefined` must
+                // be explicitly included in the element type.
+                let target_elem_type = if t_elem.optional && !self.exact_optional_property_types {
+                    self.interner.union2(t_elem.type_id, TypeId::UNDEFINED)
+                } else {
+                    t_elem.type_id
+                };
+
+                if !self
+                    .check_subtype(s_elem.type_id, target_elem_type)
+                    .is_true()
+                {
+                    return SubtypeResult::False;
+                }
+            } else if !t_elem.optional {
+                // Missing required element
+                return SubtypeResult::False;
+            }
+        }
+
+        // If we reached here, target has NO rest element (it is closed).
+        // Ensure source has no extra elements.
+
+        // 1. Source length check: Source cannot have more elements than Target
+        if source.len() > target.len() {
+            return SubtypeResult::False;
+        }
+
+        // 2. Source open check: Source cannot have a rest element if Target is closed
+        for s_elem in source {
+            if s_elem.rest {
+                return SubtypeResult::False;
+            }
+        }
+
+        SubtypeResult::True
+    }
+
+    /// Check if an array type is a subtype of a tuple type.
+    ///
+    /// TypeScript semantics: Arrays (T[]) are generally NOT assignable to fixed
+    /// tuple types because tuples have positional structural constraints that
+    /// arrays don't satisfy.
+    ///
+    /// Two exceptions apply:
+    ///
+    /// 1. **`never[]`** represents an empty array and can be assigned to any
+    ///    tuple that allows empty (has no required elements).
+    ///
+    /// 2. **Single-rest variadic tuples** `[...X]` are structurally equivalent
+    ///    to `X` (when `X` is array-typed). So `S[] <: [...X]` reduces to
+    ///    `S[] <: X`. This handles `number[] <: [...T]` where `T extends
+    ///    unknown[]`, and `string[] <: [...string[]]`. Symmetric to the
+    ///    `[...T] <: T` case in `visit_tuple`.
+    ///
+    /// Note: `any[]` is generally NOT assignable to tuples — only `any` itself
+    /// bypasses structural checks. The narrow exception is an all-unknown/all-any
+    /// fixed tuple target, which tsc accepts during overload inference for APIs
+    /// such as `new Map(Object.keys(obj).map(...))`.
+    ///
+    /// ## Cases:
+    /// - `any[]` -> `[string, number]` : No (array, not fixed tuple)
+    /// - `never[]` -> `[]` : Yes (empty array to empty tuple)
+    /// - `never[]` -> `[string?]` : Yes (empty array to optional-only tuple)
+    /// - `never[]` -> `[...string[]]` : Yes (empty array to variadic tuple)
+    /// - `never[]` -> `[string]` : No (empty array cannot satisfy required element)
+    /// - `string[]` -> `[...string[]]` : Yes (variadic spread normalizes to array)
+    /// - `string[]` -> `[...T]` where T extends unknown[] : Yes (via T's apparent type)
+    /// - `string[]` -> `[string?]` : No (fixed tuple even if optional)
+    pub(crate) fn check_array_to_tuple_subtype(
+        &mut self,
+        source_elem: TypeId,
+        target: &[TupleElement],
+    ) -> SubtypeResult {
+        if source_elem == TypeId::ANY && Self::tuple_is_fixed_all_top_types(target) {
+            return SubtypeResult::True;
+        }
+
+        // Single-rest variadic tuple `[...X]` is structurally equivalent to its
+        // rest element's array form. Reduces `S[] <: [...X]` to `S[] <: X`.
+        // tsc treats the variadic spread as transparent for assignability when
+        // it is the only element of the tuple. This is the symmetric case of
+        // `[...T] <: T` handled in `visit_tuple`.
+        if target.len() == 1 && target[0].rest {
+            let source_array = self.interner.array(source_elem);
+            return self.check_subtype(source_array, target[0].type_id);
+        }
+
+        // Only never[] can otherwise be assigned to tuples (represents empty array).
+        // The any TYPE (not any[]) is already handled earlier in the subtype check
+        // and bypasses all structural checks.
+        if source_elem != TypeId::NEVER {
+            return SubtypeResult::False;
+        }
+
+        // never[] can be assigned to a tuple if and only if the tuple allows empty
+        if self.tuple_allows_empty(target) {
+            SubtypeResult::True
+        } else {
+            SubtypeResult::False
+        }
+    }
+
+    fn tuple_is_fixed_all_top_types(target: &[TupleElement]) -> bool {
+        !target.is_empty()
+            && target
+                .iter()
+                .all(|elem| !elem.rest && matches!(elem.type_id, TypeId::ANY | TypeId::UNKNOWN))
+    }
+
+    /// Check if a tuple type allows empty arrays.
+    ///
+    /// Determines whether `never[]` (empty array) can be assigned to a tuple type.
+    /// A tuple allows empty if ALL of its elements are optional or it has a rest element
+    /// with no required trailing elements.
+    ///
+    /// ## Examples:
+    /// - `[]` ✅ - Empty tuple allows empty array
+    /// - `[string?]` ✅ - Only optional element
+    /// - `[string]` ❌ - Required element
+    /// - `[...string[]]` ✅ - Rest element allows any number including zero
+    /// - `[...string[], number]` ❌ - Required trailing element after rest
+    ///
+    /// ## Nested Tuple Spreads:
+    /// When a rest element contains a nested tuple spread, we recursively check
+    /// both the fixed elements and tail elements of the expansion.
+    pub(crate) fn tuple_allows_empty(&self, target: &[TupleElement]) -> bool {
+        for (index, elem) in target.iter().enumerate() {
+            if elem.rest {
+                // Check if there are any REQUIRED elements after the rest element
+                // e.g., [...string[], number] has a required trailing element
+                // but [...string[], number?] only has optional trailing elements
+                let tail = &target[index + 1..];
+                if tail.iter().any(|tail_elem| !tail_elem.optional) {
+                    return false;
+                }
+
+                // Check the expanded rest element for required fixed elements
+                let expansion = self.expand_tuple_rest(elem.type_id);
+                if expansion.fixed.iter().any(|fixed| !fixed.optional) {
+                    return false;
+                }
+
+                // Check tail elements from nested tuple spreads
+                if expansion.tail.iter().any(|tail_elem| !tail_elem.optional) {
+                    return false;
+                }
+
+                // Tuple with rest element allows empty if:
+                // 1. No required trailing elements after the rest
+                // 2. The rest expansion has no required fixed elements
+                // 3. The expansion has no required tail elements
+                return true;
+            }
+
+            if !elem.optional {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Check if a tuple type is a subtype of an array type.
+    ///
+    /// Tuple is subtype of array if all tuple elements are subtypes of the array element type.
+    /// Handles both regular elements and rest elements (with expansion).
+    ///
+    /// ## Examples:
+    /// - `[number, number]` <: `number[]` ✅
+    /// - `[number, string]` <: `number[]` ❌ (string is not subtype of number)
+    /// - `[number, ...string[]]` <: `(number | string)[]` ✅
+    pub(crate) fn check_tuple_to_array_subtype(
+        &mut self,
+        elems: TupleListId,
+        t_elem: TypeId,
+    ) -> SubtypeResult {
+        let elems = self.interner.tuple_list(elems);
+        for elem in elems.iter() {
+            if elem.rest {
+                let expansion = self.expand_tuple_rest(elem.type_id);
+                for fixed in expansion.fixed {
+                    if !self.check_subtype(fixed.type_id, t_elem).is_true() {
+                        return SubtypeResult::False;
+                    }
+                }
+                if let Some(variadic) = expansion.variadic
+                    && !self.check_subtype(variadic, t_elem).is_true()
+                {
+                    // When the variadic is a TypeParameter constrained to an
+                    // array type (e.g., U extends string[]), expand_tuple_rest
+                    // returns the type parameter itself as the variadic. For
+                    // [..U, ..U] <: E[], check the constraint's element type.
+                    let ok = type_param_info(self.interner, variadic).is_some_and(|info| {
+                        info.constraint.is_some_and(|c| {
+                            array_element_type(self.interner, c)
+                                .is_some_and(|e| self.check_subtype(e, t_elem).is_true())
+                        })
+                    });
+                    if !ok {
+                        return SubtypeResult::False;
+                    }
+                }
+                // Check tail elements from nested tuple spreads
+                for tail_elem in expansion.tail {
+                    if !self.check_subtype(tail_elem.type_id, t_elem).is_true() {
+                        return SubtypeResult::False;
+                    }
+                }
+            } else {
+                // Regular element: T <: U
+                if !self.check_subtype(elem.type_id, t_elem).is_true() {
+                    return SubtypeResult::False;
+                }
+            }
+        }
+        SubtypeResult::True
+    }
+
+    /// Expand a tuple rest element into its constituent parts.
+    ///
+    /// Tuples can have rest elements like `[A, B, ...C[]]` which need to be expanded
+    /// for subtype checking. This function recursively expands rest elements to produce:
+    /// - `fixed`: Elements before the rest
+    /// - `variadic`: The rest element's type (e.g., C for ...C[])
+    /// - `tail`: Elements after the rest (rare, but valid in some TypeScript patterns)
+    ///
+    /// ## Examples:
+    pub(crate) fn expand_tuple_rest(&self, type_id: TypeId) -> TupleRestExpansion {
+        utils::expand_tuple_rest(self.interner, type_id)
+    }
+
+    /// Check if Array<`element_type`> (the interface) is a subtype of the target.
+    ///
+    /// This is analogous to `is_boxed_primitive_subtype` — when a T[] is checked
+    /// against a structural type (e.g., `{ length: number; toString(): string }`),
+    /// we instantiate the Array<T> interface with the concrete element type and
+    /// check whether that interface type is a subtype of the target.
+    ///
+    /// Returns `Some(result)` if the Array interface was available and the check was
+    /// performed, or `None` if the Array base type is not registered (e.g., in tests
+    /// without lib.d.ts).
+    pub(crate) fn check_array_interface_subtype(
+        &mut self,
+        element_type: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeResult> {
+        let array_base = self.resolver.get_array_base_type()?;
+        let params = self.resolver.get_array_base_type_params();
+        let instantiated = if params.is_empty() {
+            array_base
+        } else {
+            // Instantiate Array<T> → Array<element_type>
+            let subst = TypeSubstitution::from_args(self.interner, params, &[element_type]);
+            instantiate_type(self.interner, array_base, &subst)
+        };
+
+        let direct = self.check_subtype(instantiated, target);
+        if direct.is_true() {
+            return Some(direct);
+        }
+
+        // Guard: if the target has required properties that the instantiated
+        // Array<T> type doesn't have, the iterator protocol fallback below must
+        // NOT override the structural failure.  For example,
+        // `TemplateStringsArray` extends `ReadonlyArray<string>` but adds a
+        // required `raw` property — `never[]` (Array<never>) lacks `raw`, so the
+        // assignment must fail even though element types are compatible.
+        if self.target_has_extra_required_properties(instantiated, target) {
+            return Some(direct);
+        }
+
+        // Fallback: iterator protocol compatibility.
+        // If target is iterable and source array elements are assignable to the
+        // yielded type, accept the assignment.
+        let Some(query_db) = self.query_db else {
+            // No query_db — try direct iterable yield type extraction
+            if let Some(yield_type) = self.extract_iterable_yield_type(target) {
+                return Some(self.check_subtype(element_type, yield_type));
+            }
+            return Some(direct);
+        };
+        if let Some(iter_info) = get_iterator_info(query_db, target, false) {
+            return Some(self.check_subtype(element_type, iter_info.yield_type));
+        }
+
+        // get_iterator_info failed (e.g., can't resolve `next()` on an Application
+        // type like Iterator<T>). Fall back to extracting the yield type directly
+        // from the target's [Symbol.iterator] return type arguments.
+        if let Some(yield_type) = self.extract_iterable_yield_type(target) {
+            return Some(self.check_subtype(element_type, yield_type));
+        }
+
+        Some(direct)
+    }
+
+    pub(crate) fn recursive_array_alias_element_matches_array_interface(
+        &mut self,
+        source_elem: TypeId,
+        target_elem: TypeId,
+        recursive_alias_target: TypeId,
+    ) -> bool {
+        let Some(source_members) =
+            crate::type_queries::get_union_members(self.interner, source_elem)
+        else {
+            return false;
+        };
+        let Some(target_members) =
+            crate::type_queries::get_union_members(self.interner, target_elem)
+        else {
+            return false;
+        };
+
+        source_members.iter().copied().all(|source_member| {
+            target_members.iter().copied().any(|target_member| {
+                let direct = self.check_subtype(source_member, target_member).is_true();
+                direct
+                    || self.recursive_array_member_matches_array_interface(
+                        source_member,
+                        target_member,
+                        target_elem,
+                        recursive_alias_target,
+                        source_elem,
+                    )
+            })
+        })
+    }
+
+    fn recursive_array_member_matches_array_interface(
+        &mut self,
+        source_member: TypeId,
+        target_member: TypeId,
+        target_elem: TypeId,
+        recursive_alias_target: TypeId,
+        recursive_alias_eval: TypeId,
+    ) -> bool {
+        let Some(source_member_elem) = array_element_type(self.interner, source_member) else {
+            return false;
+        };
+        if source_member_elem != target_elem
+            && self.evaluate_type(source_member_elem) != target_elem
+            && source_member_elem != recursive_alias_target
+            && self.evaluate_type(source_member_elem) != recursive_alias_eval
+        {
+            return false;
+        }
+
+        let Some(shape_id) = object_with_index_shape_id(self.interner, target_member) else {
+            return false;
+        };
+        let shape = self.interner.object_shape(shape_id);
+        let Some(number_index) = &shape.number_index else {
+            return false;
+        };
+        if !self.recursive_array_index_value_points_to_alias(
+            number_index.value_type,
+            recursive_alias_target,
+            recursive_alias_eval,
+        ) {
+            return false;
+        }
+
+        self.is_array_interface_object(target_member, number_index.value_type)
+    }
+
+    fn recursive_array_index_value_points_to_alias(
+        &mut self,
+        value_type: TypeId,
+        recursive_alias_target: TypeId,
+        recursive_alias_eval: TypeId,
+    ) -> bool {
+        if value_type == recursive_alias_target {
+            return true;
+        }
+        let value_eval = self.evaluate_type(value_type);
+        if value_eval == recursive_alias_eval {
+            return true;
+        }
+        crate::type_queries::get_union_members(self.interner, value_eval).is_some_and(|members| {
+            members.iter().copied().any(|member| {
+                array_element_type(self.interner, member).is_some_and(|elem| {
+                    elem == recursive_alias_eval
+                        || elem == value_type
+                        || self.evaluate_type(elem) == recursive_alias_eval
+                        || self.evaluate_type(elem) == value_eval
+                })
+            })
+        })
+    }
+
+    fn is_array_interface_object(&mut self, target: TypeId, element_type: TypeId) -> bool {
+        let Some(target_shape_id) = object_with_index_shape_id(self.interner, target)
+            .or_else(|| object_shape_id(self.interner, target))
+        else {
+            return false;
+        };
+        let target_shape = self.interner.object_shape(target_shape_id);
+        let Some(target_symbol) = target_shape.symbol else {
+            if !self.shape_has_array_base_property_names(target_shape_id) {
+                return false;
+            }
+            return true;
+        };
+
+        let Some(array_base) = self.resolver.get_array_base_type() else {
+            return false;
+        };
+        if self.shape_symbol(array_base) == Some(target_symbol) {
+            return true;
+        }
+        if self.shape_has_array_base_property_names(target_shape_id) {
+            return true;
+        }
+        let evaluated_array_base = self.evaluate_type(array_base);
+        if self.shape_symbol(evaluated_array_base) == Some(target_symbol) {
+            return true;
+        }
+
+        let params = self.resolver.get_array_base_type_params();
+        let instantiated = if params.is_empty() {
+            array_base
+        } else {
+            let subst = TypeSubstitution::from_args(self.interner, params, &[element_type]);
+            instantiate_type(self.interner, array_base, &subst)
+        };
+        let instantiated = self.evaluate_type(instantiated);
+        let Some(array_shape_id) = object_with_index_shape_id(self.interner, instantiated)
+            .or_else(|| object_shape_id(self.interner, instantiated))
+        else {
+            return false;
+        };
+        self.interner.object_shape(array_shape_id).symbol == Some(target_symbol)
+    }
+
+    fn shape_symbol(&self, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
+        let shape_id = object_with_index_shape_id(self.interner, type_id)
+            .or_else(|| object_shape_id(self.interner, type_id))?;
+        self.interner.object_shape(shape_id).symbol
+    }
+
+    fn shape_has_array_base_property_names(
+        &self,
+        target_shape_id: crate::types::ObjectShapeId,
+    ) -> bool {
+        let Some(array_base) = self.resolver.get_array_base_type() else {
+            return false;
+        };
+        let Some(array_shape_id) = object_with_index_shape_id(self.interner, array_base)
+            .or_else(|| object_shape_id(self.interner, array_base))
+        else {
+            return false;
+        };
+
+        let target_shape = self.interner.object_shape(target_shape_id);
+        let array_shape = self.interner.object_shape(array_shape_id);
+        if target_shape.number_index.is_none() || array_shape.number_index.is_none() {
+            return false;
+        }
+        if target_shape.string_index.is_some() != array_shape.string_index.is_some() {
+            return false;
+        }
+        target_shape.properties.len() == array_shape.properties.len()
+            && target_shape.properties.iter().all(|target_prop| {
+                array_shape
+                    .properties
+                    .iter()
+                    .any(|array_prop| array_prop.name == target_prop.name)
+            })
+    }
+
+    /// Check whether the target type has required properties that the source
+    /// array type doesn't provide.  This is used to guard the iterator protocol
+    /// fallback: if the target extends an array/iterable interface but declares
+    /// additional required properties (e.g., `TemplateStringsArray.raw`), the
+    /// mere element-type compatibility is not sufficient for assignability.
+    fn target_has_extra_required_properties(
+        &self,
+        instantiated_array: TypeId,
+        target: TypeId,
+    ) -> bool {
+        use crate::visitor::{object_shape_id, object_with_index_shape_id};
+
+        // Evaluate target to resolve Lazy(DefId) / Application types.
+        let target_eval = crate::evaluation::evaluate::evaluate_type(self.interner, target);
+
+        // Get the target's object shape
+        let target_shape_id = object_shape_id(self.interner, target_eval)
+            .or_else(|| object_with_index_shape_id(self.interner, target_eval));
+        let Some(target_shape_id) = target_shape_id else {
+            return false;
+        };
+        let target_shape = self.interner.object_shape(target_shape_id);
+        let sym_iter = self.interner.intern_string("[Symbol.iterator]");
+        let internal_iter = self.interner.intern_string("__@iterator");
+
+        // Get the source array's object shape
+        let source_eval =
+            crate::evaluation::evaluate::evaluate_type(self.interner, instantiated_array);
+        let source_shape_id = object_shape_id(self.interner, source_eval)
+            .or_else(|| object_with_index_shape_id(self.interner, source_eval));
+        let source_shape = source_shape_id.map(|id| self.interner.object_shape(id));
+
+        // Check each required target property
+        for t_prop in &target_shape.properties {
+            if t_prop.optional {
+                continue;
+            }
+            // Iterable protocol members are checked by the iterator fallback below.
+            // Do not treat them as "extra required properties" that block fallback.
+            if t_prop.name == sym_iter || t_prop.name == internal_iter {
+                continue;
+            }
+            // If the source doesn't have this property, the target has extra requirements
+            let found = source_shape.as_ref().is_some_and(|shape| {
+                shape
+                    .properties
+                    .binary_search_by_key(&t_prop.name, |p| p.name)
+                    .is_ok()
+            });
+            if !found {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Extract the yield type from an Iterable-like target type.
+    ///
+    /// When the target is an object with a `[Symbol.iterator]` method whose return
+    /// type is a generic Application (e.g., `Iterator<T, TReturn, TNext>`), extract
+    /// the first type argument as the yield type.
+    ///
+    /// This is used as a fallback when full iterator protocol resolution fails
+    /// (e.g., because `next()` can't be resolved on an unexpanded Application type).
+    fn extract_iterable_yield_type(&self, target: TypeId) -> Option<TypeId> {
+        use crate::visitor::{
+            application_id, callable_shape_id, object_shape_id, object_with_index_shape_id,
+        };
+
+        // Get the target's object shape (either Object or ObjectWithIndex)
+        let shape_id = object_shape_id(self.interner, target)
+            .or_else(|| object_with_index_shape_id(self.interner, target))?;
+        let shape = self.interner.object_shape(shape_id);
+
+        // Find [Symbol.iterator] property
+        let sym_iter_atom = self.interner.intern_string("[Symbol.iterator]");
+        let iter_prop = shape
+            .properties
+            .binary_search_by_key(&sym_iter_atom, |p| p.name)
+            .ok()
+            .map(|idx| &shape.properties[idx])?;
+
+        // Get the Callable shape to extract the return type
+        let callable_id = callable_shape_id(self.interner, iter_prop.type_id)?;
+        let callable = self.interner.callable_shape(callable_id);
+
+        // Get the first call signature's return type
+        let return_type = callable.call_signatures.first()?.return_type;
+
+        // If the return type is an Application (e.g., Iterator<T, TReturn, TNext>),
+        // the first type argument is the yield type
+        let app_id = application_id(self.interner, return_type)?;
+        let app = self.interner.type_application(app_id);
+
+        // The yield type is the first type argument
+        app.args.first().copied()
+    }
+
+    /// Get the element type of an array type, or return the type itself for any[].
+    ///
+    /// Used for extracting the element type when checking rest parameters.
+    /// For tuples used as rest parameters (e.g., [...args: [any]]), extracts the first element's type.
+    pub(crate) fn get_array_element_type(&self, type_id: TypeId) -> TypeId {
+        if type_id == TypeId::ANY {
+            return TypeId::ANY;
+        }
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
+        if let Some(TypeData::ReadonlyType(inner)) = self.interner.lookup(type_id) {
+            return self.get_array_element_type(inner);
+        }
+
+        // First try array element type
+        if let Some(elem) = array_element_type(self.interner, type_id) {
+            return elem;
+        }
+
+        // Handle generic array applications like Array<T> / ReadonlyArray<T>
+        // which are represented as TypeData::Application with a single type arg.
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) {
+            let app = self.interner.type_application(app_id);
+            if let Some(&first_arg) = app.args.first() {
+                return first_arg;
+            }
+        }
+
+        // For tuples used as rest parameters, extract the first element's type
+        // This handles cases like [...args: [any]] being compatible with [...args: any[]]
+        if let Some(list_id) = tuple_list_id(self.interner, type_id) {
+            let elements = self.interner.tuple_list(list_id);
+            if let Some(first) = elements.first() {
+                return first.type_id;
+            }
+        }
+
+        // Handle type parameters with array constraints (e.g., U extends string[])
+        // by extracting the element type from the constraint.
+        if let Some(info) = crate::visitor::type_param_info(self.interner, type_id)
+            && let Some(constraint) = info.constraint
+        {
+            let elem = self.get_array_element_type(constraint);
+            if elem != constraint {
+                return elem;
+            }
+        }
+
+        type_id
+    }
+}

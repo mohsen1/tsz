@@ -1,0 +1,1727 @@
+use super::super::Printer;
+use crate::transforms::private_fields_es5::get_private_field_name;
+use tsz_common::common::ModuleKind;
+use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
+
+impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn emit_call_expression(&mut self, node: &Node) {
+        let Some(call) = self.arena.get_call_expr(node) else {
+            return;
+        };
+
+        if let Some(index_alias) = self.scoped_static_super_index_alias.as_ref().cloned()
+            && let Some(expr_node) = self.arena.get(call.expression)
+            && expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+            && let Some(base) = self.arena.get(access.expression)
+            && base.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.write(&index_alias);
+            self.write("(");
+            self.emit(access.name_or_argument);
+            self.write(")");
+            if self.scoped_static_super_index_value_access {
+                self.write(".value");
+            }
+            self.write(".call(");
+            self.emit_scoped_static_super_receiver();
+            if let Some(ref args) = call.arguments {
+                for &arg_idx in &args.nodes {
+                    self.write(", ");
+                    self.emit(arg_idx);
+                }
+            }
+            self.write(")");
+            return;
+        }
+
+        if let Some(base_alias) = self.scoped_static_super_base_alias.as_ref().cloned()
+            && let Some(expr_node) = self.arena.get(call.expression)
+        {
+            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(expr_node)
+                && let Some(base) = self.arena.get(access.expression)
+                && base.kind == SyntaxKind::SuperKeyword as u16
+            {
+                if self.scoped_static_super_direct_access {
+                    self.write(&base_alias);
+                    self.write(".");
+                    self.emit_property_name_without_import_substitution(access.name_or_argument);
+                    self.write(".call(");
+                    self.emit_scoped_static_super_receiver();
+                    if let Some(ref args) = call.arguments {
+                        for &arg_idx in &args.nodes {
+                            self.write(", ");
+                            self.emit(arg_idx);
+                        }
+                    }
+                    self.write(")");
+                    return;
+                }
+                self.write("Reflect.get(");
+                self.write(&base_alias);
+                self.write(", ");
+                self.emit_scoped_static_super_property_name(access.name_or_argument);
+                self.write(", ");
+                self.emit_scoped_static_super_receiver();
+                self.write(").call(");
+                self.emit_scoped_static_super_receiver();
+                if let Some(ref args) = call.arguments {
+                    for &arg_idx in &args.nodes {
+                        self.write(", ");
+                        self.emit(arg_idx);
+                    }
+                }
+                self.write(")");
+                return;
+            }
+
+            if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(expr_node)
+                && let Some(base) = self.arena.get(access.expression)
+                && base.kind == SyntaxKind::SuperKeyword as u16
+            {
+                if self.scoped_static_super_direct_access {
+                    if let Some(index_alias) =
+                        self.scoped_static_super_index_alias.as_ref().cloned()
+                    {
+                        self.write(&index_alias);
+                        self.write("(");
+                        self.emit(access.name_or_argument);
+                        self.write(")");
+                        if self.scoped_static_super_index_value_access {
+                            self.write(".value");
+                        }
+                        self.write(".call(");
+                        self.emit_scoped_static_super_receiver();
+                        if let Some(ref args) = call.arguments {
+                            for &arg_idx in &args.nodes {
+                                self.write(", ");
+                                self.emit(arg_idx);
+                            }
+                        }
+                        self.write(")");
+                        return;
+                    }
+                    self.write(&base_alias);
+                    self.write("[");
+                    self.emit(access.name_or_argument);
+                    self.write("].call(");
+                    self.emit_scoped_static_super_receiver();
+                    if let Some(ref args) = call.arguments {
+                        for &arg_idx in &args.nodes {
+                            self.write(", ");
+                            self.emit(arg_idx);
+                        }
+                    }
+                    self.write(")");
+                    return;
+                }
+                self.write("Reflect.get(");
+                self.write(&base_alias);
+                self.write(", ");
+                self.emit(access.name_or_argument);
+                self.write(", ");
+                self.emit_scoped_static_super_receiver();
+                self.write(").call(");
+                self.emit_scoped_static_super_receiver();
+                if let Some(ref args) = call.arguments {
+                    for &arg_idx in &args.nodes {
+                        self.write(", ");
+                        self.emit(arg_idx);
+                    }
+                }
+                self.write(")");
+                return;
+            }
+        }
+
+        if self.is_optional_chain(node) {
+            if self.ctx.options.target.supports_es2020() {
+                self.emit_unwrapping_type_args(call.expression);
+                if self.has_optional_call_token(node, call.expression, call.arguments.as_ref()) {
+                    self.write("?.");
+                }
+                self.emit_call_arguments(node, call.arguments.as_ref());
+                return;
+            }
+
+            let has_optional_call_token =
+                self.has_optional_call_token(node, call.expression, call.arguments.as_ref());
+            if let Some(call_expr) = self.arena.get(call.expression)
+                && (call_expr.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || call_expr.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            {
+                self.emit_optional_method_call_expression(
+                    call_expr,
+                    node,
+                    &call.arguments,
+                    has_optional_call_token,
+                );
+                return;
+            }
+
+            self.emit_optional_call_expression(node, call.expression, &call.arguments);
+            return;
+        }
+
+        if self.emit_erased_object_literal_access_call(node, call.expression, &call.arguments) {
+            return;
+        }
+
+        // Private field call lowering:
+        // `this.#fn(args)` → `__classPrivateFieldGet(this, _C_fn, "f").call(this, args)`
+        // `this.#method(args)` → `__classPrivateFieldGet(this, _C_instances, "m", _C_method).call(this, args)`
+        if !self.private_field_weakmaps.is_empty()
+            && let Some(expr_node) = self.arena.get(call.expression)
+            && expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+            && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+            && let Some(field_name) = get_private_field_name(self.arena, access.name_or_argument)
+        {
+            let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
+            if let Some(weakmap_name) = self.private_field_weakmaps.get(clean_name).cloned() {
+                self.write_helper("__classPrivateFieldGet");
+                self.write("(");
+                self.emit_private_receiver(access.expression, clean_name);
+                self.write(", ");
+                if let Some(info) = self.private_member_info.get(clean_name).cloned() {
+                    if let Some(ref state_var) = info.state_var {
+                        self.write(state_var);
+                    } else {
+                        self.write(&weakmap_name);
+                    }
+                    self.write(", \"");
+                    self.write(info.kind);
+                    self.write("\"");
+                    if let Some(ref fn_ref) = info.fn_ref {
+                        self.write(", ");
+                        self.write(fn_ref);
+                    }
+                } else {
+                    self.write(&weakmap_name);
+                    self.write(", \"f\"");
+                }
+                self.write(").call(");
+                self.emit_private_receiver(access.expression, clean_name);
+                if let Some(ref args) = call.arguments {
+                    for &arg_idx in &args.nodes {
+                        self.write(", ");
+                        self.emit(arg_idx);
+                    }
+                }
+                self.write(")");
+                return;
+            }
+        }
+
+        if self.ctx.target_es5
+            && let Some(expr_node) = self.arena.get(call.expression)
+        {
+            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(expr_node)
+                && let Some(base) = self.arena.get(access.expression)
+                && base.kind == SyntaxKind::SuperKeyword as u16
+            {
+                self.emit_es5_super_property_base();
+                self.write(".");
+                self.emit(access.name_or_argument);
+                self.write(".call(");
+                if self.ctx.arrow_state.this_capture_depth > 0 {
+                    self.write("_this");
+                } else {
+                    self.write("this");
+                }
+                if let Some(ref args) = call.arguments {
+                    for &arg_idx in &args.nodes {
+                        self.write(", ");
+                        self.emit(arg_idx);
+                    }
+                }
+                self.write(")");
+                return;
+            }
+            if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(expr_node)
+                && let Some(base) = self.arena.get(access.expression)
+                && base.kind == SyntaxKind::SuperKeyword as u16
+            {
+                self.emit_es5_super_property_base();
+                self.write("[");
+                self.emit(access.name_or_argument);
+                self.write("].call(");
+                if self.ctx.arrow_state.this_capture_depth > 0 {
+                    self.write("_this");
+                } else {
+                    self.write("this");
+                }
+                if let Some(ref args) = call.arguments {
+                    for &arg_idx in &args.nodes {
+                        self.write(", ");
+                        self.emit(arg_idx);
+                    }
+                }
+                self.write(")");
+                return;
+            }
+        }
+
+        if !self.suppress_commonjs_named_import_substitution
+            && let Some(expr_node) = self.arena.get(call.expression)
+            && let Some(ident) = self.arena.get_identifier(expr_node)
+            && let Some(subst) = self
+                .commonjs_named_import_substitutions
+                .get(&ident.escaped_text)
+        {
+            let subst = subst.clone();
+            // In System modules, import substitutions are already property accesses
+            // on module-scoped variables (e.g. `repeat_1.default`), so no `(0, ...)`
+            // indirection is needed — `this` binding is not a concern.
+            if self.in_system_execute_body {
+                self.write(&subst);
+            } else {
+                self.write("(0, ");
+                self.write(&subst);
+                self.write(")");
+            }
+            self.emit_call_arguments(node, call.arguments.as_ref());
+            return;
+        }
+
+        // CJS exported variable indirect call: `foo()` → `(0, exports.foo)()`
+        // The `(0, ...)` wrapper prevents `this` binding to `exports`.
+        if !self.suppress_ns_qualification
+            && let Some(expr_node) = self.arena.get(call.expression)
+            && let Some(ident) = self.arena.get_identifier(expr_node)
+            && self
+                .commonjs_exported_var_names
+                .contains(ident.escaped_text.as_str())
+        {
+            self.write("(0, exports.");
+            self.write_identifier(&ident.escaped_text);
+            self.write(")");
+            self.emit_call_arguments(node, call.arguments.as_ref());
+            return;
+        }
+
+        if let Some(expr_node) = self.arena.get(call.expression)
+            && expr_node.kind == SyntaxKind::ImportKeyword as u16
+        {
+            match self.ctx.original_module_kind {
+                Some(ModuleKind::System) => {
+                    self.emit_system_dynamic_import_call(node, call.arguments.as_ref());
+                    return;
+                }
+                Some(ModuleKind::AMD | ModuleKind::UMD) => {
+                    self.emit_amd_or_umd_dynamic_import_call(call.arguments.as_ref());
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // CJS dynamic import: `import("mod")` → `Promise.resolve().then(() => __importStar(require("mod")))`
+        // For non-string-literal specifiers, tsc evaluates the expression eagerly:
+        //   `import(expr)` → `Promise.resolve(\`${expr}\`).then(s => __importStar(require(s)))`
+        // In CommonJS module mode, dynamic import() expressions need to be transformed
+        // to use require() wrapped in __importStar for proper ESM/CJS interop.
+        // Use is_effectively_commonjs() to also catch the case where module is temporarily
+        // set to None during CJS export body emission (e.g., inside exported async functions).
+        // Skip for node module CJS files where native import() is supported.
+        if self.ctx.is_effectively_commonjs()
+            && !self.ctx.options.resolved_node_module_to_cjs
+            && let Some(expr_node) = self.arena.get(call.expression)
+            && expr_node.kind == SyntaxKind::ImportKeyword as u16
+        {
+            // Get the first valid argument (the module specifier)
+            let first_arg = call
+                .arguments
+                .as_ref()
+                .and_then(|args| args.nodes.iter().copied().find(|n| n.is_some()));
+            let first_arg_node = first_arg.and_then(|idx| self.arena.get(idx));
+            let is_string_literal_or_none = first_arg_node
+                .map(|n| {
+                    n.kind == SyntaxKind::StringLiteral as u16
+                        || n.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                        // Missing/error-recovered nodes have zero length
+                        || n.end <= n.pos
+                })
+                .unwrap_or(true); // no args => treat as simple path
+
+            if is_string_literal_or_none {
+                // Simple string or no args:
+                //   Promise.resolve().then(() => __importStar(require("mod")))
+                //   Promise.resolve().then(() => __importStar(require()))
+                self.write("Promise.resolve().then(() => ");
+                self.write_helper("__importStar");
+                self.write("(require(");
+                // Only emit the first argument (module specifier); drop any extra args
+                if let Some(first) = first_arg {
+                    self.emit_maybe_rewritten_module_specifier_arg(first);
+                }
+                self.write(")))");
+            } else {
+                // Expression specifier with rewrite helper wrapping
+                self.write("Promise.resolve(`${");
+                if self.ctx.options.rewrite_relative_import_extensions {
+                    if let Some(first) = first_arg {
+                        self.emit_rewrite_helper_call(first);
+                    }
+                } else if let Some(first) = first_arg {
+                    self.emit_dynamic_import_template_specifier(first);
+                }
+                self.write("}`).then(s => ");
+                self.write_helper("__importStar");
+                self.write("(require(s)))");
+            }
+            return;
+        }
+
+        // rewriteRelativeImportExtensions: handle ESM import() and require() calls.
+        // For string literal specifiers, rewrite the extension inline.
+        // For non-literal specifiers, wrap with __rewriteRelativeImportExtension(expr).
+        if self.ctx.options.rewrite_relative_import_extensions
+            && let Some(expr_node) = self.arena.get(call.expression)
+        {
+            let is_import_keyword = expr_node.kind == SyntaxKind::ImportKeyword as u16;
+            let is_require_ident = !is_import_keyword
+                && expr_node.kind == SyntaxKind::Identifier as u16
+                && self
+                    .arena
+                    .get_identifier(expr_node)
+                    .is_some_and(|id| id.escaped_text == "require");
+
+            if is_import_keyword || is_require_ident {
+                let first_arg = call
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.nodes.iter().copied().find(|n| n.is_some()));
+                let first_arg_node = first_arg.and_then(|idx| self.arena.get(idx));
+                let is_string_literal = first_arg_node.is_some_and(|n| {
+                    n.kind == SyntaxKind::StringLiteral as u16
+                        || n.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                });
+
+                if is_string_literal {
+                    // Rewrite inline: import("./foo.ts") -> import("./foo.js")
+                    if is_import_keyword {
+                        self.write("import");
+                    } else {
+                        self.write("require");
+                    }
+                    self.write("(");
+                    if let Some(first) = first_arg {
+                        self.emit_maybe_rewritten_module_specifier_arg(first);
+                    }
+                    if let Some(ref args) = call.arguments {
+                        let valid_args: Vec<_> =
+                            args.nodes.iter().copied().filter(|n| n.is_some()).collect();
+                        for &arg_idx in valid_args.iter().skip(1) {
+                            self.write(", ");
+                            self.emit(arg_idx);
+                        }
+                    }
+                    self.write(")");
+                    return;
+                } else if first_arg.is_some() {
+                    // Non-literal: wrap with __rewriteRelativeImportExtension
+                    if is_import_keyword {
+                        self.write("import");
+                    } else {
+                        self.write("require");
+                    }
+                    self.write("(");
+                    if let Some(first) = first_arg {
+                        self.emit_rewrite_helper_call(first);
+                    }
+                    if let Some(ref args) = call.arguments {
+                        let valid_args: Vec<_> =
+                            args.nodes.iter().copied().filter(|n| n.is_some()).collect();
+                        for &arg_idx in valid_args.iter().skip(1) {
+                            self.write(", ");
+                            self.emit(arg_idx);
+                        }
+                    }
+                    self.write(")");
+                    return;
+                }
+            }
+        }
+
+        if !self.ctx.options.target.supports_es2020()
+            && self.emit_parenthesized_optional_access_call_expression(
+                call.expression,
+                &call.arguments,
+            )
+        {
+            return;
+        }
+
+        // Signal access position so `(new a)()` keeps parens (vs `new a()`).
+        let prev = self.paren_in_access_position;
+        let prev_call = self.paren_is_direct_call_callee;
+        self.paren_in_access_position = true;
+        self.paren_is_direct_call_callee = true;
+        // When the callee is ExpressionWithTypeArguments (e.g., `f<T>(args)`),
+        // unwrap without parens since the call parens provide grouping.
+        self.emit_unwrapping_type_args(call.expression);
+        self.paren_in_access_position = prev;
+        self.paren_is_direct_call_callee = prev_call;
+        // Map the opening `(` to its source position
+        if let Some(expr_node) = self.arena.get(call.expression) {
+            self.map_token_after(expr_node.end, node.end, b'(');
+        }
+        self.write("(");
+        // The call's own parens provide grouping, so clear the "needs parens"
+        // flags to avoid double-parenthesization when an argument contains a
+        // downlevel optional chain or nullish coalescing expression.
+        let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
+        self.ctx.flags.optional_chain_needs_parens = false;
+        self.ctx.flags.nullish_coalescing_needs_parens = false;
+        if let Some(ref args) = call.arguments {
+            // Filter out NodeIndex::NONE (omitted arguments from parser error recovery).
+            // In call expressions, `foo(a,,b)` should emit `foo(a, b)`, not `foo(a, , b)`.
+            let valid_args: Vec<_> = args
+                .nodes
+                .iter()
+                .copied()
+                .filter(|&idx| self.call_argument_should_emit(idx))
+                .collect();
+            // For the first argument, emit any comments between '(' and the argument
+            // This handles: func(/*comment*/ arg)
+            if let Some(first_arg) = valid_args.first()
+                && let Some(arg_node) = self.arena.get(*first_arg)
+            {
+                let open_paren_pos = self
+                    .find_call_open_paren_position(node, Some(args))
+                    .unwrap_or(node.pos);
+                self.emit_call_leading_argument_comments(open_paren_pos, arg_node.pos);
+            }
+            self.emit_comma_separated(&valid_args);
+            if let Some(last_arg) = valid_args.last()
+                && let Some(close_paren_pos) =
+                    self.find_call_closing_paren_position(node, Some(args))
+            {
+                let last_arg_end = self.call_argument_comment_boundary(*last_arg);
+                self.emit_call_trailing_argument_comments(last_arg_end, close_paren_pos);
+            } else if valid_args.is_empty() {
+                self.emit_empty_call_argument_comments(node, Some(args));
+            }
+        }
+        self.ctx.flags.optional_chain_needs_parens = prev_optional;
+        self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
+        // Map the closing `)` to its source position
+        self.map_closing_paren(node);
+        self.write(")");
+    }
+
+    fn emit_parenthesized_optional_access_call_expression(
+        &mut self,
+        callee: NodeIndex,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        let unwrapped = self.unwrap_paren_and_type_assertion(callee);
+        if unwrapped == callee {
+            return false;
+        }
+        let Some(access_node) = self.arena.get(unwrapped).copied() else {
+            return false;
+        };
+        if access_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && access_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.arena.get_access_expr(&access_node) else {
+            return false;
+        };
+        let access_expression = access.expression;
+        let access_name_or_argument = access.name_or_argument;
+        let access_question_dot_token = access.question_dot_token;
+        if !access_node.is_optional_chain()
+            && !access_question_dot_token
+            && !self.expression_is_optional_chain_continuation(access_expression)
+        {
+            return false;
+        }
+
+        if self.emit_parenthesized_optional_receiver_tail_call(
+            access_node.kind,
+            access_expression,
+            access_name_or_argument,
+            access_question_dot_token,
+            args,
+        ) {
+            return true;
+        }
+        if self.emit_parenthesized_optional_receiver_access_tail_call(
+            access_node.kind,
+            access_expression,
+            access_name_or_argument,
+            access_question_dot_token,
+            args,
+        ) {
+            return true;
+        }
+
+        if !access_question_dot_token {
+            return false;
+        }
+
+        let receiver_temp = if self.is_simple_nullish_expression(access_expression) {
+            None
+        } else {
+            Some(self.make_unique_name_hoisted())
+        };
+
+        self.write("(");
+        if let Some(temp) = receiver_temp.as_deref() {
+            self.write("(");
+            self.write(temp);
+            self.write(" = ");
+            self.emit(access_expression);
+            self.write(") === null || ");
+            self.write(temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(temp);
+        } else {
+            self.emit(access_expression);
+            self.write(" === null || ");
+            self.emit(access_expression);
+            self.write(" === void 0 ? void 0 : ");
+            self.emit(access_expression);
+        }
+        self.emit_access_suffix(access_node.kind, access_name_or_argument);
+        self.write(").call(");
+        if let Some(temp) = receiver_temp.as_deref() {
+            self.write(temp);
+        } else {
+            self.emit(access_expression);
+        }
+        self.emit_optional_call_tail_arguments(args.as_ref());
+        true
+    }
+
+    fn emit_parenthesized_optional_receiver_tail_call(
+        &mut self,
+        access_kind: u16,
+        access_expression: NodeIndex,
+        access_name_or_argument: NodeIndex,
+        access_question_dot_token: bool,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        if access_question_dot_token {
+            return false;
+        }
+        let Some(receiver_node) = self.arena.get(access_expression).copied() else {
+            return false;
+        };
+        if receiver_node.kind != syntax_kind_ext::CALL_EXPRESSION
+            || !self.expression_is_optional_chain_continuation(access_expression)
+        {
+            return false;
+        }
+        let Some(receiver_call) = self.arena.get_call_expr(&receiver_node).cloned() else {
+            return false;
+        };
+        let Some(receiver_access_node) = self.arena.get(receiver_call.expression).copied() else {
+            return false;
+        };
+        if receiver_access_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && receiver_access_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(receiver_access) = self.arena.get_access_expr(&receiver_access_node) else {
+            return false;
+        };
+        let receiver_base_expression = receiver_access.expression;
+        let receiver_name_or_argument = receiver_access.name_or_argument;
+        if !receiver_access.question_dot_token {
+            return false;
+        }
+
+        self.write("(");
+        let receiver_temp;
+        if self.is_simple_nullish_expression(receiver_base_expression) {
+            receiver_temp = self.make_unique_name_hoisted();
+            self.emit(receiver_base_expression);
+            self.write(" === null || ");
+            self.emit(receiver_base_expression);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+        } else {
+            let base_temp = self.make_unique_name_hoisted();
+            receiver_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+            self.write(") === null || ");
+            self.write(&base_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.write(&base_temp);
+        }
+        self.emit_access_suffix(receiver_access_node.kind, receiver_name_or_argument);
+        self.emit_call_arguments(&receiver_node, receiver_call.arguments.as_ref());
+        self.write(")");
+        self.emit_access_suffix(access_kind, access_name_or_argument);
+        self.write(").call(");
+        self.write(&receiver_temp);
+        self.emit_optional_call_tail_arguments(args.as_ref());
+        true
+    }
+
+    fn emit_parenthesized_optional_receiver_access_tail_call(
+        &mut self,
+        access_kind: u16,
+        access_expression: NodeIndex,
+        access_name_or_argument: NodeIndex,
+        access_question_dot_token: bool,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        if access_question_dot_token {
+            return false;
+        }
+        let Some(receiver_access_node) = self.arena.get(access_expression).copied() else {
+            return false;
+        };
+        if receiver_access_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && receiver_access_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(receiver_access) = self.arena.get_access_expr(&receiver_access_node) else {
+            return false;
+        };
+        if !receiver_access.question_dot_token {
+            return false;
+        }
+
+        let receiver_base_expression = receiver_access.expression;
+        let receiver_name_or_argument = receiver_access.name_or_argument;
+
+        self.write("(");
+        let receiver_temp;
+        if self.is_simple_nullish_expression(receiver_base_expression) {
+            receiver_temp = self.make_unique_name_hoisted();
+            self.emit(receiver_base_expression);
+            self.write(" === null || ");
+            self.emit(receiver_base_expression);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+        } else {
+            let base_temp = self.make_unique_name_hoisted();
+            receiver_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+            self.write(") === null || ");
+            self.write(&base_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.write(&base_temp);
+        }
+        self.emit_access_suffix(receiver_access_node.kind, receiver_name_or_argument);
+        self.write(")");
+        self.emit_access_suffix(access_kind, access_name_or_argument);
+        self.write(").call(");
+        self.write(&receiver_temp);
+        self.emit_optional_call_tail_arguments(args.as_ref());
+        true
+    }
+
+    fn emit_access_suffix(&mut self, kind: u16, name_or_argument: NodeIndex) {
+        if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.write(".");
+            self.emit_property_name_without_import_substitution(name_or_argument);
+        } else {
+            self.write("[");
+            self.emit(name_or_argument);
+            self.write("]");
+        }
+    }
+
+    fn emit_system_dynamic_import_call(
+        &mut self,
+        node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) {
+        self.write("context_1.import");
+        self.emit_call_arguments(node, args);
+    }
+
+    fn emit_amd_or_umd_dynamic_import_call(&mut self, args: Option<&tsz_parser::parser::NodeList>) {
+        let first_arg = self.first_dynamic_import_argument(args);
+        let needs_temp = first_arg.is_some_and(|arg| !self.dynamic_import_arg_is_string_like(arg));
+        let temp = needs_temp.then(|| self.make_unique_name_hoisted());
+
+        if let Some(temp_name) = temp.as_deref() {
+            self.write(temp_name);
+            self.write(" = ");
+            if self.ctx.options.rewrite_relative_import_extensions {
+                if let Some(first) = first_arg {
+                    self.emit_rewrite_helper_call(first);
+                }
+            } else if let Some(first) = first_arg {
+                self.emit(first);
+            }
+            self.write(", ");
+        }
+
+        if matches!(self.ctx.original_module_kind, Some(ModuleKind::UMD)) {
+            self.write("__syncRequire ? ");
+            self.emit_dynamic_import_commonjs_branch(first_arg, temp.as_deref());
+            self.write(" : ");
+        }
+        self.emit_dynamic_import_amd_branch(first_arg, temp.as_deref());
+    }
+
+    fn first_dynamic_import_argument(
+        &self,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) -> Option<NodeIndex> {
+        args.and_then(|args| {
+            args.nodes
+                .iter()
+                .copied()
+                .find(|&idx| self.call_argument_should_emit(idx))
+        })
+    }
+
+    fn dynamic_import_arg_is_string_like(&self, arg: NodeIndex) -> bool {
+        self.arena.get(arg).is_some_and(|node| {
+            node.kind == SyntaxKind::StringLiteral as u16
+                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || node.end <= node.pos
+        })
+    }
+
+    fn emit_dynamic_import_commonjs_branch(
+        &mut self,
+        first_arg: Option<NodeIndex>,
+        temp: Option<&str>,
+    ) {
+        if self.ctx.target_es5 {
+            self.write("Promise.resolve().then(function () { return ");
+            self.write_helper("__importStar");
+            self.write("(require(");
+            self.emit_dynamic_import_require_specifier(first_arg, temp);
+            self.write(")); })");
+        } else {
+            self.write("Promise.resolve().then(() => ");
+            self.write_helper("__importStar");
+            self.write("(require(");
+            self.emit_dynamic_import_require_specifier(first_arg, temp);
+            self.write(")))");
+        }
+    }
+
+    fn emit_dynamic_import_amd_branch(&mut self, first_arg: Option<NodeIndex>, temp: Option<&str>) {
+        let id = self.next_dynamic_import_promise_id;
+        self.next_dynamic_import_promise_id += 1;
+        let resolve = format!("resolve_{id}");
+        let reject = format!("reject_{id}");
+
+        if self.ctx.target_es5 {
+            self.write("new Promise(function (");
+        } else {
+            self.write("new Promise((");
+        }
+        self.write(&resolve);
+        self.write(", ");
+        self.write(&reject);
+        if self.ctx.target_es5 {
+            self.write(") { require([");
+        } else {
+            self.write(") => { require([");
+        }
+        self.emit_dynamic_import_require_specifier(first_arg, temp);
+        self.write("], ");
+        self.write(&resolve);
+        self.write(", ");
+        self.write(&reject);
+        self.write("); }).then(");
+        self.write_helper("__importStar");
+        self.write(")");
+    }
+
+    fn emit_dynamic_import_require_specifier(
+        &mut self,
+        first_arg: Option<NodeIndex>,
+        temp: Option<&str>,
+    ) {
+        if let Some(temp) = temp {
+            self.write(temp);
+        } else if let Some(first) = first_arg {
+            self.emit_maybe_rewritten_module_specifier_arg(first);
+        }
+    }
+
+    fn emit_erased_object_literal_access_call(
+        &mut self,
+        call_node: &Node,
+        callee: NodeIndex,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        let Some((object_expr, dot_base, property_name)) =
+            self.erased_object_literal_access_parts(callee)
+        else {
+            return false;
+        };
+
+        self.write("(");
+        self.emit(object_expr);
+        self.write_dot_token(dot_base);
+        self.emit_property_name_without_import_substitution(property_name);
+        self.emit_call_arguments(call_node, args.as_ref());
+        self.write(")");
+        true
+    }
+
+    pub(in crate::emitter) fn is_erased_object_literal_access_call_expression(
+        &self,
+        call_idx: NodeIndex,
+    ) -> bool {
+        let Some(call_node) = self.arena.get(call_idx) else {
+            return false;
+        };
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.arena.get_call_expr(call_node) else {
+            return false;
+        };
+        self.erased_object_literal_access_parts(call.expression)
+            .is_some()
+    }
+
+    fn erased_object_literal_access_parts(
+        &self,
+        callee: NodeIndex,
+    ) -> Option<(NodeIndex, NodeIndex, NodeIndex)> {
+        let callee_node = self.arena.get(callee)?;
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(callee_node)?;
+        let base_node = self.arena.get(access.expression)?;
+        if base_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return None;
+        }
+        let paren = self.arena.get_parenthesized(base_node)?;
+        let inner = self.arena.get(paren.expression)?;
+        let inner_is_erasable = inner.kind == syntax_kind_ext::TYPE_ASSERTION
+            || inner.kind == syntax_kind_ext::AS_EXPRESSION
+            || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            || inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS;
+        if !inner_is_erasable || !self.type_assertion_wraps_object_literal(paren.expression) {
+            return None;
+        }
+
+        Some((paren.expression, access.expression, access.name_or_argument))
+    }
+
+    fn emit_call_arguments(&mut self, node: &Node, args: Option<&tsz_parser::parser::NodeList>) {
+        self.write("(");
+        // The call's own parens provide grouping, so clear the "needs parens"
+        // flags to avoid double-parenthesization when an argument contains a
+        // downlevel optional chain or nullish coalescing expression.
+        let prev_optional = self.ctx.flags.optional_chain_needs_parens;
+        let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
+        self.ctx.flags.optional_chain_needs_parens = false;
+        self.ctx.flags.nullish_coalescing_needs_parens = false;
+        if let Some(args) = args {
+            let valid_args: Vec<_> = args
+                .nodes
+                .iter()
+                .copied()
+                .filter(|&idx| self.call_argument_should_emit(idx))
+                .collect();
+            if let Some(first_arg) = valid_args.first()
+                && let Some(arg_node) = self.arena.get(*first_arg)
+            {
+                let open_paren_pos = self
+                    .find_call_open_paren_position(node, Some(args))
+                    .unwrap_or(node.pos);
+                self.emit_call_leading_argument_comments(open_paren_pos, arg_node.pos);
+            }
+            self.emit_comma_separated(&valid_args);
+            if let Some(last_arg) = valid_args.last()
+                && let Some(close_paren_pos) =
+                    self.find_call_closing_paren_position(node, Some(args))
+            {
+                let last_arg_end = self.call_argument_comment_boundary(*last_arg);
+                self.emit_call_trailing_argument_comments(last_arg_end, close_paren_pos);
+            } else if valid_args.is_empty() {
+                self.emit_empty_call_argument_comments(node, Some(args));
+            }
+        }
+        self.ctx.flags.optional_chain_needs_parens = prev_optional;
+        self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
+        self.write(")");
+    }
+
+    fn call_argument_should_emit(&self, idx: NodeIndex) -> bool {
+        if idx.is_none() {
+            return false;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.end <= node.pos {
+            return false;
+        }
+        if node.kind == SyntaxKind::Unknown as u16 {
+            return false;
+        }
+        self.arena
+            .get_identifier(node)
+            .is_none_or(|ident| !ident.escaped_text.is_empty())
+    }
+
+    fn emit_optional_call_expression(
+        &mut self,
+        node: &Node,
+        callee: NodeIndex,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) {
+        // Check if the callee is a type-asserted method call like `(foo.m as T)?.()`.
+        // After unwrapping paren/type-assertion, if the underlying expression is a
+        // property/element access, we need `.call(receiver)` for correct `this` binding.
+        let unwrapped = self.unwrap_paren_and_type_assertion(callee);
+        if let Some(unwrapped_node) = self.arena.get(unwrapped)
+            && (unwrapped_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || unwrapped_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+        {
+            // Route through method call path with `.call()` for `this` preservation
+            self.emit_optional_method_call_expression(
+                unwrapped_node,
+                node,
+                args,
+                true, // has_optional_call_token — the `?.()` is on the call
+            );
+            return;
+        }
+
+        let needs_parens = self.ctx.flags.optional_chain_needs_parens;
+        if needs_parens {
+            self.write("(");
+            self.ctx.flags.optional_chain_needs_parens = false;
+        }
+        if self.is_simple_nullish_expression(callee) {
+            self.emit(callee);
+            self.write(" === null || ");
+            self.emit(callee);
+            self.write(" === void 0 ? void 0 : ");
+            self.emit(callee);
+            self.emit_call_arguments(node, args.as_ref());
+        } else {
+            let temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&temp);
+            self.write(" = ");
+            self.emit(callee);
+            self.write(")");
+            self.write(" === null || ");
+            self.write(&temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(&temp);
+            self.emit_call_arguments(node, args.as_ref());
+        }
+        if needs_parens {
+            self.write(")");
+        }
+    }
+
+    fn emit_optional_method_call_expression(
+        &mut self,
+        access_node: &Node,
+        call_node: &Node,
+        args: &Option<tsz_parser::parser::NodeList>,
+        has_optional_call_token: bool,
+    ) {
+        let Some(access) = self.arena.get_access_expr(access_node) else {
+            return;
+        };
+
+        let needs_parens = self.ctx.flags.optional_chain_needs_parens;
+        if needs_parens {
+            self.write("(");
+            self.ctx.flags.optional_chain_needs_parens = false;
+        }
+
+        if !has_optional_call_token {
+            let is_simple = self.is_simple_nullish_expression(access.expression);
+            if is_simple {
+                // Simple identifier — no temp needed.
+                // e.g., `o2?.b()` → `o2 === null || o2 === void 0 ? void 0 : o2.b()`
+                if access.question_dot_token {
+                    self.emit(access.expression);
+                    self.write(" === null || ");
+                    self.emit(access.expression);
+                    self.write(" === void 0 ? void 0 : ");
+                }
+                self.emit(access.expression);
+            } else {
+                let this_temp = self.make_unique_name_hoisted();
+                self.write("(");
+                self.write(&this_temp);
+                self.write(" = ");
+                self.emit(access.expression);
+                self.write(")");
+                if access.question_dot_token {
+                    self.write(" === null || ");
+                    self.write(&this_temp);
+                    self.write(" === void 0 ? void 0 : ");
+                }
+                if access.question_dot_token {
+                    self.write(&this_temp);
+                }
+            }
+            if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                self.write(".");
+                self.emit(access.name_or_argument);
+            } else {
+                self.write("[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+            }
+            self.emit_call_arguments(call_node, args.as_ref());
+            if needs_parens {
+                self.write(")");
+            }
+            return;
+        }
+
+        // Check if the base expression is `super` — it cannot be captured in a temp variable.
+        // For `super.method?.()`, emit: `(_a = super.method) === null || _a === void 0 ? void 0 : _a.call(this)`
+        let is_super = self
+            .arena
+            .get(access.expression)
+            .is_some_and(|n| n.kind == SyntaxKind::SuperKeyword as u16);
+
+        if is_super {
+            let func_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&func_temp);
+            self.write(" = ");
+            // Capture `super.method` or `super["method"]` as a unit
+            if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                self.write("super.");
+                self.emit(access.name_or_argument);
+            } else {
+                self.write("super[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+            }
+            self.write(") === null || ");
+            self.write(&func_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(&func_temp);
+            self.write(".call(");
+            if self.ctx.arrow_state.this_capture_depth > 0 {
+                self.write("_this");
+            } else {
+                self.write("this");
+            }
+            self.emit_optional_call_tail_arguments(args.as_ref());
+            if needs_parens {
+                self.write(")");
+            }
+            return;
+        }
+
+        let is_simple = self.is_simple_nullish_expression(access.expression);
+
+        if is_simple {
+            // Simple identifier — only need one temp for the method capture.
+            // e.g., `o3.b?.()` → `(_a = o3.b) === null || _a === void 0 ? void 0 : _a.call(o3)`
+            let func_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&func_temp);
+            self.write(" = ");
+            if access.question_dot_token {
+                self.emit(access.expression);
+                self.write(" === null || ");
+                self.emit(access.expression);
+                self.write(" === void 0 ? void 0 : ");
+                self.emit(access.expression);
+            } else {
+                self.emit(access.expression);
+            }
+            if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                self.write(".");
+                self.emit(access.name_or_argument);
+            } else {
+                self.write("[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+            }
+            self.write(") === null || ");
+            self.write(&func_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(&func_temp);
+            self.write(".call(");
+            self.emit(access.expression);
+            self.emit_optional_call_tail_arguments(args.as_ref());
+        } else {
+            let this_temp = self.make_unique_name_hoisted();
+            let func_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&func_temp);
+            self.write(" = ");
+            self.write("(");
+            self.write(&this_temp);
+            self.write(" = ");
+            self.emit(access.expression);
+            self.write(")");
+            if access.question_dot_token {
+                self.write(" === null || ");
+                self.write(&this_temp);
+                self.write(" === void 0 ? void 0 : ");
+            }
+            if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                if access.question_dot_token {
+                    self.write(&this_temp);
+                }
+                self.write(".");
+                self.emit(access.name_or_argument);
+            } else {
+                if access.question_dot_token {
+                    self.write(&this_temp);
+                }
+                self.write("[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+            }
+            self.write(") === null || ");
+            self.write(&func_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(&func_temp);
+            self.write(".call(");
+            self.write(&this_temp);
+            self.emit_optional_call_tail_arguments(args.as_ref());
+        }
+        if needs_parens {
+            self.write(")");
+        }
+    }
+
+    fn emit_optional_call_tail_arguments(&mut self, args: Option<&tsz_parser::parser::NodeList>) {
+        if let Some(args) = args
+            && !args.nodes.is_empty()
+        {
+            self.write(", ");
+            self.emit_comma_separated(&args.nodes);
+        }
+        self.write(")");
+    }
+
+    fn expression_is_optional_chain_continuation(&self, expression: NodeIndex) -> bool {
+        let expression = self.unwrap_paren_and_type_assertion(expression);
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.arena.get_access_expr(node).is_some_and(|access| {
+                    node.is_optional_chain()
+                        || access.question_dot_token
+                        || self.expression_is_optional_chain_continuation(access.expression)
+                })
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                node.is_optional_chain()
+                    || self.arena.get_call_expr(node).is_some_and(|call| {
+                        self.expression_is_optional_chain_continuation(call.expression)
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    const fn is_optional_chain(&self, node: &Node) -> bool {
+        node.is_optional_chain()
+    }
+
+    fn has_optional_call_token(
+        &self,
+        call_node: &Node,
+        callee: NodeIndex,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) -> bool {
+        let Some(source) = self.source_text_for_map() else {
+            let Some(callee_node) = self.arena.get(callee) else {
+                return false;
+            };
+            if self.arena.get_access_expr(callee_node).is_none() {
+                return true;
+            }
+            return false;
+        };
+
+        let Some(callee_node) = self.arena.get(callee) else {
+            return false;
+        };
+        // The `(` we want is the one that opens the call's argument list,
+        // which is *after* the callee. If the callee is itself a
+        // parenthesized expression — `(foo.m as any)?.()` — then
+        // `find_call_open_paren_position`'s naive "first `(` between
+        // call_node.pos and call_node.end" lands on the *callee's*
+        // open paren, not the argument-list `(`. The backward scan for
+        // `?.` from that wrong position finds nothing and the optional-
+        // call token is silently dropped, producing `foo.m()` instead of
+        // `foo.m?.()`. Pin the search start to right after the callee.
+        let scan_start = std::cmp::min(callee_node.end as usize, source.len());
+        let Some(open_paren) =
+            self.find_call_open_paren_position_after(call_node, args, scan_start as u32)
+        else {
+            return false;
+        };
+
+        let bytes = source.as_bytes();
+        let mut i = std::cmp::min(open_paren as usize, source.len());
+        let start = std::cmp::min(callee_node.pos as usize, source.len());
+
+        while i > start {
+            if i == 0 {
+                break;
+            }
+            match bytes[i - 1] {
+                b' ' | b'\t' | b'\r' | b'\n' => {
+                    i -= 1;
+                }
+                b'/' if i >= 2 && bytes[i - 2] == b'/' => {
+                    while i > start && bytes[i - 1] != b'\n' {
+                        i -= 1;
+                    }
+                    if i > start {
+                        i -= 1;
+                    }
+                }
+                b'/' if i >= 2 && bytes[i - 2] == b'*' => {
+                    if i >= 2 {
+                        i -= 2;
+                    }
+                    while i >= 2 && !(bytes[i - 2] == b'*' && bytes[i - 1] == b'/') {
+                        i -= 1;
+                    }
+                    if i >= 2 {
+                        i -= 2;
+                    }
+                }
+                // Skip over type arguments: `?.<T>()` → scan past `<T>` to find `?.`
+                b'>' => {
+                    let mut depth = 1u32;
+                    i -= 1;
+                    while i > start && depth > 0 {
+                        match bytes[i - 1] {
+                            b'>' => depth += 1,
+                            b'<' => depth -= 1,
+                            _ => {}
+                        }
+                        i -= 1;
+                    }
+                    // After skipping `<...>`, continue scanning for `?.`
+                }
+                b'?' if i >= 2 && bytes[i - 2] == b'.' => {
+                    return true;
+                }
+                b'.' if i >= 2 && bytes[i - 2] == b'?' && bytes[i - 1] == b'.' => {
+                    return true;
+                }
+                _ => return false,
+            }
+        }
+
+        false
+    }
+
+    fn find_call_open_paren_position(
+        &self,
+        call_node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) -> Option<u32> {
+        let start_after = self
+            .arena
+            .get_call_expr(call_node)
+            .and_then(|call| self.arena.get(call.expression))
+            .map_or(call_node.pos, |callee| callee.end);
+        self.find_call_open_paren_position_after(call_node, args, start_after)
+    }
+
+    /// Variant of `find_call_open_paren_position` that begins the search
+    /// at an explicit offset, used by `has_optional_call_token` to skip
+    /// past a parenthesized or type-asserted callee whose own `(` would
+    /// otherwise be returned. The offset is clamped to the call node's
+    /// end and to the source length.
+    fn find_call_open_paren_position_after(
+        &self,
+        call_node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+        start_after: u32,
+    ) -> Option<u32> {
+        let text = self.source_text_for_map()?;
+        let bytes = text.as_bytes();
+        let start = std::cmp::min(start_after as usize, bytes.len());
+        let mut end = std::cmp::min(call_node.end as usize, bytes.len());
+        if let Some(args) = args
+            && let Some(first) = args.nodes.first()
+            && let Some(first_node) = self.arena.get(*first)
+        {
+            end = std::cmp::min(first_node.pos as usize, end);
+        }
+        if start >= end {
+            return None;
+        }
+        (start..end)
+            .position(|i| bytes[i] == b'(')
+            .map(|offset| (start + offset) as u32)
+    }
+
+    fn find_call_closing_paren_position(
+        &self,
+        call_node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let open_pos = self.find_call_open_paren_position(call_node, args)? as usize;
+        let mut pos = open_pos;
+        let mut depth: i32 = 0;
+
+        while pos < bytes.len() {
+            match bytes[pos] {
+                b'(' => {
+                    depth += 1;
+                    pos += 1;
+                }
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(pos as u32);
+                    }
+                    pos += 1;
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < bytes.len() {
+                        if bytes[pos] == b'\\' {
+                            pos += 2;
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                b'/' if pos + 1 < bytes.len() && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < bytes.len() && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < bytes.len() {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+
+        None
+    }
+
+    fn call_argument_comment_boundary(&self, arg_idx: NodeIndex) -> u32 {
+        let Some(arg_node) = self.arena.get(arg_idx) else {
+            return 0;
+        };
+
+        if arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            && let Some(func) = self.arena.get_function(arg_node)
+            && let Some(body_node) = self.arena.get(func.body)
+            && body_node.kind == syntax_kind_ext::BLOCK
+        {
+            return self.find_block_closing_brace_end(body_node);
+        }
+
+        self.find_token_end_before_trivia(arg_node.pos, arg_node.end)
+    }
+
+    fn emit_call_trailing_argument_comments(&mut self, from_pos: u32, close_paren_pos: u32) {
+        if self.ctx.options.remove_comments || from_pos >= close_paren_pos {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        if let Some(comment) = self.all_comments.get(self.comment_emit_idx)
+            && comment.pos >= from_pos
+            && comment.end <= close_paren_pos
+        {
+            let gap_start = std::cmp::min(from_pos as usize, bytes.len());
+            let gap_end = std::cmp::min(comment.pos as usize, bytes.len());
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r')
+            {
+                self.write_line();
+            }
+        }
+
+        self.emit_unemitted_comments_between(from_pos, close_paren_pos);
+    }
+
+    fn emit_empty_call_argument_comments(
+        &mut self,
+        call_node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let Some(open_paren_pos) = self.find_call_open_paren_position(call_node, args) else {
+            return;
+        };
+        let Some(close_paren_pos) = self.find_call_closing_paren_position(call_node, args) else {
+            return;
+        };
+        if open_paren_pos + 1 >= close_paren_pos {
+            return;
+        }
+
+        let bytes = text.as_bytes();
+        let mut scan_idx = self.comment_emit_idx;
+        let mut previous_pos = open_paren_pos + 1;
+        let mut previous_comment_had_trailing_newline = false;
+
+        while scan_idx < self.all_comments.len() {
+            let comment_pos = self.all_comments[scan_idx].pos;
+            let comment_end = self.all_comments[scan_idx].end;
+            let has_trailing_new_line = self.all_comments[scan_idx].has_trailing_new_line;
+            if comment_end <= open_paren_pos {
+                scan_idx += 1;
+                continue;
+            }
+            if comment_pos >= close_paren_pos {
+                break;
+            }
+            if comment_pos < open_paren_pos || comment_end > close_paren_pos {
+                scan_idx += 1;
+                continue;
+            }
+
+            if previous_comment_had_trailing_newline {
+                // The previous comment already advanced to the next output line.
+            } else if self.call_comment_range_contains_newline(previous_pos, comment_pos, bytes) {
+                self.write_line();
+            } else {
+                self.write_space();
+            }
+
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+                if has_trailing_new_line {
+                    self.write_line();
+                }
+            }
+
+            previous_pos = comment_end;
+            previous_comment_had_trailing_newline = has_trailing_new_line;
+            self.comment_emit_idx = scan_idx + 1;
+            scan_idx += 1;
+        }
+    }
+
+    fn emit_call_leading_argument_comments(&mut self, open_paren_pos: u32, arg_pos: u32) {
+        if self.ctx.options.remove_comments || open_paren_pos >= arg_pos {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        if let Some(comment) = self.all_comments.get(self.comment_emit_idx)
+            && comment.pos >= open_paren_pos
+            && comment.end <= arg_pos
+        {
+            let gap_start = std::cmp::min(open_paren_pos as usize + 1, bytes.len());
+            let gap_end = std::cmp::min(comment.pos as usize, bytes.len());
+            let gap_after_start = std::cmp::min(comment.end as usize, bytes.len());
+            let gap_after_end = std::cmp::min(arg_pos as usize, bytes.len());
+            if bytes[gap_start..gap_end]
+                .iter()
+                .chain(bytes[gap_after_start..gap_after_end].iter())
+                .any(|&b| b == b'\n' || b == b'\r')
+            {
+                self.emit_call_leading_multiline_argument_comments(open_paren_pos + 1, arg_pos);
+                return;
+            }
+        }
+
+        self.emit_unemitted_comments_between(open_paren_pos, arg_pos);
+    }
+
+    fn emit_call_leading_multiline_argument_comments(&mut self, from_pos: u32, arg_pos: u32) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        let mut scan_idx = self.comment_emit_idx;
+        let mut previous_pos = from_pos;
+        let mut previous_comment_had_trailing_newline = false;
+        let mut emitted_any = false;
+
+        while scan_idx < self.all_comments.len() {
+            let comment_pos = self.all_comments[scan_idx].pos;
+            let comment_end = self.all_comments[scan_idx].end;
+            let has_trailing_new_line = self.all_comments[scan_idx].has_trailing_new_line;
+            if comment_end <= from_pos {
+                scan_idx += 1;
+                continue;
+            }
+            if comment_pos >= arg_pos {
+                break;
+            }
+            if comment_pos < from_pos || comment_end > arg_pos {
+                scan_idx += 1;
+                continue;
+            }
+
+            if previous_comment_had_trailing_newline {
+                // The previous comment already moved to the next output line.
+            } else if self.call_comment_range_contains_newline(previous_pos, comment_pos, bytes) {
+                self.write_line();
+            } else if emitted_any {
+                self.write_space();
+            }
+
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+                emitted_any = true;
+                if has_trailing_new_line {
+                    self.write_line();
+                }
+            }
+
+            previous_pos = comment_end;
+            previous_comment_had_trailing_newline = has_trailing_new_line;
+            self.comment_emit_idx = scan_idx + 1;
+            scan_idx += 1;
+        }
+
+        if emitted_any
+            && !previous_comment_had_trailing_newline
+            && self.call_comment_range_contains_newline(previous_pos, arg_pos, bytes)
+        {
+            self.write_line();
+        }
+    }
+
+    fn call_comment_range_contains_newline(
+        &self,
+        from_pos: u32,
+        to_pos: u32,
+        bytes: &[u8],
+    ) -> bool {
+        let start = std::cmp::min(from_pos as usize, bytes.len());
+        let end = std::cmp::min(to_pos as usize, bytes.len());
+        bytes[start..end].iter().any(|&b| b == b'\n' || b == b'\r')
+    }
+
+    fn emit_dynamic_import_template_specifier(&mut self, expr: NodeIndex) {
+        let Some(node) = self.arena.get(expr) else {
+            return;
+        };
+
+        if self.ctx.emit_await_as_yield_await
+            && node.kind == syntax_kind_ext::YIELD_EXPRESSION
+            && let Some(unary) = self.arena.get_unary_expr_ex(node)
+            && !unary.asterisk_token
+        {
+            self.write("yield ");
+            self.write("yield ");
+            self.write_helper("__await");
+            self.write("(");
+            if unary.expression.is_some() {
+                self.emit_expression(unary.expression);
+            } else {
+                self.write("void 0");
+            }
+            self.write(")");
+            return;
+        }
+
+        self.emit(expr);
+    }
+
+    /// Unwrap parenthesized expressions and type assertions/satisfies to find
+    /// the underlying runtime expression. Used by optional call lowering to
+    /// detect property access through type assertion wrappers like
+    /// `(foo.m as any)?.()`.
+    fn unwrap_paren_and_type_assertion(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return idx;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    let Some(paren) = self.arena.get_parenthesized(node) else {
+                        return idx;
+                    };
+                    idx = paren.expression;
+                }
+                k if k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    let Some(assert) = self.arena.get_type_assertion(node) else {
+                        return idx;
+                    };
+                    idx = assert.expression;
+                }
+                _ => return idx,
+            }
+        }
+    }
+}

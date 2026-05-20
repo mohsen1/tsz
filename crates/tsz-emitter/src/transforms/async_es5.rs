@@ -1,0 +1,325 @@
+//! ES5 Async Function Transform
+//!
+//! Transforms async functions to ES5 generators wrapped in __awaiter.
+//!
+//! # Transform Patterns
+//!
+//! ## Simple async function (no await)
+//! ```typescript
+//! async function foo(): Promise<void> { }
+//! ```
+//! Becomes:
+//! ```javascript
+//! function foo() {
+//!     return __awaiter(this, void 0, void 0, function () {
+//!         return __generator(this, function (_a) {
+//!             return [2 /*return*/];
+//!         });
+//!     });
+//! }
+//! ```
+//!
+//! ## Async function with await
+//! ```typescript
+//! async function foo() {
+//!     await bar();
+//!     return 1;
+//! }
+//! ```
+//! Becomes:
+//! ```javascript
+//! function foo() {
+//!     return __awaiter(this, void 0, void 0, function () {
+//!         return __generator(this, function (_a) {
+//!             switch (_a.label) {
+//!                 case 0: return [4 /*yield*/, bar()];
+//!                 case 1:
+//!                     _a.sent();
+//!                     return [2 /*return*/, 1];
+//!             }
+//!         });
+//!     });
+//! }
+//! ```
+//!
+//! ## Async arrow function
+//! ```typescript
+//! var foo = async () => { };
+//! ```
+//! Becomes:
+//! ```javascript
+//! var _this = this;
+//! var foo = function () { return __awaiter(_this, void 0, void 0, function () {
+//!     return __generator(this, function (_a) {
+//!         return [2 /*return*/];
+//!     });
+//! }); };
+//! ```
+//!
+//! # Architecture
+//!
+//! This module uses the IR-based transformation pattern:
+//! - `AsyncES5Transformer` (in `async_es5_ir.rs`) produces IR nodes
+//! - `AsyncES5Emitter` is a thin wrapper that uses `IRPrinter` to emit JavaScript
+//!
+//! This separation allows clean transform logic while delegating string emission
+//! to the centralized `IRPrinter`.
+
+use crate::transforms::async_es5_ir::AsyncES5Transformer;
+use crate::transforms::ir::IRNode;
+use crate::transforms::ir_printer::IRPrinter;
+use tsz_common::source_map::Mapping;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
+
+// Re-export from async_es5_ir for backward compatibility
+pub use crate::transforms::async_es5_ir::{AsyncTransformState, opcodes};
+
+/// Async ES5 emitter for transforming async functions.
+///
+/// This is a thin wrapper around `AsyncES5Transformer` that uses `IRPrinter`
+/// to emit JavaScript strings. It provides the same API as the legacy emitter
+/// for backward compatibility.
+pub struct AsyncES5Emitter<'a> {
+    arena: &'a NodeArena,
+    transformer: AsyncES5Transformer<'a>,
+    indent_level: u32,
+    source_text: Option<&'a str>,
+    source_index: u32,
+    mappings: Vec<Mapping>,
+    this_capture_depth: u32,
+    class_name: Option<String>,
+    /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
+    tslib_prefix: bool,
+    tslib_import_binding: String,
+    system_import_meta: bool,
+}
+
+impl<'a> AsyncES5Emitter<'a> {
+    pub fn new(arena: &'a NodeArena) -> Self {
+        Self {
+            arena,
+            transformer: AsyncES5Transformer::new(arena),
+            indent_level: 0,
+            source_text: None,
+            source_index: 0,
+            mappings: Vec::new(),
+            this_capture_depth: 0,
+            class_name: None,
+            tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
+            system_import_meta: false,
+        }
+    }
+
+    pub const fn set_indent_level(&mut self, level: u32) {
+        self.indent_level = level;
+    }
+
+    pub const fn set_tslib_prefix(&mut self, enable: bool) {
+        self.tslib_prefix = enable;
+    }
+
+    pub fn set_tslib_import_binding(&mut self, binding: String) {
+        self.tslib_import_binding = binding;
+    }
+
+    pub const fn set_system_import_meta(&mut self, enabled: bool) {
+        self.system_import_meta = enabled;
+    }
+
+    pub fn set_temp_var_counter(&mut self, counter: u32) {
+        self.transformer.set_temp_var_counter(counter);
+    }
+
+    pub const fn temp_var_counter(&self) -> u32 {
+        self.transformer.temp_var_counter()
+    }
+
+    pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.transformer
+            .set_disposable_env_context(next_id, blocked_names);
+    }
+
+    pub const fn disposable_env_counter(&self) -> u32 {
+        self.transformer.disposable_env_counter()
+    }
+
+    pub fn take_generated_disposable_env_names(&mut self) -> Vec<String> {
+        self.transformer.take_generated_disposable_env_names()
+    }
+
+    pub fn set_lexical_this(&mut self, capture: bool) {
+        self.this_capture_depth = u32::from(capture);
+        self.transformer.set_lexical_this_capture(capture);
+    }
+
+    pub fn set_use_this_capture(&mut self, capture: bool) {
+        self.this_capture_depth = u32::from(capture);
+        self.transformer.set_lexical_this_capture(capture);
+    }
+
+    /// Set the class name for private field access transformations
+    pub fn set_class_name(&mut self, name: &str) {
+        self.class_name = Some(name.to_string());
+    }
+
+    pub const fn set_source_map_context(&mut self, source_text: &'a str, source_index: u32) {
+        self.source_text = Some(source_text);
+        self.source_index = source_index;
+        self.transformer.set_source_text(source_text);
+    }
+
+    pub fn take_mappings(&mut self) -> Vec<Mapping> {
+        std::mem::take(&mut self.mappings)
+    }
+
+    /// Check if a function body contains any await expressions
+    pub fn body_contains_await(&self, body_idx: NodeIndex) -> bool {
+        self.transformer.body_contains_await(body_idx)
+    }
+
+    /// Emit a simple async body with no await (inline format)
+    /// Returns: "return __generator(this, function (_a) { return [2 /*return*/]; })"
+    pub fn emit_simple_generator_body(&mut self, body_idx: NodeIndex) -> String {
+        // Use the transformer to build IR, then print it
+        let ir = self.transformer.transform_generator_body(body_idx, false);
+
+        let mut printer = IRPrinter::with_arena(self.arena);
+        if let Some(text) = self.source_text {
+            printer.set_source_text(text);
+        }
+        printer.set_indent_level(self.indent_level);
+        printer.set_tslib_prefix(self.tslib_prefix);
+        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_system_import_meta(self.system_import_meta);
+        printer.emit(&ir);
+        printer.take_output()
+    }
+
+    /// Emit a generator body with await (switch/case format)
+    pub fn emit_generator_body_with_await(&mut self, body_idx: NodeIndex) -> String {
+        // Use the transformer to build IR, then print it
+        let ir = self.transformer.transform_generator_body(body_idx, true);
+
+        let mut printer = IRPrinter::with_arena(self.arena);
+        if let Some(text) = self.source_text {
+            printer.set_source_text(text);
+        }
+        printer.set_indent_level(self.indent_level);
+        printer.set_tslib_prefix(self.tslib_prefix);
+        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_system_import_meta(self.system_import_meta);
+        printer.emit(&ir);
+        printer.take_output()
+    }
+
+    /// Emit a simple async body with no await, returning hoisted var names.
+    pub fn emit_simple_generator_body_with_hoisted_vars(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> (String, Vec<String>) {
+        let (body, groups, _) = self.emit_simple_generator_body_with_hoisted_var_groups(body_idx);
+        let hoisted = groups.into_iter().flatten().collect();
+        (body, hoisted)
+    }
+
+    pub fn emit_simple_generator_body_with_hoisted_var_groups(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> (String, Vec<Vec<String>>, bool) {
+        let (body, hoisted, _, needs_lexical_this_capture) =
+            self.emit_generator_body_and_hoisted_vars(body_idx, false);
+        (body, hoisted, needs_lexical_this_capture)
+    }
+
+    /// Emit a generator body with await, returning hoisted var names.
+    pub fn emit_generator_body_with_await_and_hoisted_vars(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> (String, Vec<String>, Vec<String>) {
+        let (body, groups, directives, _) =
+            self.emit_generator_body_and_hoisted_vars(body_idx, true);
+        (body, groups.into_iter().flatten().collect(), directives)
+    }
+
+    pub fn emit_generator_body_with_await_and_hoisted_var_groups(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> (String, Vec<Vec<String>>, Vec<String>, bool) {
+        self.emit_generator_body_and_hoisted_vars(body_idx, true)
+    }
+
+    fn emit_generator_body_and_hoisted_vars(
+        &mut self,
+        body_idx: NodeIndex,
+        has_await: bool,
+    ) -> (String, Vec<Vec<String>>, Vec<String>, bool) {
+        let mut ir = self
+            .transformer
+            .transform_generator_body(body_idx, has_await);
+        let directives = Self::extract_and_remove_directive_prologue(&mut ir);
+        let hoisted = AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut ir);
+        let needs_lexical_this_capture = ir.contains_captured_this_reference();
+        let mut printer = IRPrinter::with_arena(self.arena);
+        if let Some(text) = self.source_text {
+            printer.set_source_text(text);
+        }
+        printer.set_indent_level(self.indent_level);
+        printer.set_tslib_prefix(self.tslib_prefix);
+        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_system_import_meta(self.system_import_meta);
+        let hoisted_names: Vec<&str> = hoisted
+            .iter()
+            .flat_map(|group| group.iter().map(String::as_str))
+            .collect();
+        printer
+            .set_generator_state_name(IRPrinter::generator_state_name_for_hoisted(&hoisted_names));
+        printer.emit(&ir);
+        (
+            printer.take_output(),
+            hoisted,
+            directives,
+            needs_lexical_this_capture,
+        )
+    }
+
+    fn extract_and_remove_directive_prologue(generator_body: &mut IRNode) -> Vec<String> {
+        let IRNode::GeneratorBody { cases, .. } = generator_body else {
+            return Vec::new();
+        };
+        let Some(first_case) = cases.first_mut() else {
+            return Vec::new();
+        };
+
+        let mut directives = Vec::new();
+        while let Some(IRNode::ExpressionStatement(expr)) = first_case.statements.first() {
+            let directive = match expr.as_ref() {
+                IRNode::StringLiteral(text) | IRNode::RawStringLiteral(text) => text.to_string(),
+                _ => break,
+            };
+            directives.push(directive);
+            first_case.statements.remove(0);
+        }
+        directives
+    }
+
+    /// Emit a complete async function transformation
+    pub fn emit_async_function(&mut self, func_idx: NodeIndex) -> String {
+        let ir = self.transformer.transform_async_function(func_idx);
+
+        let mut printer = IRPrinter::with_arena(self.arena);
+        if let Some(text) = self.source_text {
+            printer.set_source_text(text);
+        }
+        printer.set_indent_level(self.indent_level);
+        printer.set_tslib_prefix(self.tslib_prefix);
+        printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_system_import_meta(self.system_import_meta);
+        printer.emit(&ir);
+        printer.take_output()
+    }
+}

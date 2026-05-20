@@ -1,0 +1,1317 @@
+//! Type/value mismatch and declaration error reporting (TS2693, TS2749, TS2708, TS2709).
+
+use super::TypeOnlyKind;
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
+
+impl<'a> CheckerState<'a> {
+    // =========================================================================
+    // Variable/Declaration Errors
+    // =========================================================================
+
+    /// Report error 2403: Subsequent variable declarations must have the same type.
+    pub fn error_subsequent_variable_declaration(
+        &mut self,
+        name: &str,
+        prev_type: TypeId,
+        current_type: TypeId,
+        idx: NodeIndex,
+    ) {
+        // Suppress for ERROR types to avoid cascading diagnostics from unresolved types.
+        if prev_type == TypeId::ERROR || current_type == TypeId::ERROR {
+            return;
+        }
+        // For display, deep-widen inside compound shapes so function return
+        // types and nested object props reflect the widened form
+        // (`{ x: number; y: number; }` not `{ x: 0; y: 0; }`), matching tsc.
+        // But preserve top-level literal/union-of-literal types so explicit
+        // annotations like `var x: 5; var x: 6;` keep their literal form
+        // (`'5'` / `'6'`) instead of collapsing to `number`/`number` (which
+        // would also self-suppress via the equal-display short-circuit below).
+        //
+        // Use the widened formatter (no display-property side-table fallback)
+        // so the widened shape is actually rendered — `format_type_diagnostic`
+        // would fall back to display aliases stored on shared TypeIds and
+        // re-introduce the original literal form inside fn return types.
+        let prev_display = crate::query_boundaries::common::display_widen_for_redeclaration(
+            self.ctx.types,
+            prev_type,
+        );
+        let current_display = crate::query_boundaries::common::display_widen_for_redeclaration(
+            self.ctx.types,
+            current_type,
+        );
+        let prev_type_str = self.format_type_diagnostic_widened(prev_display);
+        let current_type_str = self
+            .ts2403_typeof_fundule_initializer_display(idx)
+            .unwrap_or_else(|| self.format_type_diagnostic_widened(current_display));
+        // Suppress when both types format to the same name. This handles cross-binder
+        // scenarios where a lib_checker resolves a type annotation (e.g., `Document`)
+        // to a separate DefId from the main checker's version. Interface declaration
+        // merging means both annotations semantically refer to the same type, but
+        // different internal TypeIds prevent the structural check from recognizing this.
+        if prev_type_str == current_type_str {
+            return;
+        }
+        let message = format!(
+            "Subsequent variable declarations must have the same type. Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
+        );
+        self.error_at_node(idx, &message, diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP);
+    }
+
+    fn ts2403_typeof_fundule_initializer_display(&self, decl_idx: NodeIndex) -> Option<String> {
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let init_idx = decl.initializer;
+        let init_node = self.ctx.arena.get(init_idx)?;
+
+        let sym_id = if init_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            self.resolve_identifier_symbol_without_tracking(init_idx)
+        } else if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.resolve_qualified_symbol(init_idx)
+        } else {
+            None
+        }?;
+
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        let is_fundule = symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
+            && symbol.has_any_flags(
+                tsz_binder::symbol_flags::VALUE_MODULE | tsz_binder::symbol_flags::NAMESPACE_MODULE,
+            );
+        if !is_fundule || symbol.escaped_name.is_empty() {
+            return None;
+        }
+
+        Some(format!("typeof {}", symbol.escaped_name))
+    }
+
+    /// Report TS2454: Variable is used before being assigned.
+    pub fn error_variable_used_before_assigned_at(&mut self, name: &str, idx: NodeIndex) {
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED,
+            &[name],
+        );
+    }
+
+    // =========================================================================
+    // Class-Related Errors
+    // =========================================================================
+
+    /// Report error 2715: Abstract property 'X' in class 'C' cannot be accessed in the constructor.
+    pub fn error_abstract_property_in_constructor(
+        &mut self,
+        prop_name: &str,
+        class_name: &str,
+        idx: NodeIndex,
+    ) {
+        let message = format!(
+            "Abstract property '{prop_name}' in class '{class_name}' cannot be accessed in the constructor."
+        );
+        self.error_at_node(
+            idx,
+            &message,
+            diagnostic_codes::ABSTRACT_PROPERTY_IN_CLASS_CANNOT_BE_ACCESSED_IN_THE_CONSTRUCTOR,
+        );
+    }
+
+    // =========================================================================
+    // Module/Namespace Errors
+    // =========================================================================
+
+    /// Report TS2694 or TS2724: Namespace has no exported member.
+    ///
+    /// If `export_names` is provided and a spelling suggestion is found,
+    /// emits TS2724 ("Did you mean?") instead of TS2694.
+    pub fn error_namespace_no_export(
+        &mut self,
+        namespace_name: &str,
+        member_name: &str,
+        idx: NodeIndex,
+    ) {
+        self.error_namespace_no_export_with_exports(namespace_name, member_name, idx, &[]);
+    }
+
+    /// Report TS2694 or TS2724 with candidate export names for spelling suggestions.
+    pub fn error_namespace_no_export_with_exports(
+        &mut self,
+        namespace_name: &str,
+        member_name: &str,
+        idx: NodeIndex,
+        export_names: &[String],
+    ) {
+        // Try to find a spelling suggestion among the namespace's exports
+        if let Some(suggestion) = Self::find_export_spelling_suggestion(member_name, export_names) {
+            let message = format!(
+                "'{namespace_name}' has no exported member named '{member_name}'. Did you mean '{suggestion}'?"
+            );
+            self.error_at_node(
+                idx,
+                &message,
+                diagnostic_codes::HAS_NO_EXPORTED_MEMBER_NAMED_DID_YOU_MEAN,
+            );
+        } else {
+            let message =
+                format!("Namespace '{namespace_name}' has no exported member '{member_name}'.");
+            self.error_at_node(idx, &message, 2694);
+        }
+    }
+
+    /// Search export names for a spelling suggestion matching `member_name`.
+    pub(crate) fn find_export_spelling_suggestion(
+        member_name: &str,
+        export_names: &[String],
+    ) -> Option<String> {
+        if export_names.is_empty() {
+            return None;
+        }
+
+        let name_len = member_name.len();
+        // tsc: bestDistance = (name.length + 2) * 0.34 rounded down, min 2
+        let maximum_length_difference = if name_len * 34 / 100 > 2 {
+            name_len * 34 / 100
+        } else {
+            2
+        };
+        // tsc: initial bestDistance = floor(name.length * 0.4) + 1
+        let mut best_distance = (name_len * 4 / 10 + 1) as f64;
+        let mut best_candidate: Option<String> = None;
+
+        for candidate in export_names {
+            Self::consider_identifier_suggestion(
+                member_name,
+                candidate,
+                name_len,
+                maximum_length_difference,
+                &mut best_distance,
+                &mut best_candidate,
+            );
+        }
+
+        best_candidate
+    }
+
+    // =========================================================================
+    // Type/Value Mismatch Errors
+    // =========================================================================
+
+    /// Report TS2698: Spread types may only be created from object types.
+    pub fn report_spread_not_object_type(&mut self, idx: NodeIndex) {
+        self.error_at_node(
+            idx,
+            diagnostic_messages::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES,
+            diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES,
+        );
+    }
+
+    /// Report TS2693/TS2585: Symbol only refers to a type, but is used as a value.
+    ///
+    /// For ES2015+ types (Promise, Map, Set, Symbol, etc.), emits TS2585 with a suggestion
+    /// to change the target library. For other types, emits TS2693 without the lib suggestion.
+    pub fn error_type_only_value_at(&mut self, name: &str, idx: NodeIndex) {
+        use tsz_binder::lib_loader;
+
+        // Don't emit TS2693 for identifiers used as import equals module references.
+        // `import r = undefined` already gets TS2503 from check_namespace_import.
+        if self.ctx.arena.get_extended(idx).is_some_and(|ext| {
+            self.ctx.arena.get(ext.parent).is_some_and(|p| {
+                p.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            })
+        }) {
+            return;
+        }
+
+        // Only suppress TS1361/TS1362 in type-only heritage contexts
+        // (interface extends, class implements, declare class extends).
+        // Regular class extends is a value context — TS1361 must fire.
+        if self.is_heritage_type_only_context(idx) {
+            return;
+        }
+
+        if self.is_declaration_name_for_type_only_value_diagnostic(idx) {
+            return;
+        }
+
+        let local_same_name_value = (!self.is_identifier_in_type_position(idx))
+            .then(|| self.local_current_file_value_symbol_named(name))
+            .flatten();
+        if local_same_name_value.is_some_and(|sym_id| {
+            self.local_same_name_value_suppresses_type_only_value_diagnostic(idx, sym_id)
+        }) {
+            return;
+        }
+
+        // Check if this is an ES2015+ type that requires specific lib support
+        let is_es2015_type = lib_loader::is_es2015_plus_type(name);
+        let allow_in_parse_recovery = self.has_type_only_value_in_parse_recovery_context(name, idx);
+
+        // In syntax-error files, TS2693 often cascades from parser recovery and
+        // diverges from tsc's primary-diagnostic set. Keep TS2585 behavior intact.
+        let allow_any_in_parse_recovery = name == "any";
+        if self.has_parse_errors()
+            && !is_es2015_type
+            && !allow_any_in_parse_recovery
+            && !allow_in_parse_recovery
+        {
+            return;
+        }
+
+        let (code, message) = if is_es2015_type {
+            // TS2585: Type only refers to a type, suggest changing target library
+            (
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO,
+                format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO,
+                    &[name],
+                ),
+            )
+        } else if let Some(type_only_kind) = self.get_type_only_import_export_kind(idx) {
+            match type_only_kind {
+                TypeOnlyKind::Import => (
+                    diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE,
+                    format_message(
+                        diagnostic_messages::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE,
+                        &[name],
+                    ),
+                ),
+                TypeOnlyKind::Export => (
+                    diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE,
+                    format_message(
+                        diagnostic_messages::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE,
+                        &[name],
+                    ),
+                ),
+            }
+        } else if self.is_computed_property_in_type_member(idx)
+            && self.computed_type_member_allows_mapped_type_suggestion(idx)
+        {
+            // TS2690: Type used as computed property key in type literal.
+            // Suggest mapped type syntax: "Did you mean to use 'P in K'?"
+            let suggested_var = Self::suggest_mapped_type_variable(name);
+            (
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DID_YOU_MEAN_TO_USE_IN,
+                format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DID_YOU_MEAN_TO_USE_IN,
+                    &[name, &suggested_var],
+                ),
+            )
+        } else {
+            // TS2693: Generic type-only error
+            (
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                    &[name],
+                ),
+            )
+        };
+
+        self.error_at_node(idx, &message, code);
+    }
+
+    fn is_declaration_name_for_type_only_value_diagnostic(&self, idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        if parent.is_none() {
+            return false;
+        }
+        self.get_declaration_name_node(parent) == Some(idx)
+    }
+
+    fn local_same_name_value_suppresses_type_only_value_diagnostic(
+        &self,
+        idx: NodeIndex,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        if self
+            .require_call_bound_identifier_type_only_kind(idx)
+            .is_some()
+        {
+            return false;
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return true;
+        };
+        if symbol.value_declaration.is_none() {
+            return false;
+        }
+        if !symbol.declarations.contains(&symbol.value_declaration) {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(symbol.value_declaration) else {
+            return true;
+        };
+        matches!(
+            node.kind,
+            syntax_kind_ext::VARIABLE_DECLARATION
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION
+        )
+    }
+
+    /// Check if the identifier at `idx` is used as a computed property name
+    /// inside a type member (property signature, method signature, etc.) within
+    /// a type literal or interface declaration.
+    ///
+    /// This detects patterns like `type T = { [K]: number }` where `K` is a type
+    /// alias being used as a computed property key, which should get TS2690
+    /// (with mapped type suggestion) instead of TS2693.
+    fn is_computed_property_in_type_member(&self, idx: NodeIndex) -> bool {
+        // Walk up from the reported token to the computed property name. For
+        // primitive keywords like `[number]`, parser recovery can wrap the
+        // keyword before attaching it to `ComputedPropertyName`.
+        let mut current = idx;
+        let computed_name = loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                break parent_idx;
+            }
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::PROPERTY_SIGNATURE
+                    | syntax_kind_ext::METHOD_SIGNATURE
+                    | syntax_kind_ext::INDEX_SIGNATURE
+            ) {
+                return true;
+            }
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::INTERFACE_DECLARATION
+            ) {
+                return false;
+            }
+            current = parent_idx;
+        };
+
+        let Some(parent_ext) = self.ctx.arena.get_extended(computed_name) else {
+            return false;
+        };
+        let Some(grandparent) = self.ctx.arena.get(parent_ext.parent) else {
+            return false;
+        };
+
+        // The computed property name must be inside a type member
+        let is_type_member = matches!(
+            grandparent.kind,
+            syntax_kind_ext::PROPERTY_SIGNATURE
+                | syntax_kind_ext::METHOD_SIGNATURE
+                | syntax_kind_ext::INDEX_SIGNATURE
+        );
+        if !is_type_member {
+            return false;
+        }
+
+        // The type member must be inside a type literal or interface
+        let Some(grandparent_ext) = self.ctx.arena.get_extended(parent_ext.parent) else {
+            return false;
+        };
+        let Some(great_grandparent) = self.ctx.arena.get(grandparent_ext.parent) else {
+            return false;
+        };
+        if !matches!(
+            great_grandparent.kind,
+            syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::INTERFACE_DECLARATION
+        ) {
+            return false;
+        }
+
+        true
+    }
+
+    fn computed_type_member_allows_mapped_type_suggestion(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return true;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return true;
+            };
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::INTERFACE_DECLARATION
+            ) {
+                return match parent.kind {
+                    syntax_kind_ext::TYPE_LITERAL => self
+                        .ctx
+                        .arena
+                        .get_type_literal(parent)
+                        .is_none_or(|type_lit| type_lit.members.nodes.len() == 1),
+                    syntax_kind_ext::INTERFACE_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_interface(parent)
+                        .is_none_or(|interface| interface.members.nodes.len() == 1),
+                    _ => true,
+                };
+            }
+            current = parent_idx;
+        }
+    }
+
+    /// Generate a suggested variable name for a mapped type suggestion.
+    ///
+    /// tsc uses the first character of the type name. If the type name is a
+    /// single character (so the suggestion would equal the name itself),
+    /// it falls back to `"P"`.
+    fn suggest_mapped_type_variable(type_name: &str) -> String {
+        let first_char = type_name.chars().next().unwrap_or('P');
+        let suggested = first_char.to_string();
+        if suggested == type_name {
+            // Single-char type name - use a fallback to avoid suggesting `[K in K]`
+            "P".to_string()
+        } else {
+            suggested
+        }
+    }
+
+    /// Determine if the identifier at `idx` resolves to a symbol that was
+    /// explicitly imported with `import type` or exported with `export type`.
+    /// Returns `Some(TypeOnlyKind::Import)` for TS1361 or
+    /// `Some(TypeOnlyKind::Export)` for TS1362 when applicable.
+    fn get_type_only_import_export_kind(&self, idx: NodeIndex) -> Option<TypeOnlyKind> {
+        use tsz_binder::symbol_flags;
+
+        if let Some(kind) = self.require_call_bound_identifier_type_only_kind(idx) {
+            return Some(kind);
+        }
+
+        if let Some(kind) = self.direct_lexical_type_only_marker_for_identifier(idx) {
+            return Some(kind);
+        }
+
+        let sym_id = self.resolve_identifier_symbol(idx)?;
+        let mut visited = AliasCycleTracker::new();
+        let target = self.resolve_alias_symbol(sym_id, &mut visited);
+
+        let lib_binders = self.get_lib_binders();
+
+        // Whenever an alias is known to be cross-file type-only but no
+        // `import type` / `export type` syntactic marker could be pinpointed
+        // on any alias in the chain, default to TS1362 (Export) at the end.
+        // This preserves the historical "blanket Export" behaviour while
+        // letting a direct `import type` marker win when present.
+        let mut saw_unclassified_cross_file_type_only = false;
+
+        // Pass 1: walk every alias on the chain — including ones whose owning
+        // binder is not the current file's binder — and return the first
+        // direct `import type` / `export type` syntactic marker found. A
+        // direct marker is the most authoritative signal: e.g. for
+        //   /c.ts: import type { C } from './b';
+        //   /c.ts: export { C as D };
+        //   /d.ts: import { D } from './c'; new D();
+        // the chain visits D-d, D-c, C-c, C-b, ... — and C-c carries the
+        // `import type` clause that anchors `tsc`'s TS1361 attribution.
+        // Without this pass an unordered iteration order could hit C-b's
+        // cross-file inference (which infers TS1362 from `export type {A as B}`
+        // upstream in /a.ts) before reaching C-c, even though C-c is closer
+        // to the use-site and carries the more direct marker.
+        for alias_sym_id in &visited {
+            let Some(symbol) = self.get_symbol_from_any_binder(alias_sym_id) else {
+                continue;
+            };
+
+            // Only applies to alias symbols explicitly marked type-only.
+            // A plain `export { X as Y }` that merely re-exports a type-only
+            // symbol is not itself a direct marker.
+            if !(symbol.has_any_flags(symbol_flags::ALIAS) && symbol.is_type_only) {
+                continue;
+            }
+
+            // Find the arena that owns this alias's declarations. Prefer the
+            // per-symbol override if registered; otherwise resolve via the
+            // owning file index (cross-binder alias case).
+            let arena = self
+                .ctx
+                .binder
+                .symbol_arenas
+                .get(&alias_sym_id)
+                .map(|arc| &**arc)
+                .or_else(|| {
+                    self.ctx
+                        .resolve_symbol_file_index(alias_sym_id)
+                        .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+                })
+                .unwrap_or(self.ctx.arena);
+
+            for &decl in &symbol.declarations {
+                if decl.is_none() {
+                    continue;
+                }
+                if let Some(kind) = Self::find_direct_type_only_marker(arena, decl) {
+                    return Some(kind);
+                }
+            }
+        }
+
+        // Pass 2: walk every alias and fall back to cross-file type-only
+        // inference for aliases whose import chain crosses into a type-only
+        // export. Skip namespace imports/exports — they create value
+        // bindings even when the module's exports are themselves type-only;
+        // individual type-only members surface as TS2339 via property lookup.
+        for alias_sym_id in &visited {
+            let symbol = match self
+                .ctx
+                .binder
+                .get_symbol_with_libs(alias_sym_id, &lib_binders)
+            {
+                Some(s) => s,
+                None => continue,
+            };
+
+            if let Some(module_specifier) = symbol.import_module.as_deref() {
+                let Some((export_name, is_namespace_binding)) =
+                    self.effective_import_binding_name(symbol)
+                else {
+                    continue;
+                };
+                if !is_namespace_binding
+                    && self.is_export_type_only_across_binders(module_specifier, &export_name)
+                {
+                    if let Some(kind) =
+                        self.classify_cross_file_type_only_kind(module_specifier, &export_name)
+                    {
+                        return Some(kind);
+                    }
+                    // Record the hit but keep iterating other aliases. A
+                    // later alias (e.g. a local `import type { ... }`)
+                    // may expose a direct marker that we prefer.
+                    saw_unclassified_cross_file_type_only = true;
+                }
+            }
+        }
+
+        // Check for type-only propagation through `export =` chains.
+        // When a module does `import type * as ns from './a'; export = ns;`,
+        // any import from that module should inherit the type-only status.
+        // This handles: `import X from './b'`, `import X = require('./b')`,
+        // and `import * as X from './b'` where b has `export = type_only_ns`.
+        for alias_sym_id in &visited {
+            let symbol = match self
+                .ctx
+                .binder
+                .get_symbol_with_libs(alias_sym_id, &lib_binders)
+            {
+                Some(s) => s,
+                None => continue,
+            };
+            if let Some(module_specifier) = symbol.import_module.as_deref()
+                && let Some(target_idx) = self.ctx.resolve_import_target(module_specifier)
+                && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+            {
+                let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+                if let Some(file_name) = target_arena.source_files.first().map(|f| &f.file_name)
+                    && let Some(exports) =
+                        self.ctx.module_exports_for_module(target_binder, file_name)
+                    && let Some(export_eq_sym) = exports.get("export=")
+                {
+                    // Check if the export= symbol itself is type-only
+                    if let Some(eq_sym) = target_binder.get_symbol(export_eq_sym) {
+                        if eq_sym.is_type_only {
+                            return Some(TypeOnlyKind::Import);
+                        }
+                        // Also check if the export= symbol is an alias that
+                        // resolves to a type-only import
+                        if eq_sym.has_any_flags(symbol_flags::ALIAS)
+                            && let Some(ref eq_import_module) = eq_sym.import_module
+                        {
+                            let eq_name = eq_sym
+                                .import_name
+                                .as_deref()
+                                .unwrap_or(&eq_sym.escaped_name);
+                            let is_ns = eq_sym.import_name.is_none()
+                                || eq_sym.import_name.as_deref() == Some("*");
+                            // For namespace imports, check the main binder's
+                            // merged symbol for is_type_only
+                            if is_ns {
+                                if let Some(main_sym) = self
+                                    .ctx
+                                    .binder
+                                    .get_symbol_with_libs(export_eq_sym, &lib_binders)
+                                    && main_sym.is_type_only
+                                {
+                                    return Some(TypeOnlyKind::Import);
+                                }
+                            } else if self
+                                .is_export_type_only_across_binders(eq_import_module, eq_name)
+                            {
+                                return Some(TypeOnlyKind::Import);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If the target symbol itself is marked type-only (e.g. `export type { A }`),
+        // it means it was exported as a type, so return Export.
+        //
+        // Keep this fallback after the `export =` propagation path above: an
+        // `export =` alias can itself resolve to a type-only symbol while still
+        // needing to preserve an underlying `import type` origin for TS1361.
+        if let Some(target_id) = target
+            && let Some(target_symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(target_id, &lib_binders)
+            && target_symbol.is_type_only
+        {
+            return Some(TypeOnlyKind::Export);
+        }
+
+        // Final fallback for cross-file type-only chains whose direct
+        // marker we could not locate (e.g. the chain terminates at a
+        // cloned class symbol whose declarations no longer include the
+        // `export type { ... }` specifier). `tsc` defaults to TS1362 in
+        // that case.
+        if saw_unclassified_cross_file_type_only {
+            return Some(TypeOnlyKind::Export);
+        }
+
+        None
+    }
+
+    /// Prefer the nearest lexical alias's own `type` marker before following
+    /// import resolution to a target symbol.
+    fn direct_lexical_type_only_marker_for_identifier(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<TypeOnlyKind> {
+        use tsz_binder::symbol_flags;
+
+        let name = self.ctx.arena.get_identifier_at(idx)?.escaped_text.as_str();
+        let lib_binders = self.get_lib_binders();
+        let sym_id = self.ctx.binder.resolve_name_with_filter(
+            name,
+            self.ctx.arena,
+            idx,
+            &lib_binders,
+            |_| true,
+        )?;
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+
+        if !(symbol.has_any_flags(symbol_flags::ALIAS) && symbol.is_type_only) {
+            return None;
+        }
+
+        let arena = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arc| &**arc)
+            .or_else(|| {
+                self.ctx
+                    .resolve_symbol_file_index(sym_id)
+                    .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            })
+            .unwrap_or(self.ctx.arena);
+
+        for &decl in &symbol.declarations {
+            if decl.is_none() {
+                continue;
+            }
+            if let Some(kind) = Self::find_direct_type_only_marker(arena, decl) {
+                return Some(kind);
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn require_call_bound_identifier_type_only_kind(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<TypeOnlyKind> {
+        use crate::context::ResolutionModeOverride;
+
+        if !self.is_require_call_bound_identifier(idx) {
+            return None;
+        }
+
+        let sym_id = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+        for &decl_idx in &symbol.declarations {
+            if decl_idx.is_none() {
+                continue;
+            }
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            let Some(module_specifier) = self.get_require_module_specifier(var_decl.initializer)
+            else {
+                continue;
+            };
+            let uses_module_exports = self.module_uses_module_exports_interop(
+                &module_specifier,
+                Some(ResolutionModeOverride::Require),
+            );
+            let kind = self.classify_cross_file_type_only_kind(&module_specifier, "module.exports");
+            if !uses_module_exports {
+                continue;
+            }
+            if let Some(kind) = kind {
+                return Some(kind);
+            }
+        }
+
+        None
+    }
+
+    /// Determine whether a cross-file type-only export came from `import type`
+    /// (TS1361) or `export type` (TS1362) by resolving the target module and
+    /// walking the export symbol's alias chain for a direct type-only marker.
+    pub(crate) fn classify_cross_file_type_only_kind(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<TypeOnlyKind> {
+        use tsz_binder::symbol_flags;
+
+        let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.clone();
+
+        let exports_table = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)?;
+        let mut current_sym_id = exports_table.get(export_name)?;
+
+        // Follow the alias chain within the target module: `export { C as D }`
+        // wraps a symbol that may itself be a type-only import. We want to
+        // attribute to the innermost *direct* `import type` / `export type`
+        // marker, not the plain re-export.
+        let mut visited = AliasCycleTracker::new();
+        while !visited.contains(&current_sym_id) {
+            visited.push(current_sym_id);
+
+            let sym = target_binder
+                .get_symbol(current_sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(current_sym_id))?;
+
+            if !sym.is_type_only {
+                return None;
+            }
+
+            let decl_arena = target_binder
+                .symbol_arenas
+                .get(&current_sym_id)
+                .map(|arc| &**arc)
+                .unwrap_or(target_arena);
+
+            for &decl in &sym.declarations {
+                if decl.is_none() {
+                    continue;
+                }
+                if let Some(kind) = Self::find_direct_type_only_marker(decl_arena, decl) {
+                    return Some(kind);
+                }
+            }
+
+            // No direct marker on this alias. If the symbol is an ALIAS,
+            // try to follow it to the next link in the chain.
+            // `resolve_import_symbol` handles import-backed aliases;
+            // pure-export aliases like `export { C as D }` without a
+            // `from` clause are not import-backed, so we fall through.
+            if sym.has_any_flags(symbol_flags::ALIAS) {
+                let Some(next_sym_id) = target_binder.resolve_import_symbol(current_sym_id) else {
+                    break;
+                };
+                if next_sym_id == current_sym_id {
+                    break;
+                }
+                current_sym_id = next_sym_id;
+                continue;
+            }
+
+            // Non-alias type-only symbol (e.g. a symbol cloned for
+            // `export type { X as Y }` — its declarations point at the
+            // original non-type-only source, so the walk cannot reach
+            // the `export type` specifier). Default to TS1362: the
+            // type-only-ness originated on the export side.
+            return Some(TypeOnlyKind::Export);
+        }
+
+        None
+    }
+
+    /// Walk upward from a declaration node and return the nearest enclosing
+    /// `import type` / `export type` marker, if any.
+    ///
+    /// A marker is "direct" when the syntax itself uses the `type` keyword:
+    /// the `ImportClause`, `ImportEqualsDeclaration`, `ExportDeclaration`,
+    /// or the individual `ImportSpecifier` / `ExportSpecifier`. A plain
+    /// `export { X as Y }` that happens to re-export a type-only symbol is
+    /// *not* a direct marker — the responsibility lies further up the
+    /// alias chain (e.g. the original `import type`).
+    fn find_direct_type_only_marker(
+        arena: &tsz_parser::parser::NodeArena,
+        start: NodeIndex,
+    ) -> Option<TypeOnlyKind> {
+        let mut current = start;
+        let mut guard = 0;
+        while guard < 16 {
+            guard += 1;
+            let node = arena.get(current)?;
+
+            // Inline specifier form: `import { type X }` / `export { type X }`.
+            if let Some(spec) = arena.get_specifier(node)
+                && spec.is_type_only
+            {
+                return Some(if node.kind == syntax_kind_ext::IMPORT_SPECIFIER {
+                    TypeOnlyKind::Import
+                } else {
+                    TypeOnlyKind::Export
+                });
+            }
+
+            // `import type { X } from ...` — the flag lives on the clause.
+            if let Some(clause) = arena.get_import_clause(node)
+                && clause.is_type_only
+            {
+                return Some(TypeOnlyKind::Import);
+            }
+
+            // `import type X = require(...)` — the flag lives on the
+            // import-equals node itself.
+            if node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                if let Some(imp) = arena.get_import_decl(node)
+                    && imp.is_type_only
+                {
+                    return Some(TypeOnlyKind::Import);
+                }
+                break;
+            }
+
+            // Plain `import { X }` without `type`: the clause above
+            // already answered. No further information above the
+            // declaration.
+            if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                break;
+            }
+
+            // `export type { X }` — flag on the export declaration.
+            if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                if let Some(exp) = arena.get_export_decl(node)
+                    && exp.is_type_only
+                {
+                    return Some(TypeOnlyKind::Export);
+                }
+                break;
+            }
+
+            let ext = arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+
+    /// Parser-recovery exceptions for TS2693/TS2585.
+    ///
+    /// Some grammar-recovery scenarios continue checking and should still emit
+    /// type/value mismatch diagnostics even with parse errors.
+    fn has_type_only_value_in_parse_recovery_context(&self, name: &str, idx: NodeIndex) -> bool {
+        // Recovery for async-generator computed members (`async * [yield] ...`) should
+        // still report TS2693.
+        if name == "yield" {
+            let mut guard = 0;
+            let mut current = Some(idx);
+            let mut seen_computed_property_name = false;
+
+            while let Some(current_idx) = current {
+                if guard > 64 {
+                    break;
+                }
+                guard += 1;
+
+                let Some(ext) = self.ctx.arena.get_extended(current_idx) else {
+                    break;
+                };
+
+                let Some(parent) = self.ctx.arena.get(ext.parent) else {
+                    break;
+                };
+
+                if parent.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    seen_computed_property_name = true;
+                } else if parent.kind == syntax_kind_ext::METHOD_DECLARATION
+                    && seen_computed_property_name
+                {
+                    return true;
+                }
+
+                current = Some(ext.parent);
+            }
+
+            return false;
+        }
+
+        // Recovery for malformed type-literal indexers (`[number]: ...`) should still
+        // report TS2693 even when unrelated parse errors exist in the file.
+        let is_primitive_type_keyword = matches!(
+            name,
+            "number"
+                | "string"
+                | "boolean"
+                | "symbol"
+                | "void"
+                | "undefined"
+                | "null"
+                | "any"
+                | "unknown"
+                | "never"
+                | "object"
+                | "bigint",
+        );
+        if !is_primitive_type_keyword {
+            return false;
+        }
+
+        let mut guard = 0;
+        let mut current = Some(idx);
+        let mut seen_computed_property_name = false;
+
+        while let Some(current_idx) = current {
+            if guard > 64 {
+                break;
+            }
+            guard += 1;
+
+            let Some(ext) = self.ctx.arena.get_extended(current_idx) else {
+                break;
+            };
+
+            let Some(parent) = self.ctx.arena.get(ext.parent) else {
+                break;
+            };
+
+            if parent.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                seen_computed_property_name = true;
+            } else if seen_computed_property_name
+                && (parent.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                    || parent.kind == syntax_kind_ext::METHOD_DECLARATION)
+            {
+                return true;
+            }
+
+            current = Some(ext.parent);
+        }
+
+        false
+    }
+
+    /// Report TS2749: Symbol refers to a value, but is used as a type.
+    pub fn error_value_only_type_at(&mut self, name: &str, idx: NodeIndex) {
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF,
+            &[name],
+        );
+    }
+
+    /// Report TS2702: '{0}' only refers to a type, but is being used as a namespace here.
+    pub fn error_type_used_as_namespace_at(&mut self, name: &str, idx: NodeIndex) {
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_NAMESPACE_HERE,
+            &[name],
+        );
+    }
+
+    /// Report TS2709: Cannot use namespace '{0}' as a type.
+    pub fn error_namespace_used_as_type_at(&mut self, name: &str, idx: NodeIndex) {
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_TYPE,
+            &[name],
+        );
+    }
+
+    /// Report TS2708: Cannot use namespace '{0}' as a value.
+    pub fn error_namespace_used_as_value_at(&mut self, name: &str, idx: NodeIndex) {
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE,
+            &[name],
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    #[test]
+    fn emits_ts2693_for_computed_type_keyword_in_type_member() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+namespace m1 {
+  export class C2 {
+    public get p(arg) {
+      return 0;
+    }
+  }
+
+  export function f4(arg1: {
+    [number]: C1;
+  }) {}
+}
+
+class C1 {}
+"#,
+        );
+
+        // Primitive type keywords recovered in computed type-member keys flow
+        // through the same wrong-meaning path as value-position keyword usage.
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2693),
+            "Expected TS2693 for computed type keyword in type member, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2690_for_type_alias_computed_type_member_key() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+type KeyName = "name";
+type Shape = {
+  [KeyName]: string;
+};
+"#,
+        );
+
+        let ts2690 = diagnostics
+            .iter()
+            .find(|diag| diag.code == 2690)
+            .expect("Expected TS2690 for type alias used as computed type member key");
+        assert!(
+            ts2690
+                .message_text
+                .contains("Did you mean to use 'K in KeyName'"),
+            "TS2690 should use the mapped-type suggestion from identifier facts, got: {ts2690:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2690_for_commented_computed_type_member_key() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+type OtherKey = "other";
+interface Shape {
+  [/* before */ OtherKey /* after */]: number;
+}
+"#,
+        );
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == 2690 && diag.message_text.contains("O in OtherKey")),
+            "Expected TS2690 from computed-property AST ancestry with comments around the key, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2693_for_type_alias_value_use_outside_computed_member_key() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+type Plain = string;
+Plain;
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2693),
+            "Expected ordinary type/value TS2693 outside computed type members, got: {diagnostics:?}",
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2690),
+            "Should not emit mapped-type suggestion outside computed type members, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn suppresses_ts2693_for_new_primitive_array_recovery() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+const x = new number[];
+"#,
+        );
+
+        let ts2693_count = diagnostics.iter().filter(|diag| diag.code == 2693).count();
+        assert_eq!(
+            ts2693_count, 0,
+            "Expected no TS2693 for `new number[]` parse recovery, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2702_for_empty_interface_used_as_namespace() {
+        // Empty interface has no property "hello", so TS2702 should fire
+        let diagnostics = check_source_diagnostics(
+            r#"
+interface OhNo {}
+declare let y: OhNo.hello;
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2702),
+            "Expected TS2702 for empty interface used as namespace, got: {diagnostics:?}",
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2713),
+            "Should NOT emit TS2713 when property doesn't exist, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2713_for_interface_property_as_type() {
+        // Interface has property "bar", so TS2713 (with suggestion) should fire
+        let diagnostics = check_source_diagnostics(
+            r#"
+interface Foo { bar: string; }
+var x: Foo.bar = "";
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2713),
+            "Expected TS2713 for interface property used as type, got: {diagnostics:?}",
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2702),
+            "Should NOT emit TS2702 when property exists, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2702_for_union_with_non_shared_property() {
+        // Union where NOT all members have "bar" (Test5 pattern) → TS2702
+        let diagnostics = check_source_diagnostics(
+            r#"
+type Foo = { bar: number } | { wat: string };
+var x: Foo.bar = "";
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2702),
+            "Expected TS2702 for union with non-shared property, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2713_for_union_with_shared_property() {
+        // Union where ALL members have "bar" (Test4 pattern) → TS2713
+        let diagnostics = check_source_diagnostics(
+            r#"
+type Foo = { bar: number } | { bar: string };
+var x: Foo.bar = "";
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2713),
+            "Expected TS2713 for union with shared property, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2713_for_type_alias_with_property() {
+        // Type alias with property "bar" → TS2713
+        let diagnostics = check_source_diagnostics(
+            r#"
+type Foo = { bar: string; };
+var x: Foo.bar = "";
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2713),
+            "Expected TS2713 for type alias property used as type, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn suppresses_ts1361_for_computed_property_in_interface() {
+        // Type-only import used in interface computed property name should NOT
+        // emit TS1361 — the expression is never evaluated at runtime.
+        let diagnostics = check_source_diagnostics(
+            r#"
+import type { onInit } from './hooks';
+interface Component {
+  [onInit]?(): void;
+}
+"#,
+        );
+
+        let ts1361_count = diagnostics.iter().filter(|d| d.code == 1361).count();
+        assert_eq!(
+            ts1361_count, 0,
+            "Should not emit TS1361 for computed property in interface, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn suppresses_ts1361_for_computed_property_in_type_literal() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+import type { key } from './keys';
+type T = { [key]: any; };
+"#,
+        );
+
+        let ts1361_count = diagnostics.iter().filter(|d| d.code == 1361).count();
+        assert_eq!(
+            ts1361_count, 0,
+            "Should not emit TS1361 for computed property in type literal, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn alias_merges_with_local_value_suppresses_ts1361() {
+        // When import type is followed by a local const with the same name,
+        // the const should shadow the import type in value position.
+        let diagnostics = check_source_diagnostics(
+            r#"
+import type { A } from './a';
+const A: A = "a";
+A.toUpperCase();
+"#,
+        );
+
+        let ts1361_count = diagnostics.iter().filter(|d| d.code == 1361).count();
+        assert_eq!(
+            ts1361_count, 0,
+            "Should not emit TS1361 when local value shadows type-only import, got: {diagnostics:?}",
+        );
+    }
+}

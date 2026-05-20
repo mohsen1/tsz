@@ -1,0 +1,39 @@
+[package]
+name = "tsz-common"
+description = "Common types and utilities for the tsz TypeScript compiler"
+version.workspace = true
+edition.workspace = true
+autotests = false
+build = "build.rs"
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+rustc-hash = { workspace = true }
+memchr = { workspace = true }
+# WASM-safe `Instant` shim used by the perf-counter lock-wait timing
+# path. Pulled in unconditionally — it's tiny and avoids a feature-
+# specific dep — but only referenced under `perf-counters-timing`.
+web-time = { workspace = true }
+
+[features]
+default = []
+# Compile-time gate for the perf-counter lock-wait histogram per
+# `docs/plan/PERFORMANCE_PLAN.md` §4.T0.3. When OFF (default),
+# `time_shard_write` is a no-op wrapper that compiles to a direct
+# call of its closure — no `Instant::now()` calls, no histogram
+# bucketing. When ON, the wrapper times each closure and records
+# the elapsed nanoseconds into a bucketed histogram. The
+# compile-time gate is deliberate: a runtime branch would still
+# pay the timestamp cost on every contended write, distorting the
+# very measurements we are trying to take.
+perf-counters-timing = []
+
+[lints]
+workspace = true

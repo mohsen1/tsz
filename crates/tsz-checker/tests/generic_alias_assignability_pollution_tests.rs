@@ -1,0 +1,155 @@
+//! Regression tests for assignability of `IteratorResult<T>` (default
+//! `TReturn = any`) against `IteratorResult<T, void>`.
+//!
+//! See: TypeScript/tests/cases/compiler/customAsyncIterator.ts (false-
+//! positive TS2416 in CLI / conformance runs).
+//!
+//! The conformance test asserts that
+//!
+//! ```ts
+//! class ConstantIterator<T> implements AsyncIterator<T, void, T | undefined> {
+//!     async next(value?: T): Promise<IteratorResult<T>> { ... }
+//! }
+//! ```
+//!
+//! does NOT emit TS2416. tsc accepts the override because the class
+//! method's return type `Promise<IteratorResult<T, /*default*/ any>>` is
+//! structurally assignable to the interface's instantiated return type
+//! `Promise<IteratorResult<T, void>>` (the `value: any` member of the
+//! return-result branch absorbs the `void`).
+//!
+//! The baseline below covers the underlying assignability invariant in
+//! a unit-level shape. Reproducing the actual TS2416 emitted by CLI runs
+//! requires the comprehensive default-target lib graph and the
+//! implements-clause path; that is exercised as a conformance test.
+
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::diagnostics::Diagnostic;
+use tsz_common::common::{ModuleKind, ScriptTarget};
+
+fn check_with_iterable_libs(source: &str) -> Vec<Diagnostic> {
+    // The minimum set required to make `IteratorResult<T>`,
+    // `Promise<T>`, and `AsyncIterator<T, ...>` resolvable.
+    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2016.array.include.d.ts",
+        "lib.es2018.asynciterable.d.ts",
+        "lib.es2018.asyncgenerator.d.ts",
+    ]);
+
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
+}
+
+fn semantic_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
+    diagnostics
+        .iter()
+        .filter(|d| {
+            d.category == tsz_checker::diagnostics::DiagnosticCategory::Error && d.code != 2318 // TS2318 = Cannot find global type (test infra noise)
+        })
+        .map(|d| d.code)
+        .collect()
+}
+
+/// `IteratorResult<string>` (default `TReturn = any`) must be assignable
+/// to `IteratorResult<string, void>` directly.
+#[test]
+fn iterator_result_default_assignable_to_iterator_result_void() {
+    let diagnostics = check_with_iterable_libs(
+        r#"
+declare const c: IteratorResult<string>;
+const x: IteratorResult<string, void> = c;
+"#,
+    );
+    let codes = semantic_error_codes(&diagnostics);
+    assert!(
+        codes.is_empty(),
+        "IteratorResult<string> should be assignable to IteratorResult<string, void>; got: {diagnostics:#?}"
+    );
+}
+
+/// Wrapping in an object property must preserve the assignability.
+#[test]
+fn property_of_iterator_result_default_assignable_to_iterator_result_void() {
+    let diagnostics = check_with_iterable_libs(
+        r#"
+declare const c: { val: IteratorResult<string> };
+const x: { val: IteratorResult<string, void> } = c;
+"#,
+    );
+    let codes = semantic_error_codes(&diagnostics);
+    assert!(
+        codes.is_empty(),
+        "{{val: IteratorResult<string>}} should be assignable to {{val: IteratorResult<string, void>}}; got: {diagnostics:#?}"
+    );
+}
+
+/// Wrapping in `Promise<...>` must preserve the assignability — this
+/// is the form actually used in the lib `AsyncIterator.next` return
+/// type.
+#[test]
+fn promise_of_iterator_result_default_assignable_to_iterator_result_void() {
+    let diagnostics = check_with_iterable_libs(
+        r#"
+declare const c: Promise<IteratorResult<string>>;
+const x: Promise<IteratorResult<string, void>> = c;
+"#,
+    );
+    let codes = semantic_error_codes(&diagnostics);
+    assert!(
+        codes.is_empty(),
+        "Promise<IteratorResult<string>> should be assignable to Promise<IteratorResult<string, void>>; got: {diagnostics:#?}"
+    );
+}
+
+/// When a class implements a generic interface declared in a different
+/// arena (e.g. a lib type like `AsyncIterator<T, TReturn, TNext>`), the
+/// interface's type parameters are not visible through the local AST
+/// arena walk. The checker must fall back to the solver-side definition
+/// store so the substitution `{T -> string, TReturn -> number, TNext -> boolean}`
+/// is built correctly and propagates into the interface members.
+///
+/// Without the fallback, the displayed expected member type retains
+/// the interface's free type parameters (e.g. `(..._: [] | [TNext]) =>
+/// Promise<IteratorResult<T, TReturn>>`) and the implements check
+/// emits a spurious TS2416 because the comparison is performed against
+/// unsubstituted free type parameters.
+///
+/// Mirrors the substitution-propagation half of
+/// `TypeScript/tests/cases/compiler/customAsyncIterator.ts` using
+/// concrete primitives so the deeper Promise-of-IteratorResult-with-
+/// type-parameter relation does not interfere.
+#[test]
+fn cross_arena_interface_type_params_substituted_for_implements() {
+    let diagnostics = check_with_iterable_libs(
+        r#"
+class C implements AsyncIterator<string, number, boolean> {
+    async next(value?: boolean): Promise<IteratorResult<string, number>> {
+        return { value: "x", done: false };
+    }
+}
+"#,
+    );
+    let codes = semantic_error_codes(&diagnostics);
+    assert!(
+        codes.is_empty(),
+        "class implementing lib AsyncIterator with concrete type args must not emit any error; got: {diagnostics:#?}"
+    );
+}

@@ -1,0 +1,23 @@
+[package]
+name = "tsz-scanner"
+description = "TypeScript scanner/tokenizer for the tsz compiler"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+tsz-common = { workspace = true }
+serde = { workspace = true }
+unicode-ident = { workspace = true }
+wasm-bindgen = { workspace = true }
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false

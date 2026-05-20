@@ -1,0 +1,613 @@
+//! Global type checking: missing types, boxed types.
+//!
+//! This module extends `CheckerState` with methods for global-scope checking:
+//! - Checking for missing global types (TS2318)
+//! - Registering and priming boxed types
+//! - Checking for feature-specific global types
+//!
+//! Duplicate identifier checking lives in `type_checking/duplicate_identifiers`.
+
+use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
+use tsz_parser::parser::NodeIndex;
+use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
+
+impl<'a> CheckerState<'a> {
+    /// Check for missing global types (TS2318).
+    ///
+    /// When library files are not loaded or specific global types are unavailable,
+    /// TypeScript emits TS2318 errors for essential global types at the beginning
+    /// of the file (position 0).
+    ///
+    /// This function checks for:
+    /// 1. Core 8 types when --noLib is used: Array, Boolean, Function, `IArguments`,
+    ///    Number, Object, `RegExp`, String
+    /// 2. Feature-specific or lib-version-specific globals when they should be
+    ///    available but aren't: Awaited, `IterableIterator`,
+    ///    `AsyncIterableIterator`, `TypedPropertyDescriptor`,
+    ///    `CallableFunction`, `NewableFunction`, Disposable, `AsyncDisposable`
+    ///
+    /// This matches TypeScript's behavior in tests like noCrashOnNoLib.ts,
+    /// generatorReturnTypeFallback.2.ts, missingDecoratorType.ts, etc.
+    pub(crate) fn check_missing_global_types(&mut self) {
+        // Core global types that TypeScript requires.
+        // These are fundamental types that should always exist unless explicitly disabled.
+        const CORE_GLOBAL_TYPES: &[&str] = &[
+            "Array",
+            "Boolean",
+            "Function",
+            "IArguments",
+            "Number",
+            "Object",
+            "RegExp",
+            "String",
+        ];
+
+        // CallableFunction/NewableFunction extend Function and provide better
+        // typing for .call/.apply/.bind. tsc emits TS2318 for them when
+        // Function itself is missing OR when --noLib is explicitly set (even
+        // if Function is manually defined). With --noLib, the user is
+        // responsible for all global types — omitting these is an error.
+        const FUNCTION_AUX_TYPES: &[&str] = &["CallableFunction", "NewableFunction"];
+
+        // Emit TS2318 errors when core global types are not available.
+        // TypeScript always requires these core global types to exist.
+        // tsc emits these errors BOTH with and without --noLib.
+        //
+        // However, when no lib files were loaded AND --noLib was not explicitly
+        // set, we're likely in a bare unit test environment with no lib context.
+        // Skip TS2318 emission UNLESS the file declares some core global types
+        // manually (indicating the user intentionally set up a minimal-lib
+        // environment and expects the check to run).
+        if !self.ctx.capabilities.no_lib && !self.ctx.capabilities.has_lib {
+            let has_any_core_type = CORE_GLOBAL_TYPES
+                .iter()
+                .any(|name| self.ctx.binder.file_locals.has(name));
+            if !has_any_core_type {
+                return;
+            }
+        }
+
+        // We check if types exist globally (in libs or current file scope).
+        // This matches tsc behavior where missing core types are reported
+        // even when some libs are loaded (e.g., if --lib es6 is missing Array).
+        for &type_name in CORE_GLOBAL_TYPES {
+            // Check if the type is available in any loaded lib or current scope
+            if !self.ctx.has_name_in_lib(type_name) {
+                // Type not available globally - emit TS2318
+                // tsc emits these with no file position (file="", line=0, column=0)
+                self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
+            }
+        }
+
+        // Check CallableFunction/NewableFunction. tsc always requires these aux
+        // types to be available; a restricted `--lib` (e.g. `@lib: es2015.core`
+        // alone) that does not include them must report them as missing at
+        // position 0. Previously this was guarded behind strict_bind_call_apply
+        // which made us miss TS2318 in lib-restriction tests like
+        // modularizeLibrary_ErrorFromUsingES6ArrayWithOnlyES6ArrayLib.
+        for &type_name in FUNCTION_AUX_TYPES {
+            if !self.ctx.has_name_in_lib(type_name) {
+                self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
+            }
+        }
+        // Check for feature-specific global types that may be missing
+        // These are checked regardless of --noLib, but only if the feature appears to be used
+        self.check_feature_specific_global_types();
+    }
+
+    /// Register boxed types (String, Number, Boolean, etc.) from lib.d.ts in `TypeEnvironment`.
+    ///
+    /// This enables primitive property access to use lib.d.ts definitions instead of
+    /// hardcoded lists. For example, "foo".length will look up the String interface
+    /// from lib.d.ts and find the length property there.
+    pub(crate) fn register_boxed_types(&mut self) {
+        use crate::query_boundaries::common::IntrinsicKind;
+
+        // Only register if lib files are loaded
+        if !self.ctx.has_lib_loaded() {
+            return;
+        }
+
+        // 1. Resolve types first (avoids holding a mutable borrow on type_env while resolving)
+        // resolve_lib_type_by_name handles looking up in lib.d.ts and merging declarations
+        let string_type = self.resolve_lib_type_by_name("String");
+        let number_type = self.resolve_lib_type_by_name("Number");
+        let boolean_type = self.resolve_lib_type_by_name("Boolean");
+        let symbol_type = self.resolve_lib_type_by_name("Symbol");
+        let bigint_type = self.resolve_lib_type_by_name("BigInt");
+        let object_type = self.resolve_lib_type_by_name("Object");
+        let function_type = self.resolve_lib_type_by_name("Function");
+
+        // For Array<T>, resolve the merged lib type once, then reuse the type
+        // parameters registered for its canonical symbol. Re-running the
+        // per-lib parameter resolver in every project checker repeatedly lowers
+        // the merged Array declarations and can exhaust the shared interner
+        // before ordinary global constructors are resolved.
+        let (resolved_array_for_params, resolved_array_params) =
+            self.resolve_lib_type_with_params("Array");
+        let existing_array_base = TypeResolver::get_array_base_type(&self.ctx.types);
+        let array_type_for_params = match (resolved_array_for_params, existing_array_base) {
+            (Some(candidate), Some(existing)) => {
+                let candidate_prop_count = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    candidate,
+                )
+                .map_or(0, |shape| shape.properties.len());
+                let existing_prop_count = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    existing,
+                )
+                .map_or(0, |shape| shape.properties.len());
+                if candidate_prop_count >= existing_prop_count {
+                    Some(candidate)
+                } else {
+                    Some(existing)
+                }
+            }
+            (Some(candidate), None) => Some(candidate),
+            (None, Some(existing)) => Some(existing),
+            (None, None) => None,
+        };
+        let mut array_type_params = self
+            .ctx
+            .binder
+            .file_locals
+            .get("Array")
+            .map(|sym_id| self.get_type_params_for_symbol(sym_id))
+            .unwrap_or_default();
+        if !resolved_array_params.is_empty() {
+            array_type_params = resolved_array_params;
+        }
+        if array_type_params.is_empty() {
+            array_type_params = TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
+        }
+        let array_type_params_for_flow = array_type_params.clone();
+
+        // Eagerly resolve ConcatArray and FlatArray, which are referenced by Array's
+        // method signatures. Without registering these types' bodies in TypeEnvironment,
+        // the solver's resolve_lazy falls through to a SymbolId-based fallback that can
+        // produce wrong types due to DefId/SymbolId value collisions.
+        // NOTE: ArrayIterator is NOT eagerly resolved here — it costs ~55ms due to deep
+        // interface merging chains (ArrayIterator → IteratorObject → Iterator + Disposable
+        // + esnext.iterator). Since the TypeInterner (DashMap) is shared across parallel
+        // checkers, ArrayIterator is resolved lazily on first use and cached globally.
+        for array_dep in &["ConcatArray", "FlatArray"] {
+            let _ = self.resolve_lib_type_by_name(array_dep);
+        }
+
+        // Pre-compute type parameters for commonly-used generic lib types.
+        // To reduce startup overhead, only prewarm symbols referenced by this file.
+        // Unreferenced symbols are still resolved lazily through normal lookup paths.
+        //
+        // PERF: Scan once, comparing each identifier against the small target set.
+        // Avoids cloning every identifier's escaped_text into a HashSet just to
+        // intersect with ~33 lib names. For files with thousands of identifiers
+        // (lib.d.ts, large user code), this saves a per-identifier String allocation
+        // on the file-checker startup path.
+        const PRIME_LIB_TYPE_NAMES: &[&str] = &[
+            "ReadonlyArray",
+            "Promise",
+            "PromiseLike",
+            "Awaited",
+            "Map",
+            "Set",
+            "WeakMap",
+            "WeakSet",
+            "WeakRef",
+            "ReadonlyMap",
+            "ReadonlySet",
+            "Iterator",
+            "IterableIterator",
+            "AsyncIterator",
+            "AsyncIterable",
+            "AsyncIterableIterator",
+            "Generator",
+            "AsyncGenerator",
+            "Partial",
+            "Required",
+            "Readonly",
+            "Record",
+            "Pick",
+            "Omit",
+            "Exclude",
+            "Extract",
+            "NonNullable",
+            "ReturnType",
+            "Parameters",
+            "ConstructorParameters",
+            "InstanceType",
+            "ThisParameterType",
+            "OmitThisParameter",
+        ];
+        let target_names: FxHashSet<&'static str> = PRIME_LIB_TYPE_NAMES.iter().copied().collect();
+        let mut referenced_targets: smallvec::SmallVec<[&'static str; 8]> =
+            smallvec::SmallVec::new();
+        let arena_len = self.ctx.arena.len();
+        for idx in 0..arena_len {
+            if referenced_targets.len() == PRIME_LIB_TYPE_NAMES.len() {
+                break;
+            }
+            let node_idx = NodeIndex(idx as u32);
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+            if node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(identifier) = self.ctx.arena.get_identifier(node)
+                && let Some(&name) = target_names.get(identifier.escaped_text.as_str())
+                && !referenced_targets.contains(&name)
+            {
+                referenced_targets.push(name);
+            }
+        }
+        for &name in &referenced_targets {
+            self.prime_lib_type_params(name);
+        }
+
+        // The Array type from lib.d.ts is a Callable with instance methods as properties
+        // We register this type directly so that resolve_array_property can use it
+        // No need to extract instance type from construct signatures - the methods
+        // are already on the Callable itself
+        let array_instance_type =
+            array_type_for_params.or_else(|| self.resolve_lib_type_by_name("Array"));
+        let array_display_type = array_instance_type;
+
+        // PropertyAccessEvaluator runs through multiple database backends
+        // (query cache, interner, binder-backed resolver). Register Array<T>
+        // through the query database so all backends see the same base type.
+        if let Some(ty) = array_instance_type {
+            self.ctx
+                .types
+                .register_array_base_type(ty, array_type_params.clone());
+            if let Some(display_ty) = array_display_type {
+                self.ctx.types.register_array_display_base_type(display_ty);
+                let display_props = crate::query_boundaries::common::callable_shape_for_type(
+                    self.ctx.types,
+                    display_ty,
+                )
+                .map(|shape| shape.properties.clone())
+                .or_else(|| {
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        display_ty,
+                    )
+                    .map(|shape| shape.properties.clone())
+                })
+                .unwrap_or_default();
+                if !display_props.is_empty() {
+                    self.ctx.types.store_display_properties(ty, display_props);
+                }
+            }
+        }
+
+        // If the user has augmented the Array interface (e.g.,
+        // `interface Array<T> extends IFoo<T> {}`), re-resolve using
+        // resolve_lib_type_by_name which processes global augmentation heritage
+        // and type argument substitution. resolve_lib_type_with_params only reads
+        // from lib binders and misses user augmentations.
+        if self
+            .ctx
+            .binder
+            .global_augmentations
+            .get("Array")
+            .is_some_and(|v| !v.is_empty())
+            && let Some(augmented_type) = self.resolve_lib_type_by_name("Array")
+        {
+            let augmented_prop_count = crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types,
+                augmented_type,
+            )
+            .map_or(0, |shape| shape.properties.len());
+            let current_prop_count = TypeResolver::get_array_base_type(&self.ctx.types)
+                .and_then(|current| {
+                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, current)
+                })
+                .map_or(0, |shape| shape.properties.len());
+            if augmented_prop_count >= current_prop_count {
+                self.ctx
+                    .types
+                    .register_array_base_type(augmented_type, array_type_params.clone());
+            }
+        }
+
+        // Register boxed types through the query database so PropertyAccessEvaluator
+        // can resolve primitive methods (e.g., "hello".match()) through the actual
+        // interface types from lib.d.ts instead of falling back to hardcoded lists.
+        let boxed_pairs: &[(IntrinsicKind, Option<TypeId>)] = &[
+            (IntrinsicKind::String, string_type),
+            (IntrinsicKind::Number, number_type),
+            (IntrinsicKind::Boolean, boolean_type),
+            (IntrinsicKind::Symbol, symbol_type),
+            (IntrinsicKind::Bigint, bigint_type),
+            (IntrinsicKind::Object, object_type),
+            (IntrinsicKind::Function, function_type),
+        ];
+        for &(kind, type_id) in boxed_pairs {
+            if let Some(ty) = type_id {
+                self.ctx.types.register_boxed_type(kind, ty);
+                // Also register the DefId (if it's a Lazy type) so the interner
+                // can identify boxed types by DefId even when TypeEnvironment
+                // is unavailable (e.g., during RefCell borrow conflicts).
+                if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
+                    self.ctx.types.as_type_database(),
+                    ty,
+                ) {
+                    self.ctx.types.register_boxed_def_id(kind, def_id);
+                }
+            }
+        }
+
+        // Register DefIds from ALL lib contexts in the interner EAGERLY.
+        // This must happen before any constraint checking (which may occur during
+        // build_type_environment), so the SubtypeChecker and generic constraint
+        // validation can identify boxed types by DefId even before the
+        // TypeEnvironment is populated.
+        let boxed_names: &[(&str, Option<TypeId>, IntrinsicKind)] = &[
+            ("String", string_type, IntrinsicKind::String),
+            ("Number", number_type, IntrinsicKind::Number),
+            ("Boolean", boolean_type, IntrinsicKind::Boolean),
+            ("Symbol", symbol_type, IntrinsicKind::Symbol),
+            ("BigInt", bigint_type, IntrinsicKind::Bigint),
+            ("Object", object_type, IntrinsicKind::Object),
+            ("Function", function_type, IntrinsicKind::Function),
+        ];
+        // PERF: Collect (kind, ty, def_id) once. The interner-side and the
+        // two env-side registrations below all walk the same lib contexts and
+        // resolve the same def_ids. Hoisting this loop avoids 2× redundant
+        // file_locals.get + get_lib_def_id calls per (name, lib_context) pair.
+        let mut boxed_def_entries: smallvec::SmallVec<
+            [(IntrinsicKind, TypeId, tsz_solver::DefId); 16],
+        > = smallvec::SmallVec::new();
+        for &(name, type_opt, kind) in boxed_names {
+            let Some(ty) = type_opt else { continue };
+            for ctx in self.ctx.lib_contexts.iter() {
+                if let Some(sym_id) = ctx.binder.file_locals.get(name) {
+                    let def_id = self.ctx.get_lib_def_id(sym_id);
+                    boxed_def_entries.push((kind, ty, def_id));
+                }
+            }
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                let def_id = self.ctx.get_lib_def_id(sym_id);
+                boxed_def_entries.push((kind, ty, def_id));
+            }
+        }
+        for &(kind, _ty, def_id) in &boxed_def_entries {
+            self.ctx.types.register_boxed_def_id(kind, def_id);
+        }
+
+        // Register ThisType marker DefIds so ThisTypeMarkerExtractor can identify
+        // ThisType<T> applications when the base type is Lazy(DefId).
+        for ctx in self.ctx.lib_contexts.iter() {
+            if let Some(sym_id) = ctx.binder.file_locals.get("ThisType") {
+                let def_id = self.ctx.get_lib_def_id(sym_id);
+                self.ctx.types.register_this_type_def_id(def_id);
+            }
+        }
+        if let Some(sym_id) = self.ctx.binder.file_locals.get("ThisType") {
+            let def_id = self.ctx.get_lib_def_id(sym_id);
+            self.ctx.types.register_this_type_def_id(def_id);
+        }
+
+        // 2. Populate the environment
+        // We use try_borrow_mut to be safe, though at this stage it should be free
+        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            if let Some(ty) = string_type {
+                env.set_boxed_type(IntrinsicKind::String, ty);
+            }
+            if let Some(ty) = number_type {
+                env.set_boxed_type(IntrinsicKind::Number, ty);
+            }
+            if let Some(ty) = boolean_type {
+                env.set_boxed_type(IntrinsicKind::Boolean, ty);
+            }
+            if let Some(ty) = symbol_type {
+                env.set_boxed_type(IntrinsicKind::Symbol, ty);
+            }
+            if let Some(ty) = bigint_type {
+                env.set_boxed_type(IntrinsicKind::Bigint, ty);
+            }
+            if let Some(ty) = object_type {
+                env.set_boxed_type(IntrinsicKind::Object, ty);
+            }
+            if let Some(ty) = function_type {
+                env.set_boxed_type(IntrinsicKind::Function, ty);
+            }
+            // Register the Array<T> interface for array property resolution
+            // Use the instance type (Array<T> interface), not the constructor (Callable)
+            if let Some(ty) = array_instance_type {
+                env.set_array_base_type(ty, array_type_params);
+            }
+
+            // 3. Register DefId mappings for non-generic boxed types in the env too.
+            // When user code writes `a: Function`, the type annotation creates a
+            // Lazy(DefId) referencing the global Function symbol. The CallEvaluator
+            // uses TypeEnvironment as its resolver, which resolves Lazy types via
+            // def_types. Without this registration, Lazy(DefId) for Function can't
+            // be resolved, causing false TS2345/TS2322 errors.
+            for &(kind, ty, def_id) in &boxed_def_entries {
+                env.insert_def(def_id, ty);
+                env.register_boxed_def_id(kind, def_id);
+            }
+        }
+
+        // Mirror boxed DefId mappings into type_environment (flow-analyzer env)
+        // so both environments stay consistent for narrowing contexts.
+        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
+            for &(kind, ty, def_id) in &boxed_def_entries {
+                env.insert_def(def_id, ty);
+                env.register_boxed_def_id(kind, def_id);
+            }
+
+            // Mirror boxed types and array base type into flow-analyzer env
+            if let Some(ty) = string_type {
+                env.set_boxed_type(IntrinsicKind::String, ty);
+            }
+            if let Some(ty) = number_type {
+                env.set_boxed_type(IntrinsicKind::Number, ty);
+            }
+            if let Some(ty) = boolean_type {
+                env.set_boxed_type(IntrinsicKind::Boolean, ty);
+            }
+            if let Some(ty) = symbol_type {
+                env.set_boxed_type(IntrinsicKind::Symbol, ty);
+            }
+            if let Some(ty) = bigint_type {
+                env.set_boxed_type(IntrinsicKind::Bigint, ty);
+            }
+            if let Some(ty) = object_type {
+                env.set_boxed_type(IntrinsicKind::Object, ty);
+            }
+            if let Some(ty) = function_type {
+                env.set_boxed_type(IntrinsicKind::Function, ty);
+            }
+            if let Some(ty) = array_instance_type {
+                env.set_array_base_type(ty, array_type_params_for_flow);
+            }
+        }
+    }
+
+    /// Prime boxed and Array base types before checking files.
+    ///
+    /// Also calls `register_function_def_ids_early()` first, matching the
+    /// file checker's DefId allocation order. Without this, the prime checker
+    /// and file checkers would assign different `DefIds` to lib types like
+    /// `ConcatArray`, causing Lazy(DefId) references in the interned Array body
+    /// to resolve to wrong types.
+    pub fn prime_boxed_types(&mut self) {
+        self.register_function_def_ids_early();
+        self.register_boxed_types();
+    }
+
+    /// Early-register Function interface `DefIds` in the interner (`DashMap`).
+    ///
+    /// This must be called BEFORE `build_type_environment()` so that constraint
+    /// checks during type alias processing (e.g., `T extends Function`) can
+    /// identify the Function interface. Only registers Function to minimize
+    /// side effects on DefId creation ordering.
+    pub(crate) fn register_function_def_ids_early(&mut self) {
+        use crate::query_boundaries::common::IntrinsicKind;
+
+        if !self.ctx.has_lib_loaded() {
+            return;
+        }
+
+        for ctx in self.ctx.lib_contexts.iter() {
+            if let Some(sym_id) = ctx.binder.file_locals.get("Function") {
+                let def_id = self.ctx.get_lib_def_id(sym_id);
+                self.ctx
+                    .types
+                    .register_boxed_def_id(IntrinsicKind::Function, def_id);
+            }
+        }
+        if let Some(sym_id) = self.ctx.binder.file_locals.get("Function") {
+            let def_id = self.ctx.get_lib_def_id(sym_id);
+            self.ctx
+                .types
+                .register_boxed_def_id(IntrinsicKind::Function, def_id);
+        }
+    }
+
+    /// Check for feature-specific global types that may be missing.
+    ///
+    /// This function checks if certain global types that are required for specific
+    /// TypeScript features are available. Unlike the core global types, these are
+    /// only checked when the feature is potentially used in the code.
+    ///
+    /// Routes through the capability boundary (`gate_for_required_type`) to map
+    /// type names to feature gates, and `should_check_feature_gate` to determine
+    /// whether the feature is actually used in the current file.
+    ///
+    /// Examples:
+    /// - `TypedPropertyDescriptor`: Required for decorators
+    /// - `IterableIterator`: Required for generators
+    /// - `AsyncIterableIterator`: Required for async generators
+    /// - Disposable/AsyncDisposable: Required for using declarations
+    /// - Awaited: Required for await type operator
+    pub(crate) fn check_feature_specific_global_types(&mut self) {
+        use crate::query_boundaries::capabilities::EnvironmentCapabilities;
+
+        // Under @noLib, the user has explicitly opted out of the default lib.
+        // tsc reports the core TS2318 set (Array/Boolean/Function/etc.) for
+        // the fundamental types the compiler always needs, but does NOT report
+        // feature-specific globals like TypedPropertyDescriptor even when the
+        // corresponding feature (decorators, generators, await, using) is used.
+        // The user is responsible for providing any types they need.
+        if self.ctx.capabilities.no_lib {
+            return;
+        }
+
+        // Feature-specific global types checked via the capability boundary.
+        // The mapping from type name → feature gate is centralized in
+        // `EnvironmentCapabilities::gate_for_required_type()`.
+        const FEATURE_TYPES: &[&str] = &[
+            "Awaited",
+            "IterableIterator",
+            "AsyncIterableIterator",
+            "TypedPropertyDescriptor",
+            "Disposable",
+            "AsyncDisposable",
+        ];
+
+        for &type_name in FEATURE_TYPES {
+            // Check if available in lib contexts or declared locally
+            if self.ctx.has_name_in_lib(type_name) || self.ctx.binder.file_locals.has(type_name) {
+                continue;
+            }
+
+            // Disposable/AsyncDisposable: tsc only emits TS2318 when the target
+            // requires downleveling of `using`/`await using` (target < ES2025).
+            // When native support is available (target >= ES2025/ESNext), the types
+            // are only needed if they happen to be in the lib; their absence is not
+            // an error.
+            if matches!(type_name, "Disposable" | "AsyncDisposable")
+                && self.ctx.compiler_options.target.supports_es2025()
+            {
+                continue;
+            }
+
+            // Use the capability boundary to map the type to its feature gate
+            let Some(gate) = EnvironmentCapabilities::gate_for_required_type(type_name) else {
+                continue;
+            };
+
+            // Only emit if the feature is actually used in this file
+            if !self.should_check_feature_gate(gate) {
+                continue;
+            }
+
+            // tsc emits these with no file position (file="", line=0, column=0)
+            self.error_global_type_missing_at_position(type_name, String::new(), 0, 0);
+        }
+    }
+
+    /// Check if a feature gate's corresponding syntax is used in the current file.
+    ///
+    /// This heuristic determines if a feature that requires a specific global type
+    /// is likely being used in the code. These errors are NOT emitted just because
+    /// noLib is set — they require the actual feature to be used.
+    ///
+    /// Routes through `FileFeatures` flags set by the binder, and checker-level
+    /// state for async depth.
+    pub(crate) const fn should_check_feature_gate(
+        &self,
+        gate: crate::query_boundaries::capabilities::FeatureGate,
+    ) -> bool {
+        use crate::query_boundaries::capabilities::FeatureGate;
+        use tsz_binder::FileFeatures;
+        let features = self.ctx.binder.file_features;
+        match gate {
+            FeatureGate::Generators => features.has(FileFeatures::GENERATORS),
+            FeatureGate::AsyncGenerators => features.has(FileFeatures::ASYNC_GENERATORS),
+            FeatureGate::ExperimentalDecorators => {
+                self.ctx.compiler_options.experimental_decorators
+                    && features.has(FileFeatures::DECORATORS)
+            }
+            FeatureGate::UsingDeclaration => features.has(FileFeatures::USING),
+            FeatureGate::AwaitUsingDeclaration => features.has(FileFeatures::AWAIT_USING),
+            // Awaited maps to AsyncFunction gate — check async_depth
+            FeatureGate::AsyncFunction => self.ctx.async_depth > 0,
+            _ => false,
+        }
+    }
+}

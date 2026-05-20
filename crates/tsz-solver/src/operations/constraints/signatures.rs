@@ -1,0 +1,1159 @@
+//! Property, signature, tuple, and index signature constraint collection.
+//!
+//! Contains methods for constraining object properties, function signatures,
+//! call signatures, tuple types, and index signatures during type inference.
+
+use crate::inference::infer::InferenceContext;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::operations::{AssignabilityChecker, CallEvaluator};
+use crate::types::{
+    CallSignature, FunctionShape, ObjectShape, ObjectShapeId, ParamInfo, PropertyInfo,
+    TupleElement, TypeData, TypeId, TypePredicate,
+};
+use crate::utils;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
+use tracing::trace;
+
+// Reusable scratch `FxHashSet<TypeId>` for `type_contains_placeholder` calls
+// in this module. Mirrors the pool pattern from #4722 / #4790 / #4801 /
+// #4805 / #4807 / #4810.
+thread_local! {
+    static SIGNATURES_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_signatures_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = SIGNATURES_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    SIGNATURES_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
+
+impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn type_contains_noinfer_marker(&mut self, ty: TypeId) -> bool {
+        if ty.is_intrinsic() {
+            return false;
+        }
+
+        let mut roots = vec![ty];
+        if let Some(expanded) = self.checker.expand_type_alias_application(ty)
+            && expanded != ty
+        {
+            roots.push(expanded);
+        }
+
+        roots.into_iter().any(|root| {
+            crate::visitor::collect_all_types(self.interner.as_type_database(), root)
+                .into_iter()
+                .any(|nested| matches!(self.interner.lookup(nested), Some(TypeData::NoInfer(_))))
+        })
+    }
+
+    pub(super) fn constrain_properties(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_props: &[PropertyInfo],
+        target_props: &[PropertyInfo],
+        priority: crate::types::InferencePriority,
+        source_is_fresh: bool,
+    ) {
+        let mut source_idx = 0;
+        let mut target_idx = 0;
+
+        while source_idx < source_props.len() && target_idx < target_props.len() {
+            let source = &source_props[source_idx];
+            let target = &target_props[target_idx];
+
+            match source.name.cmp(&target.name) {
+                std::cmp::Ordering::Equal => {
+                    let property_index = source_idx as u32;
+                    if let Some(&var) = var_map.get(&target.type_id) {
+                        ctx.add_property_candidate_with_index(
+                            var,
+                            source.type_id,
+                            priority,
+                            property_index,
+                            Some(source.name),
+                            source_is_fresh,
+                        );
+                    } else {
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            source.type_id,
+                            target.type_id,
+                            priority,
+                        );
+                    }
+                    // Constrain write type for mutable targets.
+                    // Note: readonly source → writable target is allowed during
+                    // inference constraint collection (TypeScript's inferFromProperties
+                    // ignores readonly).  Readonly mismatches are caught later during
+                    // assignability checking, not here.
+                    if !target.readonly && !source.readonly {
+                        if let Some(&var) = var_map.get(&target.write_type) {
+                            ctx.add_property_candidate_with_index(
+                                var,
+                                source.write_type,
+                                priority,
+                                property_index,
+                                Some(source.name),
+                                source_is_fresh,
+                            );
+                        } else {
+                            // Skip the reverse-direction write_type constraint when
+                            // write_type == type_id for both sides (the common case).
+                            // The type_id constraint above already handles it —
+                            // constrain_types(target.write_type, source.write_type)
+                            // goes in the contravariant direction and creates spurious
+                            // candidates that widen literals incorrectly.
+                            // It must also stay silent for `NoInfer<T>` properties:
+                            // the read-side constraint intentionally stops at the
+                            // marker, and using an unwrapped write type would leak the
+                            // same position back into inference.
+                            let write_type_differs = source.write_type != source.type_id
+                                || target.write_type != target.type_id;
+                            if write_type_differs
+                                && !self.type_contains_noinfer_marker(target.type_id)
+                            {
+                                self.constrain_types(
+                                    ctx,
+                                    var_map,
+                                    target.write_type,
+                                    source.write_type,
+                                    priority,
+                                );
+                            }
+                        }
+                    }
+                    source_idx += 1;
+                    target_idx += 1;
+                }
+                std::cmp::Ordering::Less => {
+                    source_idx += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    // Target property is missing from source.
+                    // For optional properties, only constrain to `undefined` when the
+                    // target type is NOT a direct inference variable.  Constraining an
+                    // inference placeholder to `undefined` from a missing optional
+                    // property would incorrectly fix `T = undefined` during partial
+                    // Round 1 inference (where context-sensitive properties are
+                    // intentionally omitted from the source).
+                    let target_has_placeholder = with_signatures_visited(|visited| {
+                        self.type_contains_placeholder(target.type_id, var_map, visited)
+                    });
+                    if target.optional
+                        && !var_map.contains_key(&target.type_id)
+                        && !target_has_placeholder
+                    {
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            TypeId::UNDEFINED,
+                            target.type_id,
+                            priority,
+                        );
+                    }
+                    target_idx += 1;
+                }
+            }
+        }
+
+        // Handle remaining target properties that are missing from source
+        while target_idx < target_props.len() {
+            let target = &target_props[target_idx];
+            let target_has_placeholder = with_signatures_visited(|visited| {
+                self.type_contains_placeholder(target.type_id, var_map, visited)
+            });
+            if target.optional && !var_map.contains_key(&target.type_id) && !target_has_placeholder
+            {
+                self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id, priority);
+            }
+            target_idx += 1;
+        }
+    }
+
+    /// Constrain parameter lists with proper rest parameter handling.
+    ///
+    /// When the target has a rest parameter typed as a type parameter (inference
+    /// placeholder), this collects all remaining source params into a tuple and
+    /// infers the tuple against the rest param type variable.
+    ///
+    /// Example: source `(a: string, b: number)` vs target `(...args: T)` where
+    /// T is an inference variable → infers T = [string, number].
+    pub(super) fn constrain_params_with_rest(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_params: &[ParamInfo],
+        target_params: &[ParamInfo],
+        priority: crate::types::InferencePriority,
+    ) {
+        use crate::type_queries::unpack_tuple_rest_parameter;
+
+        let s_params: Vec<ParamInfo> = source_params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+        let t_params: Vec<ParamInfo> = target_params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+
+        // Match non-rest params 1-to-1, stopping at the first rest param
+        let mut matched = 0;
+        for (s_p, t_p) in s_params.iter().zip(t_params.iter()) {
+            if s_p.rest || t_p.rest {
+                break;
+            }
+            self.constrain_parameter_types(ctx, var_map, s_p.type_id, t_p.type_id, priority);
+            matched += 1;
+        }
+
+        // If target has a rest param typed as an inference variable, collect
+        // remaining source params into a tuple and infer against the variable.
+        let target_has_rest = t_params.last().is_some_and(|t| t.rest);
+        let target_rest_is_typevar = t_params
+            .last()
+            .is_some_and(|t| t.rest && var_map.contains_key(&t.type_id));
+        if target_rest_is_typevar {
+            self.infer_rest_param_tuple_candidate(ctx, var_map, &s_params, &t_params);
+        } else if !target_has_rest
+            && let Some(s_last) = s_params.last()
+            && s_last.rest
+        {
+            // Source has rest param, target doesn't — infer each remaining
+            // target param against the source rest element type.
+            let source_rest_elem = self.rest_element_type(s_last.type_id);
+            for t_p in t_params.iter().skip(matched) {
+                self.constrain_parameter_types(
+                    ctx,
+                    var_map,
+                    source_rest_elem,
+                    t_p.type_id,
+                    priority,
+                );
+            }
+        }
+    }
+
+    /// Shared body for `constrain_{function,call_signature}_to_{call_signature,function}`.
+    /// Applies the four-step inference constraint: params → optional `this` → return →
+    /// type predicates. The three public wrappers differ only in their source/target
+    /// struct types; those structs expose the same inference-relevant fields.
+    ///
+    /// `is_constructor` indicates whether the source/target are construct
+    /// signatures rather than call signatures. The return-type priority cap is
+    /// applied only for call signatures, where the cap matches a callback's
+    /// inference shape (mirroring the Function→Function path in walker.rs).
+    /// For construct signatures, capping is skipped: the source's signature
+    /// often gets erased to `unknown` here (e.g. a generic `<T>(x: T): T` from
+    /// `interface I { new <T>(x: T): T }` is constrained at this layer after
+    /// erasure), and downgrading the `unknown` candidate's priority below an
+    /// outer direct-arg pin causes a spurious mismatch on the constructor
+    /// argument's apparent type, while the unscaled (uncapped) priority lets
+    /// the outer inference variable widen to `unknown` and the constructor
+    /// remains assignable. tsc applies its return bias at a higher layer
+    /// (signature inference), and we mirror that selective behaviour here.
+    #[allow(clippy::too_many_arguments)]
+    fn constrain_signature_bodies(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_params: &[ParamInfo],
+        target_params: &[ParamInfo],
+        source_this: Option<TypeId>,
+        target_this: Option<TypeId>,
+        source_return: TypeId,
+        target_return: TypeId,
+        source_pred: Option<&TypePredicate>,
+        target_pred: Option<&TypePredicate>,
+        priority: crate::types::InferencePriority,
+        is_constructor: bool,
+    ) {
+        self.constrain_params_with_rest(ctx, var_map, source_params, target_params, priority);
+        if let (Some(s_this), Some(t_this)) = (source_this, target_this) {
+            self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
+        }
+        // Return types must never be inferred at NakedTypeVariable priority — cap
+        // at ReturnType so direct-arg inferences always win. Mirrors the same
+        // invariant enforced in the Function→Function path in walker.rs.
+        // Skip the cap for construct signatures (see doc comment above).
+        let return_priority = if is_constructor {
+            priority
+        } else {
+            priority.max(crate::types::InferencePriority::ReturnType)
+        };
+        self.constrain_types(ctx, var_map, source_return, target_return, return_priority);
+        // Constrain type predicates if both have them.
+        // Predicates are marked as a type-annotation source so literal predicate
+        // types (e.g. `x is 'B'`) are not marked fresh and won't be widened.
+        self.constrain_type_predicates(ctx, var_map, source_pred, target_pred, return_priority);
+    }
+
+    pub(super) fn constrain_function_to_call_signature(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source: &FunctionShape,
+        target: &CallSignature,
+        priority: crate::types::InferencePriority,
+    ) {
+        trace!(
+            source_has_predicate = source.type_predicate.is_some(),
+            target_has_predicate = target.type_predicate.is_some(),
+            "constrain_function_to_call_signature: checking type predicates"
+        );
+        self.constrain_signature_bodies(
+            ctx,
+            var_map,
+            &source.params,
+            &target.params,
+            source.this_type,
+            target.this_type,
+            source.return_type,
+            target.return_type,
+            source.type_predicate.as_ref(),
+            target.type_predicate.as_ref(),
+            priority,
+            source.is_constructor,
+        );
+    }
+
+    pub(super) fn constrain_call_signature_to_function(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source: &CallSignature,
+        target: &FunctionShape,
+        priority: crate::types::InferencePriority,
+    ) {
+        self.constrain_signature_bodies(
+            ctx,
+            var_map,
+            &source.params,
+            &target.params,
+            source.this_type,
+            target.this_type,
+            source.return_type,
+            target.return_type,
+            source.type_predicate.as_ref(),
+            target.type_predicate.as_ref(),
+            priority,
+            target.is_constructor,
+        );
+    }
+
+    pub(super) fn constrain_call_signature_to_call_signature(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source: &CallSignature,
+        target: &CallSignature,
+        priority: crate::types::InferencePriority,
+        is_constructor: bool,
+    ) {
+        self.constrain_signature_bodies(
+            ctx,
+            var_map,
+            &source.params,
+            &target.params,
+            source.this_type,
+            target.this_type,
+            source.return_type,
+            target.return_type,
+            source.type_predicate.as_ref(),
+            target.type_predicate.as_ref(),
+            priority,
+            is_constructor,
+        );
+    }
+
+    /// Constrain the target type parameters inside a pair of type predicates.
+    ///
+    /// Matches tsc: when both source and target signatures carry a type
+    /// predicate with a concrete type, infer with `source_is_type_annotation`
+    /// set so that literal predicate types (e.g. `x is 'B'`) are not marked
+    /// fresh and won't be widened during candidate collection.
+    pub(super) fn constrain_type_predicates(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_pred: Option<&TypePredicate>,
+        target_pred: Option<&TypePredicate>,
+        priority: crate::types::InferencePriority,
+    ) {
+        let (Some(s_pred), Some(t_pred)) = (source_pred, target_pred) else {
+            return;
+        };
+        let (Some(s_pred_type), Some(t_pred_type)) = (s_pred.type_id, t_pred.type_id) else {
+            return;
+        };
+        let was = ctx.source_is_type_annotation;
+        ctx.source_is_type_annotation = true;
+        self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
+        ctx.source_is_type_annotation = was;
+    }
+
+    pub(super) fn function_type_from_signature(
+        &self,
+        sig: &CallSignature,
+        is_constructor: bool,
+    ) -> TypeId {
+        self.interner.function(FunctionShape {
+            type_params: Vec::new(),
+            params: sig.params.clone(),
+            this_type: sig.this_type,
+            return_type: sig.return_type,
+            type_predicate: sig.type_predicate,
+            is_constructor,
+            is_method: false,
+        })
+    }
+
+    /// Erase a signature's own type parameters by substituting defaults (or constraints, or unknown).
+    /// Returns a new `CallSignature` with no `type_params` and all types instantiated.
+    /// This is used when the source signature is generic but the target is not --
+    /// tsc instantiates the source's type params with their defaults before inferring.
+    pub(super) fn erase_signature_type_params(&self, sig: &CallSignature) -> CallSignature {
+        if sig.type_params.is_empty() {
+            return sig.clone();
+        }
+        let mut sub = TypeSubstitution::new();
+        for tp in &sig.type_params {
+            let replacement = tp.default.or(tp.constraint).unwrap_or(TypeId::UNKNOWN);
+            sub.insert(tp.name, replacement);
+        }
+        CallSignature {
+            type_params: Vec::new(),
+            params: sig
+                .params
+                .iter()
+                .map(|p| ParamInfo {
+                    name: p.name,
+                    type_id: instantiate_type(self.interner, p.type_id, &sub),
+                    optional: p.optional,
+                    rest: p.rest,
+                })
+                .collect(),
+            this_type: sig
+                .this_type
+                .map(|t| instantiate_type(self.interner, t, &sub)),
+            return_type: instantiate_type(self.interner, sig.return_type, &sub),
+            type_predicate: sig.type_predicate,
+            is_method: sig.is_method,
+        }
+    }
+
+    pub(super) fn erase_placeholders_for_inference(
+        &self,
+        ty: TypeId,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> TypeId {
+        if var_map.is_empty() {
+            return ty;
+        }
+        let contains_placeholder =
+            with_signatures_visited(|visited| self.type_contains_placeholder(ty, var_map, visited));
+        if !contains_placeholder {
+            return ty;
+        }
+
+        let mut substitution = TypeSubstitution::new();
+        for &placeholder in var_map.keys() {
+            if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(placeholder) {
+                // Use UNKNOWN instead of ANY for unresolved placeholders
+                // to expose hidden type errors instead of silently accepting all values
+                substitution.insert(info.name, TypeId::UNKNOWN);
+            }
+        }
+
+        instantiate_type(self.interner, ty, &substitution)
+    }
+
+    pub(super) fn select_signature_for_target(
+        &mut self,
+        signatures: &[CallSignature],
+        target_fn: TypeId,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        is_constructor: bool,
+    ) -> Option<usize> {
+        let target_has_placeholder = with_signatures_visited(|visited| {
+            self.type_contains_placeholder(target_fn, var_map, visited)
+        });
+        if target_has_placeholder {
+            let last_idx = signatures
+                .iter()
+                .rposition(|sig| sig.type_params.is_empty())?;
+            let last_arity = signatures[last_idx].params.len();
+            let all_same_arity = signatures
+                .iter()
+                .filter(|sig| sig.type_params.is_empty())
+                .all(|sig| sig.params.len() == last_arity);
+            if all_same_arity {
+                return Some(last_idx);
+            }
+        }
+
+        let target_erased = self.erase_placeholders_for_inference(target_fn, var_map);
+        // First pass: try non-generic signatures
+        for (index, sig) in signatures.iter().enumerate() {
+            if !sig.type_params.is_empty() {
+                continue;
+            }
+            let source_fn = self.function_type_from_signature(sig, is_constructor);
+            if self.checker.is_assignable_to(source_fn, target_erased) {
+                return Some(index);
+            }
+        }
+        // Second pass: try generic signatures with type params erased to defaults
+        for (index, sig) in signatures.iter().enumerate() {
+            if sig.type_params.is_empty() {
+                continue;
+            }
+            let erased = self.erase_signature_type_params(sig);
+            let source_fn = self.function_type_from_signature(&erased, is_constructor);
+            if self.checker.is_assignable_to(source_fn, target_erased) {
+                return Some(index);
+            }
+        }
+        None
+    }
+
+    /// Constrain `source_sig` against `target_sig`, erasing any source type
+    /// parameters first (using defaults/constraints). Shared helper for the
+    /// four overload-matching branches below, which all need to erase
+    /// source-side type params before constraining.
+    fn constrain_signature_erasing_source_type_params(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_sig: &CallSignature,
+        target_sig: &CallSignature,
+        priority: crate::types::InferencePriority,
+        is_constructor: bool,
+    ) {
+        if source_sig.type_params.is_empty() {
+            self.constrain_call_signature_to_call_signature(
+                ctx,
+                var_map,
+                source_sig,
+                target_sig,
+                priority,
+                is_constructor,
+            );
+        } else {
+            let erased = self.erase_signature_type_params(source_sig);
+            self.constrain_call_signature_to_call_signature(
+                ctx,
+                var_map,
+                &erased,
+                target_sig,
+                priority,
+                is_constructor,
+            );
+        }
+    }
+
+    pub(super) fn constrain_matching_signatures(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_signatures: &[CallSignature],
+        target_signatures: &[CallSignature],
+        is_constructor: bool,
+        priority: crate::types::InferencePriority,
+    ) {
+        if source_signatures.is_empty() || target_signatures.is_empty() {
+            return;
+        }
+
+        if source_signatures.len() == 1 && target_signatures.len() == 1 {
+            let source_sig = &source_signatures[0];
+            let target_sig = &target_signatures[0];
+            if target_sig.type_params.is_empty() {
+                // Source may carry type params (e.g. generic class construct sig)
+                // while target does not; the helper erases them first when needed.
+                self.constrain_signature_erasing_source_type_params(
+                    ctx,
+                    var_map,
+                    source_sig,
+                    target_sig,
+                    priority,
+                    is_constructor,
+                );
+            }
+            return;
+        }
+
+        if target_signatures.len() == 1 {
+            let target_sig = &target_signatures[0];
+            if target_sig.type_params.is_empty() {
+                let source_idx = if source_signatures.len() == 1 {
+                    Some(0)
+                } else {
+                    let target_fn = self.function_type_from_signature(target_sig, is_constructor);
+                    let selected = self.select_signature_for_target(
+                        source_signatures,
+                        target_fn,
+                        var_map,
+                        is_constructor,
+                    );
+                    // Fallback: tsc's `inferFromSignaturesOfType` does NOT gate
+                    // inference on assignability — it just pairs signatures by
+                    // index from the end of each list (with `len = min(srcLen, tgtLen)`).
+                    // When the target has 1 signature, that pairing picks the last
+                    // source signature regardless of whether any source signature
+                    // is "assignable" to the placeholder-erased target.
+                    //
+                    // The strict pre-check in `select_signature_for_target` is too
+                    // restrictive for the common case where inheritance-merged
+                    // callable overloads (e.g. `ArrayIterator<T>` adds a
+                    // `[Symbol.iterator]` overload returning `ArrayIterator<T>`
+                    // on top of the inherited `IteratorObject<T,…>` signature)
+                    // disagree on the apparent return type while still being
+                    // structurally compatible. Without this fallback, inference
+                    // silently drops, the placeholder receives no candidate from
+                    // the argument, and the call later fails with a spurious
+                    // TS2769 (e.g. `Array.from(arr.values())`).
+                    //
+                    // Two guards prevent over-eager inference from the wrong
+                    // overload:
+                    //
+                    // 1. `arity_compatible`: the chosen source signature's
+                    //    parameter count must align with the target signature's
+                    //    arity. This is the primary discriminator that lets us
+                    //    pair `[Symbol.iterator](): ArrayIterator<A>` (arity 0)
+                    //    with `[Symbol.iterator](): Iterator<T,…>` (arity 0)
+                    //    while rejecting cross-arity pairings like a 2-arg
+                    //    overload paired against a 1-arg target.
+                    //
+                    // 2. `all_same_arity`: every non-generic source overload
+                    //    must share the same parameter count. Inheritance-merged
+                    //    overload sets (the case this fallback exists to
+                    //    rescue) always satisfy this — the derived interface's
+                    //    override is a return-type refinement of the inherited
+                    //    signature. By contrast, semantically split overload
+                    //    sets such as `Array.from`'s `(arrayLike)` plus
+                    //    `(arrayLike, mapfn, thisArg?)` represent distinct
+                    //    calling conventions and must still rely on the strict
+                    //    assignability discriminator.
+                    selected.or_else(|| {
+                        let last_idx = source_signatures
+                            .iter()
+                            .rposition(|sig| sig.type_params.is_empty())?;
+                        let target_arity = target_sig.params.len();
+                        let last_arity = source_signatures[last_idx].params.len();
+                        let arity_compatible = last_arity == target_arity
+                            || source_signatures[last_idx]
+                                .params
+                                .last()
+                                .is_some_and(|p| p.rest);
+                        let all_same_arity = source_signatures
+                            .iter()
+                            .filter(|sig| sig.type_params.is_empty())
+                            .all(|sig| sig.params.len() == last_arity);
+                        if all_same_arity && arity_compatible {
+                            Some(last_idx)
+                        } else {
+                            None
+                        }
+                    })
+                };
+                if let Some(idx) = source_idx {
+                    self.constrain_signature_erasing_source_type_params(
+                        ctx,
+                        var_map,
+                        &source_signatures[idx],
+                        target_sig,
+                        priority,
+                        is_constructor,
+                    );
+                }
+            }
+            return;
+        }
+
+        if source_signatures.len() == 1 {
+            let source_sig = &source_signatures[0];
+            let erased_sig;
+            let effective_sig = if source_sig.type_params.is_empty() {
+                source_sig
+            } else {
+                erased_sig = self.erase_signature_type_params(source_sig);
+                &erased_sig
+            };
+            for target_sig in target_signatures {
+                if target_sig.type_params.is_empty() {
+                    self.constrain_call_signature_to_call_signature(
+                        ctx,
+                        var_map,
+                        effective_sig,
+                        target_sig,
+                        priority,
+                        is_constructor,
+                    );
+                }
+            }
+            return;
+        }
+
+        // Match tsc's `inferFromSignatures`: filter target signatures down to
+        // the non-generic ones, then pair overloads from the bottom up with
+        // `len = min(sourceLen, filteredTargetLen)`. Excess leading entries on
+        // either side are skipped — tsc does not reuse the first source for
+        // unmatched leading targets.
+        let filtered_targets: Vec<&CallSignature> = target_signatures
+            .iter()
+            .filter(|sig| sig.type_params.is_empty())
+            .collect();
+        let source_len = source_signatures.len();
+        let filtered_target_len = filtered_targets.len();
+        let len = source_len.min(filtered_target_len);
+        let source_skip = source_len - len;
+        let target_skip = filtered_target_len - len;
+        for i in 0..len {
+            let source_sig = &source_signatures[source_skip + i];
+            let target_sig = filtered_targets[target_skip + i];
+            self.constrain_signature_erasing_source_type_params(
+                ctx,
+                var_map,
+                source_sig,
+                target_sig,
+                priority,
+                is_constructor,
+            );
+        }
+    }
+
+    pub(super) fn constrain_properties_against_index_signatures(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_props: &[PropertyInfo],
+        target: &ObjectShape,
+        _priority: crate::types::InferencePriority,
+    ) {
+        let string_index = target.string_index.as_ref();
+        let number_index = target.number_index.as_ref();
+
+        if string_index.is_none() && number_index.is_none() {
+            return;
+        }
+
+        // Use MappedType priority so that candidates from multiple properties are
+        // combined via union. This matches tsc's behavior: for `{ [x: string]: T }`,
+        // calling with `{ a: number, b: string }` should infer T = number | string.
+        // Without combination priority, common supertype picks only the first type.
+        let idx_priority = crate::types::InferencePriority::MappedType;
+
+        for (i, prop) in source_props.iter().enumerate() {
+            // Skip symbol-keyed properties (stored with "__unique_" prefix).
+            // Symbol-keyed properties are NOT accessible via string or numeric index
+            // signatures, so they must not contribute to index-signature inference.
+            // e.g. `{ [sym]?: true }` must not add `true` as a candidate for T
+            // when inferring against `{ [s: string]: T }`.
+            let prop_name_str = self.interner.resolve_atom(prop.name);
+            if prop_name_str.starts_with("__unique_") {
+                continue;
+            }
+
+            // Optionality represents that the property may be missing; the stored
+            // property type represents the value when present. Use it directly so
+            // `{ a?: number }` contributes `number`, while an explicitly annotated
+            // `{ b?: number | undefined }` preserves its `undefined` member.
+            let prop_type = prop.type_id;
+            let property_index = i as u32;
+
+            if let Some(number_idx) = number_index
+                && utils::is_numeric_property_name(self.interner, prop.name)
+            {
+                if let Some(&var) = var_map.get(&number_idx.value_type) {
+                    ctx.add_index_signature_candidate_with_index(
+                        var,
+                        prop_type,
+                        idx_priority,
+                        property_index,
+                        false,
+                    );
+                } else {
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        prop_type,
+                        number_idx.value_type,
+                        idx_priority,
+                    );
+                }
+            }
+
+            if let Some(string_idx) = string_index {
+                if let Some(&var) = var_map.get(&string_idx.value_type) {
+                    ctx.add_index_signature_candidate_with_index(
+                        var,
+                        prop_type,
+                        idx_priority,
+                        property_index,
+                        false,
+                    );
+                } else {
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        prop_type,
+                        string_idx.value_type,
+                        idx_priority,
+                    );
+                }
+            }
+        }
+    }
+
+    pub(super) fn constrain_index_signatures_to_properties(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source: &ObjectShape,
+        target_props: &[PropertyInfo],
+        priority: crate::types::InferencePriority,
+    ) {
+        let string_index = source.string_index.as_ref();
+        let number_index = source.number_index.as_ref();
+
+        if string_index.is_none() && number_index.is_none() {
+            return;
+        }
+
+        for (i, prop) in target_props.iter().enumerate() {
+            // CRITICAL: Only infer from index signatures if the property is optional.
+            // Required properties missing from the source cause a structural mismatch,
+            // so TypeScript does not infer from them.
+            if !prop.optional {
+                continue;
+            }
+
+            let prop_type = self.optional_property_type(prop);
+            let property_index = i as u32;
+
+            if let Some(number_idx) = number_index
+                && utils::is_numeric_property_name(self.interner, prop.name)
+            {
+                if let Some(&var) = var_map.get(&prop_type) {
+                    ctx.add_index_signature_candidate_with_index(
+                        var,
+                        number_idx.value_type,
+                        priority,
+                        property_index,
+                        false,
+                    );
+                } else {
+                    self.constrain_types(ctx, var_map, number_idx.value_type, prop_type, priority);
+                }
+            }
+
+            if let Some(string_idx) = string_index {
+                if let Some(&var) = var_map.get(&prop_type) {
+                    ctx.add_index_signature_candidate_with_index(
+                        var,
+                        string_idx.value_type,
+                        priority,
+                        property_index,
+                        false,
+                    );
+                } else {
+                    self.constrain_types(ctx, var_map, string_idx.value_type, prop_type, priority);
+                }
+            }
+        }
+    }
+
+    pub(super) fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
+        crate::utils::optional_property_type(self.interner, prop)
+    }
+
+    pub(super) fn constrain_parameter_types(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_param: TypeId,
+        target_param: TypeId,
+        priority: crate::types::InferencePriority,
+    ) {
+        // Function parameters are contravariant: if the target parameter is a
+        // type variable placeholder, add source as a contra-candidate instead
+        // of a regular (covariant) candidate. This matches tsc's behavior where
+        // contravariant inferences go to `contraCandidates` and are resolved
+        // via intersection (not union).
+        if let Some(&var) = var_map.get(&target_param) {
+            ctx.add_contra_candidate(var, source_param, priority);
+            // Do not feed a bare placeholder target back into source-side type parameters.
+            // For higher-order generic callbacks like `callr(sn, f16)`, that reverse edge
+            // creates recursive source-placeholder candidates (`A = T`, `T = [A, B]`) and
+            // blows the target callback type into a self-referential tuple union.
+            let source_is_type_param = matches!(
+                self.interner.lookup(source_param),
+                Some(TypeData::TypeParameter(_))
+            );
+            if !source_is_type_param {
+                // Use contra mode for the reverse direction so that the
+                // placeholder appearing as source gets a contra-candidate
+                // instead of a hard upper bound. This matches the behavior
+                // of the complex-type branch below and prevents upper bounds
+                // from overriding correct covariant inference.
+                let was_contra = ctx.in_contra_mode;
+                ctx.in_contra_mode = true;
+                self.constrain_types(ctx, var_map, target_param, source_param, priority);
+                ctx.in_contra_mode = was_contra;
+            }
+        } else {
+            // The target parameter is a complex type containing type variables
+            // (e.g., `{ kind: T }`, not just `T` directly). In tsc, callback
+            // parameter inference in this case goes to `contraCandidates` because
+            // function parameters are contravariant. We set `in_contra_mode` for
+            // BOTH directions so that:
+            // - Forward (source→target): candidates are routed to contra_candidates
+            // - Reverse (target→source): type parameters in source position add
+            //   contra-candidates instead of hard upper bounds
+            // Without contra mode on the reverse direction, decomposing a union
+            // target (e.g., {kind:T} vs {kind:'a'}|{kind:'b'}) creates separate
+            // upper bounds 'a' and 'b', causing false TS2345 when the covariant
+            // result ('a') fails to satisfy upper bound 'b'.
+            let target_has_placeholder = with_signatures_visited(|visited| {
+                self.type_contains_placeholder(target_param, var_map, visited)
+            });
+            if target_has_placeholder {
+                let was_contra = ctx.in_contra_mode;
+                ctx.in_contra_mode = true;
+                self.constrain_types(ctx, var_map, source_param, target_param, priority);
+                self.constrain_types(ctx, var_map, target_param, source_param, priority);
+                ctx.in_contra_mode = was_contra;
+            } else {
+                self.constrain_types(ctx, var_map, target_param, source_param, priority);
+            }
+        }
+    }
+
+    /// Constrain each element type against the string and number index signatures
+    /// of a target object shape. Used for Array→Object and Tuple→Object inference.
+    pub(super) fn constrain_elements_against_index_sigs(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        element_types: &[TypeId],
+        target_shape_id: ObjectShapeId,
+        priority: crate::types::InferencePriority,
+    ) {
+        let t_shape = self.interner.object_shape(target_shape_id);
+        // Arrays and Tuples only have number index signatures, not string index signatures.
+        // Therefore, we only constrain their elements against the target's number index signature.
+        let number_idx_type = t_shape.number_index.as_ref().map(|idx| idx.value_type);
+        for &elem in element_types {
+            if let Some(number_target) = number_idx_type {
+                self.constrain_types(ctx, var_map, elem, number_target, priority);
+            }
+        }
+    }
+
+    pub(super) fn constrain_tuple_types(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source: &[TupleElement],
+        target: &[TupleElement],
+        priority: crate::types::InferencePriority,
+    ) {
+        for (i, t_elem) in target.iter().enumerate() {
+            if t_elem.rest {
+                if var_map.contains_key(&t_elem.type_id) {
+                    let tail = &target[i + 1..];
+                    let mut trailing_count = 0usize;
+                    let mut source_index = source.len();
+                    for tail_elem in tail.iter().rev() {
+                        if source_index <= i {
+                            break;
+                        }
+                        let s_elem = &source[source_index - 1];
+                        if s_elem.rest {
+                            break;
+                        }
+                        let assignable = self
+                            .checker
+                            .is_assignable_to(s_elem.type_id, tail_elem.type_id);
+                        if tail_elem.optional && !assignable {
+                            break;
+                        }
+                        trailing_count += 1;
+                        source_index -= 1;
+                    }
+
+                    let end_index = source.len().saturating_sub(trailing_count).max(i);
+                    let mut tail = Vec::new();
+                    for s_elem in source.iter().take(end_index).skip(i) {
+                        tail.push(TupleElement {
+                            type_id: s_elem.type_id,
+                            name: s_elem.name,
+                            optional: s_elem.optional,
+                            rest: s_elem.rest,
+                        });
+                        if s_elem.rest {
+                            break;
+                        }
+                    }
+                    if tail.len() == 1 && tail[0].rest {
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            tail[0].type_id,
+                            t_elem.type_id,
+                            priority,
+                        );
+                    } else {
+                        let tail_tuple = self.interner.tuple(tail);
+                        self.constrain_types(ctx, var_map, tail_tuple, t_elem.type_id, priority);
+                    }
+                    return;
+                }
+                let rest_elem_type = self.rest_element_type(t_elem.type_id);
+                // For a terminal rest target like `[...HandleOptions<T[K]>]`, infer the
+                // whole remaining source tuple through the mapped target. Per-element
+                // inference would compare each `{ value: ... }` against the mapped
+                // rest element and lose the tuple position needed for reverse mapping.
+                let rest_target_contains_placeholder = with_signatures_visited(|visited| {
+                    self.type_contains_placeholder(t_elem.type_id, var_map, visited)
+                });
+                if target[i + 1..].is_empty()
+                    && (rest_target_contains_placeholder
+                        || crate::type_queries::is_homomorphic_mapped_type_context(
+                            self.interner,
+                            t_elem.type_id,
+                        ))
+                {
+                    let tail = source
+                        .iter()
+                        .skip(i)
+                        .map(|s_elem| TupleElement {
+                            type_id: s_elem.type_id,
+                            name: s_elem.name,
+                            optional: s_elem.optional,
+                            rest: s_elem.rest,
+                        })
+                        .collect();
+                    let tail_tuple = self.interner.tuple(tail);
+                    self.constrain_types(ctx, var_map, tail_tuple, t_elem.type_id, priority);
+                    return;
+                }
+                for s_elem in source.iter().skip(i) {
+                    if s_elem.rest {
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            s_elem.type_id,
+                            t_elem.type_id,
+                            priority,
+                        );
+                    } else {
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            s_elem.type_id,
+                            rest_elem_type,
+                            priority,
+                        );
+                    }
+                }
+                return;
+            }
+
+            let Some(s_elem) = source.get(i) else {
+                if t_elem.optional {
+                    continue;
+                }
+                return;
+            };
+
+            if s_elem.rest {
+                return;
+            }
+
+            self.constrain_types(ctx, var_map, s_elem.type_id, t_elem.type_id, priority);
+        }
+    }
+
+    /// Check if an evaluated type looks like an iterable object (has `[Symbol.iterator]`).
+    /// Used during constraint collection to detect when an Application target evaluates
+    /// to an Iterable-like interface, so Array/Tuple source element types can be
+    /// constrained against the Application's type arguments.
+    pub(super) fn is_iterable_like_evaluated_object(&self, type_id: TypeId) -> bool {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                // Has number index → array-like (ArrayLike<T>, ReadonlyArray<T>)
+                if shape.number_index.is_some() {
+                    return true;
+                }
+                // Has Symbol.iterator property → iterable (Iterable<T>)
+                for prop in &shape.properties {
+                    let name = self.interner.resolve_atom(prop.name);
+                    if name == "__@iterator" || name == "[Symbol.iterator]" {
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(TypeData::Intersection(members)) => {
+                let members = self.interner.type_list(members);
+                members
+                    .iter()
+                    .any(|&m| self.is_iterable_like_evaluated_object(m))
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a source type matches any of the given fixed target members.
+    /// Used for union subtraction during inference: source members matching
+    /// fixed (non-placeholder) target members are filtered out.
+    pub(super) fn source_matches_any_fixed(
+        &mut self,
+        src: TypeId,
+        fixed_targets: &[TypeId],
+    ) -> bool {
+        for &fixed in fixed_targets {
+            if fixed == src {
+                return true;
+            }
+            let evaluated = self.checker.evaluate_type(fixed);
+            if evaluated != fixed {
+                if evaluated == src {
+                    return true;
+                }
+                if let Some(TypeData::Union(inner_members)) = self.interner.lookup(evaluated) {
+                    let inner = self.interner.type_list(inner_members);
+                    if inner.contains(&src) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+}

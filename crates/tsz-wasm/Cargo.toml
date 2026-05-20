@@ -1,0 +1,41 @@
+[package]
+name = "tsz-wasm"
+description = "WebAssembly bindings for the tsz TypeScript compiler"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+dts = ["tsz/dts"]
+
+[dependencies]
+tsz = { path = "../tsz-core", package = "tsz-core", default-features = false }
+tsz-common = { workspace = true }
+tsz-scanner = { workspace = true }
+tsz-solver = { workspace = true }
+tsz-checker = { workspace = true }
+wasm-bindgen = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde-wasm-bindgen = { workspace = true }
+console_error_panic_hook = { workspace = true }
+rustc-hash = { workspace = true }
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console"] }
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false
+
+[lints]
+workspace = true

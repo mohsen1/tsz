@@ -1,0 +1,24 @@
+//! Debug ASI parsing
+#[cfg(test)]
+mod tests {
+    use crate::parser::ParserState;
+
+    #[test]
+    fn debug_function_missing_paren() {
+        let source = r#"function f( { }"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+
+        let diagnostics = parser.get_diagnostics();
+        println!("Diagnostics count: {}", diagnostics.len());
+        for diag in diagnostics {
+            println!(
+                "Code: {}, Message: '{}', Start: {}, Length: {}",
+                diag.code, diag.message, diag.start, diag.length
+            );
+        }
+
+        // For now, just check that we get some diagnostic
+        assert!(!diagnostics.is_empty(), "Expected at least one diagnostic");
+    }
+}

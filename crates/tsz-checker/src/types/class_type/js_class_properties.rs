@@ -1,0 +1,1530 @@
+//! JS/checkJs-specific scanning of constructor bodies for `this.prop = value`
+//! assignments that serve as implicit property declarations.
+
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
+use crate::state::CheckerState;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_binder::SymbolId;
+use tsz_common::interner::Atom;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::{
+    CallSignature, CallableShape, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
+    Visibility,
+};
+
+impl CheckerState<'_> {
+    /// Push the enclosing JS class's `@template T` JSDoc-derived type
+    /// parameters into `type_parameter_scope` for the lifetime of a
+    /// surrounding check (typically a class-member walk or a method-type
+    /// build). Returns the list of (name, `previous_value`) entries that
+    /// `pop_enclosing_jsdoc_class_template_types` consumes to restore the
+    /// scope on exit. Returns an empty Vec for non-JS files.
+    pub(crate) fn push_enclosing_jsdoc_class_template_types(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> Vec<(String, Option<TypeId>)> {
+        if !self.is_js_file() {
+            return Vec::new();
+        }
+        let class_template_types = self.enclosing_jsdoc_class_template_types(node_idx);
+        let mut updates = Vec::with_capacity(class_template_types.len());
+        for (name, ty) in class_template_types {
+            if self.ctx.type_parameter_scope.contains_key(&name) {
+                continue;
+            }
+            let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
+            updates.push((name, previous));
+        }
+        updates
+    }
+
+    /// Pop class-level `@template T` JSDoc-derived type parameters that were
+    /// pushed by `push_enclosing_jsdoc_class_template_types`, restoring any
+    /// previous value or removing the entry when there was none.
+    pub(crate) fn pop_enclosing_jsdoc_class_template_types(
+        &mut self,
+        updates: Vec<(String, Option<TypeId>)>,
+    ) {
+        for (name, previous) in updates.into_iter().rev() {
+            match previous {
+                Some(prev) => {
+                    self.ctx.type_parameter_scope.insert(name, prev);
+                }
+                None => {
+                    self.ctx.type_parameter_scope.remove(&name);
+                }
+            }
+        }
+    }
+
+    /// Same as `push_enclosing_jsdoc_class_template_types` but emits a
+    /// 3-tuple shape `(name, previous, false)` that fits the
+    /// `jsdoc_type_param_updates` accumulator used by
+    /// `get_type_of_function_impl`. The third bool is the
+    /// "`shadowed_class_param`" flag, always `false` for class-level pushes.
+    pub(crate) fn push_enclosing_jsdoc_class_template_types_with_flag(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> Vec<(String, Option<TypeId>, bool)> {
+        self.push_enclosing_jsdoc_class_template_types(node_idx)
+            .into_iter()
+            .map(|(name, prev)| (name, prev, false))
+            .collect()
+    }
+
+    pub(crate) fn enclosing_jsdoc_class_template_types(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> FxHashMap<String, TypeId> {
+        let mut template_types = FxHashMap::default();
+        if !self.is_js_file() {
+            return template_types;
+        }
+
+        let mut current = node_idx;
+        for _ in 0..12 {
+            let Some(parent_idx) = self.ctx.arena.parent_of(current) else {
+                break;
+            };
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+                && let Some(class) = self.ctx.arena.get_class(parent_node)
+            {
+                if class
+                    .type_parameters
+                    .as_ref()
+                    .is_some_and(|params| !params.nodes.is_empty())
+                {
+                    return template_types;
+                }
+                let Some(source_file) = self.ctx.arena.source_files.first() else {
+                    return template_types;
+                };
+                let Some(jsdoc) = self.try_leading_jsdoc(
+                    &source_file.comments,
+                    parent_node.pos,
+                    &source_file.text,
+                ) else {
+                    return template_types;
+                };
+
+                for (name, is_const) in Self::jsdoc_template_type_params(&jsdoc) {
+                    let atom = self.ctx.types.intern_string(&name);
+                    template_types.entry(name).or_insert_with(|| {
+                        self.ctx
+                            .types
+                            .factory()
+                            .type_param(tsz_solver::TypeParamInfo {
+                                name: atom,
+                                constraint: None,
+                                default: None,
+                                is_const,
+                            })
+                    });
+                }
+                return template_types;
+            }
+            current = parent_idx;
+        }
+
+        template_types
+    }
+
+    pub(crate) fn js_class_body_param_type_map(
+        &mut self,
+        body_idx: NodeIndex,
+    ) -> FxHashMap<String, TypeId> {
+        let mut param_type_map = FxHashMap::default();
+        let Some(parent_idx) = self.ctx.arena.parent_of(body_idx) else {
+            return param_type_map;
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return param_type_map;
+        };
+
+        let parameters = match parent_node.kind {
+            k if k == syntax_kind_ext::CONSTRUCTOR => self
+                .ctx
+                .arena
+                .get_constructor(parent_node)
+                .map(|ctor| &ctor.parameters),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(parent_node)
+                .map(|method| &method.parameters),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                self.ctx
+                    .arena
+                    .get_function(parent_node)
+                    .map(|func| &func.parameters)
+            }
+            _ => None,
+        };
+        let Some(parameters) = parameters else {
+            return param_type_map;
+        };
+        let jsdoc = self.get_jsdoc_for_function(parent_idx);
+        let class_template_types = self.enclosing_jsdoc_class_template_types(parent_idx);
+        let mut function_template_types = FxHashMap::default();
+        if let Some(jsdoc) = jsdoc.as_ref() {
+            for (name, is_const) in Self::jsdoc_template_type_params(jsdoc) {
+                let atom = self.ctx.types.intern_string(&name);
+                function_template_types.entry(name).or_insert_with(|| {
+                    self.ctx
+                        .types
+                        .factory()
+                        .type_param(tsz_solver::TypeParamInfo {
+                            name: atom,
+                            constraint: None,
+                            default: None,
+                            is_const,
+                        })
+                });
+            }
+        }
+        let jsdoc_param_names: Vec<String> = jsdoc
+            .as_ref()
+            .map(|jsdoc| {
+                Self::extract_jsdoc_param_names(jsdoc)
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let comment_start = self.get_jsdoc_comment_pos_for_function(parent_idx);
+
+        for (pi, &param_idx) in parameters.nodes.iter().enumerate() {
+            let Some(param) = self.ctx.arena.get_parameter_at(param_idx) else {
+                continue;
+            };
+            let Some(name_ident) = self.ctx.arena.get_identifier_at(param.name) else {
+                continue;
+            };
+            let param_type = if param.type_annotation.is_some() {
+                Some(self.get_type_from_type_node(param.type_annotation))
+            } else if let (Some(jsdoc), Some(comment_start)) = (jsdoc.as_ref(), comment_start) {
+                let pname = self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, pi);
+                self.resolve_jsdoc_param_type_with_pos(jsdoc, &pname, Some(comment_start))
+                    .or_else(|| {
+                        Self::extract_jsdoc_param_type_string(jsdoc, &pname).and_then(|type_expr| {
+                            let normalized = type_expr
+                                .trim()
+                                .trim_end_matches('=')
+                                .trim_start_matches("...")
+                                .trim();
+                            class_template_types
+                                .get(normalized)
+                                .copied()
+                                .or_else(|| function_template_types.get(normalized).copied())
+                        })
+                    })
+                    .or_else(|| self.jsdoc_type_annotation_for_node(param_idx))
+            } else {
+                self.jsdoc_type_annotation_for_node(param_idx)
+            };
+            if let Some(param_type) = param_type {
+                param_type_map.insert(name_ident.escaped_text.clone(), param_type);
+            }
+        }
+
+        param_type_map
+    }
+
+    fn js_constructor_assignment_rhs_type(
+        &mut self,
+        rhs_idx: NodeIndex,
+        param_type_map: &FxHashMap<String, TypeId>,
+    ) -> TypeId {
+        if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
+            && rhs_node.kind == SyntaxKind::Identifier as u16
+            && let Some(rhs_ident) = self.ctx.arena.get_identifier(rhs_node)
+            && let Some(&param_type) = param_type_map.get(rhs_ident.escaped_text.as_str())
+        {
+            return param_type;
+        }
+        if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
+            && rhs_node.kind == SyntaxKind::Identifier as u16
+            && let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, rhs_idx)
+        {
+            let symbol_type = self.get_type_of_symbol(sym_id);
+            if symbol_type != TypeId::ERROR && symbol_type != TypeId::UNDEFINED {
+                return symbol_type;
+            }
+        }
+
+        let Some(rhs_node) = self.ctx.arena.get(rhs_idx) else {
+            return TypeId::ERROR;
+        };
+        let suppress_provisional_body_diagnostics = matches!(
+            rhs_node.kind,
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION || k == syntax_kind_ext::ARROW_FUNCTION
+        );
+        let diag_snap = suppress_provisional_body_diagnostics
+            .then(|| DiagnosticSpeculationSnapshot::new(&self.ctx));
+        let rhs_type = self.get_type_of_node(rhs_idx);
+        if let Some(snap) = diag_snap {
+            snap.rollback(&mut self.ctx.diagnostic_state());
+        }
+        rhs_type
+    }
+
+    pub(crate) fn js_assignment_rhs_is_void_zero(&self, rhs_idx: NodeIndex) -> bool {
+        let rhs_idx = self.ctx.arena.skip_parenthesized(rhs_idx);
+        let Some(rhs_node) = self.ctx.arena.get(rhs_idx) else {
+            return false;
+        };
+
+        if rhs_node.kind != syntax_kind_ext::VOID_EXPRESSION
+            && rhs_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+        {
+            return false;
+        }
+
+        let Some(unary) = self.ctx.arena.get_unary_expr(rhs_node) else {
+            return false;
+        };
+        if unary.operator != SyntaxKind::VoidKeyword as u16 {
+            return false;
+        }
+
+        let operand_idx = self.ctx.arena.skip_parenthesized(unary.operand);
+        let Some(operand_node) = self.ctx.arena.get(operand_idx) else {
+            return false;
+        };
+        operand_node.kind == SyntaxKind::NumericLiteral as u16
+            && self
+                .ctx
+                .arena
+                .get_literal(operand_node)
+                .is_some_and(|lit| lit.text == "0")
+    }
+
+    pub(crate) fn js_statement_declared_type(&mut self, stmt_idx: NodeIndex) -> Option<TypeId> {
+        // For JS constructor property assignments, we should always try to resolve
+        // JSDoc annotations to provide type information to consuming TS files, even
+        // when checkJs is not enabled. This matches TypeScript's behavior where
+        // JSDoc types are available for cross-file type checking.
+        self.jsdoc_type_annotation_for_node_direct_force(stmt_idx)
+            .or_else(|| {
+                let stmt_node = self.ctx.arena.get(stmt_idx)?;
+                let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+                self.jsdoc_type_annotation_for_node_direct_force(expr_stmt.expression)
+            })
+            // Fallback: when allowJs is set but checkJs is not, the `_direct`
+            // variants above return None because should_resolve_jsdoc() is false.
+            // tsc still reads @type annotations for type inference in this case.
+            .or_else(|| self.jsdoc_type_annotation_for_node_inference(stmt_idx))
+            .or_else(|| {
+                let stmt_node = self.ctx.arena.get(stmt_idx)?;
+                let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+                self.jsdoc_type_annotation_for_node_inference(expr_stmt.expression)
+            })
+            .or_else(|| self.jsdoc_simple_template_type_for_node(stmt_idx))
+            .or_else(|| {
+                let stmt_node = self.ctx.arena.get(stmt_idx)?;
+                let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+                self.jsdoc_simple_template_type_for_node(expr_stmt.expression)
+            })
+    }
+
+    /// Force resolve a direct leading JSDoc `@type` annotation, bypassing the
+    /// `should_resolve_jsdoc()` check. Used for JS constructor property assignments
+    /// where type information should be available to consuming TS files.
+    fn jsdoc_type_annotation_for_node_direct_force(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let sf = self.source_file_data_for_node(idx)?;
+        // Fast path: no comments in file means no JSDoc possible.
+        if sf.comments.is_empty() {
+            return None;
+        }
+        // Fast path: JSDoc annotations require multi-line comments (/** ... */).
+        if !sf.comments.iter().any(|c| c.is_multi_line) {
+            return None;
+        }
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let jsdoc = self.try_leading_jsdoc(
+            &comments,
+            self.effective_jsdoc_pos_for_node(idx, &comments, &source_text)?,
+            &source_text,
+        )?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+        let type_expr = type_expr.trim();
+        // Use the authoritative resolution kernel first, then fall back to the
+        // enclosing JSDoc template scope for bare template names like `T`.
+        self.resolve_jsdoc_reference(type_expr).or_else(|| {
+            let normalized = type_expr
+                .trim_end_matches('=')
+                .trim_start_matches("...")
+                .trim();
+
+            let mut current = idx;
+            for _ in 0..16 {
+                let parent_idx = self.ctx.arena.get_extended(current)?.parent;
+                let parent_node = self.ctx.arena.get(parent_idx)?;
+                let is_function_like = matches!(
+                    parent_node.kind,
+                    k if k == syntax_kind_ext::CONSTRUCTOR
+                        || k == syntax_kind_ext::METHOD_DECLARATION
+                        || k == syntax_kind_ext::FUNCTION_DECLARATION
+                        || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                        || k == syntax_kind_ext::ARROW_FUNCTION
+                );
+                if !is_function_like {
+                    current = parent_idx;
+                    continue;
+                }
+
+                if let Some(ty) = self
+                    .enclosing_jsdoc_class_template_types(parent_idx)
+                    .get(normalized)
+                    .copied()
+                {
+                    return Some(ty);
+                }
+
+                if let Some(jsdoc) = self.get_jsdoc_for_function(parent_idx) {
+                    for (name, is_const) in Self::jsdoc_template_type_params(&jsdoc) {
+                        if name == normalized {
+                            let atom = self.ctx.types.intern_string(&name);
+                            return Some(self.ctx.types.factory().type_param(
+                                tsz_solver::TypeParamInfo {
+                                    name: atom,
+                                    constraint: None,
+                                    default: None,
+                                    is_const,
+                                },
+                            ));
+                        }
+                    }
+                }
+
+                break;
+            }
+
+            None
+        })
+    }
+
+    fn jsdoc_simple_template_type_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let sf = self.source_file_data_for_node(idx)?;
+        if sf.comments.is_empty() || !sf.comments.iter().any(|c| c.is_multi_line) {
+            return None;
+        }
+
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let jsdoc = self.try_leading_jsdoc(
+            &comments,
+            self.effective_jsdoc_pos_for_node(idx, &comments, &source_text)?,
+            &source_text,
+        )?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+        let normalized = type_expr
+            .trim()
+            .trim_end_matches('=')
+            .trim_start_matches("...")
+            .trim();
+        if normalized.is_empty() {
+            return None;
+        }
+
+        if let Some(ty) = self.ctx.type_parameter_scope.get(normalized) {
+            return Some(*ty);
+        }
+
+        let class_template_types = self.enclosing_jsdoc_class_template_types(idx);
+        if let Some(ty) = class_template_types.get(normalized) {
+            return Some(*ty);
+        }
+
+        let mut current = idx;
+        for _ in 0..12 {
+            let Some(parent_idx) = self.ctx.arena.parent_of(current) else {
+                break;
+            };
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            let is_function = matches!(
+                parent_node.kind,
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+            );
+            if is_function && let Some(jsdoc) = self.get_jsdoc_for_function(parent_idx) {
+                for (name, is_const) in Self::jsdoc_template_type_params(&jsdoc) {
+                    if name == normalized {
+                        let atom = self.ctx.types.intern_string(&name);
+                        return Some(self.ctx.types.factory().type_param(TypeParamInfo {
+                            name: atom,
+                            constraint: None,
+                            default: None,
+                            is_const,
+                        }));
+                    }
+                }
+            }
+            current = parent_idx;
+        }
+
+        None
+    }
+
+    /// Scan a body (constructor or method) for `this.prop = value` assignments
+    /// and add them as instance properties. This implements the JS/checkJs
+    /// pattern where assignments serve as implicit property declarations.
+    ///
+    /// Also handles the `var self = this; self.prop = value` alias pattern.
+    ///
+    /// Only top-level expression statements in the body are scanned.
+    /// Properties that already exist (from explicit declarations or parameter
+    /// properties) are skipped — explicit declarations take precedence.
+    pub(crate) fn collect_js_constructor_this_properties(
+        &mut self,
+        body_idx: NodeIndex,
+        properties: &mut FxHashMap<Atom, PropertyInfo>,
+        parent_sym: Option<SymbolId>,
+        emit_implicit_any: bool,
+    ) {
+        let top_level_stmts: Vec<NodeIndex> = {
+            let Some(body_node) = self.ctx.arena.get(body_idx) else {
+                return;
+            };
+            let Some(block) = self.ctx.arena.get_block(body_node) else {
+                return;
+            };
+            block.statements.nodes.clone()
+        };
+        let mut stmts = Vec::new();
+        for stmt_idx in top_level_stmts {
+            self.collect_nested_js_this_assignment_statements(stmt_idx, &mut stmts);
+        }
+        let param_type_map = self.js_class_body_param_type_map(body_idx);
+
+        // Check if the enclosing function has a JSDoc @this tag.
+        // When @this provides an explicit type for `this`, all properties
+        // from `this.x` assignments inherit their types from the @this type,
+        // so TS7008 should be suppressed.
+        let enclosing_has_this_tag = self
+            .ctx
+            .arena
+            .get_extended(body_idx)
+            .map(|ext| ext.parent)
+            .and_then(|func_idx| self.get_jsdoc_for_function(func_idx))
+            .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"));
+
+        // Phase 1: Detect `var/let/const alias = this` patterns
+        let this_aliases = self.collect_this_aliases(&stmts);
+        let mut constructor_collected_props = FxHashSet::default();
+        let mut pending_implicit_any =
+            FxHashMap::<Atom, (String, &'static str, NodeIndex)>::default();
+
+        for &stmt_idx in &stmts {
+            let Some((prop_name, rhs_idx, is_private, report_idx)) = self
+                .extract_this_property_assignment(stmt_idx, &this_aliases)
+                .or_else(|| {
+                    self.extract_jsdoc_this_property_declaration(stmt_idx, &this_aliases)
+                        .map(|(prop_name, is_private, report_idx)| {
+                            (prop_name, NodeIndex::NONE, is_private, report_idx)
+                        })
+                })
+            else {
+                continue;
+            };
+
+            // Skip private identifiers — they have separate handling
+            if is_private {
+                continue;
+            }
+
+            let name_atom = self.ctx.types.intern_string(&prop_name);
+
+            // Don't override explicit declarations or properties collected by
+            // earlier scans (e.g. class members/method passes). Within this scan,
+            // allow later concrete assignments to refine earlier `null`/`undefined`
+            // placeholders from branchy constructor code.
+            if properties.contains_key(&name_atom)
+                && !constructor_collected_props.contains(&name_atom)
+            {
+                continue;
+            }
+            if enclosing_has_this_tag {
+                continue;
+            }
+            let is_readonly = self.jsdoc_has_readonly_tag(stmt_idx);
+
+            if rhs_idx.is_some() && self.js_assignment_rhs_is_void_zero(rhs_idx) {
+                if let Some(parent_sym) = parent_sym
+                    && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
+                {
+                    self.error_at_node(
+                        report_idx,
+                        &format!(
+                            "Property '{prop_name}' does not exist on type '{}'.",
+                            symbol.escaped_name
+                        ),
+                        crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                }
+                continue;
+            }
+
+            // Determine type: JSDoc @type annotation > inferred from RHS
+            // Track whether the resulting `any` type came from an explicit source
+            // (JSDoc @type, or a parameter with @param {any}) vs a truly implicit one
+            // (no RHS, or RHS is null/undefined without annotation).
+            let mut any_is_explicit = false;
+            let mut provisional_open = false;
+            let type_id = if let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx) {
+                any_is_explicit = true;
+                jsdoc_type
+            } else if rhs_idx.is_some() {
+                let mut rhs_type =
+                    self.js_constructor_assignment_rhs_type(rhs_idx, &param_type_map);
+                let rhs_is_direct_empty_array =
+                    self.ctx.arena.get(rhs_idx).is_some_and(|rhs_node| {
+                        rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            && self
+                                .ctx
+                                .arena
+                                .get_literal_expr(rhs_node)
+                                .is_some_and(|lit| lit.elements.nodes.is_empty())
+                    });
+                if rhs_is_direct_empty_array
+                    && crate::query_boundaries::common::array_element_type(self.ctx.types, rhs_type)
+                        == Some(TypeId::NEVER)
+                {
+                    rhs_type = self.ctx.types.factory().array(TypeId::ANY);
+                    provisional_open = true;
+                }
+                if rhs_type == TypeId::NULL || rhs_type == TypeId::UNDEFINED {
+                    provisional_open = true;
+                } else if rhs_type == TypeId::ANY
+                    || crate::query_boundaries::common::array_element_type(self.ctx.types, rhs_type)
+                        == Some(TypeId::ANY)
+                {
+                    // RHS evaluates to `any` or `any[]` — check if it came from
+                    // an explicitly-typed source (e.g., a parameter with @param {any}).
+                    // If so, the member's `any` type is explicit, not implicit.
+                    //
+                    // Also treat expressions rooted on `this` as explicit:
+                    // `this.z = this.y`, `this[x] = this[y].bind(this)`, etc.
+                    // The property type comes from the class/constructor, so the
+                    // `any` is due to incomplete `this` context during class building,
+                    // not a genuinely untyped source. tsc does not emit TS7008 here.
+                    if self.expression_roots_in_this(rhs_idx) {
+                        any_is_explicit = true;
+                    }
+                    if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
+                        && rhs_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(sym_id) =
+                            self.ctx.binder.resolve_identifier(self.ctx.arena, rhs_idx)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    {
+                        let decl = symbol.value_declaration;
+                        if decl.is_some() {
+                            // Check if the declaration has an inline type annotation
+                            let has_inline_type = self.ctx.arena.get(decl).is_some_and(|d| {
+                                self.ctx
+                                    .arena
+                                    .get_parameter(d)
+                                    .is_some_and(|p| p.type_annotation.is_some())
+                            });
+                            // Check if the enclosing function's JSDoc has
+                            // a @param {type} tag for this parameter
+                            let has_jsdoc_param_type = if !has_inline_type {
+                                let param_name = self
+                                    .ctx
+                                    .arena
+                                    .get(decl)
+                                    .and_then(|d| self.ctx.arena.get_parameter(d))
+                                    .and_then(|p| self.ctx.arena.get(p.name))
+                                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                                    .map(|id| id.escaped_text.as_str());
+                                if let Some(pname) = param_name {
+                                    // Walk to enclosing function via extended node parent
+                                    let func_idx = self.ctx.arena.parent_of(decl);
+                                    func_idx
+                                        .and_then(|fidx| self.get_jsdoc_for_function(fidx))
+                                        .is_some_and(|jsdoc| {
+                                            Self::jsdoc_has_param_type(&jsdoc, pname)
+                                        })
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+                            if has_inline_type || has_jsdoc_param_type {
+                                any_is_explicit = true;
+                            }
+                        }
+                    }
+                }
+                if is_readonly {
+                    rhs_type
+                } else {
+                    self.widen_literal_type(rhs_type)
+                }
+            } else {
+                TypeId::ANY
+            };
+
+            if emit_implicit_any
+                && self.ctx.no_implicit_any()
+                && !any_is_explicit
+                && !enclosing_has_this_tag
+            {
+                let implicit_type = if type_id == TypeId::ANY
+                    || (provisional_open && matches!(type_id, TypeId::NULL | TypeId::UNDEFINED))
+                {
+                    Some("any")
+                } else if crate::query_boundaries::common::array_element_type(
+                    self.ctx.types,
+                    type_id,
+                ) == Some(TypeId::ANY)
+                {
+                    Some("any[]")
+                } else {
+                    None
+                };
+                if let Some(implicit_type) = implicit_type {
+                    pending_implicit_any
+                        .entry(name_atom)
+                        .or_insert_with(|| (prop_name.clone(), implicit_type, stmt_idx));
+                }
+            }
+
+            if type_id == TypeId::VOID {
+                if let Some(parent_sym) = parent_sym
+                    && let Some(symbol) = self.ctx.binder.get_symbol(parent_sym)
+                {
+                    self.error_at_node(
+                        report_idx,
+                        &format!(
+                            "Property '{prop_name}' does not exist on type '{}'.",
+                            symbol.escaped_name
+                        ),
+                        crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                }
+                continue;
+            }
+            if let Some(existing) = properties.get_mut(&name_atom) {
+                if existing.write_type == TypeId::ANY {
+                    if existing.type_id == TypeId::UNDEFINED && !provisional_open {
+                        existing.type_id = type_id;
+                        existing.write_type = type_id;
+                    } else {
+                        let merged = self.ctx.types.factory().union2(existing.type_id, type_id);
+                        existing.type_id = merged;
+                        existing.write_type = if provisional_open {
+                            TypeId::ANY
+                        } else {
+                            merged
+                        };
+                    }
+                    existing.readonly &= is_readonly;
+                }
+                continue;
+            }
+
+            constructor_collected_props.insert(name_atom);
+            properties.insert(
+                name_atom,
+                PropertyInfo {
+                    name: name_atom,
+                    type_id,
+                    write_type: if provisional_open {
+                        TypeId::ANY
+                    } else {
+                        type_id
+                    },
+                    optional: false,
+                    readonly: is_readonly,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: parent_sym,
+                    declaration_order: 0,
+                    is_string_named: false,
+                    is_symbol_named: false,
+                    single_quoted_name: false,
+                },
+            );
+        }
+
+        for (name_atom, (prop_name, implicit_type, implicit_anchor)) in pending_implicit_any {
+            let still_implicit = properties.get(&name_atom).is_some_and(|property| {
+                property.write_type == TypeId::ANY
+                    || property.type_id == TypeId::ANY
+                    || crate::query_boundaries::common::array_element_type(
+                        self.ctx.types,
+                        property.type_id,
+                    ) == Some(TypeId::ANY)
+            });
+            if !still_implicit {
+                continue;
+            }
+
+            if let Some(property) = properties.get_mut(&name_atom) {
+                if implicit_type == "any[]" {
+                    let any_array = self.ctx.types.factory().array(TypeId::ANY);
+                    let nullish_part = if property.type_id.is_nullable() {
+                        Some(property.type_id)
+                    } else {
+                        crate::query_boundaries::common::union_members(
+                            self.ctx.types,
+                            property.type_id,
+                        )
+                        .and_then(|members| {
+                            let nullish_members: Vec<_> = members
+                                .iter()
+                                .copied()
+                                .filter(|member| member.is_nullable())
+                                .collect();
+                            match nullish_members.as_slice() {
+                                [] => None,
+                                [single] => Some(*single),
+                                _ => Some(self.ctx.types.factory().union(nullish_members)),
+                            }
+                        })
+                    };
+                    if let Some(nullish_part) = nullish_part {
+                        property.type_id = self.ctx.types.factory().union2(any_array, nullish_part);
+                    } else {
+                        property.type_id = any_array;
+                        property.write_type = any_array;
+                    }
+                } else {
+                    property.type_id = TypeId::ANY;
+                    property.write_type = TypeId::ANY;
+                }
+            }
+
+            let message = format!("Member '{prop_name}' implicitly has an '{implicit_type}' type.");
+            let already_emitted = self.ctx.diagnostics.iter().any(|d| {
+                d.code == crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
+                    && d.start == self.ctx.arena.get(implicit_anchor).map_or(0, |n| n.pos)
+                    && d.message_text == message
+            });
+            if !already_emitted {
+                self.error_at_node_msg(
+                    implicit_anchor,
+                    crate::diagnostics::diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
+                    &[&prop_name, implicit_type],
+                );
+            }
+        }
+    }
+
+    /// Scan statements for `var/let/const X = this` patterns and return
+    /// the set of alias identifier names.
+    pub(crate) fn collect_this_aliases(&self, stmts: &[NodeIndex]) -> Vec<String> {
+        let mut aliases = Vec::new();
+        for &stmt_idx in stmts {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            // VariableStatement -> declarations (NodeList of VARIABLE_DECLARATION_LIST)
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.ctx.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    // Check initializer is `this`
+                    if let Some(init_node) = self.ctx.arena.get(var_decl.initializer)
+                        && init_node.kind == SyntaxKind::ThisKeyword as u16
+                    {
+                        // Get the name identifier
+                        if let Some(name_node) = self.ctx.arena.get(var_decl.name)
+                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        {
+                            aliases.push(ident.escaped_text.clone());
+                        }
+                    }
+                }
+            }
+        }
+        aliases
+    }
+
+    pub(crate) fn collect_nested_js_this_assignment_statements(
+        &self,
+        stmt_idx: NodeIndex,
+        out: &mut Vec<NodeIndex>,
+    ) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => out.push(stmt_idx),
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => out.push(stmt_idx),
+            k if k == syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &nested_idx in &block.statements.nodes {
+                        self.collect_nested_js_this_assignment_statements(nested_idx, out);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
+                    self.collect_nested_js_this_assignment_statements(if_stmt.then_statement, out);
+                    if if_stmt.else_statement.is_some() {
+                        self.collect_nested_js_this_assignment_statements(
+                            if_stmt.else_statement,
+                            out,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Check if an expression is rooted in `this` — i.e., is `this`,
+    /// `this.x`, `this[x]`, `this.x.bind(...)`, `this[x].call(...)`, etc.
+    /// Used to suppress TS7008 when the `any` type comes from incomplete
+    /// `this` context during class type building, not a genuinely untyped source.
+    fn expression_roots_in_this(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::ThisKeyword as u16 => true,
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.ctx
+                    .arena
+                    .get_access_expr(node)
+                    .is_some_and(|a| self.expression_roots_in_this(a.expression))
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => self
+                .ctx
+                .arena
+                .get_call_expr(node)
+                .is_some_and(|c| self.expression_roots_in_this(c.expression)),
+            _ => false,
+        }
+    }
+
+    /// Extract a `this.propName = rhs`, `alias.propName = rhs`,
+    /// `this[computed] = rhs`, or `alias[computed] = rhs` pattern
+    /// from an expression statement. The `this_aliases` parameter contains
+    /// names of variables known to alias `this` (e.g., `var self = this`).
+    /// Returns `(property_name, rhs_node_index, is_private, report_node_index)` if matched.
+    pub(crate) fn extract_this_property_assignment(
+        &mut self,
+        stmt_idx: NodeIndex,
+        this_aliases: &[String],
+    ) -> Option<(String, NodeIndex, bool, NodeIndex)> {
+        let stmt_node = self.ctx.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+        let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.ctx.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        // Check LHS is this.propName, alias.propName, this[key], or alias[key]
+        let lhs_node = self.ctx.arena.get(binary.left)?;
+        let is_element_access = lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION && !is_element_access {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(lhs_node)?;
+        let obj_node = self.ctx.arena.get(access.expression)?;
+
+        let is_this_or_alias = if obj_node.kind == SyntaxKind::ThisKeyword as u16 {
+            true
+        } else if obj_node.kind == SyntaxKind::Identifier as u16 {
+            // Check if the identifier is a known `this` alias
+            if let Some(ident) = self.ctx.arena.get_identifier(obj_node) {
+                this_aliases.iter().any(|a| a == &ident.escaped_text)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if !is_this_or_alias {
+            return None;
+        }
+
+        if is_element_access {
+            // For element access (this[key] = value), evaluate the key expression's
+            // type to get a property name. Handles Symbol keys, string literal keys,
+            // and const variable references.
+            let arg_idx = access.name_or_argument;
+            let prev = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
+            let key_type = self.get_type_of_node(arg_idx);
+            self.ctx.preserve_literal_types = prev;
+            let prop_name =
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    key_type,
+                )
+                .map(|atom| self.ctx.types.resolve_atom(atom))?;
+            Some((prop_name, binary.right, false, access.name_or_argument))
+        } else {
+            let name_node = self.ctx.arena.get(access.name_or_argument)?;
+            let ident = self.ctx.arena.get_identifier(name_node)?;
+            let is_private = name_node.kind == SyntaxKind::PrivateIdentifier as u16;
+            Some((
+                ident.escaped_text.clone(),
+                binary.right,
+                is_private,
+                access.name_or_argument,
+            ))
+        }
+    }
+
+    pub(crate) fn extract_jsdoc_this_property_declaration(
+        &mut self,
+        stmt_idx: NodeIndex,
+        this_aliases: &[String],
+    ) -> Option<(String, bool, NodeIndex)> {
+        let stmt_node = self.ctx.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
+        if self.js_statement_declared_type(stmt_idx).is_none()
+            && !self.js_statement_has_direct_jsdoc_type_annotation(stmt_idx)
+            && !self.js_statement_has_direct_jsdoc_type_annotation(expr_stmt.expression)
+        {
+            return None;
+        }
+        let expr_node = self.ctx.arena.get(expr_stmt.expression)?;
+        let is_element_access = expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION && !is_element_access {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(expr_node)?;
+        let obj_node = self.ctx.arena.get(access.expression)?;
+        let is_this_or_alias = if obj_node.kind == SyntaxKind::ThisKeyword as u16 {
+            true
+        } else if obj_node.kind == SyntaxKind::Identifier as u16 {
+            self.ctx
+                .arena
+                .get_identifier(obj_node)
+                .is_some_and(|ident| {
+                    this_aliases
+                        .iter()
+                        .any(|alias| alias == &ident.escaped_text)
+                })
+        } else {
+            false
+        };
+        if !is_this_or_alias {
+            return None;
+        }
+
+        if is_element_access {
+            let prev_preserve = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
+            let key_type = self.get_type_of_node(access.name_or_argument);
+            self.ctx.preserve_literal_types = prev_preserve;
+            let prop_name =
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    key_type,
+                )
+                .map(|atom| self.ctx.types.resolve_atom(atom))?;
+            return Some((prop_name, false, access.name_or_argument));
+        }
+
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+            return Some((String::new(), true, access.name_or_argument));
+        }
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        Some((ident.escaped_text.clone(), false, access.name_or_argument))
+    }
+
+    fn js_statement_has_direct_jsdoc_type_annotation(&self, idx: NodeIndex) -> bool {
+        let Some(sf) = self.source_file_data_for_node(idx) else {
+            return false;
+        };
+        if sf.comments.is_empty() || !sf.comments.iter().any(|c| c.is_multi_line) {
+            return false;
+        }
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let Some(pos) = self.effective_jsdoc_pos_for_node(idx, &comments, &source_text) else {
+            return false;
+        };
+        let Some(jsdoc) = self.try_leading_jsdoc(&comments, pos, &source_text) else {
+            return false;
+        };
+        Self::extract_jsdoc_type_expression(&jsdoc).is_some()
+    }
+
+    /// Build a quick partial type from a class's declared members without
+    /// recursing into the full class instance type resolution.
+    ///
+    /// This is used when a nested class expression extends its enclosing class
+    /// which is currently being resolved. We extract only syntactically-visible
+    /// property types (annotated properties, constructor parameter properties,
+    /// and properties with simple initializers) to avoid triggering recursive
+    /// resolution while still providing enough type information for property
+    /// access within the nested class.
+    pub(crate) fn quick_prescan_class_members(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> TypeId {
+        let factory = self.ctx.types.factory();
+        let class_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let mut props: Vec<PropertyInfo> = Vec::new();
+
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&prop.modifiers) {
+                        continue;
+                    }
+                    let Some(name) = self.get_property_name_resolved(prop.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    let is_readonly = self.has_readonly_modifier(&prop.modifiers)
+                        || self.jsdoc_has_readonly_tag(member_idx);
+                    let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
+
+                    // Try annotation first, then fall back to initializer inference
+                    let type_id = if let Some(declared) =
+                        self.effective_class_property_declared_type(member_idx, prop)
+                    {
+                        declared
+                    } else if prop.initializer.is_some() {
+                        let prev = self.ctx.preserve_literal_types;
+                        self.ctx.preserve_literal_types = true;
+                        let init_type = self.get_type_of_node(prop.initializer);
+                        self.ctx.preserve_literal_types = prev;
+                        if is_readonly {
+                            init_type
+                        } else {
+                            self.widen_literal_type(init_type)
+                        }
+                    } else {
+                        TypeId::ANY
+                    };
+
+                    props.push(PropertyInfo {
+                        name: name_atom,
+                        type_id,
+                        write_type: type_id,
+                        optional: prop.question_token,
+                        readonly: is_readonly,
+                        is_method: false,
+                        is_class_prototype: false,
+                        visibility,
+                        parent_id: class_sym,
+                        declaration_order: 0,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    });
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                        continue;
+                    };
+                    for &param_idx in &ctor.parameters.nodes {
+                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                            continue;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                            continue;
+                        };
+                        if !self.has_parameter_property_modifier(&param.modifiers) {
+                            continue;
+                        }
+                        let Some(name) = self.get_property_name(param.name) else {
+                            continue;
+                        };
+                        let name_atom = self.ctx.types.intern_string(&name);
+                        let is_readonly = self.has_readonly_modifier(&param.modifiers);
+                        let type_id = if param.type_annotation.is_some() {
+                            self.get_type_from_type_node(param.type_annotation)
+                        } else if param.initializer.is_some() {
+                            let init_type = self.get_type_of_node(param.initializer);
+                            if is_readonly {
+                                init_type
+                            } else {
+                                self.widen_literal_type(init_type)
+                            }
+                        } else {
+                            TypeId::ANY
+                        };
+                        let visibility = self.get_visibility_from_modifiers(&param.modifiers);
+                        props.push(PropertyInfo {
+                            name: name_atom,
+                            type_id,
+                            write_type: type_id,
+                            optional: param.question_token,
+                            readonly: is_readonly,
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility,
+                            parent_id: class_sym,
+                            declaration_order: 0,
+                            is_string_named: false,
+                            is_symbol_named: false,
+                            single_quoted_name: false,
+                        });
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&method.modifiers) {
+                        continue;
+                    }
+                    let Some(name) = self.get_property_name_resolved(method.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    let visibility = self.get_member_visibility(&method.modifiers, method.name);
+                    let method_type = factory.callable(CallableShape {
+                        call_signatures: vec![CallSignature {
+                            type_params: Vec::new(),
+                            params: vec![ParamInfo {
+                                name: None,
+                                type_id: TypeId::ANY,
+                                optional: false,
+                                rest: true,
+                            }],
+                            this_type: None,
+                            return_type: TypeId::ANY,
+                            type_predicate: None,
+                            is_method: true,
+                        }],
+                        construct_signatures: Vec::new(),
+                        properties: Vec::new(),
+                        string_index: None,
+                        number_index: None,
+                        symbol: None,
+                        is_abstract: false,
+                    });
+                    props.push(PropertyInfo {
+                        name: name_atom,
+                        type_id: method_type,
+                        write_type: method_type,
+                        optional: method.question_token,
+                        readonly: false,
+                        is_method: true,
+                        is_class_prototype: true,
+                        visibility,
+                        parent_id: class_sym,
+                        declaration_order: 0,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    });
+                }
+                k if matches!(
+                    k,
+                    syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR
+                ) =>
+                {
+                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    if self.has_static_modifier(&accessor.modifiers) {
+                        continue;
+                    }
+                    let Some(name) = self.get_property_name(accessor.name) else {
+                        continue;
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    if props.iter().any(|prop| prop.name == name_atom) {
+                        continue;
+                    }
+                    let visibility = self.get_member_visibility(&accessor.modifiers, accessor.name);
+                    let type_id = if k == syntax_kind_ext::GET_ACCESSOR
+                        && accessor.type_annotation.is_some()
+                    {
+                        self.get_type_from_type_node(accessor.type_annotation)
+                    } else if k == syntax_kind_ext::SET_ACCESSOR {
+                        accessor
+                            .parameters
+                            .nodes
+                            .first()
+                            .and_then(|&param_idx| {
+                                let param_node = self.ctx.arena.get(param_idx)?;
+                                let param = self.ctx.arena.get_parameter(param_node)?;
+                                (!self.ctx.is_js_file() && param.type_annotation.is_some())
+                                    .then(|| self.get_type_from_type_node(param.type_annotation))
+                            })
+                            .unwrap_or(TypeId::ANY)
+                    } else {
+                        TypeId::ANY
+                    };
+                    props.push(PropertyInfo {
+                        name: name_atom,
+                        type_id,
+                        write_type: TypeId::ANY,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        is_class_prototype: true,
+                        visibility,
+                        parent_id: class_sym,
+                        declaration_order: 0,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        let merge_base_type = |this: &mut Self, props: &mut Vec<PropertyInfo>, base_type| {
+            if let Some(base_shape) =
+                crate::query_boundaries::common::object_shape_for_type(this.ctx.types, base_type)
+            {
+                let own_names: FxHashSet<_> = props.iter().map(|prop| prop.name).collect();
+                props.extend(
+                    base_shape
+                        .properties
+                        .iter()
+                        .filter(|prop| !own_names.contains(&prop.name))
+                        .cloned(),
+                );
+            }
+        };
+
+        let invalid_shadowed_base =
+            class
+                .heritage_clauses
+                .as_ref()
+                .is_some_and(|heritage_clauses| {
+                    heritage_clauses.nodes.iter().any(|&clause_idx| {
+                        let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                            return false;
+                        };
+                        let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                            return false;
+                        };
+                        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                            return false;
+                        }
+                        let Some(&type_idx) = heritage.types.nodes.first() else {
+                            return false;
+                        };
+                        let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                            return false;
+                        };
+                        let expr_idx = if let Some(expr_type_args) =
+                            self.ctx.arena.get_expr_type_args(type_node)
+                        {
+                            expr_type_args.expression
+                        } else {
+                            type_idx
+                        };
+                        self.resolve_heritage_symbol(expr_idx)
+                            .is_some_and(|base_sym_id| {
+                                self.heritage_expression_shadows_nonconstructable_lib_value(
+                                    expr_idx,
+                                    base_sym_id,
+                                )
+                            })
+                    })
+                });
+
+        if !invalid_shadowed_base && let Some(base_idx) = self.get_base_class_idx(class_idx) {
+            if let Some(base_type) = self
+                .ctx
+                .class_instance_type_cache
+                .get(&base_idx)
+                .copied()
+                .or_else(|| {
+                    let base_node = self.ctx.arena.get(base_idx)?;
+                    let base_class = self.ctx.arena.get_class(base_node)?;
+                    Some(self.get_class_instance_type(base_idx, base_class))
+                })
+            {
+                merge_base_type(self, &mut props, base_type);
+            }
+        } else if let Some(ref heritage_clauses) = class.heritage_clauses {
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                let Some(&type_idx) = heritage.types.nodes.first() else {
+                    break;
+                };
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    break;
+                };
+                let (expr_idx, type_arguments) =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                        (
+                            expr_type_args.expression,
+                            expr_type_args.type_arguments.as_ref(),
+                        )
+                    } else {
+                        (type_idx, None)
+                    };
+                if let Some(base_type) =
+                    self.base_instance_type_from_expression(expr_idx, type_arguments)
+                {
+                    merge_base_type(self, &mut props, base_type);
+                }
+                break;
+            }
+        }
+
+        if props.is_empty() {
+            return TypeId::ERROR;
+        }
+
+        let result = factory.object_with_index(ObjectShape {
+            properties: props,
+            symbol: class_sym,
+            ..ObjectShape::default()
+        });
+        // Cache the partial type so subsequent nested class expressions can use it
+        self.ctx.class_instance_type_cache.insert(class_idx, result);
+        result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::CheckerOptions;
+    use crate::query_boundaries::common::{callable_shape_for_type, object_shape_for_type};
+    use crate::query_boundaries::type_construction::TypeInterner;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    #[test]
+    fn quick_prescan_class_members_keeps_method_placeholders() {
+        let source = r#"
+abstract class Boxed<T> {
+    readonly value!: T;
+    abstract parse(input: T): T;
+    sync(input: T): T {
+        return this.parse(input);
+    }
+}
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let source_file = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), source_file);
+
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+
+        let source_file_node = checker
+            .ctx
+            .arena
+            .get(source_file)
+            .expect("source file node");
+        let source_file_data = checker
+            .ctx
+            .arena
+            .get_source_file(source_file_node)
+            .expect("source file data");
+        let class_idx = *source_file_data
+            .statements
+            .nodes
+            .first()
+            .expect("class statement");
+        let class = checker
+            .ctx
+            .arena
+            .get_class_at(class_idx)
+            .expect("class declaration");
+        let partial = checker.quick_prescan_class_members(class_idx, class);
+        let shape = object_shape_for_type(checker.ctx.types, partial).expect("object shape");
+
+        let parse_name = checker.ctx.types.intern_string("parse");
+        let parse_prop = shape
+            .properties
+            .iter()
+            .find(|prop| prop.name == parse_name)
+            .expect("abstract method placeholder");
+        assert!(parse_prop.is_method);
+        assert!(
+            callable_shape_for_type(checker.ctx.types, parse_prop.type_id)
+                .is_some_and(|shape| !shape.call_signatures.is_empty()),
+            "quick prescan should keep callable method placeholders"
+        );
+
+        let sync_name = checker.ctx.types.intern_string("sync");
+        assert!(
+            shape
+                .properties
+                .iter()
+                .any(|prop| prop.name == sync_name && prop.is_method),
+            "quick prescan should include concrete methods too"
+        );
+    }
+}

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#
+# post-commit hook for tsz
+#
+# Records the commit SHA after a successful pre-commit run.
+# The pre-push hook checks this stamp to skip redundant test runs.
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+MARKER="$ROOT_DIR/.git/pre-commit-ok"
+STAMP="$ROOT_DIR/.git/pre-commit-passed"
+
+if [ -f "$MARKER" ]; then
+    git rev-parse HEAD > "$STAMP" 2>/dev/null || true
+    rm -f "$MARKER"
+fi

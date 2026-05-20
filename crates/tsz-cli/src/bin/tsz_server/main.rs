@@ -1,0 +1,1851 @@
+//! tsz-server: TypeScript language server compatible with tsserver
+//!
+//! This binary provides both:
+//! 1. A tsserver-compatible stdin/stdout protocol (Content-Length framed JSON)
+//! 2. A legacy JSON-per-line protocol for fast conformance testing
+//!
+//! tsserver Protocol (default):
+//! - Input: Content-Length framed JSON on stdin
+//! - Output: Content-Length framed JSON on stdout
+//!
+//! Legacy Protocol (--protocol legacy):
+//! - Input: JSON objects on stdin (one per line)
+//! - Output: JSON objects on stdout (one per line)
+//!
+//! tsserver-compatible CLI flags:
+//!   --syntaxOnly, --useSingleInferredProject, --useInferredProjectPerProjectRoot,
+//!   --suppressDiagnosticEvents, --cancellationPipeName, --serverMode, --locale,
+//!   --logVerbosity, --logFile, --globalPlugins, --pluginProbeLocations, etc.
+//!
+//! Environment variables (tsserver-compatible):
+
+//! Environment variables (tsserver-compatible):
+//!   `TSS_LOG`     - Configure logging (e.g., "-level verbose -file /tmp/tsserver.log")
+//!   `TSS_DEBUG`   - Enable debug mode on specified port
+//!   `TSS_DEBUG_BRK` - Enable debug mode with break on startup
+//!
+//! Legacy usage:
+//! ```bash
+//! echo '{"type":"check","id":1,"files":{"main.ts":"const x: string = 1;"}}' | tsz-server --protocol legacy
+//! ```
+
+mod check;
+mod handlers_code_fixes;
+mod handlers_code_fixes_imports;
+mod handlers_code_fixes_jsdoc;
+mod handlers_code_fixes_utils;
+mod handlers_completions;
+mod handlers_completions_display;
+mod handlers_completions_snippets;
+mod handlers_diagnostics;
+mod handlers_editing;
+mod handlers_files;
+mod handlers_info;
+mod handlers_info_alias;
+mod handlers_legacy;
+mod handlers_project_info;
+mod handlers_quickinfo;
+mod handlers_quickinfo_text;
+mod handlers_structure;
+
+use anyhow::{Context, Result};
+use clap::Parser;
+use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tracing::{debug, info};
+
+use tsz::binder::BinderState;
+use tsz::lib_loader::LibFile;
+use tsz::lsp::position::{LineMap, Position};
+use tsz::parser::ParserState;
+use tsz::parser::base::NodeIndex;
+use tsz::parser::node::NodeArena;
+
+fn deserialize_target_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_tsserver_enum_option(deserializer, |value| {
+        tsz::emitter::ScriptTarget::from_ts_numeric(value).map(|target| target.as_ts_str())
+    })
+}
+
+fn deserialize_module_option<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_tsserver_enum_option(deserializer, |value| {
+        tsz::ModuleKind::from_ts_numeric(value).map(|module| module.as_ts_str())
+    })
+}
+
+fn deserialize_tsserver_enum_option<'de, D, F>(
+    deserializer: D,
+    map_numeric: F,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    F: Fn(u32) -> Option<&'static str>,
+{
+    let Some(value) = Option::<serde_json::Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+
+    match value {
+        serde_json::Value::String(value) => Ok(Some(value)),
+        serde_json::Value::Number(number) => {
+            let mapped = number
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .and_then(map_numeric);
+            Ok(Some(
+                mapped.map_or_else(|| number.to_string(), str::to_string),
+            ))
+        }
+        _ => Ok(None),
+    }
+}
+
+// Diagnostic code for "File appears to be binary."
+const TS1490_FILE_APPEARS_TO_BE_BINARY: i32 = 1490;
+
+/// Check if content appears to be garbled binary (e.g., UTF-16 read as UTF-8).
+///
+/// When Node.js reads a UTF-16 file as UTF-8, it produces garbled output with:
+/// - Replacement characters (U+FFFD)
+/// - Many null bytes interspersed with ASCII
+///
+/// Returns true if content looks like corrupted binary that should emit TS1490.
+fn content_appears_binary(content: &str) -> bool {
+    if content.is_empty() {
+        return false;
+    }
+
+    // Count problematic patterns in first 512 bytes (slice at character boundary)
+    let max_bytes = content.len().min(512);
+    // Find the character boundary closest to max_bytes
+    let check_slice = if max_bytes >= content.len() {
+        content
+    } else {
+        // Find the last character boundary at or before max_bytes
+        let mut boundary = max_bytes;
+        while !content.is_char_boundary(boundary) && boundary > 0 {
+            boundary -= 1;
+        }
+        &content[..boundary]
+    };
+
+    // Check for replacement character (common when invalid UTF-8 sequences are read)
+    let replacement_count = check_slice.matches('\u{FFFD}').count();
+    if replacement_count >= 3 {
+        return true;
+    }
+
+    // Check for null bytes (common in UTF-16 content read as UTF-8)
+    // UTF-16 has null bytes between ASCII characters
+    let null_count = check_slice.chars().filter(|&c| c == '\0').count();
+    if null_count >= 4 {
+        return true;
+    }
+
+    let control_count = check_slice
+        .chars()
+        .filter(|&ch| {
+            let code = ch as u32;
+            code <= 0x1f
+                && code != 0x09
+                && code != 0x0A
+                && code != 0x0D
+                && code != 0x0B
+                && code != 0x0C
+        })
+        .count();
+    if control_count >= 4 {
+        return true;
+    }
+
+    false
+}
+
+// =============================================================================
+// CLI Arguments (tsserver-compatible)
+// =============================================================================
+
+/// tsz-server: TypeScript language server (tsserver-compatible)
+#[derive(Parser, Debug)]
+#[command(
+    name = "tsz-server",
+    version,
+    about = "TypeScript language server - tsserver compatible"
+)]
+struct ServerArgs {
+    /// Enable syntax-only mode (no semantic analysis).
+    /// Legacy flag; prefer --serverMode partialSemantic.
+    #[arg(long = "syntaxOnly", alias = "syntax-only")]
+    syntax_only: bool,
+
+    /// Consolidate all open files without a tsconfig into a single inferred project.
+    #[arg(
+        long = "useSingleInferredProject",
+        alias = "use-single-inferred-project"
+    )]
+    use_single_inferred_project: bool,
+
+    /// Create a separate inferred project for each distinct project root directory.
+    #[arg(
+        long = "useInferredProjectPerProjectRoot",
+        alias = "use-inferred-project-per-project-root"
+    )]
+    use_inferred_project_per_project_root: bool,
+
+    /// Disable automatic diagnostic discovery events.
+    #[arg(
+        long = "suppressDiagnosticEvents",
+        alias = "suppress-diagnostic-events"
+    )]
+    suppress_diagnostic_events: bool,
+
+    /// Opt out of starting getErr when projectsUpdatedInBackground fires.
+    #[arg(
+        long = "noGetErrOnBackgroundUpdate",
+        alias = "no-get-err-on-background-update"
+    )]
+    no_get_err_on_background_update: bool,
+
+    /// Allow loading language service plugins from local project `node_modules`.
+    #[arg(long = "allowLocalPluginLoads", alias = "allow-local-plugin-loads")]
+    allow_local_plugin_loads: bool,
+
+    /// Enable integration with the editor's file watcher.
+    #[arg(long = "canUseWatchEvents", alias = "can-use-watch-events")]
+    can_use_watch_events: bool,
+
+    /// Disable Automatic Type Acquisition (ATA) for JavaScript projects.
+    #[arg(
+        long = "disableAutomaticTypingAcquisition",
+        alias = "disable-automatic-typing-acquisition"
+    )]
+    disable_automatic_typing_acquisition: bool,
+
+    /// Enable telemetry events.
+    #[arg(long = "enableTelemetry", alias = "enable-telemetry")]
+    enable_telemetry: bool,
+
+    /// Validate the default npm binary location on startup.
+    #[arg(
+        long = "validateDefaultNpmLocation",
+        alias = "validate-default-npm-location"
+    )]
+    validate_default_npm_location: bool,
+
+    /// Named pipe for request cancellation semaphore.
+    /// If name ends with '*', actual pipe name is <`name_without`_*><requestId>.
+    #[arg(long = "cancellationPipeName", alias = "cancellation-pipe-name")]
+    cancellation_pipe_name: Option<String>,
+
+    /// Server operational mode: 'semantic' (default), 'partialSemantic', or 'syntactic'.
+    #[arg(long = "serverMode", alias = "server-mode")]
+    server_mode: Option<String>,
+
+    /// TCP port for delivering events (if not specified, events go to stdout).
+    #[arg(long = "eventPort", alias = "event-port")]
+    event_port: Option<u16>,
+
+    /// Language for error messages (e.g., en, ja, de).
+    #[arg(long)]
+    locale: Option<String>,
+
+    /// Global TypeScript language service plugins (comma-separated).
+    #[arg(
+        long = "globalPlugins",
+        alias = "global-plugins",
+        value_delimiter = ','
+    )]
+    global_plugins: Option<Vec<String>>,
+
+    /// Directories to search for plugin modules (comma-separated).
+    #[arg(
+        long = "pluginProbeLocations",
+        alias = "plugin-probe-locations",
+        value_delimiter = ','
+    )]
+    plugin_probe_locations: Option<Vec<String>>,
+
+    /// Log verbosity level: off, terse, normal, requestTime, verbose.
+    #[arg(long = "logVerbosity", alias = "log-verbosity")]
+    log_verbosity: Option<String>,
+
+    /// File path for server log output.
+    #[arg(long = "logFile", alias = "log-file")]
+    log_file: Option<PathBuf>,
+
+    /// Directory for trace output files.
+    #[arg(long = "traceDirectory", alias = "trace-directory")]
+    trace_directory: Option<PathBuf>,
+
+    /// Override the default npm binary location (for ATA).
+    #[arg(long = "npmLocation", alias = "npm-location")]
+    npm_location: Option<PathBuf>,
+
+    /// Enable project-wide `IntelliSense` in web context.
+    #[arg(
+        long = "enableProjectWideIntelliSenseOnWeb",
+        alias = "enable-project-wide-intellisense-on-web"
+    )]
+    enable_project_wide_intellisense_on_web: bool,
+
+    /// Use Node.js IPC channel instead of stdin/stdout.
+    #[arg(long = "useNodeIpc", alias = "use-node-ipc")]
+    use_node_ipc: bool,
+
+    // ==================== tsz-specific options ====================
+    /// Protocol mode: 'tsserver' (Content-Length framed, default) or 'legacy' (JSON per line).
+    #[arg(long, default_value = "tsserver")]
+    protocol: Protocol,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+enum Protocol {
+    /// tsserver-compatible Content-Length framed JSON protocol.
+    Tsserver,
+    /// Legacy JSON-per-line protocol for conformance testing.
+    Legacy,
+}
+
+// =============================================================================
+// tsserver Protocol Types
+// =============================================================================
+
+/// tsserver protocol message (incoming request)
+#[derive(Debug, Deserialize)]
+pub(crate) struct TsServerRequest {
+    pub(crate) seq: u64,
+    #[serde(rename = "type")]
+    pub(crate) _msg_type: String,
+    pub(crate) command: String,
+    #[serde(default)]
+    pub(crate) arguments: serde_json::Value,
+}
+
+/// tsserver protocol response (outgoing)
+#[derive(Debug, Serialize)]
+pub(crate) struct TsServerResponse {
+    pub(crate) seq: u64,
+    #[serde(rename = "type")]
+    pub(crate) msg_type: String,
+    pub(crate) command: String,
+    pub(crate) request_seq: u64,
+    pub(crate) success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) body: Option<serde_json::Value>,
+}
+
+// =============================================================================
+// Legacy Protocol Types (for conformance testing)
+// =============================================================================
+
+/// Legacy request from client
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum LegacyRequest {
+    /// Type check files and return error codes
+    Check {
+        id: u64,
+        files: Box<FxHashMap<String, String>>,
+        #[serde(default)]
+        options: Box<CheckOptions>,
+    },
+    /// Get server status (memory usage, checks completed)
+    Status { id: u64 },
+    /// Clear caches and force memory cleanup
+    Recycle { id: u64 },
+    /// Graceful shutdown
+    Shutdown { id: u64 },
+}
+
+/// Full compiler options for a check request (expanded for tsc compatibility)
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct CheckOptions {
+    strict: bool,
+    strict_null_checks: Option<bool>,
+    strict_function_types: Option<bool>,
+    strict_bind_call_apply: Option<bool>,
+    strict_property_initialization: Option<bool>,
+    no_implicit_any: Option<bool>,
+    no_implicit_this: Option<bool>,
+    no_implicit_returns: bool,
+    use_unknown_in_catch_variables: Option<bool>,
+    always_strict: Option<bool>,
+    no_unused_locals: bool,
+    no_unused_parameters: bool,
+    exact_optional_property_types: bool,
+    no_unchecked_indexed_access: bool,
+    allow_unreachable_code: Option<bool>,
+    allow_unused_labels: Option<bool>,
+    no_property_access_from_index_signature: bool,
+    es_module_interop: bool,
+    allow_synthetic_default_imports: Option<bool>,
+    isolated_modules: bool,
+    no_lib: bool,
+    lib: Option<Vec<String>>,
+    #[serde(deserialize_with = "deserialize_target_option")]
+    target: Option<String>,
+    #[serde(deserialize_with = "deserialize_module_option")]
+    module: Option<String>,
+    experimental_decorators: bool,
+    no_resolve: bool,
+    allow_js: bool,
+    check_js: bool,
+    resolve_json_module: bool,
+    no_unchecked_side_effect_imports: bool,
+    no_implicit_override: bool,
+    downlevel_iteration: bool,
+    no_fallthrough_cases_in_switch: bool,
+    strict_builtin_iterator_return: Option<bool>,
+    declaration: bool,
+    // Server-protocol checker options that were previously hardcoded to false
+    // when constructing `CheckerOptions`. Wiring them through fixes #3579.
+    verbatim_module_syntax: bool,
+    erasable_syntax_only: bool,
+    allow_importing_ts_extensions: bool,
+    rewrite_relative_import_extensions: bool,
+    allow_umd_global_access: bool,
+    preserve_const_enums: bool,
+    isolated_declarations: bool,
+    jsx: Option<String>,
+    jsx_import_source: Option<String>,
+    module_resolution: Option<String>,
+}
+
+/// Legacy response to client
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum LegacyResponse {
+    Check(CheckResponse),
+    Status(StatusResponse),
+    Ok(OkResponse),
+    Error(ErrorResponse),
+}
+
+#[derive(Debug, Serialize)]
+struct CheckResponse {
+    id: u64,
+    codes: Vec<i32>,
+    elapsed_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct StatusResponse {
+    id: u64,
+    memory_mb: u64,
+    checks_completed: u64,
+    cached_libs: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct OkResponse {
+    id: u64,
+    ok: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ErrorResponse {
+    id: u64,
+    error: String,
+}
+
+// =============================================================================
+// Logging Configuration (TSS_LOG environment variable)
+// =============================================================================
+
+pub(crate) struct LogConfig {
+    pub(crate) level: LogLevel,
+    pub(crate) file: Option<PathBuf>,
+    pub(crate) trace_to_console: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LogLevel {
+    Off,
+    Terse,
+    Normal,
+    RequestTime,
+    Verbose,
+}
+
+impl LogConfig {
+    fn from_env_and_args(args: &ServerArgs) -> Self {
+        let mut config = Self {
+            level: LogLevel::Off,
+            file: None,
+            trace_to_console: false,
+        };
+
+        // Parse TSS_LOG environment variable
+        // Format: -level <level> -traceToConsole <bool> -logToFile <bool> -file <path>
+        if let Ok(tss_log) = std::env::var("TSS_LOG") {
+            let parts: Vec<&str> = tss_log.split_whitespace().collect();
+            let mut i = 0;
+            while i < parts.len() {
+                match parts[i] {
+                    "-level" if i + 1 < parts.len() => {
+                        config.level = match parts[i + 1] {
+                            "terse" => LogLevel::Terse,
+                            "normal" => LogLevel::Normal,
+                            "requestTime" => LogLevel::RequestTime,
+                            "verbose" => LogLevel::Verbose,
+                            _ => LogLevel::Off,
+                        };
+                        i += 2;
+                    }
+                    "-file" if i + 1 < parts.len() => {
+                        config.file = Some(PathBuf::from(parts[i + 1]));
+                        i += 2;
+                    }
+                    "-traceToConsole" if i + 1 < parts.len() => {
+                        config.trace_to_console = parts[i + 1] == "true";
+                        i += 2;
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+        }
+
+        // CLI args override TSS_LOG
+        if let Some(ref verbosity) = args.log_verbosity {
+            config.level = match verbosity.as_str() {
+                "terse" => LogLevel::Terse,
+                "normal" => LogLevel::Normal,
+                "requestTime" => LogLevel::RequestTime,
+                "verbose" => LogLevel::Verbose,
+                _ => LogLevel::Off,
+            };
+        }
+
+        if let Some(ref log_file) = args.log_file {
+            config.file = Some(log_file.clone());
+        }
+
+        config
+    }
+}
+
+// =============================================================================
+// Server State
+// =============================================================================
+
+pub(crate) struct Server {
+    /// Directory containing lib.*.d.ts files (TypeScript/src/lib)
+    pub(crate) lib_dir: PathBuf,
+    /// Fallback directory for tests (TypeScript/tests/lib)
+    pub(crate) tests_lib_dir: PathBuf,
+    /// Cache of parsed+bound lib files AND their dependencies (references)
+    pub(crate) lib_cache: FxHashMap<String, (Arc<LibFile>, Vec<String>)>,
+    /// Cache for unified lib binder: (sorted lib names, unified `LibFile`)
+    /// This avoids recreating the expensive merged binder on every request
+    pub(crate) unified_lib_cache: Option<(Vec<String>, Arc<LibFile>)>,
+    /// Number of checks completed
+    pub(crate) checks_completed: u64,
+    /// Response sequence counter (for tsserver protocol)
+    pub(crate) response_seq: u64,
+    /// Open files (for tsserver protocol)
+    pub(crate) open_files: FxHashMap<String, String>,
+    /// Files registered by each external project (`openExternalProject`).
+    pub(crate) external_project_files: FxHashMap<String, Vec<String>>,
+    /// Completion preference: import module specifier ending (e.g. "js")
+    pub(crate) completion_import_module_specifier_ending: Option<String>,
+    /// Completion/codefix preference: import module specifier preference.
+    pub(crate) import_module_specifier_preference: Option<String>,
+    /// Import ordering preference used by import code fixes.
+    pub(crate) organize_imports_type_order: Option<String>,
+    /// Case sensitivity preference used by import ordering.
+    pub(crate) organize_imports_ignore_case: bool,
+    /// Auto-import exclusion patterns (tsserver preference: autoImportFileExcludePatterns)
+    pub(crate) auto_import_file_exclude_patterns: Vec<String>,
+    /// Module-specifier regex exclusions (tsserver preference: autoImportSpecifierExcludeRegexes)
+    pub(crate) auto_import_specifier_exclude_regexes: Vec<String>,
+    /// Completion preference: include class member snippet completions.
+    pub(crate) include_completions_with_class_member_snippets: bool,
+    /// User preference: parameter inlay hint mode. tsserver supports `"none"`,
+    /// `"literals"`, and `"all"`. `None` here means the user hasn't called
+    /// `configure` for this preference; in that case the tsserver default
+    /// (`"none"`) applies and parameter hints are suppressed. See #3793.
+    pub(crate) include_inlay_parameter_name_hints: Option<String>,
+    /// User preference: emit `@returns` in JSDoc templates from `docCommentTemplate`.
+    /// `None` means unset by `configure`, in which case the per-request argument
+    /// or the tsserver default (`true`) applies.
+    pub(crate) generate_return_in_doc_template: Option<bool>,
+    /// Newline character preference from `configure` formatOptions. Used by
+    /// import edits to respect `format.setOption("newLineCharacter", ...)`.
+    pub(crate) new_line_character: Option<String>,
+    /// Compiler option propagated by `compilerOptionsForInferredProjects`.
+    pub(crate) allow_importing_ts_extensions: bool,
+    /// Full inferred compiler options propagated by `compilerOptionsForInferredProjects`.
+    pub(crate) inferred_check_options: CheckOptions,
+    /// `projectInfo`-only view of inferred-project `lib`/`target`/`noLib`.
+    /// Stored parallel to `inferred_check_options` so that setting `lib` for
+    /// projectInfo does not trigger lib-loading in every rename/completion
+    /// typecheck (the rename* fourslash tests time out if check.rs sees a
+    /// populated `lib`).
+    pub(crate) inferred_projectinfo_options:
+        Option<self::handlers_project_info::InferredProjectInfoOptions>,
+    /// Fallback auto-import gate for inferred projects (no nearby tsconfig/jsconfig).
+    pub(crate) auto_imports_allowed_for_inferred_projects: bool,
+    /// Whether inferred projects should be checked as `module:none`.
+    pub(crate) inferred_module_is_none_for_projects: bool,
+    /// Server mode
+    pub(crate) _server_mode: ServerMode,
+    /// Log configuration
+    pub(crate) _log_config: LogConfig,
+    /// Whether telemetry responses should be emitted.
+    pub(crate) enable_telemetry: bool,
+    /// Plugin configurations stored via `configurePlugin` command.
+    pub(crate) plugin_configs: FxHashMap<String, serde_json::Value>,
+    /// Persistent native-TypeScript worker subprocess used for operations
+    /// that delegate to real `tsc` (rename, classification, etc.). Loaded
+    /// lazily on first use so that test/CLI invocations that never call
+    /// native TypeScript don't pay the spawn cost.
+    pub(crate) native_ts_worker:
+        Option<std::sync::Mutex<self::handlers_info_alias::NativeTsWorker>>,
+    /// Async tsserver events queued by handlers. Drained by the protocol
+    /// runner after the response for the originating request is written.
+    /// Used by `geterr` / `geterrForProject` to fire `syntaxDiag`,
+    /// `semanticDiag`, `suggestionDiag`, and `requestCompleted` events.
+    /// See #3544.
+    pub(crate) pending_events: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ServerMode {
+    Semantic,
+    PartialSemantic,
+    Syntactic,
+}
+
+impl Server {
+    fn new(args: &ServerArgs) -> Result<Self> {
+        let lib_dir = Self::find_lib_dir()?;
+        let tests_lib_dir = Self::find_tests_lib_dir(&lib_dir);
+        info!("Using lib directory: {}", lib_dir.display());
+
+        let server_mode = if args.syntax_only {
+            ServerMode::Syntactic
+        } else {
+            match args.server_mode.as_deref() {
+                Some("partialSemantic") => ServerMode::PartialSemantic,
+                Some("syntactic") => ServerMode::Syntactic,
+                _ => ServerMode::Semantic,
+            }
+        };
+
+        let log_config = LogConfig::from_env_and_args(args);
+
+        // Log TSS_DEBUG/TSS_DEBUG_BRK presence
+        if let Ok(port) = std::env::var("TSS_DEBUG") {
+            debug!("TSS_DEBUG detected: port {}", port);
+        }
+        if let Ok(port) = std::env::var("TSS_DEBUG_BRK") {
+            debug!("TSS_DEBUG_BRK detected: port {} (break on startup)", port);
+        }
+
+        if log_config.level != LogLevel::Off {
+            if let Some(ref file) = log_config.file {
+                info!("Log file: {}", file.display());
+            }
+            info!("Log level: {:?}", log_config.level);
+        }
+
+        Ok(Self {
+            lib_dir,
+            tests_lib_dir,
+            lib_cache: FxHashMap::default(),
+            unified_lib_cache: None,
+            checks_completed: 0,
+            response_seq: 0,
+            open_files: FxHashMap::default(),
+            external_project_files: FxHashMap::default(),
+            completion_import_module_specifier_ending: None,
+            import_module_specifier_preference: None,
+            organize_imports_type_order: None,
+            organize_imports_ignore_case: true,
+            auto_import_file_exclude_patterns: Vec::new(),
+            auto_import_specifier_exclude_regexes: Vec::new(),
+            include_completions_with_class_member_snippets: true,
+            include_inlay_parameter_name_hints: None,
+            generate_return_in_doc_template: None,
+            new_line_character: None,
+            allow_importing_ts_extensions: false,
+            inferred_check_options: CheckOptions::default(),
+            inferred_projectinfo_options: None,
+            auto_imports_allowed_for_inferred_projects: true,
+            inferred_module_is_none_for_projects: false,
+            _server_mode: server_mode,
+            _log_config: log_config,
+            enable_telemetry: args.enable_telemetry,
+            plugin_configs: FxHashMap::default(),
+            native_ts_worker: self::handlers_info_alias::NativeTsWorker::spawn()
+                .map(std::sync::Mutex::new),
+            pending_events: Vec::new(),
+        })
+    }
+
+    /// Queue a tsserver async event for the protocol runner to write after
+    /// the originating request's response. Body is the `body` payload of
+    /// the event message. See #3544.
+    pub(crate) fn emit_event(&mut self, event_name: &str, body: serde_json::Value) {
+        let seq = self.next_seq();
+        self.pending_events.push(serde_json::json!({
+            "seq": seq,
+            "type": "event",
+            "event": event_name,
+            "body": body,
+        }));
+    }
+
+    /// Drain the queued async events. Called by the protocol runner.
+    pub(crate) fn drain_pending_events(&mut self) -> Vec<serde_json::Value> {
+        std::mem::take(&mut self.pending_events)
+    }
+
+    const fn next_seq(&mut self) -> u64 {
+        self.response_seq += 1;
+        self.response_seq
+    }
+
+    fn reset_session_state(&mut self) {
+        self.open_files.clear();
+        self.external_project_files.clear();
+        self.completion_import_module_specifier_ending = None;
+        self.import_module_specifier_preference = None;
+        self.organize_imports_type_order = None;
+        self.organize_imports_ignore_case = true;
+        self.auto_import_file_exclude_patterns.clear();
+        self.auto_import_specifier_exclude_regexes.clear();
+        self.include_completions_with_class_member_snippets = true;
+        self.include_inlay_parameter_name_hints = None;
+        self.generate_return_in_doc_template = None;
+        self.new_line_character = None;
+        self.allow_importing_ts_extensions = false;
+        self.inferred_check_options = CheckOptions::default();
+        self.inferred_projectinfo_options = None;
+        self.auto_imports_allowed_for_inferred_projects = true;
+        self.inferred_module_is_none_for_projects = false;
+        self.plugin_configs.clear();
+    }
+
+    fn handle_reset(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        self.reset_session_state();
+        self.success_response(seq, request, Some(serde_json::json!(true)))
+    }
+
+    // =========================================================================
+    // Helper: Parse and Bind a File
+    // =========================================================================
+
+    /// Parse and bind a file from `open_files`, returning the arena, binder,
+    /// root node index, and source text. Uses `into_arena()` to transfer
+    /// the interner so that identifier resolution works correctly.
+    fn parse_and_bind_file(
+        &self,
+        file_path: &str,
+    ) -> Option<(NodeArena, BinderState, NodeIndex, String)> {
+        // Only disk-loaded fourslash fixtures get `////` normalization: a real
+        // client opening `/fourslash.ts` should see tsc-equivalent behavior
+        // (treat `////` as a comment), not the harness rewrite. See #3799.
+        let content = if let Some(raw) = self.open_files.get(file_path).cloned() {
+            raw
+        } else if let Ok(raw) = std::fs::read_to_string(file_path) {
+            raw
+        } else {
+            let raw = Self::read_virtual_harness_path(file_path)?;
+            Self::normalize_fourslash_virtual_content(file_path, &raw)
+        };
+        let mut parser = ParserState::new(file_path.to_string(), content.clone());
+        let root = parser.parse_source_file();
+        let arena = parser.into_arena();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(&arena, root);
+        Some((arena, binder, root, content))
+    }
+
+    fn read_virtual_harness_path(file_path: &str) -> Option<String> {
+        let rel = file_path.strip_prefix('/').unwrap_or(file_path);
+        let cwd = std::env::current_dir().ok()?;
+        let mut candidates = Vec::new();
+        candidates.push(cwd.join(rel));
+        candidates.push(cwd.join("TypeScript").join(rel));
+        if let Some(parent) = cwd.parent() {
+            candidates.push(parent.join("TypeScript").join(rel));
+        }
+
+        for path in candidates {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                return Some(content);
+            }
+        }
+        None
+    }
+
+    fn is_fourslash_virtual_harness_path(file_path: &str) -> bool {
+        let normalized = file_path.replace('\\', "/");
+        normalized == "/fourslash.ts"
+            || normalized == "fourslash.ts"
+            || normalized.starts_with("/tests/cases/fourslash/")
+            || normalized.starts_with("tests/cases/fourslash/")
+    }
+
+    fn normalize_fourslash_virtual_content(file_path: &str, content: &str) -> String {
+        if !Self::is_fourslash_virtual_harness_path(file_path) {
+            return content.to_string();
+        }
+        if !content
+            .lines()
+            .any(|line| line.trim_start().starts_with("////"))
+        {
+            return content.to_string();
+        }
+
+        let mut virtual_lines = Vec::new();
+        for line in content.lines() {
+            let ws_len = line.len().saturating_sub(line.trim_start().len());
+            let ws = &line[..ws_len];
+            let trimmed = &line[ws_len..];
+            if let Some(rest) = trimmed.strip_prefix("////") {
+                virtual_lines.push(format!("{ws}{rest}"));
+            }
+        }
+
+        if virtual_lines.is_empty() {
+            content.to_string()
+        } else {
+            virtual_lines.join("\n")
+        }
+    }
+
+    /// Extract file path, line, and offset from tsserver request arguments.
+    /// Returns (file, `line_1based`, `offset_1based`).
+    fn extract_file_position(args: &serde_json::Value) -> Option<(String, u32, u32)> {
+        let file = args.get("file")?.as_str()?.to_string();
+        let line = args.get("line")?.as_u64()? as u32;
+        let offset = args.get("offset")?.as_u64()? as u32;
+        Some((file, line, offset))
+    }
+
+    fn add_project_config_files(
+        files: &mut rustc_hash::FxHashMap<String, String>,
+        file_path: &str,
+    ) {
+        let mut current = std::path::Path::new(file_path).parent();
+        while let Some(dir) = current {
+            for config_name in ["package.json", "tsconfig.json", "jsconfig.json"] {
+                let config_path = dir.join(config_name);
+                let key = config_path.to_string_lossy().to_string();
+                if files.contains_key(&key) {
+                    continue;
+                }
+                if let Ok(content) = std::fs::read_to_string(&config_path) {
+                    files.insert(key, content);
+                }
+            }
+            current = dir.parent();
+        }
+    }
+
+    /// Convert tsserver 1-based line/offset to 0-based LSP Position.
+    pub(crate) const fn tsserver_to_lsp_position(line: u32, offset: u32) -> Position {
+        Position::new(line.saturating_sub(1), offset.saturating_sub(1))
+    }
+
+    /// Convert LSP 0-based Position to tsserver 1-based {line, offset} JSON.
+    fn lsp_to_tsserver_position(pos: Position) -> serde_json::Value {
+        serde_json::json!({
+            "line": pos.line + 1,
+            "offset": pos.character + 1
+        })
+    }
+
+    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value for the
+    /// plain `definition` / `typeDefinition` / `findSourceDefinition` commands.
+    ///
+    /// This is the `FileSpanWithContext` shape: `file` plus 1-based
+    /// `start`/`end` line/offset positions, and optional `contextStart`/
+    /// `contextEnd` line/offset positions. Symbol metadata (`kind`, `name`,
+    /// `containerName`, `isLocal`, `isAmbient`, …) belongs to the `-full`
+    /// shape; including it here causes consumers that parse the protocol
+    /// strictly to treat the response as the full shape.
+    fn definition_info_to_json(
+        info: &tsz::lsp::definition::DefinitionInfo,
+        file: &str,
+    ) -> serde_json::Value {
+        let out_file = if info.location.file_path.is_empty() {
+            file.to_string()
+        } else {
+            info.location.file_path.clone()
+        };
+        let mut result = serde_json::json!({
+            "file": out_file,
+            "start": Self::lsp_to_tsserver_position(info.location.range.start),
+            "end": Self::lsp_to_tsserver_position(info.location.range.end),
+        });
+        if let Some(ref ctx) = info.context_span {
+            result["contextStart"] = Self::lsp_to_tsserver_position(ctx.start);
+            result["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
+        }
+        result
+    }
+
+    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value for the
+    /// `definition-full` / `typeDefinition-full` / `definitionAndBoundSpan-full`
+    /// commands.
+    ///
+    /// This is the `DefinitionInfo` shape: `fileName` plus a numeric
+    /// `textSpan` (`start`/`length`), an optional numeric `contextSpan`,
+    /// the symbol metadata (`kind`, `name`, `containerName`), and the
+    /// `isLocal` / `isAmbient` / `unverified` / `failedAliasResolution`
+    /// flags. The byte-offset positions are computed against `line_map` /
+    /// `source_text`, which the caller is expected to have built for the
+    /// requesting file (mirroring the cross-file handling of
+    /// `references-full`).
+    fn definition_info_to_json_full(
+        info: &tsz::lsp::definition::DefinitionInfo,
+        file: &str,
+        line_map: &LineMap,
+        source_text: &str,
+    ) -> serde_json::Value {
+        let out_file = if info.location.file_path.is_empty() {
+            file.to_string()
+        } else {
+            info.location.file_path.clone()
+        };
+        let span_start = line_map
+            .position_to_offset(info.location.range.start, source_text)
+            .unwrap_or(0);
+        let span_end = line_map
+            .position_to_offset(info.location.range.end, source_text)
+            .unwrap_or(span_start);
+        let mut result = serde_json::json!({
+            "fileName": out_file,
+            "textSpan": {
+                "start": span_start,
+                "length": span_end.saturating_sub(span_start),
+            },
+            "kind": info.kind,
+            "name": info.name,
+            "containerName": info.container_name,
+            "isLocal": info.is_local,
+            "isAmbient": info.is_ambient,
+            "unverified": false,
+            "failedAliasResolution": false,
+        });
+        if let Some(ref ctx) = info.context_span {
+            let ctx_start = line_map
+                .position_to_offset(ctx.start, source_text)
+                .unwrap_or(0);
+            let ctx_end = line_map
+                .position_to_offset(ctx.end, source_text)
+                .unwrap_or(ctx_start);
+            result["contextSpan"] = serde_json::json!({
+                "start": ctx_start,
+                "length": ctx_end.saturating_sub(ctx_start),
+            });
+        }
+        result
+    }
+
+    fn canonicalize_or_owned(path: &Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    fn find_lib_dir() -> Result<PathBuf> {
+        tsz_cli::config::default_lib_dir().with_context(|| {
+            let cwd = std::env::current_dir()
+                .map(|dir| dir.display().to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            format!("TypeScript lib directory not found for tsz-server (cwd: {cwd})")
+        })
+    }
+
+    fn find_tests_lib_dir(lib_dir: &Path) -> PathBuf {
+        if let Ok(dir) = std::env::var("TSZ_TESTS_LIB_DIR") {
+            let path = PathBuf::from(&dir);
+            let path = if path.is_absolute() {
+                path
+            } else {
+                std::env::current_dir()
+                    .map(|cwd| cwd.join(&path))
+                    .unwrap_or(path)
+            };
+            if path.is_dir() {
+                return Self::canonicalize_or_owned(&path);
+            }
+        }
+
+        let mut roots = Vec::new();
+        if let Ok(cwd) = std::env::current_dir() {
+            let mut current: Option<&Path> = Some(cwd.as_path());
+            while let Some(dir) = current {
+                roots.push(dir.to_path_buf());
+                current = dir.parent();
+            }
+        }
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut current: Option<&Path> = Some(manifest_dir);
+        while let Some(dir) = current {
+            if !roots.iter().any(|existing| existing == dir) {
+                roots.push(dir.to_path_buf());
+            }
+            current = dir.parent();
+        }
+
+        for root in roots {
+            let candidate = root.join("TypeScript/tests/lib");
+            if candidate.is_dir() {
+                return Self::canonicalize_or_owned(&candidate);
+            }
+        }
+
+        lib_dir.to_path_buf()
+    }
+
+    // =========================================================================
+    // tsserver Protocol Handling
+    // =========================================================================
+
+    fn handle_tsserver_request(&mut self, request: TsServerRequest) -> TsServerResponse {
+        let seq = self.next_seq();
+        match request.command.as_str() {
+            "open" => self.handle_open(seq, &request),
+            "close" => self.handle_close(seq, &request),
+            "change" => self.handle_change(seq, &request),
+            "reset" | "tsz/reset" => self.handle_reset(seq, &request),
+            "configure" => self.handle_configure(seq, &request),
+            "quickinfo" | "quickinfo-full" => self.handle_quickinfo(seq, &request),
+            "definition" | "definition-full" | "findSourceDefinition" => {
+                self.handle_definition(seq, &request)
+            }
+            "typeDefinition" | "typeDefinition-full" => self.handle_type_definition(seq, &request),
+            "definitionAndBoundSpan" | "definitionAndBoundSpan-full" => {
+                self.handle_definition_and_bound_span(seq, &request)
+            }
+            "references" => self.handle_references(seq, &request),
+            "references-full" => self.handle_references_full(seq, &request),
+            "completions" | "completionInfo" | "completions-full" => {
+                self.handle_completions(seq, &request)
+            }
+            "completionEntryDetails" | "completionEntryDetails-full" => {
+                self.handle_completion_details(seq, &request)
+            }
+            "signatureHelp" | "signatureHelp-full" => self.handle_signature_help(seq, &request),
+            "semanticDiagnosticsSync" => self.handle_semantic_diagnostics_sync(seq, &request),
+            "syntacticDiagnosticsSync" => self.handle_syntactic_diagnostics_sync(seq, &request),
+            "suggestionDiagnosticsSync" => self.handle_suggestion_diagnostics_sync(seq, &request),
+            "geterr" => self.handle_geterr(seq, &request),
+            "geterrForProject" => self.handle_geterr_for_project(seq, &request),
+            "navtree" | "navtree-full" => self.handle_navtree(seq, &request),
+            "navbar" | "navbar-full" => self.handle_navbar(seq, &request),
+            "navto" | "navTo" | "navto-full" | "navTo-full" => self.handle_navto(seq, &request),
+            "documentHighlights" => self.handle_document_highlights(seq, &request),
+            "rename" | "rename-full" => self.handle_rename(seq, &request),
+            "getCodeFixes" => self.handle_get_code_fixes(seq, &request),
+            "getCombinedCodeFix" => self.handle_get_combined_code_fix(seq, &request),
+            "applyCodeActionCommand" => self.handle_apply_code_action_command(seq, &request),
+            "getSupportedCodeFixes" => self.handle_get_supported_code_fixes(seq, &request),
+            "getApplicableRefactors" => self.handle_get_applicable_refactors(seq, &request),
+            "getEditsForRefactor" => self.handle_get_edits_for_refactor(seq, &request),
+            "organizeImports" => self.handle_organize_imports(seq, &request),
+            "getEditsForFileRename" => self.handle_get_edits_for_file_rename(seq, &request),
+            "format" | "format-full" => self.handle_format(seq, &request),
+            "formatonkey" => self.handle_format_on_key(seq, &request),
+            "projectInfo" => self.handle_project_info(seq, &request),
+            "compilerOptionsForInferredProjects" => {
+                self.handle_compiler_options_for_inferred(seq, &request)
+            }
+            "openExternalProject" | "openExternalProjects" | "closeExternalProject" => {
+                self.handle_external_project(seq, &request)
+            }
+            "synchronizeProjectList" => self.handle_synchronize_project_list(seq, &request),
+            "updateOpen" => self.handle_update_open(seq, &request),
+            "applyChangedToOpenFiles" => self.handle_apply_changed_to_open_files(seq, &request),
+            "encodedSyntacticClassifications-full" => {
+                self.handle_encoded_syntactic_classifications_full(seq, &request)
+            }
+            "encodedSemanticClassifications-full" => {
+                self.handle_encoded_semantic_classifications_full(seq, &request)
+            }
+            "inlayHints" | "provideInlayHints" => self.handle_inlay_hints(seq, &request),
+            "selectionRange" | "selectionRange-full" => self.handle_selection_range(seq, &request),
+            "linkedEditingRange" => self.handle_linked_editing_range(seq, &request),
+            "prepareCallHierarchy" => self.handle_prepare_call_hierarchy(seq, &request),
+            "provideCallHierarchyIncomingCalls" | "provideCallHierarchyOutgoingCalls" => {
+                self.handle_call_hierarchy(seq, &request)
+            }
+            "mapCode" => self.handle_map_code(seq, &request),
+            "fileReferences" | "fileReferences-full" => self.handle_file_references(seq, &request),
+            "implementation" | "implementation-full" => self.handle_implementation(seq, &request),
+            "getOutliningSpans" | "outliningSpans" => self.handle_outlining_spans(seq, &request),
+            "brace" => self.handle_brace(seq, &request),
+            "tszPerformance" | "performance" => self.handle_tsz_performance(seq, &request),
+            "emitOutput" | "emit-output" => self.handle_emit_output(seq, &request),
+            "getMoveToRefactoringFileSuggestions" => {
+                self.handle_get_move_to_refactoring_file_suggestions(seq, &request)
+            }
+            "preparePasteEdits" => self.handle_prepare_paste_edits(seq, &request),
+            "getPasteEdits" => self.handle_get_paste_edits(seq, &request),
+            "configurePlugin" => self.handle_configure_plugin(seq, &request),
+            "breakpointStatement" => self.handle_breakpoint_statement(seq, &request),
+            "jsxClosingTag" => self.handle_jsx_closing_tag(seq, &request),
+            "braceCompletion" => self.handle_brace_completion(seq, &request),
+            "getSpanOfEnclosingComment" => self.handle_span_of_enclosing_comment(seq, &request),
+            "todoComments" => self.handle_todo_comments(seq, &request),
+            "docCommentTemplate" => self.handle_doc_comment_template(seq, &request),
+            "indentation" => self.handle_indentation(seq, &request),
+            "toggleLineComment" | "toggleLineComment-full" => {
+                self.handle_toggle_line_comment(seq, &request)
+            }
+            "toggleMultilineComment" | "toggleMultilineComment-full" => {
+                self.handle_toggle_multiline_comment(seq, &request)
+            }
+            "commentSelection" | "commentSelection-full" => {
+                self.handle_comment_selection(seq, &request)
+            }
+            "uncommentSelection" | "uncommentSelection-full" => {
+                self.handle_uncomment_selection(seq, &request)
+            }
+            "getCompilerOptionsDiagnostics" => {
+                self.handle_compiler_options_diagnostics(seq, &request)
+            }
+            "reload" => self.handle_reload(seq, &request),
+            "reloadProjects" => self.handle_reload_projects(seq, &request),
+            "status" => self.success_response(
+                seq,
+                &request,
+                Some(serde_json::json!({"version": tsz_cli::help::TSC_VERSION})),
+            ),
+            "compileOnSaveAffectedFileList" => {
+                self.handle_compile_on_save_affected_file_list(seq, &request)
+            }
+            "compileOnSaveEmitFile" => self.handle_compile_on_save_emit_file(seq, &request),
+            "saveto" => self.handle_save_to(seq, &request),
+            "exit" => self.acknowledge_response(seq, &request),
+            _ => self.unrecognized_command_response(seq, &request),
+        }
+    }
+
+    // =========================================================================
+    // tsserver response taxonomy
+    // =========================================================================
+    //
+    // Four named categories so handlers express intent at the call site and
+    // clients can distinguish them on the wire:
+    //
+    //   `success_response`      — handler computed this body.
+    //   `acknowledge_response`  — async-acknowledged; real payload arrives
+    //                             via events (e.g. `geterr`).
+    //   `unimplemented_response`— recognized but not built yet; success: false.
+    //   `unsupported_response`  — recognized but intentionally out of scope;
+    //                             success: false.
+    //
+    // The dispatch fall-through adds a fifth shape,
+    // `unrecognized_command_response`, for command strings we don't know at
+    // all.
+
+    /// Handler computed `body`. Empty bodies are legitimate answers
+    /// ("no fixes apply here") and stay `success: true`.
+    pub(crate) fn success_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+        body: Option<serde_json::Value>,
+    ) -> TsServerResponse {
+        self.build_response(seq, request, true, None, body)
+    }
+
+    /// Async-acknowledged: the real payload was already enqueued as
+    /// protocol events; the response carries only the ack.
+    pub(crate) fn acknowledge_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        self.success_response(seq, request, None)
+    }
+
+    /// Recognized command that has no implementation yet.
+    // No production call site yet — kept as part of the taxonomy so future
+    // stub handlers can mark themselves honest without re-deriving the shape.
+    #[allow(dead_code)]
+    pub(crate) fn unimplemented_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+        reason: &str,
+    ) -> TsServerResponse {
+        self.capability_error_response(seq, request, "not implemented", reason)
+    }
+
+    /// Recognized command that tsz intentionally does not support
+    /// (e.g. plugin-host or debug-only protocol commands).
+    pub(crate) fn unsupported_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+        reason: &str,
+    ) -> TsServerResponse {
+        self.capability_error_response(seq, request, "not supported", reason)
+    }
+
+    /// Command string is not in our dispatch table at all.
+    fn unrecognized_command_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        self.build_response(
+            seq,
+            request,
+            false,
+            Some(format!("Unrecognized command: {}", request.command)),
+            None,
+        )
+    }
+
+    fn capability_error_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+        verb: &str,
+        reason: &str,
+    ) -> TsServerResponse {
+        self.build_response(
+            seq,
+            request,
+            false,
+            Some(format!("Command '{}' is {verb}: {reason}", request.command)),
+            None,
+        )
+    }
+
+    pub(crate) fn build_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+        success: bool,
+        message: Option<String>,
+        body: Option<serde_json::Value>,
+    ) -> TsServerResponse {
+        TsServerResponse {
+            seq,
+            msg_type: "response".to_string(),
+            command: request.command.clone(),
+            request_seq: request.seq,
+            success,
+            message,
+            body,
+        }
+    }
+}
+
+// =============================================================================
+// Brace Matching Helpers
+// =============================================================================
+
+/// Decide whether a `/` at `pos` starts a regular-expression literal rather
+/// than a division operator. Uses the standard lexer heuristic: walk back to
+/// the previous in-code, non-whitespace token; if it is an operator/punctuator
+/// that cannot end an expression, or a keyword that introduces an expression,
+/// or there is no such token, the `/` begins a regex.
+///
+/// `map` reflects bytes already classified by `build_code_map` for
+/// `j < pos`; bytes inside earlier strings/comments are `false` and should be
+/// skipped here.
+fn is_regex_literal_start(bytes: &[u8], map: &[bool], pos: usize) -> bool {
+    let mut j = pos;
+    while j > 0 {
+        j -= 1;
+        let b = bytes[j];
+        if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
+            continue;
+        }
+        if !map[j] {
+            // Inside a string/comment/template — skip.
+            continue;
+        }
+        if matches!(
+            b,
+            b'=' | b','
+                | b'('
+                | b'['
+                | b'{'
+                | b';'
+                | b':'
+                | b'?'
+                | b'!'
+                | b'+'
+                | b'-'
+                | b'*'
+                | b'/'
+                | b'%'
+                | b'&'
+                | b'|'
+                | b'^'
+                | b'<'
+                | b'>'
+                | b'~'
+        ) {
+            return true;
+        }
+        if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' {
+            // Walk back to the start of the identifier and decide based on
+            // whether it is a keyword that introduces an expression.
+            let end = j + 1;
+            let mut start = j;
+            while start > 0 {
+                let bb = bytes[start - 1];
+                if (bb.is_ascii_alphanumeric() || bb == b'_' || bb == b'$') && map[start - 1] {
+                    start -= 1;
+                } else {
+                    break;
+                }
+            }
+            return matches!(
+                &bytes[start..end],
+                b"return"
+                    | b"typeof"
+                    | b"delete"
+                    | b"void"
+                    | b"in"
+                    | b"of"
+                    | b"instanceof"
+                    | b"new"
+                    | b"throw"
+                    | b"do"
+                    | b"else"
+                    | b"case"
+                    | b"yield"
+                    | b"await"
+            );
+        }
+        // `)`, `]`, `}`, quotes, digits already handled above as alnum: end
+        // of expression — `/` is division.
+        return false;
+    }
+    // Start of file.
+    true
+}
+
+/// Build a boolean map indicating which byte positions are "in code"
+/// (i.e., not inside a string literal, comment, or regex literal).
+fn build_code_map(bytes: &[u8]) -> Vec<bool> {
+    let len = bytes.len();
+    let mut map = vec![true; len];
+    let mut i = 0;
+    while i < len {
+        match bytes[i] {
+            b'/' if i + 1 < len => {
+                if bytes[i + 1] == b'/' {
+                    // Single-line comment
+                    map[i] = false;
+                    map[i + 1] = false;
+                    i += 2;
+                    while i < len && bytes[i] != b'\n' {
+                        map[i] = false;
+                        i += 1;
+                    }
+                } else if bytes[i + 1] == b'*' {
+                    // Multi-line comment
+                    map[i] = false;
+                    map[i + 1] = false;
+                    i += 2;
+                    while i < len {
+                        if bytes[i] == b'*' && i + 1 < len && bytes[i + 1] == b'/' {
+                            map[i] = false;
+                            map[i + 1] = false;
+                            i += 2;
+                            break;
+                        }
+                        map[i] = false;
+                        i += 1;
+                    }
+                } else if is_regex_literal_start(bytes, &map, i) {
+                    // Regex literal `/.../flags`. Mark its body so brace
+                    // scanning ignores `{` / `}` that appear inside.
+                    map[i] = false;
+                    i += 1;
+                    let mut in_class = false;
+                    while i < len {
+                        match bytes[i] {
+                            b'\\' => {
+                                map[i] = false;
+                                i += 1;
+                                if i < len && bytes[i] != b'\n' {
+                                    map[i] = false;
+                                    i += 1;
+                                }
+                            }
+                            b'[' if !in_class => {
+                                in_class = true;
+                                map[i] = false;
+                                i += 1;
+                            }
+                            b']' if in_class => {
+                                in_class = false;
+                                map[i] = false;
+                                i += 1;
+                            }
+                            b'/' if !in_class => {
+                                map[i] = false;
+                                i += 1;
+                                while i < len && bytes[i].is_ascii_alphabetic() {
+                                    map[i] = false;
+                                    i += 1;
+                                }
+                                break;
+                            }
+                            b'\n' => {
+                                // Unterminated regex literal.
+                                break;
+                            }
+                            _ => {
+                                map[i] = false;
+                                i += 1;
+                            }
+                        }
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            b'"' | b'\'' => {
+                let quote = bytes[i];
+                map[i] = false;
+                i += 1;
+                while i < len {
+                    if bytes[i] == b'\\' {
+                        map[i] = false;
+                        i += 1;
+                        if i < len {
+                            map[i] = false;
+                            i += 1;
+                        }
+                    } else if bytes[i] == quote {
+                        map[i] = false;
+                        i += 1;
+                        break;
+                    } else if bytes[i] == b'\n' {
+                        // Unterminated string at newline
+                        break;
+                    } else {
+                        map[i] = false;
+                        i += 1;
+                    }
+                }
+            }
+            b'`' => {
+                // Template literal - mark everything inside as non-code
+                // except for ${...} substitutions
+                map[i] = false;
+                i += 1;
+                let mut depth = 0u32;
+                while i < len {
+                    if bytes[i] == b'\\' {
+                        map[i] = false;
+                        i += 1;
+                        if i < len {
+                            map[i] = false;
+                            i += 1;
+                        }
+                    } else if bytes[i] == b'$' && i + 1 < len && bytes[i + 1] == b'{' {
+                        // Template substitution - these are code
+                        depth += 1;
+                        i += 2;
+                    } else if bytes[i] == b'{' && depth > 0 {
+                        depth += 1;
+                        i += 1;
+                    } else if bytes[i] == b'}' && depth > 0 {
+                        depth -= 1;
+                        i += 1;
+                    } else if bytes[i] == b'`' && depth == 0 {
+                        map[i] = false;
+                        i += 1;
+                        break;
+                    } else {
+                        if depth == 0 {
+                            map[i] = false;
+                        }
+                        i += 1;
+                    }
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    map
+}
+
+/// Scan forward from `start` (exclusive) to find the matching closing brace.
+/// Returns the byte offset of the matching close brace, or None.
+fn scan_forward(
+    bytes: &[u8],
+    code_map: &[bool],
+    start: usize,
+    open: u8,
+    close: u8,
+) -> Option<usize> {
+    let mut depth = 1i32;
+    let mut i = start + 1;
+    while i < bytes.len() {
+        if code_map[i] {
+            if bytes[i] == open {
+                depth += 1;
+            } else if bytes[i] == close {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Scan backward from `start` (exclusive) to find the matching opening brace.
+/// Returns the byte offset of the matching open brace, or None.
+fn scan_backward(
+    bytes: &[u8],
+    code_map: &[bool],
+    start: usize,
+    close: u8,
+    open: u8,
+) -> Option<usize> {
+    let mut depth = 1i32;
+    let mut i = start;
+    while i > 0 {
+        i -= 1;
+        if code_map[i] {
+            if bytes[i] == close {
+                depth += 1;
+            } else if bytes[i] == open {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Find matching angle bracket using AST-based analysis.
+/// Returns the byte offset of the matching bracket, or None.
+fn find_angle_bracket_match(arena: &NodeArena, source: &str, pos: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+
+    // Derive angle bracket positions from NodeList children.
+    // The NodeList pos/end may be 0/0 (unset), but we can find the `<` and `>`
+    // by looking at the first/last child nodes:
+    //   `<` is at first_child.pos - 1
+    //   `>` is at last_child.end - 1 (if parser includes `>` in range)
+    //        or last_child.end (if parser excludes `>` from range)
+    let check_list_nodes = |list: &Option<tsz::parser::base::NodeList>| -> Option<(usize, usize)> {
+        let list = list.as_ref()?;
+        if list.nodes.is_empty() {
+            return None;
+        }
+        let first = arena.nodes.get(list.nodes.first()?.0 as usize)?;
+        let last = arena.nodes.get(list.nodes.last()?.0 as usize)?;
+
+        let open_pos = (first.pos as usize).checked_sub(1)?;
+        if bytes.get(open_pos) != Some(&b'<') {
+            return None;
+        }
+
+        // Try last_child.end - 1 first (parser includes `>` in range)
+        let close_candidate1 = last.end as usize;
+        if close_candidate1 > 0 && bytes.get(close_candidate1 - 1) == Some(&b'>') {
+            return Some((open_pos, close_candidate1 - 1));
+        }
+        // Try last_child.end (parser excludes `>` from range)
+        if bytes.get(close_candidate1) == Some(&b'>') {
+            return Some((open_pos, close_candidate1));
+        }
+        None
+    };
+
+    // Collect from all data pools that have type_parameters or type_arguments
+    for f in &arena.functions {
+        if let Some(pair) = check_list_nodes(&f.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for c in &arena.classes {
+        if let Some(pair) = check_list_nodes(&c.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for iface in &arena.interfaces {
+        if let Some(pair) = check_list_nodes(&iface.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for t in &arena.type_aliases {
+        if let Some(pair) = check_list_nodes(&t.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for c in &arena.call_exprs {
+        if let Some(pair) = check_list_nodes(&c.type_arguments) {
+            pairs.push(pair);
+        }
+    }
+    for t in &arena.type_refs {
+        if let Some(pair) = check_list_nodes(&t.type_arguments) {
+            pairs.push(pair);
+        }
+    }
+    for s in &arena.signatures {
+        if let Some(pair) = check_list_nodes(&s.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for m in &arena.method_decls {
+        if let Some(pair) = check_list_nodes(&m.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for c in &arena.constructors {
+        if let Some(pair) = check_list_nodes(&c.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for ft in &arena.function_types {
+        if let Some(pair) = check_list_nodes(&ft.type_parameters) {
+            pairs.push(pair);
+        }
+    }
+    for e in &arena.expr_with_type_args {
+        if let Some(pair) = check_list_nodes(&e.type_arguments) {
+            pairs.push(pair);
+        }
+    }
+
+    // Type assertions: <type>expr
+    for node in &arena.nodes {
+        if node.kind == tsz::parser::syntax_kind_ext::TYPE_ASSERTION
+            && let Some(ta) = arena.type_assertions.get(node.data_index as usize)
+        {
+            let open_pos = node.pos as usize;
+            if bytes.get(open_pos) != Some(&b'<') {
+                continue;
+            }
+            if let Some(type_node) = arena.nodes.get(ta.type_node.0 as usize) {
+                // `>` might be at type_node.end - 1 or type_node.end
+                let end = type_node.end as usize;
+                if end > 0 && bytes.get(end - 1) == Some(&b'>') {
+                    pairs.push((open_pos, end - 1));
+                } else if bytes.get(end) == Some(&b'>') {
+                    pairs.push((open_pos, end));
+                }
+            }
+        }
+    }
+
+    // Search for the position in collected pairs
+    for (open, close) in pairs {
+        if pos == open {
+            return Some(close);
+        } else if pos == close {
+            return Some(open);
+        }
+    }
+
+    None
+}
+
+// =============================================================================
+// Protocol I/O
+// =============================================================================
+
+/// Read a Content-Length framed message from stdin (tsserver protocol)
+fn read_content_length_message<R: BufRead>(reader: &mut R) -> Result<Option<String>> {
+    let mut header_line = String::new();
+    let bytes_read = reader.read_line(&mut header_line)?;
+    if bytes_read == 0 {
+        return Ok(None); // EOF
+    }
+
+    let header = header_line.trim();
+    if header.is_empty() {
+        // Skip empty lines (can happen between messages)
+        return read_content_length_message(reader);
+    }
+
+    // Parse Content-Length header
+    let content_length = if let Some(len_str) = header.strip_prefix("Content-Length:") {
+        len_str
+            .trim()
+            .parse::<usize>()
+            .with_context(|| format!("invalid Content-Length: {}", len_str.trim()))?
+    } else {
+        // Not a Content-Length header - try to parse as raw JSON (for compatibility)
+        return Ok(Some(header.to_string()));
+    };
+
+    // Read the blank line separator
+    let mut blank_line = String::new();
+    reader.read_line(&mut blank_line)?;
+
+    // Read the message body
+    let mut body = vec![0u8; content_length];
+    reader.read_exact(&mut body)?;
+
+    String::from_utf8(body)
+        .map(Some)
+        .context("invalid UTF-8 in message body")
+}
+
+/// Write a Content-Length framed message to stdout (tsserver protocol)
+fn write_content_length_message<W: Write>(stdout: &mut W, message: &str) -> Result<()> {
+    write!(
+        stdout,
+        "Content-Length: {}\r\n\r\n{}",
+        message.len(),
+        message
+    )?;
+    stdout.flush()?;
+    Ok(())
+}
+
+// =============================================================================
+// Main Entry Point
+// =============================================================================
+
+fn main() -> Result<()> {
+    // Initialize tracing (always stderr so it doesn't interfere with protocol).
+    // Supports TSZ_LOG_FORMAT=tree|json|text (see src/tracing_config.rs).
+    tsz_cli::tracing_config::init_tracing();
+
+    let args = ServerArgs::parse();
+    let mut server = Server::new(&args).context("failed to initialize server")?;
+
+    info!("tsz-server ready (protocol: {:?})", args.protocol);
+
+    match args.protocol {
+        Protocol::Tsserver => run_tsserver_protocol(&mut server)?,
+        Protocol::Legacy => run_legacy_protocol(&mut server)?,
+    }
+
+    Ok(())
+}
+
+fn run_tsserver_protocol(server: &mut Server) -> Result<()> {
+    let mut stdin = BufReader::new(std::io::stdin());
+    let mut stdout = std::io::stdout();
+
+    run_tsserver_protocol_with_io(server, &mut stdin, &mut stdout)
+}
+
+fn run_tsserver_protocol_with_io<R: BufRead, W: Write>(
+    server: &mut Server,
+    stdin: &mut R,
+    stdout: &mut W,
+) -> Result<()> {
+    loop {
+        let message = match read_content_length_message(stdin)? {
+            Some(msg) => msg,
+            None => break, // EOF
+        };
+
+        if message.trim().is_empty() {
+            continue;
+        }
+
+        let request: TsServerRequest = match serde_json::from_str(&message) {
+            Ok(req) => req,
+            Err(e) => {
+                let error_response = TsServerResponse {
+                    seq: server.next_seq(),
+                    msg_type: "response".to_string(),
+                    command: "unknown".to_string(),
+                    request_seq: 0,
+                    success: false,
+                    message: Some(format!("invalid request: {e}")),
+                    body: None,
+                };
+                let json = serde_json::to_string(&error_response)?;
+                write_content_length_message(stdout, &json)?;
+                continue;
+            }
+        };
+
+        if request.command == "exit" {
+            break;
+        }
+
+        let response = server.handle_tsserver_request(request);
+        let json = serde_json::to_string(&response)?;
+        write_content_length_message(stdout, &json)?;
+
+        // Async events queued by the handler (e.g. `geterr` → `syntaxDiag`
+        // / `semanticDiag` / `suggestionDiag` / `requestCompleted`) write
+        // after the originating response. See #3544.
+        for event in server.drain_pending_events() {
+            let json = serde_json::to_string(&event)?;
+            write_content_length_message(stdout, &json)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn run_legacy_protocol(server: &mut Server) -> Result<()> {
+    let stdin = BufReader::new(std::io::stdin());
+    let mut stdout = std::io::stdout();
+
+    for line in stdin.lines() {
+        let line = line.context("failed to read from stdin")?;
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let request: LegacyRequest = match serde_json::from_str(&line) {
+            Ok(req) => req,
+            Err(e) => {
+                let error_response = LegacyResponse::Error(ErrorResponse {
+                    id: 0,
+                    error: format!("invalid request: {e}"),
+                });
+                writeln!(stdout, "{}", serde_json::to_string(&error_response)?)?;
+                stdout.flush()?;
+                continue;
+            }
+        };
+
+        let is_shutdown = matches!(request, LegacyRequest::Shutdown { .. });
+        let response = server.handle_legacy_request(request);
+        writeln!(stdout, "{}", serde_json::to_string(&response)?)?;
+        stdout.flush()?;
+
+        if is_shutdown {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;

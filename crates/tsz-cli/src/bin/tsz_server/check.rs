@@ -1,0 +1,930 @@
+//! Core type checking logic for tsz-server.
+//!
+//! Contains the check pipeline: semantic diagnostics, `run_check`, lib loading,
+//! and checker option construction.
+
+use super::{CheckOptions, Server, TsServerRequest, TsServerResponse};
+use anyhow::{Context, Result};
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
+use tsz::binder::BinderState;
+use tsz::checker::context::{CheckerOptions, LibContext, ProgramContext};
+use tsz::checker::diagnostics::DiagnosticCategory;
+use tsz::checker::module_resolution::build_module_resolution_maps;
+use tsz::checker::state::CheckerState;
+use tsz::emitter::{ModuleKind, ScriptTarget};
+use tsz::lib_loader::LibFile;
+use tsz::parallel;
+use tsz::parser::ParserState;
+use tsz::parser::node::NodeArena;
+use tsz_cli::config::{
+    checker_target_from_emitter, default_lib_name_for_target, resolve_default_lib_files_from_dir,
+    resolve_lib_files_from_dir,
+};
+use tsz_solver::construction::QueryCache;
+use tsz_solver::construction::RelationCacheStats;
+
+pub(crate) struct RunCheckResult {
+    pub(crate) codes: Vec<i32>,
+    pub(crate) relation_cache_stats: RelationCacheStats,
+}
+
+impl Server {
+    const SUPPRESSED_TYPE_CODES_FOR_DEPRECATION: &[i32] = &[
+        2322, // TS2322: Type not assignable
+        2345, // TS2345: Argument not assignable
+        2339, // TS2339: Property does not exist
+        2343, // TS2343: Access modifier error
+        2882, // TS2882: Cannot find module/type declarations for side-effect import
+        2304, // TS2304: Cannot find name
+        2307, // TS2307: Cannot find module
+        7006, // TS7006: Parameter implicitly has 'any' type
+        7005, // TS7005: Variable implicitly has 'any' type
+        2323, // TS2323: Cannot redeclare exported variable
+        2741, // TS2741: Missing properties
+        2510, // TS2510: Cannot assign to read-only property
+        2694, // TS2694: Namespace not found
+        2531, // TS2531: Possibly null
+        2532, // TS2532: Possibly undefined
+        2533, // TS2533: Object is possibly null or undefined
+        2564, // TS2564: Property has no initializer
+        2454, // TS2454: Variable used before being assigned
+        2403, // TS2403: Subsequent variable declarations must have same type
+        2411, // TS2411: Property conflict
+        2300, // TS2300: Duplicate identifier
+    ];
+
+    #[inline]
+    fn is_deprecated_type_suppression_code(code: i32) -> bool {
+        Self::SUPPRESSED_TYPE_CODES_FOR_DEPRECATION.contains(&code)
+    }
+
+    #[inline]
+    fn has_deprecation_diagnostics(codes: &[i32]) -> bool {
+        codes.iter().any(|&code| matches!(code, 5101 | 5107))
+    }
+
+    /// Get full semantic diagnostics for a single file (with position info).
+    pub(crate) fn get_semantic_diagnostics_full(
+        &mut self,
+        file_path: &str,
+        content: &str,
+    ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
+        self.get_diagnostics_by_category(file_path, content, DiagnosticCategory::Error)
+    }
+
+    /// Get suggestion diagnostics for a single file.
+    pub(crate) fn get_suggestion_diagnostics(
+        &mut self,
+        file_path: &str,
+        content: &str,
+    ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
+        self.get_diagnostics_by_category(file_path, content, DiagnosticCategory::Suggestion)
+    }
+
+    fn get_diagnostics_by_category(
+        &mut self,
+        file_path: &str,
+        content: &str,
+        category: DiagnosticCategory,
+    ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
+        let mut options = self.inferred_check_options.clone();
+        if self.inferred_module_is_none_for_projects
+            && !self.auto_imports_allowed_for_inferred_projects
+        {
+            options.module = Some("none".to_string());
+        }
+
+        let binding_lib_files = match if options.no_lib {
+            Ok(vec![])
+        } else {
+            self.load_libs_for_binding(&options)
+        } {
+            Ok(libs) => libs,
+            Err(_) => return Vec::new(),
+        };
+        let checker_lib_files = match if options.no_lib {
+            Ok(vec![])
+        } else {
+            self.load_libs_unified(&options)
+        } {
+            Ok(libs) => libs,
+            Err(_) => return Vec::new(),
+        };
+
+        // Client-supplied `open_files` content is never normalized — preserves
+        // tsc-equivalent behavior for paths like `/fourslash.ts`. See #3799.
+        let mut files: Vec<(String, String)> = self
+            .open_files
+            .iter()
+            .map(|(path, raw)| (path.clone(), raw.clone()))
+            .collect();
+        if let Some((_, existing)) = files.iter_mut().find(|(path, _)| path == file_path) {
+            *existing = content.to_string();
+        } else {
+            files.push((file_path.to_string(), content.to_string()));
+        }
+        files.retain(|(path, _)| Self::is_checkable_file(path));
+
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            files,
+            &binding_lib_files,
+        ));
+        let checker_options = self.build_checker_options(&options);
+        let lib_contexts: Vec<LibContext> = checker_lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        let query_cache = QueryCache::new(&program.type_interner);
+
+        let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(
+            program
+                .files
+                .iter()
+                .map(|file| Arc::clone(&file.arena))
+                .collect(),
+        );
+        let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new(
+            program
+                .files
+                .iter()
+                .enumerate()
+                .map(|(file_idx, file)| {
+                    let mut binder =
+                        parallel::create_binder_from_bound_file(file, &program, file_idx);
+                    binder.declaration_arenas = Arc::clone(&program.declaration_arenas);
+                    binder.sym_to_decl_indices = Arc::clone(&program.sym_to_decl_indices);
+                    binder.symbol_arenas = Arc::clone(&program.symbol_arenas);
+                    Arc::new(binder)
+                })
+                .collect(),
+        );
+        let file_names: Vec<String> = program
+            .files
+            .iter()
+            .map(|file| file.file_name.clone())
+            .collect();
+        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+        let resolved_modules_arc = Arc::new(resolved_modules);
+
+        // Build skeleton indices if available (Phase 2 step 2 added the
+        // module-augmentations index, Phase 2 step 3 added the
+        // augmentation-targets index, Phase 2 step 4 added the module-binder
+        // index).
+        let (
+            skeleton_declared_modules,
+            skeleton_expando_index,
+            skeleton_module_augmentations_index,
+            skeleton_augmentation_targets_index,
+            skeleton_module_binder_index,
+            skeleton_module_exports_index,
+        ) = if let Some(ref skel) = program.skeleton_index {
+            let (exact, patterns) = skel.build_declared_module_sets();
+            (
+                Some(Arc::new(
+                    tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
+                )),
+                Some(Arc::clone(&skel.expando_properties)),
+                Some(Arc::new(skel.build_module_augmentations_index(&all_arenas))),
+                Some(Arc::new(skel.build_augmentation_targets_index())),
+                Some(Arc::new(skel.build_module_binder_index())),
+                Some(Arc::new(
+                    skel.build_module_exports_index(&program.module_exports),
+                )),
+            )
+        } else {
+            (None, None, None, None, None, None)
+        };
+
+        let mut program_context = ProgramContext {
+            lib_contexts: std::sync::Arc::new(lib_contexts),
+            all_arenas,
+            all_binders,
+            skeleton_declared_modules,
+            skeleton_expando_index,
+            skeleton_module_augmentations_index,
+            skeleton_augmentation_targets_index,
+            skeleton_module_binder_index,
+            skeleton_module_exports_index,
+            resolved_module_paths: Arc::new(resolved_module_paths),
+            ..Default::default()
+        };
+        program_context.build_global_indices();
+
+        let mut diagnostics: Vec<tsz::checker::diagnostics::Diagnostic> = Vec::new();
+        for (file_idx, file) in program.files.iter().enumerate() {
+            if category == DiagnosticCategory::Error && file.file_name == file_path {
+                diagnostics.extend(file.parse_diagnostics.iter().map(|diag| {
+                    tsz::checker::diagnostics::Diagnostic::error(
+                        file.file_name.clone(),
+                        diag.start,
+                        diag.length,
+                        diag.message.clone(),
+                        diag.code,
+                    )
+                }));
+            }
+
+            let mut checker = CheckerState::new(
+                &file.arena,
+                &program_context.all_binders[file_idx],
+                &query_cache,
+                file.file_name.clone(),
+                checker_options.clone(),
+            );
+
+            program_context.apply_to(&mut checker.ctx);
+            checker
+                .ctx
+                .set_resolved_modules(Arc::clone(&resolved_modules_arc));
+            checker.ctx.set_current_file_idx(file_idx);
+            checker.check_source_file(file.source_file);
+
+            if file.file_name == file_path {
+                diagnostics.extend(
+                    checker
+                        .ctx
+                        .diagnostics
+                        .into_iter()
+                        .filter(|diag| diag.category == category),
+                );
+            }
+        }
+
+        if category == DiagnosticCategory::Error {
+            diagnostics
+                .retain(|diag| !Self::should_suppress_namespace_global_ts2403(diag, content));
+
+            if diagnostics
+                .iter()
+                .any(|diag| matches!(diag.code, 5101 | 5107))
+            {
+                diagnostics
+                    .retain(|diag| !Self::is_deprecated_type_suppression_code(diag.code as i32));
+            }
+        }
+
+        diagnostics
+    }
+
+    fn should_suppress_namespace_global_ts2403(
+        diag: &tsz::checker::diagnostics::Diagnostic,
+        content: &str,
+    ) -> bool {
+        if diag.code
+            != tsz::checker::diagnostics::diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP
+        {
+            return false;
+        }
+
+        let marker = "Variable '";
+        let Some(start) = diag.message_text.find(marker) else {
+            return false;
+        };
+        let tail = &diag.message_text[start + marker.len()..];
+        let Some(end) = tail.find('\'') else {
+            return false;
+        };
+        let name = &tail[..end];
+        if name.is_empty() {
+            return false;
+        }
+
+        let has_ambient_namespace = content.contains("declare namespace");
+        let has_namespace_var = content.contains(&format!("var {name}:"));
+        let has_global_decl = content.contains(&format!("declare var {name}:"));
+        has_ambient_namespace && has_namespace_var && has_global_decl
+    }
+
+    pub(crate) fn handle_tsz_performance(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let body = (|| -> Option<serde_json::Value> {
+            let file = request
+                .arguments
+                .get("file")
+                .and_then(|v| v.as_str())
+                .map(std::string::ToString::to_string)
+                .or_else(|| self.open_files.keys().next().cloned())?;
+
+            let content = request
+                .arguments
+                .get("fileContent")
+                .and_then(|v| v.as_str())
+                .map(std::string::ToString::to_string)
+                .or_else(|| self.open_files.get(&file).cloned())
+                .or_else(|| std::fs::read_to_string(&file).ok())?;
+
+            let mut files = FxHashMap::default();
+            files.insert(file.clone(), content);
+            let result = self.run_check(files, CheckOptions::default()).ok()?;
+            let stats = result.relation_cache_stats;
+
+            let mut payload = serde_json::json!({
+                "file": file,
+                "checksCompleted": self.checks_completed,
+                "errorCount": result.codes.len(),
+                "errorCodes": result.codes,
+                "relationCache": {
+                    "subtypeHits": stats.subtype_hits,
+                    "subtypeMisses": stats.subtype_misses,
+                    "subtypeEntries": stats.subtype_entries,
+                    "assignabilityHits": stats.assignability_hits,
+                    "assignabilityMisses": stats.assignability_misses,
+                    "assignabilityEntries": stats.assignability_entries
+                }
+            });
+
+            if self.enable_telemetry {
+                payload["telemetryEvent"] = serde_json::json!({
+                    "eventName": "tszPerformance",
+                    "relationCache": payload["relationCache"].clone()
+                });
+            }
+
+            Some(payload)
+        })();
+
+        self.success_response(seq, request, body)
+    }
+
+    pub(crate) fn run_check(
+        &mut self,
+        files: FxHashMap<String, String>,
+        options: CheckOptions,
+    ) -> Result<RunCheckResult> {
+        // Two-phase lib loading (matches get_semantic_diagnostics_full):
+        // 1. Individual lib files for binding (proper symbol resolution per-lib)
+        // 2. Unified merged lib for checker (cross-lib type resolution)
+        let binding_lib_files = if options.no_lib {
+            vec![]
+        } else {
+            self.load_libs_for_binding(&options)?
+        };
+        let checker_lib_files = if options.no_lib {
+            vec![]
+        } else {
+            self.load_libs_unified(&options)?
+        };
+
+        let checker_options = self.build_checker_options(&options);
+
+        // Filter checkable files and detect binary content
+        let mut checkable_files: Vec<(String, String)> = Vec::with_capacity(files.len());
+        let mut binary_file_errors: Vec<(String, i32)> = Vec::new();
+
+        for (file_name, content) in files {
+            if !Self::is_checkable_file(&file_name) {
+                continue;
+            }
+            if super::content_appears_binary(&content) {
+                binary_file_errors
+                    .push((file_name.clone(), super::TS1490_FILE_APPEARS_TO_BE_BINARY));
+                continue;
+            }
+            checkable_files.push((file_name, content));
+        }
+
+        // Use the same parse+bind pipeline as get_semantic_diagnostics_full:
+        // parallel::parse_and_bind_parallel_with_libs properly integrates lib
+        // symbols during binding, resolving cross-lib references.
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            checkable_files,
+            &binding_lib_files,
+        ));
+
+        let lib_contexts: Vec<LibContext> = checker_lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: std::sync::Arc::clone(&lib.arena),
+                binder: std::sync::Arc::clone(&lib.binder),
+            })
+            .collect();
+
+        let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(
+            program
+                .files
+                .iter()
+                .map(|file| Arc::clone(&file.arena))
+                .collect(),
+        );
+        let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new(
+            program
+                .files
+                .iter()
+                .enumerate()
+                .map(|(file_idx, file)| {
+                    let mut binder =
+                        parallel::create_binder_from_bound_file(file, &program, file_idx);
+                    binder.declaration_arenas = Arc::clone(&program.declaration_arenas);
+                    binder.sym_to_decl_indices = Arc::clone(&program.sym_to_decl_indices);
+                    binder.symbol_arenas = Arc::clone(&program.symbol_arenas);
+                    Arc::new(binder)
+                })
+                .collect(),
+        );
+
+        let file_names: Vec<String> = program
+            .files
+            .iter()
+            .map(|file| file.file_name.clone())
+            .collect();
+        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+        let resolved_modules_arc = Arc::new(resolved_modules);
+
+        // Build skeleton indices if available (Phase 2 step 2 added the
+        // module-augmentations index, Phase 2 step 3 added the
+        // augmentation-targets index, Phase 2 step 4 added the module-binder
+        // index).
+        let (
+            skeleton_declared_modules,
+            skeleton_expando_index,
+            skeleton_module_augmentations_index,
+            skeleton_augmentation_targets_index,
+            skeleton_module_binder_index,
+            skeleton_module_exports_index,
+        ) = if let Some(ref skel) = program.skeleton_index {
+            let (exact, patterns) = skel.build_declared_module_sets();
+            (
+                Some(Arc::new(
+                    tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
+                )),
+                Some(Arc::clone(&skel.expando_properties)),
+                Some(Arc::new(skel.build_module_augmentations_index(&all_arenas))),
+                Some(Arc::new(skel.build_augmentation_targets_index())),
+                Some(Arc::new(skel.build_module_binder_index())),
+                Some(Arc::new(
+                    skel.build_module_exports_index(&program.module_exports),
+                )),
+            )
+        } else {
+            (None, None, None, None, None, None)
+        };
+
+        let mut program_context = ProgramContext {
+            lib_contexts: std::sync::Arc::new(lib_contexts),
+            all_arenas,
+            all_binders,
+            skeleton_declared_modules,
+            skeleton_expando_index,
+            skeleton_module_augmentations_index,
+            skeleton_augmentation_targets_index,
+            skeleton_module_binder_index,
+            skeleton_module_exports_index,
+            resolved_module_paths: Arc::new(resolved_module_paths),
+            ..Default::default()
+        };
+        program_context.build_global_indices();
+
+        // Type check all files
+        let query_cache = QueryCache::new(&program.type_interner);
+        let mut all_codes: Vec<i32> = Vec::new();
+
+        // Add TS1490 for binary files detected earlier
+        for (_file_name, code) in binary_file_errors {
+            all_codes.push(code);
+        }
+
+        for (file_idx, file) in program.files.iter().enumerate() {
+            // Include parse errors
+            all_codes.extend(file.parse_diagnostics.iter().map(|d| d.code as i32));
+
+            let mut checker = CheckerState::new(
+                &file.arena,
+                &program_context.all_binders[file_idx],
+                &query_cache,
+                file.file_name.clone(),
+                checker_options.clone(),
+            );
+
+            program_context.apply_to(&mut checker.ctx);
+            checker
+                .ctx
+                .set_resolved_modules(Arc::clone(&resolved_modules_arc));
+            checker.ctx.set_current_file_idx(file_idx);
+            checker.check_source_file(file.source_file);
+
+            for diag in &checker.ctx.diagnostics {
+                if diag.category == DiagnosticCategory::Error {
+                    all_codes.push(diag.code as i32);
+                }
+            }
+        }
+
+        if Self::has_deprecation_diagnostics(&all_codes) {
+            all_codes.retain(|code| !Self::is_deprecated_type_suppression_code(*code));
+        }
+
+        Ok(RunCheckResult {
+            codes: all_codes,
+            relation_cache_stats: query_cache.relation_cache_stats(),
+        })
+    }
+
+    /// Load libs with unified symbol merging.
+    ///
+    /// This method implements **cumulative binding** to solve cross-lib symbol resolution:
+    /// 1. Loads libs in dependency order using the old method (each with its own binder)
+    /// 2. Creates a unified merged binder from all lib binders
+    /// 3. Returns a single `LibFile` with the merged binder
+    ///
+    /// This allows proper cross-lib type resolution (e.g., `Array` from es5 visible in dom).
+    pub(crate) fn load_libs_for_binding(
+        &mut self,
+        options: &CheckOptions,
+    ) -> Result<Vec<Arc<LibFile>>> {
+        let lib_paths = if let Some(ref libs) = options.lib {
+            resolve_lib_files_from_dir(libs, &self.lib_dir)
+        } else {
+            resolve_default_lib_files_from_dir(Self::parse_target(&options.target), &self.lib_dir)
+        };
+        let lib_paths = match lib_paths {
+            Ok(paths) => paths,
+            Err(_) => {
+                let lib_names = self.determine_libs(options);
+                if lib_names.is_empty() {
+                    return Ok(vec![]);
+                }
+
+                let mut lib_files = Vec::new();
+                let mut loaded = rustc_hash::FxHashSet::default();
+                for lib_name in &lib_names {
+                    self.load_lib_recursive(lib_name, &mut lib_files, &mut loaded)?;
+                }
+                return Ok(lib_files);
+            }
+        };
+        if lib_paths.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let lib_refs: Vec<&std::path::Path> = lib_paths.iter().map(|path| path.as_path()).collect();
+        parallel::load_lib_files_for_binding_strict(&lib_refs)
+    }
+
+    pub(crate) fn load_libs_unified(
+        &mut self,
+        options: &CheckOptions,
+    ) -> Result<Vec<Arc<LibFile>>> {
+        let mut lib_names = self.determine_libs(options);
+        if lib_names.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Sort for deterministic cache key
+        lib_names.sort();
+
+        // Check cache first
+        if let Some((cached_names, cached_lib)) = &self.unified_lib_cache
+            && *cached_names == lib_names
+        {
+            return Ok(vec![std::sync::Arc::clone(cached_lib)]);
+        }
+
+        // Phase 1: Load all libs normally (each with its own binder)
+        let mut lib_files = Vec::new();
+        let mut loaded = rustc_hash::FxHashSet::default();
+        for lib_name in &lib_names {
+            self.load_lib_recursive(lib_name, &mut lib_files, &mut loaded)?;
+        }
+
+        if lib_files.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Phase 2: Create LibContexts from all loaded libs
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+
+        // Phase 3: Create a unified binder by merging ALL lib binders
+        // This is the key fix - we merge symbols from all libs into a single binder
+        // so cross-lib references (e.g., Array in dom.d.ts from es5.d.ts) are resolved
+        let mut unified_binder = BinderState::new();
+        unified_binder.merge_lib_contexts_into_binder(&lib_contexts);
+
+        // Phase 4: Create a unified LibFile
+        // Use the first arena as representative (the unified binder tracks symbol_arenas)
+        let unified_arena = lib_files.first().map_or_else(
+            || Arc::new(tsz::parser::node::NodeArena::new()),
+            |lib| Arc::clone(&lib.arena),
+        );
+
+        let unified_root = lib_files
+            .first()
+            .map(|f| f.root_index)
+            .unwrap_or(tsz::parser::NodeIndex(0));
+        let unified_lib = Arc::new(LibFile::new(
+            "unified-libs".to_string(),
+            unified_arena,
+            Arc::new(unified_binder),
+            unified_root,
+        ));
+
+        // Cache the result
+        self.unified_lib_cache = Some((lib_names, std::sync::Arc::clone(&unified_lib)));
+
+        Ok(vec![unified_lib])
+    }
+
+    /// Normalize lib name aliases to their canonical form.
+    /// IMPORTANT: lib.es6.d.ts and lib.es2015.d.ts are DIFFERENT files:
+    /// - lib.es6.d.ts includes ES2015 + DOM (for web targets)
+    /// - lib.es2015.d.ts includes ES2015 ONLY (for non-web targets)
+    ///
+    /// For conformance tests (web targets), we MUST use "es6" to get DOM types.
+    /// TypeScript's libMap (in commandLineParser.ts) maps short names to actual lib files.
+    ///
+    /// lib name mapping:
+    /// - es6 -> es6 (NOT es2015! lib.es6.d.ts includes DOM)
+    /// - es7 -> es2016
+    /// - lib -> es5 (the default lib.d.ts)
+    /// - dom -> dom.generated (TypeScript source uses .generated suffix)
+    pub(crate) fn normalize_lib_alias(name: &str) -> String {
+        match name.to_lowercase().trim() {
+            // ES version aliases
+            // NOTE: Do NOT map "es6" to "es2015" - they are different files!
+            // lib.es6.d.ts = ES2015 + DOM (web)
+            // lib.es2015.d.ts = ES2015 only (non-web)
+            "es6" => "es6".to_string(),
+            "es7" => "es2016".to_string(),
+            // lib.d.ts is equivalent to es5
+            "lib" | "lib.d.ts" => "es5".to_string(),
+            // DOM aliases - TypeScript source uses .generated suffix
+            "dom" => "dom.generated".to_string(),
+            "dom.iterable" => "dom.iterable.generated".to_string(),
+            "dom.asynciterable" => "dom.asynciterable.generated".to_string(),
+            // Full lib aliases (e.g., "lib.es6.d.ts" -> "es6")
+            s if s.starts_with("lib.") && s.ends_with(".d.ts") => {
+                let inner = &s[4..s.len() - 5]; // Extract between "lib." and ".d.ts"
+                Self::normalize_lib_alias(inner)
+            }
+            // Pass through others unchanged
+            other => other.to_string(),
+        }
+    }
+
+    pub(crate) fn load_lib_recursive(
+        &mut self,
+        lib_name: &str,
+        result: &mut Vec<Arc<LibFile>>,
+        loaded: &mut rustc_hash::FxHashSet<String>,
+    ) -> Result<()> {
+        // Apply lib aliasing (es6 -> es2015, es7 -> es2016, etc.)
+        let aliased = Self::normalize_lib_alias(lib_name);
+        let normalized = aliased.trim().to_lowercase();
+        if loaded.contains(&normalized) {
+            return Ok(());
+        }
+        loaded.insert(normalized.clone());
+
+        if let Some((lib, references)) = self.lib_cache.get(&normalized) {
+            let lib_clone = std::sync::Arc::clone(lib);
+            let refs = references.clone();
+            for ref_lib in &refs {
+                self.load_lib_recursive(ref_lib, result, loaded)?;
+            }
+            result.push(lib_clone);
+            return Ok(());
+        }
+
+        let candidates = [
+            self.lib_dir.join(format!("{normalized}.d.ts")),
+            self.lib_dir.join(format!("lib.{normalized}.d.ts")),
+            self.tests_lib_dir.join(format!("{normalized}.d.ts")),
+        ];
+
+        for candidate in &candidates {
+            if candidate.exists() {
+                let content = std::fs::read_to_string(candidate)
+                    .with_context(|| format!("failed to read lib file: {}", candidate.display()))?;
+                let references = Self::parse_lib_references(&content);
+                for ref_lib in &references {
+                    self.load_lib_recursive(ref_lib, result, loaded)?;
+                }
+
+                let file_name = candidate.file_name().map_or_else(
+                    || format!("lib.{normalized}.d.ts"),
+                    |s| s.to_string_lossy().to_string(),
+                );
+                let mut parser = ParserState::new(file_name.clone(), content);
+                let root_idx = parser.parse_source_file();
+                let mut binder = BinderState::new();
+                binder.bind_source_file(parser.get_arena(), root_idx);
+
+                let lib = Arc::new(LibFile::new(
+                    file_name,
+                    Arc::new(parser.into_arena()),
+                    Arc::new(binder),
+                    root_idx,
+                ));
+
+                // Cap lib_cache size to prevent unbounded growth
+                const MAX_LIB_CACHE_ENTRIES: usize = 50;
+                if self.lib_cache.len() >= MAX_LIB_CACHE_ENTRIES {
+                    // Clear cache if it gets too large
+                    self.lib_cache.clear();
+                    // Also clear unified cache as it depends on lib_cache
+                    self.unified_lib_cache = None;
+                }
+
+                self.lib_cache.insert(
+                    normalized,
+                    (std::sync::Arc::clone(&lib), references.clone()),
+                );
+                result.push(lib);
+                return Ok(());
+            }
+        }
+
+        // No embedded libs fallback - lib files must be on disk (matching tsgo behavior)
+        // Users need TypeScript installed or TSZ_LIB_DIR set
+        Ok(())
+    }
+
+    pub(crate) fn parse_lib_references(content: &str) -> Vec<String> {
+        let mut refs = Vec::new();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("///") {
+                continue;
+            }
+            if let Some(start) = trimmed.find("<reference") {
+                let rest = &trimmed[start..];
+                if let Some(lib_start) = rest.find("lib=") {
+                    let after_lib = &rest[lib_start + 4..];
+                    let quote = after_lib.chars().next();
+                    if quote == Some('"') || quote == Some('\'') {
+                        let quote_char = quote
+                            .expect("guarded by quote == Some('\"') || quote == Some('\\'') check");
+                        let value_start = 1;
+                        if let Some(end) = after_lib[value_start..].find(quote_char) {
+                            let lib_name = &after_lib[value_start..value_start + end];
+                            refs.push(lib_name.trim().to_lowercase());
+                        }
+                    }
+                }
+            }
+        }
+        refs
+    }
+
+    pub(crate) fn determine_libs(&self, options: &CheckOptions) -> Vec<String> {
+        if options.no_lib {
+            return vec![];
+        }
+        if let Some(ref libs) = options.lib {
+            libs.iter().map(|s| s.trim().to_lowercase()).collect()
+        } else {
+            let target = Self::parse_target(&options.target);
+            let default_lib = default_lib_name_for_target(target);
+            vec![default_lib.to_string()]
+        }
+    }
+
+    /// Returns true if the file has a TypeScript or JavaScript extension that
+    /// should be parsed and type-checked. Non-source files (.json, .txt, etc.)
+    /// that appear in multi-file test fixtures should be skipped.
+    pub(crate) fn is_checkable_file(file_name: &str) -> bool {
+        let lower = file_name.to_lowercase();
+        // Order: most common extensions first for early return
+        lower.ends_with(".ts")
+            || lower.ends_with(".tsx")
+            || lower.ends_with(".js")
+            || lower.ends_with(".jsx")
+            || lower.ends_with(".mts")
+            || lower.ends_with(".cts")
+            || lower.ends_with(".mjs")
+            || lower.ends_with(".cjs")
+    }
+
+    pub(crate) fn parse_target(target: &Option<String>) -> ScriptTarget {
+        match target.as_deref() {
+            Some(value) => value
+                .parse::<u32>()
+                .ok()
+                .and_then(ScriptTarget::from_ts_numeric)
+                .or_else(|| ScriptTarget::from_ts_str(value))
+                .unwrap_or(ScriptTarget::ESNext),
+            None => ScriptTarget::ES5,
+        }
+    }
+
+    pub(crate) fn parse_module(module: &Option<String>) -> ModuleKind {
+        match module.as_deref() {
+            Some(value) => value
+                .parse::<u32>()
+                .ok()
+                .and_then(ModuleKind::from_ts_numeric)
+                .or_else(|| ModuleKind::from_ts_str(value))
+                .unwrap_or(ModuleKind::None),
+            None => ModuleKind::CommonJS,
+        }
+    }
+
+    pub(crate) fn build_checker_options(&self, options: &CheckOptions) -> CheckerOptions {
+        let emitter_target = Self::parse_target(&options.target);
+        let checker_target = checker_target_from_emitter(emitter_target);
+
+        // Note: We don't use CheckerOptions::default() as a base here.
+        // When strict is explicitly set (true or false), all strict-family flags
+        // that are not explicitly set should inherit from strict's value.
+        // This matches tsc behavior where @strict: false disables all strict checks.
+        // Only use defaults for flags that are truly not specified.
+
+        CheckerOptions {
+            strict: options.strict,
+            strict_null_checks: options.strict_null_checks.unwrap_or(options.strict),
+            strict_function_types: options.strict_function_types.unwrap_or(options.strict),
+            strict_bind_call_apply: options.strict_bind_call_apply.unwrap_or(options.strict),
+            strict_property_initialization: options
+                .strict_property_initialization
+                .unwrap_or(options.strict),
+            no_implicit_any: options.no_implicit_any.unwrap_or(options.strict),
+            no_implicit_this: options.no_implicit_this.unwrap_or(options.strict),
+            no_implicit_returns: options.no_implicit_returns,
+            exact_optional_property_types: options.exact_optional_property_types,
+            no_unchecked_indexed_access: options.no_unchecked_indexed_access,
+            use_unknown_in_catch_variables: options
+                .use_unknown_in_catch_variables
+                .unwrap_or(options.strict),
+            isolated_modules: options.isolated_modules,
+            no_lib: options.no_lib,
+            no_types_and_symbols: false,
+            types_explicitly_set: false,
+            target: checker_target,
+            module: Self::parse_module(&options.module),
+            es_module_interop: options.es_module_interop,
+            allow_synthetic_default_imports: options
+                .allow_synthetic_default_imports
+                .unwrap_or(options.es_module_interop),
+            allow_unreachable_code: options.allow_unreachable_code,
+            allow_unused_labels: options.allow_unused_labels,
+            no_property_access_from_index_signature: options
+                .no_property_access_from_index_signature,
+            sound_mode: false, // Sound mode not yet exposed in server protocol
+            sound_check_declarations: false,
+            sound_report_only: false,
+            sound_pedantic: false,
+            experimental_decorators: options.experimental_decorators,
+            no_unused_locals: options.no_unused_locals,
+            no_unused_parameters: options.no_unused_parameters,
+            always_strict: options.always_strict.unwrap_or(options.strict),
+            resolve_json_module: options.resolve_json_module,
+            check_js: options.check_js,
+            allow_js: options.allow_js,
+            no_resolve: options.no_resolve,
+            isolated_declarations: options.isolated_declarations,
+            emit_declarations: options.declaration,
+            no_unchecked_side_effect_imports: options.no_unchecked_side_effect_imports,
+            no_implicit_override: options.no_implicit_override,
+            downlevel_iteration: options.downlevel_iteration,
+            jsx_factory: "React.createElement".to_string(),
+            jsx_factory_from_config: false,
+            jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_fragment_factory_from_config: false,
+            jsx_mode: options
+                .jsx
+                .as_deref()
+                .and_then(tsz::config::jsx_string_to_mode)
+                .unwrap_or_default(),
+            module_explicitly_set: options.module.is_some(),
+            suppress_excess_property_errors: false,
+            suppress_implicit_any_index_errors: false,
+            no_implicit_use_strict: false,
+            // Issue #3579: route server-protocol options that were previously
+            // hardcoded to `false` so the legacy `check` request matches the
+            // CLI/checker behavior for the same options.
+            allow_importing_ts_extensions: options.allow_importing_ts_extensions,
+            rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
+            implied_classic_resolution: options
+                .module_resolution
+                .as_deref()
+                .and_then(tsz::config::ModuleResolutionKind::from_ts_str)
+                .is_some_and(|r| r == tsz::config::ModuleResolutionKind::Classic),
+            jsx_import_source: options
+                .jsx_import_source
+                .as_deref()
+                .unwrap_or_default()
+                .to_owned(),
+            verbatim_module_syntax: options.verbatim_module_syntax,
+            ignore_deprecations: false,
+            allow_umd_global_access: options.allow_umd_global_access,
+            preserve_const_enums: options.preserve_const_enums,
+            strict_builtin_iterator_return: options
+                .strict_builtin_iterator_return
+                .unwrap_or(options.strict),
+            erasable_syntax_only: options.erasable_syntax_only,
+            no_fallthrough_cases_in_switch: options.no_fallthrough_cases_in_switch,
+        }
+    }
+}

@@ -1,0 +1,874 @@
+//! Tests for TS2693 (type-only as value) and TS2362/TS2363 (arithmetic operand errors)
+
+use crate::context::{CheckerOptions, ScriptTarget};
+use crate::test_utils::{
+    diagnostic_count, diagnostic_count_where, diagnostics_with_code, has_diagnostic_code,
+    has_diagnostic_code_message, has_diagnostic_message,
+};
+
+#[test]
+fn test_interface_used_as_value() {
+    let source = r"
+interface Foo {
+    a: number;
+}
+const x = new Foo();
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit TS2693 for using interface as value
+    let ts2693_count = diagnostic_count(&diags, 2693);
+    assert!(
+        ts2693_count >= 1,
+        "Expected at least 1 TS2693 error, got {ts2693_count}"
+    );
+}
+
+#[test]
+fn test_type_alias_used_as_value() {
+    let source = r"
+type Foo = {
+    a: number;
+};
+const x = new Foo();
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit TS2693 for using type alias as value
+    let ts2693_count = diagnostic_count(&diags, 2693);
+    assert!(
+        ts2693_count >= 1,
+        "Expected at least 1 TS2693 error, got {ts2693_count}"
+    );
+}
+
+/// For `number[]` parse-recovery, tsc only emits TS1011 (missing element access argument),
+/// NOT TS2693. The parse error is sufficient — no need for a semantic "type used as value" error.
+#[test]
+fn test_primitive_array_type_recovery_no_ts2693() {
+    let source = r"
+var results = number[];
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let ts2693_count = diagnostic_count(&diags, 2693);
+    assert!(
+        ts2693_count == 0,
+        "Should NOT emit TS2693 for `number[]` parse-recovery (TS1011 is sufficient), got {ts2693_count}"
+    );
+}
+
+#[test]
+fn test_string_subtraction_emits_ts2362() {
+    let source = r#"
+const str = "hello";
+const result = str - 5;
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit TS2362 for left-hand side of - operation
+    let ts2362_count = diagnostic_count(&diags, 2362);
+    assert!(
+        ts2362_count >= 1,
+        "Expected at least 1 TS2362 error, got {ts2362_count}"
+    );
+}
+
+#[test]
+fn test_boolean_multiplication_emits_ts2362() {
+    let source = r"
+const flag = true;
+const result = flag * 10;
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit TS2362 for left-hand side of * operation
+    let ts2362_count = diagnostic_count(&diags, 2362);
+    assert!(
+        ts2362_count >= 1,
+        "Expected at least 1 TS2362 error, got {ts2362_count}"
+    );
+}
+
+#[test]
+fn test_number_divided_by_string_emits_ts2363() {
+    let source = r#"
+const num = 10;
+const str = "hello";
+const result = num / str;
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit TS2363 for right-hand side of / operation
+    let ts2363_count = diagnostic_count(&diags, 2363);
+    assert!(
+        ts2363_count >= 1,
+        "Expected at least 1 TS2363 error, got {ts2363_count}"
+    );
+}
+
+#[test]
+fn test_arithmetic_on_non_numeric_types() {
+    let source = r"
+const obj = { a: 1 };
+const arr = [1, 2, 3];
+const r1 = obj - 1;  // TS2362
+const r2 = 10 * arr;  // TS2363
+const r3 = obj % 2;  // TS2362
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit multiple TS2362 and TS2363 errors
+    let ts2362_count = diagnostic_count(&diags, 2362);
+    let ts2363_count = diagnostic_count(&diags, 2363);
+
+    assert!(
+        ts2362_count >= 2,
+        "Expected at least 2 TS2362 errors, got {ts2362_count}"
+    );
+    assert!(
+        ts2363_count >= 1,
+        "Expected at least 1 TS2363 error, got {ts2363_count}"
+    );
+}
+
+#[test]
+fn test_valid_arithmetic_no_errors() {
+    let source = r"
+const a = 10;
+const b = 5;
+const r1 = a + b;  // OK - number addition
+const r2 = a - b;  // OK - number subtraction
+const r3 = a * b;  // OK - number multiplication
+const r4 = a / b;  // OK - number division
+const r5 = a % b;  // OK - number modulo
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should not emit TS2362 or TS2363 for valid arithmetic
+    let error_count = diagnostic_count_where(&diags, |code| code == 2362 || code == 2363);
+    assert_eq!(
+        error_count, 0,
+        "Expected no TS2362/TS2363 errors, got {error_count}"
+    );
+}
+
+#[test]
+fn test_for_of_unknown_expression_emits_ts18046() {
+    let source = r"
+declare const value: unknown;
+
+for (const item of value) {
+    item.foo;
+}
+";
+    let diags = crate::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_diagnostic_code_message(&diags, 18046, "'value' is of type 'unknown'"),
+        "Expected TS18046 for the for-of source expression, got {diags:?}"
+    );
+    assert!(
+        !has_diagnostic_message(&diags, "'item' is of type 'unknown'"),
+        "Expected no cascaded TS18046 on the recovered loop variable, got {diags:?}"
+    );
+}
+
+#[test]
+fn test_for_of_variable_type_annotation_emits_ts2322() {
+    let source = r"
+const numbers = [1, 2, 3];
+for (const x: string of numbers) {
+    // Should emit TS2322: number is not assignable to string
+}
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit TS2322 for for-of variable with incompatible type annotation
+    let ts2322_count = diagnostic_count(&diags, 2322);
+    assert!(
+        ts2322_count >= 1,
+        "Expected at least 1 TS2322 error, got {ts2322_count}"
+    );
+}
+
+#[test]
+fn test_for_of_variable_compatible_type_no_error() {
+    let source = r"
+const numbers = [1, 2, 3];
+for (const x: number of numbers) {
+    // OK - number is assignable to number
+}
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should not emit TS2322 for compatible types
+    let ts2322_count = diagnostic_count(&diags, 2322);
+    assert_eq!(
+        ts2322_count, 0,
+        "Expected no TS2322 errors, got {ts2322_count}"
+    );
+}
+
+#[test]
+fn test_type_import_used_as_value() {
+    // Test that type-only imports emit TS1361 when used as values
+    // Note: In single-file mode, the imported module doesn't exist, so the
+    // binder may not fully resolve the symbol. This test verifies that when
+    // the symbol IS resolved, TS1361 is emitted instead of TS2693.
+    let source = r"
+import type { Foo } from './foo';
+const x = new Foo();  // TS1361: Foo cannot be used as a value because it was imported using 'import type'
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // In single-file mode, either TS1361 (type-only import as value) or
+    // TS2693 (type used as value) should be emitted, depending on symbol resolution
+    let type_value_error_count =
+        diagnostic_count_where(&diags, |code| code == 1361 || code == 2693);
+    assert!(
+        type_value_error_count > 0 || {
+            // Acceptable if no error when module can't be resolved in single-file mode
+            has_diagnostic_code(&diags, 2307)
+        },
+        "Expected TS1361/TS2693 or TS2307 (module not found), got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_interface_property_access_emits_ts18050() {
+    // Test accessing interface as if it were an object with properties
+    let source = r"
+interface MyInterface {
+    prop: string;
+}
+const x = MyInterface.prop;  // TS2693: MyInterface only refers to a type
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit TS2693 for using interface as value
+    let ts2693_count = diagnostic_count(&diags, 2693);
+    assert!(
+        ts2693_count >= 1,
+        "Expected at least 1 TS2693 error for interface property access, got {ts2693_count}"
+    );
+}
+
+#[test]
+fn test_exponentiation_with_string_emits_ts2362() {
+    // Test ** operator with string operand
+    let source = r#"
+const base = "2";
+const exp = 3;
+const result = base ** exp;  // TS2362: base is string, not number
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit TS2362 for string operand in **
+    let ts2362_count = diagnostic_count(&diags, 2362);
+    assert!(
+        ts2362_count >= 1,
+        "Expected at least 1 TS2362 error for exponentiation, got {ts2362_count}"
+    );
+}
+
+#[test]
+fn test_bitwise_operations_with_invalid_operands() {
+    // Test bitwise operators (&, |, ^, <<, >>, >>>) with non-integer types
+    let source = r#"
+const str = "test";
+const obj = { a: 1 };
+const r1 = str & 5;      // TS2362
+const r2 = 10 | obj;     // TS2363
+const r3 = obj ^ 2;      // TS2362
+const r4 = 5 << str;     // TS2363
+const r5 = str >> 1;     // TS2362
+const r6 = 10 >>> obj;   // TS2363
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit multiple TS2362 and TS2363 errors
+    let ts2362_count = diagnostic_count(&diags, 2362);
+    let ts2363_count = diagnostic_count(&diags, 2363);
+
+    assert!(
+        ts2362_count >= 3,
+        "Expected at least 3 TS2362 errors for bitwise operations, got {ts2362_count}"
+    );
+    assert!(
+        ts2363_count >= 3,
+        "Expected at least 3 TS2363 errors for bitwise operations, got {ts2363_count}"
+    );
+}
+
+#[test]
+fn test_string_plus_number_no_error() {
+    // Test that string + number is valid (string concatenation)
+    let source = r#"
+const str = "hello";
+const num = 42;
+const result = str + num;  // OK: string concatenation
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should not emit TS2362/TS2363 for string + number (valid concatenation)
+    let error_count = diagnostic_count_where(&diags, |code| code == 2362 || code == 2363);
+    assert_eq!(
+        error_count, 0,
+        "Expected no TS2362/TS2363 errors for string + number, got {error_count}"
+    );
+}
+
+#[test]
+fn test_enum_arithmetic_valid() {
+    // Test that enum members can be used in arithmetic
+    let source = r"
+enum MyEnum {
+    A = 0,
+    B = 1,
+    C = 2,
+}
+const result = MyEnum.A + MyEnum.B;  // OK: enum arithmetic is valid
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should not emit TS2362/TS2363 for enum arithmetic
+    let error_count = diagnostic_count_where(&diags, |code| code == 2362 || code == 2363);
+    assert_eq!(
+        error_count, 0,
+        "Expected no TS2362/TS2363 errors for enum arithmetic, got {error_count}"
+    );
+}
+
+#[test]
+fn test_null_property_access_emits_ts18050() {
+    // Test accessing property on null literal - should emit TS18050
+    let source = r"
+const x = null.toString();  // TS18050: The value 'null' cannot be used here.
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit TS18050 for null.toString()
+    let ts18050_count = diagnostic_count(&diags, 18050);
+    assert!(
+        ts18050_count >= 1,
+        "Expected at least 1 TS18050 error for null property access, got {ts18050_count}"
+    );
+}
+
+#[test]
+fn test_undefined_property_access_emits_ts18050() {
+    // Test accessing property on undefined - should emit TS18050
+    let source = r"
+const x = undefined.toString();  // TS18050: The value 'undefined' cannot be used here.
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit TS18050 for undefined.toString()
+    let ts18050_count = diagnostic_count(&diags, 18050);
+    assert!(
+        ts18050_count >= 1,
+        "Expected at least 1 TS18050 error for undefined property access, got {ts18050_count}"
+    );
+}
+
+#[test]
+fn test_string_string_subtraction_emits_ts2362() {
+    // Test string - string should emit TS2362
+    let source = r#"
+const a = "hello";
+const b = "world";
+const result = a - b;  // TS2362: left-hand side must be number/bigint/any/enum
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should emit TS2362 for string - string
+    let ts2362_count = diagnostic_count(&diags, 2362);
+    assert!(
+        ts2362_count >= 1,
+        "Expected at least 1 TS2362 error for string subtraction, got {ts2362_count}"
+    );
+}
+
+#[test]
+fn test_never_type_property_access_no_error() {
+    // In TSC, property access on `never` returns `never` without any error.
+    // `never` is the bottom type — accessing properties on it is valid because
+    // it represents unreachable code (exhaustive narrowing patterns).
+    let source = r"
+function test(x: never) {
+    const y = x.toString();
+}
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // TSC does NOT emit TS18050 for property access on never — it returns never
+    let ts18050_count = diagnostic_count(&diags, 18050);
+    assert_eq!(
+        ts18050_count, 0,
+        "Property access on never should NOT emit TS18050 (TSC returns never silently)"
+    );
+}
+
+#[test]
+fn test_never_type_call_no_error() {
+    // In TSC, calling `never` returns `never` without any error.
+    let source = r"
+function test(x: never) {
+    const y = x();
+}
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // TSC does NOT emit TS18050 for calling never — it returns never
+    let ts18050_count = diagnostic_count(&diags, 18050);
+    assert_eq!(
+        ts18050_count, 0,
+        "Calling never should NOT emit TS18050 (TSC returns never silently)"
+    );
+}
+
+#[test]
+fn test_array_object_prototype_properties() {
+    // Arrays should have access to Object.prototype properties like constructor,
+    // valueOf, hasOwnProperty, etc. (through Array<T> → Object prototype chain)
+    let source = r#"
+var arr: number[] = [1, 2, 3];
+arr.constructor;
+arr.valueOf();
+arr.hasOwnProperty("length");
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    // Should have no TS2339 errors — these properties exist on Object.prototype
+    let ts2339_count = diagnostic_count(&diags, 2339);
+    assert!(
+        ts2339_count == 0,
+        "Expected no TS2339 errors for array Object.prototype properties, got {ts2339_count}"
+    );
+}
+
+#[test]
+fn test_shorthand_property_missing_value_emits_ts18004() {
+    let source = r"
+const make = () => {
+    return { arguments };
+};
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let ts18004_count = diagnostic_count(&diags, 18004);
+    assert!(
+        ts18004_count >= 1,
+        "Expected TS18004 for missing shorthand property value, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_invalid_shorthand_property_default_anchors_ts1312_on_equals() {
+    let source = "let a = { s = 5 };\n";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+    let ts1312 = diagnostics_with_code(&diags, 1312);
+
+    assert_eq!(
+        ts1312.len(),
+        1,
+        "Expected one TS1312 for invalid shorthand default, got diagnostics: {diags:?}"
+    );
+    assert_eq!(
+        ts1312[0].start,
+        source.rfind('=').expect("source contains equals") as u32,
+        "TS1312 should anchor on the recovered equals token, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_js_shorthand_assignment_argument_emits_ts18004_without_duplicate_ts2304() {
+    let source = r"
+function Test({ b = '' } = {}) {}
+
+Test(({ b = '5' } = {}));
+";
+    let diags = crate::test_utils::check_source(
+        source,
+        "test.js",
+        crate::context::CheckerOptions {
+            check_js: true,
+            ..crate::context::CheckerOptions::default()
+        },
+    );
+
+    let ts18004_count = diagnostic_count(&diags, 18004);
+    let ts2304_count = diagnostic_count(&diags, 2304);
+
+    assert_eq!(
+        ts18004_count, 1,
+        "Expected exactly one TS18004 for missing shorthand property value, got diagnostics: {diags:?}"
+    );
+    assert_eq!(
+        ts2304_count, 0,
+        "Expected no duplicate TS2304 alongside TS18004 for shorthand assignment in JS, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_unknown_property_access_emits_ts18046_with_strict() {
+    let source = r"
+function f(x: unknown) {
+    x.foo;
+    x['p'];
+}
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let ts18046_count = diagnostic_count(&diags, 18046);
+    assert!(
+        ts18046_count >= 2,
+        "Expected at least 2 TS18046 for property/element access on unknown, got {ts18046_count}. Diagnostics: {diags:?}"
+    );
+    // Should NOT emit TS2339 for unknown type accesses
+    let ts2339_count = diagnostic_count(&diags, 2339);
+    assert_eq!(
+        ts2339_count, 0,
+        "Expected no TS2339 for unknown property access (should be TS18046), got {ts2339_count}"
+    );
+}
+
+#[test]
+fn test_unknown_property_access_emits_ts2339_and_ts7053_without_strict() {
+    let source = r"
+function f(x: unknown) {
+    x.foo;
+    x['p'];
+}
+";
+    let diags = crate::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict_null_checks: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts18046_count = diagnostic_count(&diags, 18046);
+    assert_eq!(ts18046_count, 0);
+    let ts2339_count = diagnostic_count(&diags, 2339);
+    assert!(
+        ts2339_count >= 1,
+        "Expected TS2339 for x.foo without strictNullChecks, got {ts2339_count}. Diagnostics: {diags:?}"
+    );
+    let ts7053_count = diagnostic_count(&diags, 7053);
+    assert!(
+        ts7053_count >= 1,
+        "Expected TS7053 for x['p'] without strictNullChecks, got {ts7053_count}. Diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_namespace_import_unknown_does_not_emit_ts18046() {
+    let source = r#"
+import * as ns from "./missing";
+ns.foo.bar();
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let ts18046_count = diagnostic_count(&diags, 18046);
+    assert_eq!(
+        ts18046_count, 0,
+        "Expected no TS18046 for namespace import access fallback, got diagnostics: {diags:?}"
+    );
+}
+
+// NOTE: TS18046 for calls, binary ops, and unary ops on unknown is deferred.
+// Our type system sometimes resolves non-unknown types (e.g., iterator values,
+// unresolved imports) as TypeId::UNKNOWN. Adding TS18046 in those paths causes
+// false positives. Property access TS18046 is safe because it replaces existing
+// TS2339 errors (wrong code → correct code), so no tests flip from pass to fail.
+
+#[test]
+fn test_for_await_no_ts1103_ts1431_ts1432() {
+    // tsc 6.0 no longer emits TS1103/TS1431/TS1432 for `for await` statements.
+    // Top-level `for await` and `for await` in non-async functions are accepted.
+    // Only TS18038 (for-await in class static blocks) is still emitted.
+    let source = r#"
+async function ok() {
+    let y: any;
+    for await (const x of y) {}
+}
+function notAsync() {
+    let y: any;
+    for await (const x of y) {}
+}
+for await (const x of []) {}
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let obsolete_count = diagnostic_count_where(&diags, |code| matches!(code, 1103 | 1431 | 1432));
+    assert!(
+        obsolete_count == 0,
+        "Expected no TS1103/TS1431/TS1432 (obsolete in tsc 6.0), got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_literal_undefined_in_binary_op_emits_ts18050() {
+    // When the literal `undefined` keyword is used in a binary operation,
+    // tsc emits TS18050 "The value 'undefined' cannot be used here."
+    let source = r"
+var r = undefined + 1;
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let ts18050_count = diagnostic_count(&diags, 18050);
+    assert!(
+        ts18050_count >= 1,
+        "Expected TS18050 for literal `undefined` in binary op, got {ts18050_count}"
+    );
+
+    // Should NOT emit TS18048 for literal undefined
+    let ts18048_count = diagnostic_count(&diags, 18048);
+    assert_eq!(
+        ts18048_count, 0,
+        "Should not emit TS18048 for literal `undefined`; expected TS18050"
+    );
+}
+
+#[test]
+fn test_variable_with_undefined_type_in_binary_op_emits_ts18048() {
+    // When a variable whose type is `undefined` is used in a binary operation,
+    // tsc emits TS18048 "'x' is possibly 'undefined'." (not TS18050).
+    let source = r"
+var x: typeof undefined;
+var r = x < 1;
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let ts18048_count = diagnostic_count(&diags, 18048);
+    assert!(
+        ts18048_count >= 1,
+        "Expected TS18048 for variable with undefined type in binary op, got {ts18048_count}"
+    );
+
+    // Should NOT emit TS18050 for a variable (only for the literal keyword)
+    let ts18050_count = diagnostic_count(&diags, 18050);
+    assert_eq!(
+        ts18050_count, 0,
+        "Should not emit TS18050 for variable with undefined type; expected TS18048"
+    );
+}
+
+#[test]
+fn test_union_with_undefined_in_binary_op_prefers_ts18048_over_ts2365() {
+    let source = r"
+let x: number | undefined = Math.random() ? 1 : undefined;
+let r = x < 1;
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let ts18048_count = diagnostic_count(&diags, 18048);
+    assert!(
+        ts18048_count >= 1,
+        "Expected TS18048 for `number | undefined` operand, got diagnostics: {diags:?}"
+    );
+
+    let ts2365_count = diagnostic_count(&diags, 2365);
+    assert_eq!(
+        ts2365_count, 0,
+        "Should suppress TS2365 when TS18048 is emitted, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_optional_property_chain_in_binary_op_uses_ts18048_name() {
+    let source = r"
+declare const item: { id?: number };
+let r = item.id < 5;
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        has_diagnostic_code(&diags, 18048),
+        "Expected TS18048 for optional property comparison, got diagnostics: {diags:?}"
+    );
+
+    let has_item_dot_id_message =
+        has_diagnostic_code_message(&diags, 18048, "'item.id' is possibly 'undefined'.");
+    assert!(
+        has_item_dot_id_message,
+        "Expected TS18048 message for 'item.id', got diagnostics: {diags:?}"
+    );
+
+    let ts2365_count = diagnostic_count(&diags, 2365);
+    assert_eq!(
+        ts2365_count, 0,
+        "Should suppress TS2365 for optional property nullish check, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_literal_null_in_binary_op_emits_ts18050() {
+    // When the literal `null` keyword is used in a binary operation,
+    // tsc emits TS18050 "The value 'null' cannot be used here."
+    let source = r"
+var r = null + 1;
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let ts18050_count = diagnostic_count(&diags, 18050);
+    assert!(
+        ts18050_count >= 1,
+        "Expected TS18050 for literal `null` in binary op, got {ts18050_count}"
+    );
+}
+
+#[test]
+fn test_parameters_of_class_constructor_emits_ts2344() {
+    // `MyParams<typeof C>` should emit TS2344 because class constructor types
+    // have construct signatures (new ...) but not call signatures (...args => ...).
+    // The constraint `T extends (...args: any) => any` only accepts types with
+    // call signatures, not construct-only types.
+    let source = r#"
+type MyParams<T extends (...args: any) => any> = T extends (...args: infer P) => any ? P : never;
+class C {
+    constructor(a: number, b: string) {}
+}
+type Cps = MyParams<typeof C>;
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    let ts2344_count = diagnostic_count(&diags, 2344);
+    assert!(
+        ts2344_count >= 1,
+        "Expected TS2344 for MyParams<typeof C> (class has no call signatures), got {ts2344_count}. Diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_bigint_unsigned_shift_reports_pair_error() {
+    let source = r"
+let bigInt = 1n;
+1 + 2n;
+1n + 2;
+bigInt >>>= 1n;
+bigInt = bigInt >>> 1n;
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        has_diagnostic_code_message(
+            &diags,
+            2365,
+            "Operator '+' cannot be applied to types '1' and '2n'.",
+        ),
+        "Expected TS2365 to preserve number/bigint literal display, got diagnostics: {diags:?}"
+    );
+    assert!(
+        has_diagnostic_code_message(
+            &diags,
+            2365,
+            "Operator '+' cannot be applied to types '1n' and '2'.",
+        ),
+        "Expected TS2365 to preserve bigint/number literal display, got diagnostics: {diags:?}"
+    );
+    assert!(
+        has_diagnostic_code_message(
+            &diags,
+            2365,
+            "Operator '>>>=' cannot be applied to types 'bigint' and '1n'.",
+        ),
+        "Expected TS2365 for bigint >>>= 1n, got diagnostics: {diags:?}"
+    );
+    assert!(
+        has_diagnostic_code_message(
+            &diags,
+            2365,
+            "Operator '>>>' cannot be applied to types 'bigint' and '1n'.",
+        ),
+        "Expected TS2365 for bigint >>> 1n, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_invalid_non_bigint_bitwise_result_stays_number() {
+    let source = r#"
+let num: number;
+num = "3" & 5;
+"3" & 5n;
+2n ** false;
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        !has_diagnostic_code(&diags, 2322),
+        "Invalid non-bigint bitwise expressions should still have number result type, got diagnostics: {diags:?}"
+    );
+    assert!(
+        has_diagnostic_code_message(
+            &diags,
+            2365,
+            "Operator '&' cannot be applied to types 'string' and 'bigint'.",
+        ),
+        "Expected TS2365 for string & bigint, got diagnostics: {diags:?}"
+    );
+    assert!(
+        has_diagnostic_code_message(
+            &diags,
+            2365,
+            "Operator '**' cannot be applied to types 'bigint' and 'boolean'.",
+        ),
+        "Expected TS2365 for bigint ** boolean, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn test_number_bigint_union_operator_display_expands_alias_but_preserves_type_parameter() {
+    let source = r"
+type NumberOrBigint = number | bigint;
+declare let value: NumberOrBigint;
+value + value;
+value << value;
+function getKey<S extends NumberOrBigint>(key: S) {
+    +key;
+    0 + key;
+}
+";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+
+    assert!(
+        has_diagnostic_code_message(
+            &diags,
+            2365,
+            "Operator '+' cannot be applied to types 'number | bigint' and 'number | bigint'.",
+        ),
+        "Expected expanded union display for alias + alias, got diagnostics: {diags:?}"
+    );
+    assert!(
+        has_diagnostic_code_message(
+            &diags,
+            2365,
+            "Operator '<<' cannot be applied to types 'number | bigint' and 'number | bigint'.",
+        ),
+        "Expected expanded union display for alias << alias, got diagnostics: {diags:?}"
+    );
+    assert!(
+        has_diagnostic_code_message(&diags, 2736, "Operator '+' cannot be applied to type 'S'.",),
+        "Expected unary + on constrained type parameter to preserve S, got diagnostics: {diags:?}"
+    );
+    assert!(
+        has_diagnostic_code_message(
+            &diags,
+            2365,
+            "Operator '+' cannot be applied to types 'number' and 'S'.",
+        ),
+        "Expected binary + on constrained type parameter to preserve S, got diagnostics: {diags:?}"
+    );
+}

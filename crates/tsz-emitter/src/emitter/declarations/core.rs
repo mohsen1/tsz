@@ -1,0 +1,933 @@
+use super::super::Printer;
+use super::namespace::rewrite_enum_iife_for_namespace_export;
+use crate::transforms::enum_es5::EnumES5Transformer;
+use crate::transforms::ir_printer::IRPrinter;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::{FunctionData, Node, VariableDeclarationData};
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+
+impl<'a> Printer<'a> {
+    // =========================================================================
+    // Declarations
+    // =========================================================================
+
+    pub(in crate::emitter) fn emit_function_declaration(&mut self, node: &Node, _idx: NodeIndex) {
+        let Some(func) = self.arena.get_function(node) else {
+            return;
+        };
+
+        // Skip ambient declarations (declare function)
+        if self.arena.is_declare(&func.modifiers) {
+            self.skip_comments_for_erased_node(node);
+            return;
+        }
+
+        // For JavaScript emit: skip declaration-only functions (no body)
+        // These are just type information in TypeScript (overload signatures)
+        let has_recovered_trailing_comma =
+            func.body.is_none() && self.has_recovered_declaration_trailing_comma(node);
+        let has_recovered_anonymous_arrow =
+            func.body.is_none() && self.has_recovered_anonymous_function_arrow(node, func.name);
+        if func.body.is_none() && !has_recovered_trailing_comma && !has_recovered_anonymous_arrow {
+            self.skip_comments_for_erased_node(node);
+            return;
+        }
+        let has_recovered_errant_arrow_body =
+            self.has_recovered_errant_function_arrow_body(node, func);
+        if has_recovered_errant_arrow_body
+            && self.recovered_errant_function_arrow_skips_declaration(func)
+        {
+            self.emit_expression_in_statement_position(func.body);
+            self.write_semicolon();
+            return;
+        }
+
+        let emit_invalid_namespace_static =
+            self.should_emit_invalid_namespace_static_modifier(node, &func.modifiers);
+        if emit_invalid_namespace_static {
+            self.write("static ");
+        }
+
+        if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
+            let func_name = if func.name.is_some() {
+                self.get_identifier_text_idx(func.name)
+            } else {
+                String::new()
+            };
+            self.emit_async_function_es5(func, &func_name, "this");
+            return;
+        }
+
+        if func.is_async && self.ctx.needs_es2018_lowering && func.asterisk_token {
+            let func_name = if func.name.is_some() {
+                self.get_identifier_text_idx(func.name)
+            } else {
+                String::new()
+            };
+            self.emit_async_generator_lowered(func, &func_name);
+            return;
+        }
+
+        if func.is_async {
+            self.write("async ");
+        }
+
+        if self
+            .arena
+            .has_modifier(&func.modifiers, SyntaxKind::AccessorKeyword)
+            || self.has_recovered_accessor_modifier(node)
+        {
+            self.write("accessor ");
+        }
+
+        let needs_new_target_capture =
+            self.ctx.target_es5 && self.function_body_contains_new_target(func);
+        let function_name = if func.name.is_some() {
+            Some(self.get_identifier_text_idx(func.name))
+        } else {
+            self.anonymous_default_export_name
+                .clone()
+                .or_else(|| needs_new_target_capture.then_some("_a".to_string()))
+        };
+
+        self.write("function");
+
+        if func.asterisk_token {
+            self.write("*");
+        }
+
+        // Name
+        if let Some(name) = function_name.as_deref() {
+            self.write_space();
+            if let Some(name_node) = self.arena.get(func.name) {
+                self.skip_comments_in_range(node.pos, name_node.pos);
+            }
+            self.write(name);
+        } else {
+            // Space before ( for anonymous functions: `function ()` not `function()`
+            self.write(" ");
+        }
+
+        // Parameters - only emit names, not types for JavaScript
+        // Map opening `(` to its source position (after name/type params)
+        let open_paren_pos = {
+            let search_start = if let Some(ref tp) = func.type_parameters {
+                tp.nodes
+                    .last()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map_or(node.pos, |n| n.end)
+            } else if func.name.is_some() {
+                self.arena.get(func.name).map_or(node.pos, |n| n.end)
+            } else {
+                node.pos
+            };
+            self.map_token_after(search_start, node.end, b'(');
+            self.pending_source_pos
+                .map(|source_pos| source_pos.pos)
+                .unwrap_or(search_start)
+        };
+        // Skip comments inside the type parameter list
+        if func.type_parameters.is_some() {
+            let tp_skip_start = if func.name.is_some() {
+                self.arena.get(func.name).map_or(node.pos, |n| n.end)
+            } else {
+                node.pos
+            };
+            self.skip_comments_in_range(tp_skip_start, open_paren_pos);
+        }
+        self.skip_comments_in_range(node.pos, open_paren_pos);
+        self.write("(");
+        let search_start = func
+            .parameters
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.pos, |n| n.pos);
+        let search_end = if func.body.is_some() {
+            self.arena.get(func.body).map_or(node.end, |n| n.pos)
+        } else {
+            node.end
+        };
+        // Increment function_scope_depth before parameters so async arrows in
+        // parameter defaults use `this` in __awaiter instead of `void 0`
+        self.function_scope_depth += 1;
+        self.emit_function_parameters_with_trailing_comments(
+            &func.parameters.nodes,
+            open_paren_pos,
+            search_start,
+            search_end,
+        );
+        if func.is_async {
+            self.emit_recovered_async_await_arrow_parameter(&func.parameters.nodes);
+        }
+        self.write(")");
+
+        if has_recovered_trailing_comma || has_recovered_anonymous_arrow {
+            self.write(" { }");
+            self.function_scope_depth -= 1;
+            if func.name.is_some() {
+                let func_name = self.get_identifier_text_idx(func.name);
+                if !func_name.is_empty() {
+                    self.declared_namespace_names.insert(func_name);
+                }
+            }
+            return;
+        }
+        if has_recovered_errant_arrow_body {
+            self.write(" { }");
+            self.function_scope_depth -= 1;
+            if func.name.is_some() {
+                let func_name = self.get_identifier_text_idx(func.name);
+                if !func_name.is_empty() {
+                    self.declared_namespace_names.insert(func_name);
+                }
+            }
+            self.write_line();
+            self.emit_expression_in_statement_position(func.body);
+            self.write_semicolon();
+            return;
+        }
+
+        // No return type for JavaScript — skip comments inside erased return type
+        if !self.ctx.flags.in_declaration_emit
+            && func.type_annotation.is_some()
+            && let Some(type_node) = self.arena.get(func.type_annotation)
+        {
+            self.skip_comments_in_range(type_node.pos, type_node.end);
+        }
+
+        self.write_space();
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
+        let prev_pending_function_body_parameters = std::mem::replace(
+            &mut self.pending_function_body_parameters,
+            func.parameters.nodes.clone(),
+        );
+        // Don't increment again — already incremented before parameter emission
+
+        // Push temp scope and block scope for function body.
+        // Each function has its own scope for variable renaming/shadowing.
+        self.ctx.block_scope_state.enter_scope();
+        self.push_temp_scope();
+        // Save/restore declared_namespace_names so enum/namespace names from the
+        // outer scope don't suppress declarations inside this function, and names
+        // declared inside don't leak to sibling functions at the outer scope.
+        let prev_declared = std::mem::take(&mut self.declared_namespace_names);
+        self.prepare_logical_assignment_value_temps(func.body);
+        let prev_in_generator = self.ctx.flags.in_generator;
+        self.ctx.flags.in_generator = func.asterisk_token;
+        let prev_arguments_capture_name = self.ctx.arguments_capture_name.take();
+        let prev_async_generator_shadowed_parameter_names =
+            std::mem::take(&mut self.ctx.async_generator_shadowed_parameter_names);
+        let prev_namespace_exported_names = self.namespace_exported_names.clone();
+        let previous_new_target_capture = needs_new_target_capture.then(|| {
+            self.push_new_target_capture_for_initializer(
+                self.ordinary_function_new_target_initializer(function_name.as_deref()),
+            )
+        });
+        self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
+        for &param_idx in &func.parameters.nodes {
+            if let Some(param) = self.arena.get_parameter_at(param_idx) {
+                let name = self.get_identifier_text_idx(param.name);
+                if !name.is_empty() {
+                    self.namespace_exported_names.remove(name.as_str());
+                }
+            }
+        }
+        self.emit(func.body);
+        self.pop_commonjs_exported_var_parameter_shadow_names();
+        self.namespace_exported_names = prev_namespace_exported_names;
+        self.ctx.arguments_capture_name = prev_arguments_capture_name;
+        self.ctx.async_generator_shadowed_parameter_names =
+            prev_async_generator_shadowed_parameter_names;
+        self.ctx.flags.in_generator = prev_in_generator;
+        if let Some(previous) = previous_new_target_capture {
+            self.restore_new_target_capture(previous);
+        }
+        if self.function_has_recovered_pre_body_token(node, func.body) {
+            self.write_line();
+            self.write("{ }");
+        }
+        self.declared_namespace_names = prev_declared;
+        self.pop_temp_scope();
+        self.ctx.block_scope_state.exit_scope();
+        self.pending_function_body_parameters = prev_pending_function_body_parameters;
+        self.function_scope_depth -= 1;
+        self.emitting_function_body_block = prev_emitting_function_body_block;
+
+        // Track function name to prevent duplicate var declarations for merged namespaces.
+        // Function declarations provide their own declaration, so if a namespace merges
+        // with this function, the namespace shouldn't emit `var name;`.
+        if func.name.is_some() {
+            let func_name = self.get_identifier_text_idx(func.name);
+            if !func_name.is_empty() {
+                self.declared_namespace_names.insert(func_name);
+            }
+        }
+    }
+
+    fn function_has_recovered_pre_body_token(&self, node: &Node, body: NodeIndex) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(body_node) = self.arena.get(body) else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (body_node.pos as usize).min(text.len());
+        let Some(prefix) = text.get(start..end) else {
+            return false;
+        };
+        prefix
+            .rfind(')')
+            .is_some_and(|close_paren| prefix[close_paren + 1..].contains('¬'))
+    }
+
+    fn has_recovered_errant_function_arrow_body(&self, node: &Node, func: &FunctionData) -> bool {
+        let Some(body_node) = self.arena.get(func.body) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (body_node.pos as usize).min(text.len());
+        text.get(start..end)
+            .is_some_and(|header| header.contains("=>"))
+    }
+
+    fn recovered_errant_function_arrow_skips_declaration(&self, func: &FunctionData) -> bool {
+        func.type_annotation.is_some()
+            || func.parameters.nodes.iter().copied().any(|param_idx| {
+                self.arena
+                    .get_parameter_at(param_idx)
+                    .is_some_and(|param| param.type_annotation.is_some())
+            })
+    }
+
+    pub(in crate::emitter) fn emit_variable_declaration_list(&mut self, node: &Node) {
+        // Variable declaration list is stored as VariableData
+        let Some(decl_list) = self.arena.get_variable(node) else {
+            return;
+        };
+
+        if self.ctx.target_es5 {
+            self.emit_variable_declaration_list_es5(node);
+            return;
+        }
+
+        // Check if any declaration has object rest that needs ES2018 lowering
+        let has_object_rest = self.ctx.needs_es2018_lowering
+            && decl_list
+                .declarations
+                .nodes
+                .iter()
+                .any(|&idx| self.decl_has_object_rest(idx));
+
+        // Emit keyword based on node flags.
+        let flags = node.flags as u32;
+        let is_using = flags & tsz_parser::parser::node_flags::USING != 0;
+        let is_const = flags & tsz_parser::parser::node_flags::CONST != 0;
+        let is_let = flags & tsz_parser::parser::node_flags::LET != 0;
+        let keyword = if is_using && self.ctx.options.target.supports_es2025() {
+            // await using is encoded as USING | CONST
+            if is_const { "await using" } else { "using" }
+        } else if is_const {
+            // For ES6+ targets, preserve const as-is even without initializer
+            // (tsc preserves user's code even if it's a syntax error)
+            "const"
+        } else if is_let {
+            "let"
+        } else {
+            "var"
+        };
+        self.write(keyword);
+
+        if has_object_rest {
+            // Emit declarations with object rest lowering
+            self.write(" ");
+            let mut first = true;
+            for &decl_idx in &decl_list.declarations.nodes {
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+                if self.decl_has_object_rest(decl_idx) {
+                    self.emit_var_decl_with_object_rest(decl_idx);
+                } else {
+                    self.emit(decl_idx);
+                }
+            }
+        } else if !decl_list.declarations.nodes.is_empty() {
+            self.write(" ");
+            self.emit_comma_separated(&decl_list.declarations.nodes);
+        } else if !is_let {
+            // TSC emits `var ;` and `const ;` (with space) for empty declarations,
+            // but `let;` (no space) for empty let declarations.
+            self.write(" ");
+        }
+    }
+
+    pub(in crate::emitter) fn emit_variable_declaration(&mut self, node: &Node) {
+        let Some(decl) = self.arena.get_variable_declaration(node) else {
+            return;
+        };
+
+        if let Some(name_node) = self.arena.get(decl.name) {
+            self.emit_comments_before_pos(name_node.pos);
+        }
+        self.emit_decl_name(decl.name);
+
+        // Skip type annotation for JavaScript emit — consume any comments
+        // inside the erased type annotation so they don't leak into output.
+        if !self.ctx.flags.in_declaration_emit
+            && decl.type_annotation.is_some()
+            && let Some(type_node) = self.arena.get(decl.type_annotation)
+        {
+            self.skip_comments_in_range(type_node.pos, type_node.end);
+        }
+
+        if decl.initializer.is_none() {
+            if self.emit_missing_initializer_as_void_0 {
+                self.write(" = void 0");
+            } else if self.variable_declaration_has_recovered_empty_initializer(node, decl) {
+                if let Some(name_node) = self.arena.get(decl.name) {
+                    self.map_source_offset(name_node.end);
+                }
+                self.write(" = ");
+            }
+            return;
+        }
+
+        // Map the `=` to the source position after the name (matching tsc)
+        if let Some(name_node) = self.arena.get(decl.name) {
+            self.map_source_offset(name_node.end);
+        }
+        self.write(" = ");
+        // Emit inline comments between = and the initializer value.
+        if let Some(init_node) = self.arena.get(decl.initializer) {
+            let initializer_comment_line_break =
+                self.last_pending_comment_before_pos_has_trailing_newline(init_node.pos);
+            self.emit_comments_before_pos(init_node.pos);
+            if initializer_comment_line_break && self.writer.is_at_line_start() {
+                self.write_space();
+            } else if self.pending_block_comment_space {
+                self.write_space();
+                self.pending_block_comment_space = false;
+            }
+        }
+        self.emit_expression(decl.initializer);
+    }
+
+    fn variable_declaration_has_recovered_empty_initializer(
+        &self,
+        node: &Node,
+        decl: &VariableDeclarationData,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let anchor_end = if decl.type_annotation.is_some() {
+            self.arena
+                .get(decl.type_annotation)
+                .map_or(node.pos, |type_node| type_node.end)
+        } else {
+            self.arena
+                .get(decl.name)
+                .map_or(node.pos, |name_node| name_node.end)
+        };
+        let start = anchor_end.min(node.end) as usize;
+        let end = node.end.min(text.len() as u32) as usize;
+        text.get(start..end)
+            .is_some_and(Self::source_tail_contains_equals_outside_comments)
+    }
+
+    fn source_tail_contains_equals_outside_comments(tail: &str) -> bool {
+        let bytes = tail.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'=' => return true,
+                b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                    i += 2;
+                    while i < bytes.len() && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                }
+                b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                    i += 2;
+                    while i + 1 < bytes.len()
+                        && !(bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/'))
+                    {
+                        i += 1;
+                    }
+                    i = (i + 2).min(bytes.len());
+                }
+                _ => i += 1,
+            }
+        }
+        false
+    }
+
+    // =========================================================================
+    // Declarations - Enum, Interface, Type Alias
+    // =========================================================================
+
+    /// Determines whether an enum declaration should use `let` instead of `var`.
+    ///
+    /// tsc uses `var` for top-level enums and `let` for block-scoped enums
+    /// (inside functions, methods, namespaces) when targeting ES2015+.
+    fn should_use_let_for_enum(&self, enum_idx: NodeIndex) -> bool {
+        // Use `let` inside namespace IIFEs, but only at ES2015+ targets.
+        // ES5 doesn't support `let`, so must always use `var`.
+        if self.in_namespace_iife {
+            return !self.ctx.target_es5;
+        }
+        // Only upgrade to `let` for ES2015+ targets.
+        if self.ctx.target_es5 {
+            return false;
+        }
+        // Walk parent chain to check if enum is inside a block scope
+        // (function body, method, etc.) rather than at source file top level.
+        let mut current = enum_idx;
+        for _ in 0..32 {
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.arena.get(parent) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::SOURCE_FILE => return false,
+                syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::CONSTRUCTOR
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::MODULE_DECLARATION
+                | syntax_kind_ext::BLOCK => return true,
+                _ => {
+                    current = parent;
+                }
+            }
+        }
+        false
+    }
+
+    pub(in crate::emitter) fn emit_enum_declaration(&mut self, node: &Node, idx: NodeIndex) {
+        let Some(enum_decl) = self.arena.get_enum(node) else {
+            return;
+        };
+
+        // Skip ambient enums (always erased) and const enums (erased unless preserveConstEnums)
+        if self.arena.is_declare(&enum_decl.modifiers) {
+            self.skip_comments_for_erased_node(node);
+            return;
+        }
+        if self
+            .arena
+            .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+            && !self.ctx.options.preserve_const_enums
+        {
+            self.skip_comments_for_erased_node(node);
+            return;
+        }
+
+        // Transform enum to IIFE pattern for all targets
+        {
+            let mut transformer = EnumES5Transformer::new(self.arena);
+            transformer.set_preserve_const_enums(self.ctx.options.preserve_const_enums);
+            if let Some(source_text) = self.source_text {
+                transformer.set_source_text(source_text);
+            }
+            let enum_name = if enum_decl.name.is_some() {
+                self.get_identifier_text_idx(enum_decl.name)
+            } else {
+                String::new()
+            };
+            let mut folded_export_name = None;
+            if !enum_name.is_empty() {
+                if self.declared_namespace_names.contains(&enum_name) {
+                    transformer.set_emit_var_declaration(false);
+                }
+                if let Some(export_name) = self
+                    .deferred_local_export_bindings
+                    .as_ref()
+                    .and_then(|bindings| bindings.get(&enum_name))
+                {
+                    transformer.set_commonjs_export_fold(export_name);
+                    folded_export_name = Some(export_name.clone());
+                }
+            }
+            // Pass previously-evaluated enum member values for cross-enum
+            // reference resolution (e.g., `enum Bar { B = Foo.A }`)
+            transformer.set_prior_enum_values(&self.prior_enum_member_values);
+            transformer.set_prior_string_members(&self.prior_enum_string_members);
+            transformer.set_prior_string_values(&self.prior_enum_string_values);
+            if let Some(mut ir) = transformer.transform_enum(idx) {
+                // Accumulate member values and string member names
+                let enum_name_for_accum = transformer.current_enum_name_ref().to_string();
+                if !enum_name_for_accum.is_empty() {
+                    let entry = self
+                        .prior_enum_member_values
+                        .entry(enum_name_for_accum.clone())
+                        .or_default();
+                    for (k, &v) in transformer.get_member_values() {
+                        entry.insert(k.clone(), v);
+                    }
+                    if !transformer.get_string_members().is_empty() {
+                        let str_entry = self
+                            .prior_enum_string_members
+                            .entry(enum_name_for_accum.clone())
+                            .or_default();
+                        for name in transformer.get_string_members() {
+                            str_entry.insert(name.clone());
+                        }
+                    }
+                    if !transformer.get_string_member_values().is_empty() {
+                        let value_entry = self
+                            .prior_enum_string_values
+                            .entry(enum_name_for_accum)
+                            .or_default();
+                        for (name, value) in transformer.get_string_member_values() {
+                            value_entry.insert(name.clone(), value.clone());
+                        }
+                    }
+                }
+                let mut printer = IRPrinter::with_arena(self.arena);
+                printer.set_indent_level(self.writer.indent_level());
+                printer.set_target_es5(self.ctx.target_es5);
+                if let Some(source_text) = self.source_text_for_map() {
+                    printer.set_source_text(source_text);
+                }
+
+                // Fold namespace export into IIFE closing when emitting exported enums
+                // in a namespace: `(Color = A.Color || (A.Color = {}))` instead of
+                // separate `A.Color = Color;` statement.
+                if let Some(ns_name) = self.enum_namespace_export.take() {
+                    rewrite_enum_iife_for_namespace_export(&mut ir, &enum_name, &ns_name);
+                }
+
+                let mut output = printer.emit(&ir).to_string();
+                if self
+                    .arena
+                    .has_modifier(&enum_decl.modifiers, SyntaxKind::AccessorKeyword)
+                    || self.has_recovered_accessor_modifier(node)
+                {
+                    let var_prefix = format!("var {enum_name};");
+                    let accessor_var_prefix = format!("accessor {var_prefix}");
+                    if output.starts_with(&var_prefix) {
+                        output = format!("{accessor_var_prefix}{}", &output[var_prefix.len()..]);
+                    }
+                }
+                if !enum_name.is_empty()
+                    && !self.declared_namespace_names.contains(&enum_name)
+                    && self.should_use_let_for_enum(idx)
+                {
+                    // Inside a block scope (namespace IIFE or function body) at ES2015+,
+                    // use `let` instead of `var` to preserve block scoping semantics.
+                    let var_prefix = format!("var {enum_name};");
+                    let let_prefix = format!("let {enum_name};");
+                    if output.starts_with(&var_prefix) {
+                        output = format!("{let_prefix}{}", &output[var_prefix.len()..]);
+                    }
+                }
+                self.write(&output);
+
+                // The enum IR emitter handles comments INSIDE the enum body,
+                // so we must advance the main comment system past them to prevent
+                // orphaned duplicate comments after the IIFE.
+                let enum_close_pos = self.find_token_end_before_trivia(node.pos, node.end);
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].pos < enum_close_pos
+                {
+                    self.comment_emit_idx += 1;
+                }
+                // Don't emit trailing comments here — the source_file statement
+                // loop handles them with proper next-sibling bounds, preventing
+                // us from stealing comments that belong to subsequent statements
+                // (e.g., `enum E { One }; // error` where `// error` belongs to `;`).
+
+                // Track enum name for subsequent namespace/enum merges.
+                if !enum_name.is_empty() {
+                    if let Some(export_name) = folded_export_name {
+                        self.ctx
+                            .module_state
+                            .iife_exported_names
+                            .insert(enum_name.clone());
+                        self.ctx
+                            .module_state
+                            .inline_exported_names
+                            .insert(export_name);
+                    }
+                    self.declared_namespace_names.insert(enum_name);
+                }
+            }
+            // If transformer returns None (e.g., const enum), emit nothing
+        }
+    }
+
+    pub(in crate::emitter) fn emit_enum_member(&mut self, node: &Node) {
+        let Some(member) = self.arena.get_enum_member(node) else {
+            return;
+        };
+
+        self.emit(member.name);
+
+        if member.initializer.is_some() {
+            self.write(" = ");
+            self.emit(member.initializer);
+        }
+    }
+
+    /// Emit an interface declaration (for .d.ts declaration emit mode)
+    pub(in crate::emitter) fn emit_interface_declaration(&mut self, node: &Node) {
+        let Some(interface) = self.arena.get_interface(node) else {
+            return;
+        };
+
+        self.write("interface ");
+        self.emit(interface.name);
+
+        // Type parameters
+        if let Some(ref type_params) = interface.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
+        }
+
+        // Heritage clauses - interfaces can extend multiple types
+        if let Some(ref heritage_clauses) = interface.heritage_clauses {
+            let mut first_extends = true;
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.arena.get_heritage(clause_node) else {
+                    continue;
+                };
+                // Interfaces only have extends clauses (no implements)
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                for (i, &type_idx) in heritage.types.nodes.iter().enumerate() {
+                    if first_extends && i == 0 {
+                        self.write(" extends ");
+                        first_extends = false;
+                    } else {
+                        self.write(", ");
+                    }
+                    self.emit_heritage_expression(type_idx);
+                }
+            }
+        }
+
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        for &member_idx in &interface.members.nodes {
+            self.emit(member_idx);
+            self.write_semicolon();
+            self.write_line();
+        }
+
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    pub(in crate::emitter) fn emit_recovered_interface_body_statements(&mut self, node: &Node) {
+        let statements = self.recovered_interface_body_statements(node);
+        if statements.is_empty() {
+            return;
+        }
+
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        for statement in statements {
+            self.write(&statement);
+            self.write_line();
+        }
+    }
+
+    fn recovered_interface_body_statements(&self, node: &Node) -> Vec<String> {
+        if let Some(statement) = self.recovered_predefined_interface_name_statement(node) {
+            return vec![statement];
+        }
+
+        let Some(text) = self.source_text else {
+            return Vec::new();
+        };
+        let start = std::cmp::min(node.pos as usize, text.len());
+        let end = self
+            .interface_source_end(start)
+            .unwrap_or_else(|| std::cmp::min(node.end as usize, text.len()));
+        let Some(source) = text.get(start..end) else {
+            return Vec::new();
+        };
+
+        let trimmed = source.trim();
+        if let Some(after_interface) = trimmed.strip_prefix("interface") {
+            let after_interface = after_interface.trim_start();
+            if after_interface.starts_with('{') {
+                return vec!["interface;".to_string(), after_interface.to_string()];
+            }
+        }
+
+        source
+            .lines()
+            .map(str::trim)
+            .filter_map(|line| {
+                self.recover_interface_var_statement(line).or_else(|| {
+                    self.is_recoverable_interface_return_statement(line)
+                        .then(|| line.to_string())
+                })
+            })
+            .collect()
+    }
+
+    fn recovered_predefined_interface_name_statement(&self, node: &Node) -> Option<String> {
+        let interface = self.arena.get_interface(node)?;
+        if !interface.members.nodes.is_empty()
+            || interface.type_parameters.is_some()
+            || interface.heritage_clauses.is_some()
+        {
+            return None;
+        }
+
+        let name = self.get_identifier_text_idx(interface.name);
+        match name.as_str() {
+            "any" => Some("interface;".to_string()),
+            "void" => Some("void {};".to_string()),
+            _ => None,
+        }
+    }
+
+    fn recover_interface_var_statement(&self, line: &str) -> Option<String> {
+        let rest = line.strip_prefix("var ")?;
+        let rest = rest.trim_start();
+        let mut end = 0usize;
+        for (idx, ch) in rest.char_indices() {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+                end = idx + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if end == 0 {
+            return None;
+        }
+
+        let after_name = rest[end..].trim_start();
+        if !matches!(after_name.as_bytes().first(), Some(b':' | b';' | b',')) {
+            return None;
+        }
+
+        Some(format!("var {};", &rest[..end]))
+    }
+
+    fn is_recoverable_interface_return_statement(&self, line: &str) -> bool {
+        line.starts_with("return ") && line.ends_with(';') && !line.contains(':')
+    }
+
+    fn interface_source_end(&self, start: usize) -> Option<usize> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut i = start;
+        while i < bytes.len() && bytes[i] != b'{' {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            return None;
+        }
+
+        let mut depth = 0u32;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                b'\'' | b'"' | b'`' => {
+                    i = self.skip_interface_quoted_source_text(i);
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn skip_interface_quoted_source_text(&self, quote_start: usize) -> usize {
+        let Some(text) = self.source_text else {
+            return quote_start + 1;
+        };
+        let bytes = text.as_bytes();
+        let quote = bytes[quote_start];
+        let mut i = quote_start + 1;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' {
+                i += 2;
+                continue;
+            }
+            if bytes[i] == quote {
+                return i + 1;
+            }
+            i += 1;
+        }
+        i
+    }
+
+    /// Emit a type alias declaration (for .d.ts declaration emit mode)
+    pub(in crate::emitter) fn emit_type_alias_declaration(&mut self, node: &Node) {
+        let Some(type_alias) = self.arena.get_type_alias(node) else {
+            return;
+        };
+
+        self.write("type ");
+        self.emit(type_alias.name);
+
+        // Type parameters
+        if let Some(ref type_params) = type_alias.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
+        }
+
+        self.write(" = ");
+        self.emit(type_alias.type_node);
+        self.write_semicolon();
+    }
+
+    /// Emit `export as namespace X;` (UMD global namespace declaration).
+    /// Only emitted in declaration mode (.d.ts); erased in JS output.
+    pub(in crate::emitter) fn emit_namespace_export_declaration(&mut self, node: &Node) {
+        let Some(export) = self.arena.get_export_decl(node) else {
+            return;
+        };
+
+        self.write("export as namespace ");
+        self.emit(export.export_clause);
+        self.write_semicolon();
+    }
+}

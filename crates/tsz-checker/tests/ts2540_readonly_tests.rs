@@ -1,0 +1,788 @@
+//! Tests for TS2540 readonly property assignment errors
+//!
+//! Verifies that assigning to readonly properties emits TS2540.
+
+use tsz_checker::test_utils::{check_source_code_messages, check_source_codes};
+
+fn has_error_with_code(source: &str, code: u32) -> bool {
+    check_source_codes(source).contains(&code)
+}
+
+fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    // `check_source_*` helpers run with an empty lib context, so TS2318
+    // ("Cannot find global type") can fire for built-in references like
+    // `Array`. Filter it out here so the assertions below only inspect
+    // readonly-related diagnostics, matching the prior local helper's
+    // behavior.
+    check_source_code_messages(source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect()
+}
+
+// =========================================================================
+// Class readonly property tests
+// =========================================================================
+
+#[test]
+fn test_readonly_class_property_assignment() {
+    let source = r"
+class C {
+    readonly x: number = 1;
+}
+const c = new C();
+c.x = 10;
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assigning to readonly class property"
+    );
+}
+
+#[test]
+fn test_non_readonly_class_property_assignment_ok() {
+    let source = r"
+class C {
+    y: number = 2;
+}
+const c = new C();
+c.y = 20;
+";
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for non-readonly property"
+    );
+}
+
+#[test]
+fn test_readonly_class_mixed_properties() {
+    // Class with both readonly and mutable properties
+    let source = r#"
+class C {
+    readonly ro: string = "hello";
+    mut_prop: string = "world";
+}
+const c = new C();
+c.ro = "new";
+c.mut_prop = "ok";
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|(code, _)| *code == 2540).count();
+    assert_eq!(
+        ts2540_count, 1,
+        "Should emit exactly 1 TS2540 (for ro), got: {diags:?}"
+    );
+}
+
+// =========================================================================
+// Interface readonly property tests
+// =========================================================================
+
+#[test]
+fn test_readonly_interface_property() {
+    let source = r"
+interface I {
+    readonly x: number;
+}
+declare const obj: I;
+obj.x = 10;
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assigning to readonly interface property"
+    );
+}
+
+#[test]
+fn test_non_readonly_interface_property_ok() {
+    let source = r"
+interface I {
+    x: number;
+}
+declare const obj: I;
+obj.x = 10;
+";
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for mutable interface property"
+    );
+}
+
+// =========================================================================
+// Const variable tests
+// =========================================================================
+
+#[test]
+fn test_const_variable_assignment() {
+    // TS2588: Cannot assign to 'x' because it is a constant
+    let source = r"
+const x = 10;
+x = 20;
+";
+    assert!(
+        has_error_with_code(source, 2588),
+        "Should emit TS2588 for assigning to const variable"
+    );
+}
+
+// =========================================================================
+// Namespace const export tests
+// =========================================================================
+
+#[test]
+fn test_namespace_const_export_readonly() {
+    let source = r"
+namespace M {
+    export const x = 0;
+}
+M.x = 1;
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assigning to namespace const export"
+    );
+}
+
+// =========================================================================
+// Interface mixed readonly tests
+// =========================================================================
+
+#[test]
+fn test_readonly_interface_mixed_properties() {
+    // Interface with both readonly and mutable properties
+    let source = r#"
+interface I {
+    readonly ro: string;
+    mut_prop: string;
+}
+declare const obj: I;
+obj.ro = "new";
+obj.mut_prop = "ok";
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|(code, _)| *code == 2540).count();
+    assert_eq!(
+        ts2540_count, 1,
+        "Should emit exactly 1 TS2540 (for ro), got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_readonly_interface_multiple_readonly_props() {
+    // Interface with multiple readonly properties
+    let source = r#"
+interface I {
+    readonly a: number;
+    readonly b: string;
+    c: boolean;
+}
+declare const obj: I;
+obj.a = 1;
+obj.b = "x";
+obj.c = true;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|(code, _)| *code == 2540).count();
+    assert_eq!(
+        ts2540_count, 2,
+        "Should emit 2 TS2540 errors (for a and b), got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_nested_readonly_survives_prior_receiver_assignment() {
+    let source = r#"
+interface DeepFrozen {
+    readonly a: {
+        readonly b: number;
+    };
+}
+const df: DeepFrozen = { a: { b: 1 } };
+df.a = { b: 2 };
+df.a.b = 3;
+
+type AliasFrozen = {
+    readonly outer: {
+        readonly inner: number;
+    };
+};
+let af: AliasFrozen = { outer: { inner: 1 } };
+af.outer = { inner: 2 };
+af.outer.inner = 3;
+
+interface MutableParent {
+    slot: {
+        readonly leaf: number;
+    };
+}
+let mp: MutableParent = { slot: { leaf: 1 } };
+mp.slot = { leaf: 2 };
+mp.slot.leaf = 3;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(
+        ts2540_count, 5,
+        "Expected readonly diagnostics for both parent writes and nested child writes, got {ts2540_count}: {diags:?}"
+    );
+}
+
+// =========================================================================
+// Namespace let export should be mutable
+// =========================================================================
+
+#[test]
+fn test_namespace_let_export_mutable() {
+    let source = r"
+namespace M {
+    export let x = 0;
+}
+M.x = 1;
+";
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for namespace let export"
+    );
+}
+
+// =========================================================================
+// Element access readonly tests
+// =========================================================================
+
+#[test]
+fn test_readonly_interface_element_access() {
+    // obj["x"] should also be caught as readonly
+    let source = r#"
+interface I {
+    readonly x: number;
+}
+declare const obj: I;
+obj["x"] = 10;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for element access to readonly interface property"
+    );
+}
+
+#[test]
+fn test_readonly_class_compound_assignment() {
+    // Compound assignments (+=, -=, etc.) should also be caught
+    let source = r"
+class C {
+    readonly x: number = 1;
+}
+const c = new C();
+c.x += 10;
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for compound assignment to readonly class property"
+    );
+}
+
+#[test]
+fn test_readonly_class_increment() {
+    // Increment/decrement should also be caught
+    let source = r"
+class C {
+    readonly x: number = 1;
+}
+const c = new C();
+c.x++;
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for increment on readonly class property"
+    );
+}
+
+// =========================================================================
+// Parenthesized expression tests
+// =========================================================================
+
+#[test]
+fn test_readonly_parenthesized_increment() {
+    // ++((M.x)) should detect readonly through parentheses
+    let source = r"
+namespace M {
+    export const x = 0;
+}
+++((M.x));
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for parenthesized increment on namespace const"
+    );
+}
+
+#[test]
+fn test_readonly_parenthesized_assignment() {
+    // (obj.x) = 1 should detect readonly through parentheses
+    let source = r"
+interface I {
+    readonly x: number;
+}
+declare const obj: I;
+(obj.x) = 10;
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for parenthesized assignment to readonly property"
+    );
+}
+
+#[test]
+fn test_readonly_double_parenthesized_increment() {
+    // ++((obj.x)) with double parens
+    let source = r"
+class C {
+    readonly x: number = 1;
+}
+const c = new C();
+++((c.x));
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for double-parenthesized increment on readonly"
+    );
+}
+
+#[test]
+fn test_non_readonly_parenthesized_ok() {
+    // Parenthesized assignment to non-readonly should be fine
+    let source = r"
+class C {
+    x: number = 1;
+}
+const c = new C();
+(c.x) = 10;
+";
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for parenthesized assignment to mutable property"
+    );
+}
+
+// =========================================================================
+// globalThis readonly property tests
+// =========================================================================
+
+#[test]
+fn test_global_this_self_reference_is_readonly() {
+    // globalThis.globalThis is a readonly self-reference (TS2540)
+    let source = r"globalThis.globalThis = 1 as any;";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assigning to globalThis.globalThis (readonly)"
+    );
+}
+
+#[test]
+fn test_global_this_var_property_assignment_ok() {
+    // globalThis.x where x is a var-declared global should not emit TS2540
+    let source = r"
+var x = 1;
+globalThis.x = 3;
+";
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for assigning to var-declared global via globalThis"
+    );
+}
+
+// =========================================================================
+// Readonly tuple element access: TS2540 vs TS2542
+// =========================================================================
+
+#[test]
+fn test_readonly_tuple_fixed_element_emits_ts2540() {
+    // Assigning to a fixed element of a readonly tuple should emit TS2540
+    // (named property), NOT TS2542 (index signature).
+    let source = r"
+declare var v: readonly [number, number];
+v[0] = 1;
+";
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2540),
+        "Should emit TS2540 for assigning to readonly tuple fixed element, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 2542),
+        "Should NOT emit TS2542 for readonly tuple fixed element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_readonly_tuple_fixed_element_suppresses_type_mismatch() {
+    // Fixed readonly tuple elements are named properties. When the write is
+    // invalid both because the element is readonly and because the assigned
+    // literal has the wrong type, tsc reports only TS2540 for that assignment.
+    let source = r#"
+const arr = [1, 2, 3] as const;
+arr[0] = 999;
+
+const nested = { a: [1, 2] as const };
+nested.a[0] = 999;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    let ts2322_count = diags.iter().filter(|d| d.0 == 2322).count();
+    assert_eq!(
+        ts2540_count, 2,
+        "Expected TS2540 for direct and nested readonly tuple fixed elements, got: {diags:?}"
+    );
+    assert_eq!(
+        ts2322_count, 0,
+        "TS2322 should be suppressed when TS2540 already reports the readonly fixed element write, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_readonly_tuple_rest_element_emits_ts2542() {
+    // Assigning to a rest-range index of a readonly tuple should emit TS2542
+    // (index signature only permits reading).
+    let source = r"
+declare var v: readonly [number, number, ...number[]];
+v[2] = 1;
+";
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2542),
+        "Should emit TS2542 for assigning to readonly tuple rest element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_readonly_tuple_mixed_fixed_and_rest() {
+    // Fixed elements get TS2540, rest-range elements get TS2542.
+    let source = r"
+declare var v: readonly [number, number, ...number[]];
+v[0] = 1;
+v[1] = 1;
+v[2] = 1;
+";
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    let ts2542_count = diags.iter().filter(|d| d.0 == 2542).count();
+    assert_eq!(
+        ts2540_count, 2,
+        "Expected 2 TS2540 for fixed elements 0 and 1, got {ts2540_count}: {diags:?}"
+    );
+    assert_eq!(
+        ts2542_count, 1,
+        "Expected 1 TS2542 for rest element 2, got {ts2542_count}: {diags:?}"
+    );
+}
+
+// =========================================================================
+// String primitive readonly index signature
+// =========================================================================
+
+#[test]
+fn test_string_primitive_element_access_assignment_emits_ts2542() {
+    // The `string` primitive has an implicit readonly number index signature.
+    // Assigning via bracket notation (e.g., `s[0] = "x"`) should emit TS2542.
+    let source = r#"
+declare var s: string;
+s[0] = "x";
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2542),
+        "Should emit TS2542 for assigning to string element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_string_union_element_access_assignment_emits_ts2542() {
+    // A union containing `string` has a readonly number index at the union level
+    // because `string` has a readonly implicit number index.
+    let source = r#"
+interface Obj { [n: number]: string; }
+declare var x: string | Obj;
+x[0] = "y";
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2542),
+        "Should emit TS2542 for assigning to union with string member, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_string_reading_element_access_no_ts2542() {
+    // Reading from a string via bracket notation should NOT emit TS2542.
+    let source = r#"
+declare var s: string;
+let c = s[0];
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2542),
+        "Should NOT emit TS2542 for reading from string element, got: {diags:?}"
+    );
+}
+
+// =========================================================================
+// TS1354: readonly type modifier on non-array/tuple types
+// =========================================================================
+
+#[test]
+fn test_readonly_on_non_array_type_emits_ts1354() {
+    let source = r"
+type T = readonly string;
+";
+    assert!(
+        has_error_with_code(source, 1354),
+        "Should emit TS1354 for 'readonly string'"
+    );
+}
+
+#[test]
+fn test_readonly_on_array_type_no_ts1354() {
+    let source = r"
+type T = readonly string[];
+";
+    assert!(
+        !has_error_with_code(source, 1354),
+        "Should NOT emit TS1354 for 'readonly string[]'"
+    );
+}
+
+#[test]
+fn test_readonly_on_tuple_type_no_ts1354() {
+    let source = r"
+type T = readonly [string, number];
+";
+    assert!(
+        !has_error_with_code(source, 1354),
+        "Should NOT emit TS1354 for 'readonly [string, number]'"
+    );
+}
+
+#[test]
+fn test_omit_preserves_readonly_modifier() {
+    // Omit<T, K> is a homomorphic mapped type that preserves readonly modifiers
+    // from the source type. Assigning to a readonly property through Omit should
+    // still emit TS2540.
+    let source = r#"
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+
+type A = {
+    a: number;
+    b?: string;
+    readonly c: boolean;
+    d: unknown;
+};
+
+type B = Omit<A, 'a'>;
+
+function f(x: B) {
+    x.c = true;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assigning to readonly property 'c' through Omit type"
+    );
+}
+
+#[test]
+fn test_readonly_on_type_reference_emits_ts1354() {
+    // readonly Array<string> should emit TS1354 — use ReadonlyArray<string> instead
+    let source = r"
+type T = readonly Array<string>;
+";
+    assert!(
+        has_error_with_code(source, 1354),
+        "Should emit TS1354 for 'readonly Array<string>'"
+    );
+}
+
+// =========================================================================
+// DeepReadonly with Function branch – nested property TS2540 (issue #6591)
+// =========================================================================
+
+const DEEP_READONLY_PREAMBLE: &str = r"
+type DeepReadonly<T> = T extends Function
+  ? T
+  : T extends object
+    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+    : T;
+
+interface Nested {
+  a: {
+    b: {
+      c: number;
+    };
+  };
+  fn: () => void;
+}
+
+type DRN = DeepReadonly<Nested>;
+declare const drn: DRN;
+";
+
+#[test]
+fn test_deep_readonly_function_branch_all_levels_error() {
+    for (expr, label) in [
+        ("drn.a = { b: { c: 1 } };", "level 1 (drn.a)"),
+        ("drn.a.b = { c: 1 };", "level 2 (drn.a.b)"),
+        ("drn.a.b.c = 5;", "level 3 (drn.a.b.c)"),
+    ] {
+        let source = format!("{DEEP_READONLY_PREAMBLE}\n{expr}");
+        assert!(
+            has_error_with_code(&source, 2540),
+            "Should emit TS2540 at {label}"
+        );
+    }
+}
+
+#[test]
+fn test_deep_readonly_without_function_branch_nested_errors() {
+    let source = r"
+type DR<T> = { readonly [K in keyof T]: DR<T[K]> };
+declare const drn: DR<{ a: { b: { c: number } } }>;
+drn.a.b = { c: 1 };
+drn.a.b.c = 5;
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Without Function branch: should still emit TS2540 for nested properties"
+    );
+}
+
+#[test]
+fn test_deep_readonly_function_branch_no_false_positive_on_mutable() {
+    let source = r"
+interface Nested {
+  a: { b: { c: number } };
+}
+declare const obj: Nested;
+obj.a.b = { c: 1 };
+obj.a.b.c = 5;
+";
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for mutable nested properties"
+    );
+}
+
+// =========================================================================
+// as const deep readonly tests
+// =========================================================================
+
+#[test]
+fn test_as_const_nested_property_readonly_after_parent_write() {
+    let source = r#"
+const obj = { nested: { b: 2 } } as const;
+obj.nested = { b: 3 };
+obj.nested.b = 4;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(
+        ts2540_count, 2,
+        "Expected TS2540 for both outer and nested property writes on as-const object, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_as_const_multiple_levels_all_readonly() {
+    let source = r#"
+const config = { db: { host: { ip: "localhost" } } } as const;
+config.db = { host: { ip: "x" } };
+config.db.host = { ip: "x" };
+config.db.host.ip = "x";
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(
+        ts2540_count, 3,
+        "Expected TS2540 for all three levels of nested as-const writes, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_intersection_readonly_property_emits_ts2540() {
+    let source = r#"
+interface WithReadonly { readonly x: number; }
+interface WithMutable { y: string; }
+declare const inter: WithReadonly & WithMutable;
+inter.x = 5;
+inter.y = "ok";
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(ts2540_count, 1, "Expected TS2540 only for readonly x");
+    let ts2322_count = diags.iter().filter(|d| d.0 == 2322).count();
+    assert_eq!(ts2322_count, 0, "Expected no TS2322 for mutable y write");
+}
+
+#[test]
+fn test_readonly_function_return_type_property_emits_ts2540() {
+    let source = r#"
+function getReadonly(): { readonly x: number } {
+    return { x: 42 };
+}
+const result = getReadonly();
+result.x = 1;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assignment to readonly property from function return type"
+    );
+}
+
+// =========================================================================
+// Union type readonly edge cases
+// =========================================================================
+
+#[test]
+fn test_union_all_readonly_emits_ts2540() {
+    let source = r#"
+type A = { readonly x: number };
+type B = { readonly x: string };
+declare const ab: A | B;
+ab.x = 5;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 when all union members have readonly x"
+    );
+}
+
+#[test]
+fn test_union_any_readonly_emits_ts2540() {
+    // At runtime we can't know which branch of the union we're on, so writing
+    // to a property that is readonly in any member is unsafe.
+    let source = r#"
+type A = { readonly x: number };
+type B = { x: string };
+declare const ab: A | B;
+ab.x = 5;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 when any union member has readonly x (conservative union write semantics)"
+    );
+}
+
+#[test]
+fn test_union_no_readonly_no_ts2540() {
+    let source = r#"
+type C = { x: number };
+type D = { x: string };
+declare const cd: C | D;
+cd.x = 5;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().all(|d| d.0 != 2540),
+        "Should NOT emit TS2540 when no union member has readonly x, got: {diags:?}"
+    );
+}

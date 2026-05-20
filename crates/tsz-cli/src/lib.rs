@@ -1,0 +1,53 @@
+//! Native CLI support for the tsz TypeScript compiler.
+//!
+//! This crate provides CLI binaries (`tsz`, `tsz-lsp`, `tsz-server`) and
+//! all CLI-specific modules (argument parsing, file discovery, config loading,
+//! compilation driver, watch mode, etc.).
+
+pub mod commands;
+pub use tsz::config;
+pub mod driver;
+pub mod localization;
+#[cfg(feature = "perf-tools")]
+pub mod perf_json;
+pub mod project;
+pub mod reporting;
+pub use commands::args;
+pub use commands::build;
+pub use commands::help;
+pub use commands::watch;
+pub use localization::locale;
+pub use project::fs;
+pub use project::incremental;
+pub use project::refs as project_refs;
+pub use reporting::reporter;
+pub use reporting::trace;
+pub use reporting::tracing_config;
+
+#[cfg(test)]
+#[path = "../tests/args_tests.rs"]
+mod args_tests;
+#[cfg(test)]
+#[path = "../tests/build_tests.rs"]
+mod build_tests;
+#[cfg(test)]
+#[path = "../tests/config_tests.rs"]
+mod config_tests;
+#[cfg(test)]
+#[path = "../tests/driver_tests.rs"]
+mod driver_tests;
+#[cfg(test)]
+#[path = "../tests/driver_tests_ts2307.rs"]
+mod driver_tests_ts2307;
+#[cfg(test)]
+#[path = "../tests/fs_tests.rs"]
+mod fs_tests;
+#[cfg(test)]
+#[path = "../tests/reporter_tests.rs"]
+mod reporter_tests;
+#[cfg(test)]
+#[path = "../tests/tsc_compat_tests.rs"]
+mod tsc_compat_tests;
+#[cfg(test)]
+#[path = "../tests/watch_tests.rs"]
+mod watch_tests;

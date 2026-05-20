@@ -1,0 +1,1814 @@
+use crate::state::CheckerState;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
+
+mod indexed_access_helpers;
+mod mapped_key_check;
+
+use indexed_access_helpers::{
+    generic_constrained_index, indexed_access_object_alias_application_exceeds_depth,
+    is_broad_index_type, remapped_mapped_type_template_index_should_report_ts2536,
+    same_object_key_space, same_type_param_name,
+};
+
+impl<'a> CheckerState<'a> {
+    /// Check if an object type is a deferred indexed access that can't be resolved.
+    /// Only suppresses TS2536 when the base of the indexed access is a type parameter
+    /// (e.g., `Shape[k]` where Shape is a generic param), NOT when it's a concrete type
+    /// (e.g., `DataFetchFns[T]` where `DataFetchFns` is a known type).
+    fn is_deferred_indexed_access_object(&self, ty: TypeId) -> bool {
+        if !crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty) {
+            return false;
+        }
+        // Decompose the indexed access and check if the base is a type parameter
+        if let Some((base, _index)) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, ty)
+        {
+            return crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, base);
+        }
+        false
+    }
+
+    /// Check if two AST nodes have the same text representation.
+    fn nodes_have_same_text(&self, a: NodeIndex, b: NodeIndex) -> bool {
+        let a_node = self.ctx.arena.get(a);
+        let b_node = self.ctx.arena.get(b);
+        match (a_node, b_node) {
+            (Some(an), Some(bn)) if an.kind == bn.kind => {
+                // Identifiers
+                if let (Some(ai), Some(bi)) = (
+                    self.ctx.arena.get_identifier(an),
+                    self.ctx.arena.get_identifier(bn),
+                ) {
+                    return ai.escaped_text == bi.escaped_text;
+                }
+                // Literal types (e.g., LiteralType wrapping a string literal)
+                if let (Some(alt), Some(blt)) = (
+                    self.ctx.arena.get_literal_type(an),
+                    self.ctx.arena.get_literal_type(bn),
+                ) {
+                    return self.nodes_have_same_text(alt.literal, blt.literal);
+                }
+                // String/number literals directly
+                if let (Some(al), Some(bl)) = (
+                    self.ctx.arena.get_literal(an),
+                    self.ctx.arena.get_literal(bn),
+                ) {
+                    return al.text == bl.text;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn is_keyof_for_current_object(
+        &mut self,
+        ty: TypeId,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        crate::query_boundaries::state::checking::keyof_target(self.ctx.types, ty).is_some_and(
+            |operand| {
+                let evaluated_operand = self.evaluate_type_with_env(operand);
+                same_object_key_space(self.ctx.types, operand, object_type)
+                    || same_object_key_space(self.ctx.types, operand, object_type_for_check)
+                    || same_object_key_space(self.ctx.types, evaluated_operand, object_type)
+                    || same_object_key_space(
+                        self.ctx.types,
+                        evaluated_operand,
+                        object_type_for_check,
+                    )
+            },
+        )
+    }
+
+    /// Resolve a type parameter's constraint from its AST declaration when the TypeId
+    /// doesn't carry one. This handles cases where type parameters lose their constraints
+    /// during type application argument resolution (e.g., `M[Event]` inside `Id<M[Event]>`).
+    pub(crate) fn resolve_index_constraint_from_declaration(
+        &mut self,
+        index_node_idx: NodeIndex,
+        _object_node_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let index_name = self.simple_type_reference_name(index_node_idx)?;
+
+        let mut current = self
+            .ctx
+            .arena
+            .get_extended(index_node_idx)
+            .map(|ext| ext.parent);
+        while let Some(parent_idx) = current {
+            let parent_node = self.ctx.arena.get(parent_idx)?;
+            // Extract type_parameters NodeList from any generic declaration kind
+            let type_params: Option<&tsz_parser::parser::base::NodeList> = match parent_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    self.ctx
+                        .arena
+                        .get_function(parent_node)
+                        .and_then(|f| f.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::METHOD_SIGNATURE
+                    || k == syntax_kind_ext::CALL_SIGNATURE
+                    || k == syntax_kind_ext::CONSTRUCT_SIGNATURE =>
+                {
+                    self.ctx
+                        .arena
+                        .get_signature(parent_node)
+                        .and_then(|s| s.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_interface(parent_node)
+                    .and_then(|i| i.type_parameters.as_ref()),
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    self.ctx
+                        .arena
+                        .get_class(parent_node)
+                        .and_then(|c| c.type_parameters.as_ref())
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_type_alias(parent_node)
+                    .and_then(|ta| ta.type_parameters.as_ref()),
+                k if k == syntax_kind_ext::FUNCTION_TYPE
+                    || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
+                {
+                    self.ctx
+                        .arena
+                        .get_function_type(parent_node)
+                        .and_then(|ft| ft.type_parameters.as_ref())
+                }
+                _ => None,
+            };
+
+            if let Some(tp_list) = type_params {
+                for &tp_idx in &tp_list.nodes {
+                    let Some(tp_node) = self.ctx.arena.get(tp_idx) else {
+                        continue;
+                    };
+                    let Some(tp) = self.ctx.arena.get_type_parameter(tp_node) else {
+                        continue;
+                    };
+                    let Some(name_node) = self.ctx.arena.get(tp.name) else {
+                        continue;
+                    };
+                    let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                        continue;
+                    };
+                    if ident.escaped_text == index_name && tp.constraint != NodeIndex::NONE {
+                        let constraint_type = self.get_type_from_type_node(tp.constraint);
+                        if constraint_type != TypeId::ERROR {
+                            return Some(constraint_type);
+                        }
+                    }
+                }
+            }
+            // Mapped type key parameter: `[K in C]: ...` — extract constraint C
+            if parent_node.kind == syntax_kind_ext::MAPPED_TYPE
+                && let Some(mapped) = self.ctx.arena.get_mapped_type(parent_node)
+                && let Some(tp_node) = self.ctx.arena.get(mapped.type_parameter)
+                && let Some(tp) = self.ctx.arena.get_type_parameter(tp_node)
+                && let Some(name_node) = self.ctx.arena.get(tp.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && ident.escaped_text == index_name
+                && tp.constraint != NodeIndex::NONE
+            {
+                let constraint_type = self.get_type_from_type_node(tp.constraint);
+                if constraint_type != TypeId::ERROR {
+                    return Some(constraint_type);
+                }
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+        None
+    }
+
+    /// Check if the indexed access `T[K]` is inside the true branch of a conditional type
+    /// `K extends keyof T ? ... : ...`. In the true branch, `K` is narrowed to `keyof T`,
+    /// so the index is valid.
+    fn is_in_conditional_keyof_narrowing_context(
+        &mut self,
+        node_idx: NodeIndex,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+        _index_type: TypeId,
+    ) -> bool {
+        let index_name = self.simple_type_reference_name(
+            self.ctx
+                .arena
+                .get(node_idx)
+                .and_then(|n| self.ctx.arena.get_indexed_access_type(n))
+                .map(|iat| iat.index_type)
+                .unwrap_or(NodeIndex::NONE),
+        );
+
+        let mut current = self.ctx.arena.parent_of(node_idx);
+        while let Some(parent_idx) = current {
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                && let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
+            {
+                // Check if the indexed access is in the true branch
+                // (the node_idx must be a descendant of cond.true_type)
+                let in_true_branch = self.is_descendant_of(node_idx, cond.true_type);
+                if in_true_branch {
+                    // Check if the check type matches the index type
+                    let check_name = self.simple_type_reference_name(cond.check_type);
+                    if check_name.is_some() && check_name == index_name {
+                        // Check if the extends type is `keyof T` for our object
+                        let extends_type = self.get_type_from_type_node(cond.extends_type);
+                        if self.is_keyof_for_current_object(
+                            extends_type,
+                            object_type,
+                            object_type_for_check,
+                        ) {
+                            return true;
+                        }
+                        // Also check if extends type is keyof applied to the object
+                        if let Some(extends_node) = self.ctx.arena.get(cond.extends_type)
+                            && let Some(type_op) = self.ctx.arena.get_type_operator(extends_node)
+                            && type_op.operator == SyntaxKind::KeyOfKeyword as u16
+                        {
+                            let keyof_target_type = self.get_type_from_type_node(type_op.type_node);
+                            if same_object_key_space(self.ctx.types, keyof_target_type, object_type)
+                                || same_object_key_space(
+                                    self.ctx.types,
+                                    keyof_target_type,
+                                    object_type_for_check,
+                                )
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    // Also check for `infer X extends C` patterns in the extends type.
+                    // When the extends type contains `infer Head extends DistributedKeyOf<ObjT>`,
+                    // the inferred type parameter `Head` is constrained to `keyof ObjT` in the
+                    // true branch. If our index type matches such an infer parameter, suppress
+                    // TS2536.
+                    if let Some(ref idx_name) = index_name
+                        && self.extends_type_has_infer_keyof_constraint(
+                            cond.extends_type,
+                            idx_name,
+                            object_type,
+                            object_type_for_check,
+                        )
+                    {
+                        return true;
+                    }
+                }
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+        false
+    }
+
+    /// Check if the extends type of a conditional contains an `infer X extends C` pattern
+    /// where `X` matches `target_name` and `C` resolves to `keyof ObjT`.
+    fn extends_type_has_infer_keyof_constraint(
+        &mut self,
+        extends_node_idx: NodeIndex,
+        target_name: &str,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        // Collect all infer type nodes from the extends type subtree.
+        // We use a stack-based approach since there's no generic node_children method.
+        let infer_nodes = self.collect_infer_nodes_in_subtree(extends_node_idx);
+        for infer_node_idx in infer_nodes {
+            let Some(node) = self.ctx.arena.get(infer_node_idx) else {
+                continue;
+            };
+            let Some(infer_data) = self.ctx.arena.get_infer_type(node) else {
+                continue;
+            };
+            let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter) else {
+                continue;
+            };
+            let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(tp_data.name) else {
+                continue;
+            };
+            let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                continue;
+            };
+            if ident.escaped_text != target_name || tp_data.constraint == NodeIndex::NONE {
+                continue;
+            }
+            // The constraint exists — check if it resolves to keyof ObjT
+            let constraint_type = self.get_type_from_type_node(tp_data.constraint);
+            let constraint_eval = self.evaluate_type_with_env(constraint_type);
+            if self.is_keyof_for_current_object(constraint_type, object_type, object_type_for_check)
+                || self.is_keyof_for_current_object(
+                    constraint_eval,
+                    object_type,
+                    object_type_for_check,
+                )
+            {
+                return true;
+            }
+            // Also check assignability: constraint might be
+            // DistributedKeyOf<ObjT> which evaluates to keyof ObjT
+            let keyof_object = self.ctx.types.evaluate_keyof(object_type_for_check);
+            if self.is_assignable_to(constraint_eval, keyof_object) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Collect all `INFER_TYPE` node indices in a subtree, using parent-tracking.
+    /// Walks all nodes whose parent chain leads back to `root_idx`.
+    fn collect_infer_nodes_in_subtree(&self, root_idx: NodeIndex) -> Vec<NodeIndex> {
+        let mut result = Vec::new();
+        let mut stack = vec![root_idx];
+        while let Some(idx) = stack.pop() {
+            if idx == NodeIndex::NONE {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::INFER_TYPE {
+                result.push(idx);
+                // Nested `infer Y` inside the constraint is in the same scope.
+                if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
+                    stack.push(infer_data.type_parameter);
+                }
+                continue;
+            }
+            // Push children based on node type
+            self.push_type_node_children(idx, node, &mut stack);
+        }
+        result
+    }
+
+    /// Push child indices of a type node onto the stack for traversal.
+    fn push_type_node_children(
+        &self,
+        _idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+        stack: &mut Vec<NodeIndex>,
+    ) {
+        // Tuple type: push elements
+        if let Some(tuple) = self.ctx.arena.get_tuple_type(node) {
+            stack.extend(tuple.elements.nodes.iter().copied());
+            return;
+        }
+        // Array type
+        if let Some(arr) = self.ctx.arena.get_array_type(node) {
+            stack.push(arr.element_type);
+            return;
+        }
+        // Union/intersection type (both use CompositeTypeData)
+        if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+            stack.extend(composite.types.nodes.iter().copied());
+            return;
+        }
+        // Type reference with type arguments
+        if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+            if let Some(ref args) = type_ref.type_arguments {
+                stack.extend(args.nodes.iter().copied());
+            }
+            return;
+        }
+        // Wrapped types: rest, optional, parenthesized (all share WrappedTypeData)
+        if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+            stack.push(wrapped.type_node);
+            return;
+        }
+        // Conditional type
+        if let Some(cond) = self.ctx.arena.get_conditional_type(node) {
+            stack.push(cond.check_type);
+            stack.push(cond.extends_type);
+            stack.push(cond.true_type);
+            stack.push(cond.false_type);
+            return;
+        }
+        // Indexed access type
+        if let Some(iat) = self.ctx.arena.get_indexed_access_type(node) {
+            stack.push(iat.object_type);
+            stack.push(iat.index_type);
+            return;
+        }
+        // Type operator (keyof, readonly, unique)
+        if let Some(type_op) = self.ctx.arena.get_type_operator(node) {
+            stack.push(type_op.type_node);
+            return;
+        }
+        if let Some(tp) = self.ctx.arena.get_type_parameter(node) {
+            stack.extend_from_slice(&[tp.constraint, tp.default]);
+        }
+    }
+
+    /// Check if `node_a` is a descendant of `node_b` in the AST.
+    fn is_descendant_of(&self, node_a: NodeIndex, node_b: NodeIndex) -> bool {
+        let mut current = Some(node_a);
+        while let Some(idx) = current {
+            if idx == node_b {
+                return true;
+            }
+            current = self.ctx.arena.parent_of(idx);
+        }
+        false
+    }
+
+    /// Check if the index type parameter has a `keyof` constraint targeting the object type,
+    /// resolved from the AST declaration. Returns true if `K extends keyof T` for the current
+    /// object T.
+    fn index_has_keyof_constraint_from_declaration(
+        &mut self,
+        index_node_idx: NodeIndex,
+        object_node_idx: NodeIndex,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        if let Some(constraint_type) =
+            self.resolve_index_constraint_from_declaration(index_node_idx, object_node_idx)
+        {
+            // Check if the constraint is `keyof T` for our object
+            if self.is_keyof_for_current_object(constraint_type, object_type, object_type_for_check)
+            {
+                return true;
+            }
+            // Also check if the constraint is directly assignable to keyof of the object
+            // (handles cases like `K extends string` indexing `Record<string, V>`)
+        }
+        false
+    }
+
+    /// Check an indexed access type (T[K]).
+    pub(crate) fn check_indexed_access_type(&mut self, node_idx: NodeIndex) {
+        // tsc does not re-type-check declaration files (.d.ts) — they are trusted
+        // as correct declarations. Checking them generates false positives because
+        // the type constraint relationships (e.g. keyof Readonly<T> = keyof T) are
+        // not always reconstructible from type IDs without full evaluation.
+        if self.ctx.is_declaration_file() {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+        let Some(data) = self.ctx.arena.get_indexed_access_type(node) else {
+            return;
+        };
+
+        if self.indexed_access_literal_property_exists_in_alias_union(
+            data.object_type,
+            data.index_type,
+        ) {
+            return;
+        }
+
+        let object_type = self.get_type_from_type_node(data.object_type);
+        let index_type = self.get_type_from_type_node(data.index_type);
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if indexed_access_object_alias_application_exceeds_depth(self, data.object_type) {
+            self.error_at_node(
+                data.object_type,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+            return;
+        }
+
+        if object_type == TypeId::ERROR
+            && index_type != TypeId::ERROR
+            && index_type != TypeId::NEVER
+            && let Some(object_node) = self.ctx.arena.get(data.object_type)
+            && self
+                .ctx
+                .arena
+                .get_indexed_access_type(object_node)
+                .is_some()
+            && let Some(raw_object_text) = self.node_text(data.object_type)
+        {
+            let nested_base_type = self
+                .ctx
+                .arena
+                .get_indexed_access_type(object_node)
+                .map(|nested| self.get_type_from_type_node(nested.object_type));
+            if let Some(base_type) = nested_base_type
+                && self.indexed_access_constraint_values_allow_index(base_type, index_type)
+            {
+                return;
+            }
+            if self.nested_type_literal_index_access_allows_index(
+                data.object_type,
+                data.index_type,
+                index_type,
+            ) {
+                return;
+            }
+            // Clean up object type text: strip enclosing parens and any trailing
+            // index access syntax that may leak from the object_type node span.
+            let object_type_str = {
+                let trimmed = raw_object_text.trim();
+                let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
+                let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
+                if let Some(pos) = trimmed.find(")[") {
+                    trimmed[..pos].trim().to_string()
+                } else {
+                    trimmed.trim().to_string()
+                }
+            };
+            let object_type_str = if object_type_str.is_empty() || object_type_str.contains('[') {
+                self.format_type(object_type)
+            } else {
+                object_type_str
+            };
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &object_type_str],
+            );
+            self.error_at_node(
+                node_idx,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
+
+        if object_type == TypeId::ERROR
+            || index_type == TypeId::ERROR
+            || object_type == TypeId::ANY
+            || index_type == TypeId::NEVER
+        {
+            return;
+        }
+
+        // TS4105: Private or protected member cannot be accessed on a type parameter.
+        // When the object type is (or contains) a type parameter and the index is a
+        // string literal naming a private/protected property on the constraint, tsc
+        // emits this error. The check fires per-type-parameter in unions but NOT for
+        // intersection constraints (tsc skips those).
+        if let Some(prop_atom) =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+        {
+            let property_name = self.ctx.types.resolve_atom(prop_atom);
+            self.check_ts4105_private_on_type_parameter(node_idx, object_type, &property_name);
+        }
+
+        let mut index_constraint =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, index_type);
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
+            && index_constraint.is_none()
+            && let Some(ast_constraint) =
+                self.resolve_index_constraint_from_declaration(data.index_type, data.object_type)
+        {
+            index_constraint = Some(ast_constraint);
+        }
+        let error_anchor = node_idx;
+        let concrete_error_anchor = data.index_type;
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
+            && index_constraint.is_some_and(|constraint| {
+                constraint == object_type
+                    || same_type_param_name(self.ctx.types, constraint, object_type)
+            })
+        {
+            let obj_type_str = self.format_type(object_type);
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
+
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
+            && self.generic_index_mentions_transformed_current_type_param(index_type, object_type)
+        {
+            let obj_type_str = self.format_type(object_type);
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type)
+            && crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
+            && index_constraint.is_some_and(|constraint| {
+                crate::query_boundaries::key_constraints::is_symbol_only_key_constraint(
+                    self.ctx.types,
+                    constraint,
+                )
+            })
+            && !self.is_valid_index_for_type_param(index_type, object_type)
+        {
+            let obj_type_str = self.format_type(object_type);
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
+
+        // Fast path: when the index is a type parameter and the object type node
+        // is a type literal, compute keyof from AST property names only (no
+        // value-type evaluation needed). This avoids eagerly resolving complex
+        // member types (e.g., generic type applications) just to check key validity.
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type)
+            && let Some(keyof_type) = self.type_literal_keyof_from_node(data.object_type)
+        {
+            let check_index = index_constraint.unwrap_or(index_type);
+            let check_index_eval = self.evaluate_type_with_env(check_index);
+            if self.is_assignable_to(check_index_eval, keyof_type) {
+                return;
+            }
+        }
+
+        let mut object_type_for_check = self.evaluate_type_with_env(object_type);
+        // Indexing `never` is always valid (produces `never`), so suppress TS2536.
+        // This handles cases like `(A & B)['kind']` where `A & B` reduces to `never`
+        // due to conflicting discriminant properties.
+        if object_type_for_check == TypeId::NEVER {
+            return;
+        }
+        object_type_for_check = crate::query_boundaries::common::type_parameter_constraint(
+            self.ctx.types,
+            object_type_for_check,
+        )
+        .unwrap_or(object_type_for_check);
+        if let Some((base_object_type, access_index_type)) =
+            crate::query_boundaries::common::index_access_types(
+                self.ctx.types,
+                object_type_for_check,
+            )
+            && let Some(base_constraint) =
+                crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    base_object_type,
+                )
+        {
+            let constrained_access = self
+                .ctx
+                .types
+                .factory()
+                .index_access(base_constraint, access_index_type);
+            let evaluated_constrained_access =
+                self.evaluate_type_for_assignability(constrained_access);
+            if evaluated_constrained_access != TypeId::ERROR {
+                object_type_for_check = evaluated_constrained_access;
+            }
+        }
+        if crate::query_boundaries::common::is_generic_application(
+            self.ctx.types,
+            object_type_for_check,
+        ) {
+            let expanded_object = self.evaluate_application_type(object_type_for_check);
+            if expanded_object != TypeId::ERROR && expanded_object != TypeId::ANY {
+                object_type_for_check = expanded_object;
+            }
+        }
+        if index_type == TypeId::ANY {
+            // tsc defers indexed-access validation in generic contexts.
+            // When the object type still contains type parameters (or IS
+            // a type parameter), `any` as an index is fine — the concrete
+            // check will happen at instantiation time.
+            if object_type_for_check == TypeId::ANY
+                || crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    object_type_for_check,
+                )
+                || crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types,
+                    object_type_for_check,
+                )
+            {
+                return;
+            }
+            let supports_string_index =
+                self.is_element_indexable(object_type_for_check, true, false);
+            let supports_number_index =
+                self.is_element_indexable(object_type_for_check, false, true);
+            if !supports_string_index && !supports_number_index {
+                // tsc keeps the index syntactically generic when the AST node
+                // is a bare type-parameter reference, even when our resolution
+                // evaluated the parameter to `any` (typically via a constraint
+                // that itself resolved through a property with `any` type).
+                // Defer rejection to instantiation time — mirroring tsc's
+                // `getActualTypeOfIndexedAccess` deferral.
+                if crate::query_boundaries::type_checking_utilities::ast_index_node_is_in_scope_type_parameter(
+                    self.ctx.arena,
+                    self.ctx.binder,
+                    &self.ctx.type_parameter_scope,
+                    data.index_type,
+                ) {
+                    return;
+                }
+                let message_2538 = format_message(
+                    diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                    &["any"],
+                );
+                self.error_at_index_type_span(
+                    error_anchor,
+                    &message_2538,
+                    diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                );
+                return;
+            }
+            return;
+        }
+        let keyof_object = if let Some(mapped_id) =
+            crate::query_boundaries::common::mapped_type_id(self.ctx.types, object_type_for_check)
+        {
+            let mapped = self.ctx.types.mapped_type(mapped_id);
+            let mapped_constraint = mapped.constraint;
+            let keyof = self.evaluate_mapped_constraint_with_resolution(mapped_constraint);
+
+            // When the index is `keyof T` and the mapped type iterates over `keyof T`
+            // (same T), the index is always valid. Check both the raw constraint and
+            // the evaluated result for structural equivalence via same_object_key_space.
+            if let Some(index_operand) =
+                crate::query_boundaries::state::checking::keyof_target(self.ctx.types, index_type)
+            {
+                if let Some(constraint_operand) =
+                    crate::query_boundaries::state::checking::keyof_target(
+                        self.ctx.types,
+                        mapped_constraint,
+                    )
+                    && same_object_key_space(self.ctx.types, index_operand, constraint_operand)
+                {
+                    return;
+                }
+                // Also check against the evaluated keyof result
+                if let Some(keyof_operand) =
+                    crate::query_boundaries::state::checking::keyof_target(self.ctx.types, keyof)
+                    && same_object_key_space(self.ctx.types, index_operand, keyof_operand)
+                {
+                    return;
+                }
+            }
+            if self.index_constraint_keyof_matches_mapped_constraint(
+                index_constraint,
+                mapped_constraint,
+                keyof,
+            ) {
+                return;
+            }
+
+            keyof
+        } else {
+            self.ctx.types.evaluate_keyof(object_type_for_check)
+        };
+        let is_self_derived_key_space = |candidate: TypeId| {
+            crate::query_boundaries::common::index_access_types(self.ctx.types, candidate)
+                .is_some_and(|(derived_object, derived_index)| {
+                    crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        index_type,
+                    ) && !crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        derived_object,
+                    ) && (derived_index == index_type
+                        || same_type_param_name(self.ctx.types, derived_index, index_type))
+                })
+        };
+        let is_self_derived_keyof_space = |candidate: TypeId| {
+            crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
+                .and_then(|target| {
+                    crate::query_boundaries::common::index_access_types(self.ctx.types, target)
+                })
+                .is_some_and(|(derived_object, derived_index)| {
+                    crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        index_type,
+                    ) && !crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        derived_object,
+                    ) && (derived_index == index_type
+                        || same_type_param_name(self.ctx.types, derived_index, index_type))
+                })
+        };
+        if is_self_derived_key_space(keyof_object)
+            || is_self_derived_key_space(self.evaluate_type_with_env(keyof_object))
+            || is_self_derived_keyof_space(keyof_object)
+            || is_self_derived_keyof_space(self.evaluate_type_with_env(keyof_object))
+        {
+            let obj_type_str = self.format_type(object_type);
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
+
+        let index_type_for_check = self.evaluate_type_with_env(index_type);
+        if let Some(prop_atom) =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+            && self.ctx.types.resolve_atom(prop_atom) == "length"
+            && self.indexed_access_object_allows_length_property(object_type, object_type_for_check)
+        {
+            return;
+        }
+        if remapped_mapped_type_template_index_should_report_ts2536(
+            self.ctx.types,
+            object_type_for_check,
+            index_type,
+            index_type_for_check,
+        ) {
+            let obj_type_str = self.format_type(object_type);
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
+        // First check: raw index type against keyof.
+        // This handles cases where keyof includes type parameters from mapped types
+        // (e.g. keyof ({ [P in T]: P } & ...) = T | ...) and the index IS that parameter.
+        if self.is_assignable_to(index_type_for_check, keyof_object) {
+            return;
+        }
+        if self.conditional_result_branches_satisfy_constraint(index_type, keyof_object)
+            || self
+                .conditional_result_branches_satisfy_constraint(index_type_for_check, keyof_object)
+        {
+            return;
+        }
+        // When the solver TypeData doesn't carry the constraint (common for type
+        // parameters in generic signatures), use the AST-resolved constraint.
+        // E.g. `emit<Event extends keyof M>(...args: M[Event])` — Event's
+        // constraint `keyof M` is found from the AST but not in the TypeId.
+        if let Some(constraint) = index_constraint {
+            let constraint_eval = self.evaluate_type_with_env(constraint);
+            if self.is_assignable_to(constraint_eval, keyof_object) {
+                return;
+            }
+        }
+        if self.is_mapped_key_index_for_current_object(
+            node_idx,
+            data.object_type,
+            data.index_type,
+            object_type,
+            object_type_for_check,
+        ) {
+            return;
+        }
+        if self.mapped_object_index_matches_own_key_constraint(
+            data.object_type,
+            index_type,
+            index_type_for_check,
+        ) {
+            return;
+        }
+        // When the constraint was resolved from AST, also check if it represents
+        // a keyof for the current object type (catches deferred keyof patterns that
+        // aren't directly assignable to the computed keyof).
+        if let Some(constraint) = index_constraint {
+            let evaluated_constraint = self.evaluate_type_with_env(constraint);
+            if self.is_keyof_for_current_object(
+                evaluated_constraint,
+                object_type,
+                object_type_for_check,
+            ) || self.is_keyof_for_current_object(constraint, object_type, object_type_for_check)
+            {
+                return;
+            }
+        }
+        // Follow the constraint chain transitively (P -> K -> keyof T) so that
+        // e.g. T[P] where P extends K extends keyof T doesn't false-positive.
+        // At each level, check assignability to keyof or recognize deferred types.
+        let mut index_type_for_check = index_type_for_check;
+        for _ in 0..5 {
+            let next = crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                index_type_for_check,
+            );
+            let Some(next_constraint) = next else { break };
+            let next_evaluated = self.evaluate_type_with_env(next_constraint);
+            if self.is_assignable_to(next_evaluated, keyof_object) {
+                return;
+            }
+            // If the constraint resolved to a deferred key space for THIS object,
+            // suppress TS2536. For unrelated key spaces (e.g. `F extends keyof D[T]`
+            // used as `D[F]`), we must keep checking and report TS2536.
+            if self.is_keyof_for_current_object(next_evaluated, object_type, object_type_for_check)
+                || self.is_keyof_for_current_object(
+                    next_constraint,
+                    object_type,
+                    object_type_for_check,
+                )
+            {
+                return;
+            }
+            // Continue following if still a type parameter.
+            if !crate::query_boundaries::common::is_type_parameter_like(
+                self.ctx.types,
+                next_evaluated,
+            ) {
+                index_type_for_check = next_evaluated;
+                break;
+            }
+            index_type_for_check = next_evaluated;
+        }
+        // When the solver-level type parameter had no constraint but an AST-resolved
+        // constraint exists (e.g. mapped type key `k` in `[k in K]: T[k]` where the
+        // solver's TypeId for `k` doesn't carry the constraint), follow the chain
+        // starting from the AST-resolved constraint. This handles patterns like
+        // `[k in K]: T[k]` where `K extends keyof T` — the chain K → keyof T must
+        // be followed to suppress the false TS2536.
+        if let Some(ast_constraint) = index_constraint {
+            let mut chain_start = ast_constraint;
+            for _ in 0..5 {
+                let evaluated = self.evaluate_type_with_env(chain_start);
+                if self.is_keyof_for_current_object(evaluated, object_type, object_type_for_check)
+                    || self.is_keyof_for_current_object(
+                        chain_start,
+                        object_type,
+                        object_type_for_check,
+                    )
+                {
+                    return;
+                }
+                if self.is_assignable_to(evaluated, keyof_object) {
+                    return;
+                }
+                let next = crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    evaluated,
+                );
+                let Some(next_constraint) = next else { break };
+                chain_start = next_constraint;
+            }
+        }
+        if !self.is_assignable_to(index_type_for_check, keyof_object) {
+            if let Some((wants_string, wants_number)) =
+                self.get_index_key_kind(index_type_for_check)
+                && !generic_constrained_index(
+                    self.ctx.types,
+                    object_type_for_check,
+                    index_type,
+                    index_constraint,
+                )
+                && self.is_element_indexable(object_type_for_check, wants_string, wants_number)
+            {
+                return;
+            }
+            // Numeric-literal index keys may stringify differently from our keyof
+            // representation; explicitly check if all literals are valid keys.
+            if crate::query_boundaries::common::numeric_literal_index_valid_for_object(
+                self.ctx.types,
+                index_type_for_check,
+                object_type_for_check,
+            ) {
+                return;
+            }
+            if self.is_numeric_index_on_parameters_utility(data.object_type, index_type_for_check) {
+                return;
+            }
+            if self.canonical_numeric_string_literal_valid_for_object(
+                index_type_for_check,
+                object_type_for_check,
+            ) {
+                return;
+            }
+            if self.union_index_members_valid_for_object(
+                index_type_for_check,
+                object_type_for_check,
+                keyof_object,
+            ) {
+                return;
+            }
+            if self.keyof_index_valid_for_string_indexed_object(
+                object_type_for_check,
+                index_type_for_check,
+            ) {
+                return;
+            }
+            if let Some(object_type_node) = self.ctx.arena.get(data.object_type)
+                && let Some(nested_indexed_access) =
+                    self.ctx.arena.get_indexed_access_type(object_type_node)
+            {
+                let mut constrained_base_type =
+                    self.get_type_from_type_node(nested_indexed_access.object_type);
+                constrained_base_type = crate::query_boundaries::common::type_parameter_constraint(
+                    self.ctx.types,
+                    constrained_base_type,
+                )
+                .unwrap_or(constrained_base_type);
+
+                let nested_index_type =
+                    self.get_type_from_type_node(nested_indexed_access.index_type);
+                let constrained_base_keyof = self
+                    .type_literal_keyof_from_node(nested_indexed_access.object_type)
+                    .unwrap_or_else(|| self.ctx.types.evaluate_keyof(constrained_base_type));
+                let nested_index_for_check = self.evaluate_type_with_env(nested_index_type);
+                let nested_index_constraint_matches =
+                    crate::query_boundaries::common::type_parameter_constraint(
+                        self.ctx.types,
+                        nested_index_for_check,
+                    )
+                    .is_some_and(|constraint| {
+                        let constraint = self.evaluate_type_with_env(constraint);
+                        self.is_assignable_to(constraint, constrained_base_keyof)
+                    });
+                let nested_index_matches_constrained_base = self
+                    .is_assignable_to(nested_index_for_check, constrained_base_keyof)
+                    || nested_index_constraint_matches
+                    || self.is_keyof_for_current_object(
+                        nested_index_type,
+                        constrained_base_type,
+                        constrained_base_type,
+                    )
+                    || self.is_keyof_for_current_object(
+                        nested_index_for_check,
+                        constrained_base_type,
+                        constrained_base_type,
+                    );
+                if nested_index_matches_constrained_base {
+                    if self.type_literal_member_values_accept_index(
+                        nested_indexed_access.object_type,
+                        index_type_for_check,
+                        index_constraint,
+                    ) {
+                        return;
+                    }
+                    let constrained_object_type = if let Some(prop_atom) =
+                        crate::query_boundaries::common::string_literal_value(
+                            self.ctx.types,
+                            nested_index_type,
+                        ) {
+                        let property_name = self.ctx.types.resolve_atom(prop_atom);
+                        match self
+                            .resolve_property_access_with_env(constrained_base_type, &property_name)
+                        {
+                            tsz_solver::operations::property::PropertyAccessResult::Success {
+                                type_id,
+                                ..
+                            } => type_id,
+                            _ => self.evaluate_type_with_env(
+                                self.ctx
+                                    .types
+                                    .factory()
+                                    .index_access(constrained_base_type, nested_index_type),
+                            ),
+                        }
+                    } else {
+                        // When the nested index is a type parameter (e.g., k in a mapped
+                        // type), the solver can't resolve `constraint[k]` directly.
+                        // First try index signature lookup, then fall back to evaluation.
+                        let evaluated_base = self.evaluate_type_with_env(constrained_base_type);
+                        let index_info = self.ctx.types.get_index_signatures(evaluated_base);
+                        if let Some(ref sig) = index_info.string_index {
+                            sig.value_type
+                        } else {
+                            self.evaluate_type_with_env(
+                                self.ctx
+                                    .types
+                                    .factory()
+                                    .index_access(constrained_base_type, nested_index_type),
+                            )
+                        }
+                    };
+                    // When the constrained object is still a deferred indexed access,
+                    // try evaluating it further. If it resolves to a concrete type,
+                    // use that for validation. Otherwise, check if the evaluated type
+                    // has index signatures or properties that validate the index.
+                    let constrained_object_type =
+                        if crate::query_boundaries::common::is_index_access_type(
+                            self.ctx.types,
+                            constrained_object_type,
+                        ) {
+                            let evaluated =
+                                self.evaluate_type_for_assignability(constrained_object_type);
+                            if evaluated != TypeId::ERROR
+                                && !crate::query_boundaries::common::is_index_access_type(
+                                    self.ctx.types,
+                                    evaluated,
+                                )
+                            {
+                                evaluated
+                            } else {
+                                constrained_object_type
+                            }
+                        } else {
+                            constrained_object_type
+                        };
+                    if constrained_object_type != TypeId::ERROR
+                        // When the constrained object is still a deferred indexed access
+                        // (e.g., T[keyof T] where T is unconstrained), or resolves to
+                        // `any` (recursive/circular constraints), property lookups may
+                        // spuriously succeed. Skip this block so the error is caught
+                        // by the deferred-suppression or final error path below.
+                        && constrained_object_type != TypeId::ANY
+                        && !crate::query_boundaries::common::is_index_access_type(
+                            self.ctx.types,
+                            constrained_object_type,
+                        )
+                    {
+                        // Check broad index types (string/number/symbol)
+                        if is_broad_index_type(self.ctx.types, index_type_for_check)
+                            && let Some((wants_string, wants_number)) =
+                                self.get_index_key_kind(index_type_for_check)
+                            && self.is_element_indexable(
+                                constrained_object_type,
+                                wants_string,
+                                wants_number,
+                            )
+                        {
+                            return;
+                        }
+                        // Check string literal indices via property access on the
+                        // resolved constraint type. This handles generic class instances
+                        // (e.g., ZodType<any>) where evaluate_keyof doesn't enumerate
+                        // class members.
+                        if let Some(prop_atom) =
+                            crate::query_boundaries::common::string_literal_value(
+                                self.ctx.types,
+                                index_type_for_check,
+                            )
+                        {
+                            let property_name = self.ctx.types.resolve_atom(prop_atom);
+                            let prop_result = self.resolve_property_access_with_env(
+                                constrained_object_type,
+                                &property_name,
+                            );
+                            if matches!(
+                                prop_result,
+                                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                            ) {
+                                return;
+                            }
+                        }
+                        // Fall back to keyof check for non-literal indices.
+                        let constrained_keyof =
+                            self.ctx.types.evaluate_keyof(constrained_object_type);
+                        if self.is_assignable_to(index_type_for_check, constrained_keyof) {
+                            return;
+                        }
+                    }
+                }
+            }
+            // When the index is a concrete string literal (not a type parameter or
+            // deferred type), do NOT suppress TS2536 just because the object type
+            // is a deferred indexed access — tsc still emits TS2536 for patterns
+            // like `T[keyof T]["foo"]` where the literal can't be validated as a
+            // key of the unresolved indexed access result.
+            let index_is_concrete_literal = crate::query_boundaries::common::string_literal_value(
+                self.ctx.types,
+                index_type_for_check,
+            )
+            .is_some();
+            // Suppress TS2536 when the index is deferred (conditional, application,
+            // keyof, or error) — tsc defers generic-level checks to instantiation time.
+            // Check both evaluated and original types since evaluation can partially
+            // resolve to ERROR or Conditional.
+            let is_deferred_object_type = |ty: TypeId| -> bool {
+                ty == TypeId::ERROR
+                    || crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty)
+                    || crate::query_boundaries::common::is_generic_application(self.ctx.types, ty)
+                    || crate::query_boundaries::common::is_keyof_type(self.ctx.types, ty)
+            };
+            let key_space_is_unresolved = |ty: TypeId| -> bool {
+                ty == TypeId::ERROR
+                    || ty == TypeId::ANY
+                    || crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty)
+                    || crate::query_boundaries::common::is_generic_application(self.ctx.types, ty)
+                    || crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty)
+            };
+            let mut is_deferred_index_type = |ty: TypeId| -> bool {
+                ty == TypeId::ERROR
+                    || crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty)
+                    || crate::query_boundaries::common::is_generic_application(self.ctx.types, ty)
+                    || self.is_keyof_for_current_object(ty, object_type, object_type_for_check)
+            };
+            // Suppress TS2536 for deferred types (conditional, application, keyof,
+            // error, index-access). tsc defers these checks to instantiation time.
+            if is_deferred_index_type(index_type_for_check)
+                || is_deferred_index_type(index_type)
+                || (is_deferred_object_type(object_type_for_check)
+                    && key_space_is_unresolved(keyof_object)
+                    && !index_is_concrete_literal)
+                || (is_deferred_object_type(object_type)
+                    && key_space_is_unresolved(keyof_object)
+                    && !index_is_concrete_literal)
+                || (self.is_deferred_indexed_access_object(object_type_for_check)
+                    && key_space_is_unresolved(keyof_object)
+                    && !index_is_concrete_literal)
+                // Only fall back to checking the pre-resolution object_type when the
+                // resolved type is also still an indexed access. If constraint resolution
+                // produced a concrete type (e.g., T['value'] → number), trust it.
+                || (crate::query_boundaries::common::is_index_access_type(self.ctx.types, object_type_for_check)
+                    && self.is_deferred_indexed_access_object(object_type)
+                    && key_space_is_unresolved(keyof_object)
+                    && !index_is_concrete_literal)
+                || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type_for_check)
+                || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type)
+            {
+                return;
+            }
+            // Last-resort: check if the index type parameter's AST declaration has a
+            // `keyof` constraint targeting the current object type. This catches cases
+            // where the TypeId lost its constraint during type application lowering.
+            if self.index_has_keyof_constraint_from_declaration(
+                data.index_type,
+                data.object_type,
+                object_type,
+                object_type_for_check,
+            ) {
+                return;
+            }
+            // Check if we're inside a conditional type's true branch where the condition
+            // narrows the index to `keyof T`. E.g., `key extends keyof T ? T[key] : never`.
+            if self.is_in_conditional_keyof_narrowing_context(
+                node_idx,
+                object_type,
+                object_type_for_check,
+                index_type,
+            ) {
+                return;
+            }
+
+            if let Some(prop_atom) = crate::query_boundaries::common::string_literal_value(
+                self.ctx.types,
+                index_type_for_check,
+            ) {
+                let property_name = self.ctx.types.resolve_atom(prop_atom);
+                if self.union_restricted_literal_property_is_missing(
+                    &property_name,
+                    object_type_for_check,
+                ) {
+                    // Suppress TS2339 for types containing type parameters,
+                    // index access types, or deferred types that cannot be resolved.
+                    // Check both the resolved type and the original type.
+                    let type_str_for_check = self.format_type(object_type_for_check);
+                    let should_suppress =
+                        crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            object_type_for_check,
+                        ) || crate::query_boundaries::common::is_index_access_type(
+                            self.ctx.types,
+                            object_type_for_check,
+                        ) || crate::query_boundaries::common::is_conditional_type(
+                            self.ctx.types,
+                            object_type_for_check,
+                        ) || object_type_for_check == TypeId::UNKNOWN
+                            || object_type_for_check == TypeId::ERROR
+                            || crate::query_boundaries::common::is_index_access_type(
+                                self.ctx.types,
+                                object_type,
+                            )
+                            || crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                object_type,
+                            )
+                            || type_str_for_check.contains('['); // Index access type like T[K]
+                    if !should_suppress {
+                        let object_type_str = self
+                            .node_text(data.object_type)
+                            .map(|text| {
+                                let trimmed = text.trim();
+                                let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
+                                let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
+                                // Strip trailing index access syntax that may leak from
+                                // the object_type node span (e.g., "Foo | Bar)['foo']")
+                                let trimmed = if let Some(bracket_pos) = trimmed.find(")[") {
+                                    trimmed[..bracket_pos].trim()
+                                } else if let Some(bracket_pos) = trimmed.find("]['") {
+                                    trimmed[..bracket_pos].trim()
+                                } else {
+                                    trimmed
+                                };
+                                trimmed.trim().to_string()
+                            })
+                            .filter(|text| !text.is_empty() && !text.contains('['))
+                            .unwrap_or_else(|| self.format_type(object_type));
+                        let message = format_message(
+                            diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                            &[property_name.as_str(), &object_type_str],
+                        );
+                        self.error_at_node(
+                            concrete_error_anchor,
+                            &message,
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        );
+                    }
+                    return;
+                }
+                // Don't trust property access results on deferred types (indexed
+                // access, conditional, generic application) — the solver may
+                // spuriously report success on types it can't fully resolve.
+                if !crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types,
+                    object_type_for_check,
+                ) && !crate::query_boundaries::common::is_conditional_type(
+                    self.ctx.types,
+                    object_type_for_check,
+                ) && !crate::query_boundaries::common::is_generic_application(
+                    self.ctx.types,
+                    object_type_for_check,
+                ) && matches!(
+                    self.resolve_property_access_with_env(object_type_for_check, &property_name),
+                    tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                ) {
+                    return;
+                }
+                // For conditional types like Extract<X, Y> (i.e., X extends Y ? X : never),
+                // check if the property exists on the check_type or extends_type.
+                // When false_type is `never`, the result is always a subtype of check_type
+                // (which extends extends_type), so if either has the property it's valid.
+                // This handles patterns like Extract<TDef[I], FieldDefinition>["type"]
+                // where FieldDefinition has a "type" property.
+                if let Some(cond_id) = crate::query_boundaries::common::get_conditional_type_id(
+                    self.ctx.types,
+                    object_type_for_check,
+                ) {
+                    let cond = self.ctx.types.conditional_type(cond_id);
+                    if cond.false_type == TypeId::NEVER {
+                        // Check extends_type first (common for Extract/Filter patterns)
+                        let extends_eval = self.evaluate_type_with_env(cond.extends_type);
+                        if !crate::query_boundaries::common::is_conditional_type(
+                            self.ctx.types,
+                            extends_eval,
+                        ) && !crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            extends_eval,
+                        ) && matches!(
+                            self.resolve_property_access_with_env(extends_eval, &property_name),
+                            tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                        ) {
+                            return;
+                        }
+                        // Check check_type (handles cases where check_type's constraint
+                        // has the property but extends_type doesn't)
+                        let check_eval = self.evaluate_type_with_env(cond.check_type);
+                        if !crate::query_boundaries::common::is_conditional_type(
+                            self.ctx.types,
+                            check_eval,
+                        ) && !crate::query_boundaries::common::is_generic_application(
+                            self.ctx.types,
+                            check_eval,
+                        ) && !crate::query_boundaries::common::is_index_access_type(
+                            self.ctx.types,
+                            check_eval,
+                        ) && matches!(
+                            self.resolve_property_access_with_env(check_eval, &property_name),
+                            tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                        ) {
+                            return;
+                        }
+                        // Also check the constraint of the check_type (for generic
+                        // patterns like TDef[number] where TDef: readonly FieldDefinition[])
+                        let check_constraint =
+                            crate::query_boundaries::common::type_parameter_constraint(
+                                self.ctx.types,
+                                check_eval,
+                            );
+                        if let Some(constraint) = check_constraint {
+                            let constraint_eval = self.evaluate_type_with_env(constraint);
+                            if !crate::query_boundaries::common::is_conditional_type(
+                                self.ctx.types,
+                                constraint_eval,
+                            ) && !crate::query_boundaries::common::is_generic_application(
+                                self.ctx.types,
+                                constraint_eval,
+                            ) && matches!(
+                                self.resolve_property_access_with_env(
+                                    constraint_eval,
+                                    &property_name
+                                ),
+                                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                            ) {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // When the original index type is a type parameter (e.g., T extends keyof A
+            // used to index B where A != B), don't decompose its constraint into concrete
+            // members — emit TS2536 for the type parameter itself. tsc reports
+            // "Type 'T' cannot be used to index type 'B'" rather than per-member TS2339.
+            let original_index_is_type_param =
+                crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, index_type);
+            if !original_index_is_type_param
+                && self.try_emit_concrete_index_access_error(
+                    concrete_error_anchor,
+                    object_type_for_check,
+                    index_type_for_check,
+                    self.type_node_refers_to_type_parameter(data.object_type),
+                )
+            {
+                return;
+            }
+
+            let obj_type_str = self.format_type(object_type);
+            let evaluated_index_type = self.evaluate_type_for_assignability(index_type);
+            let index_type_str = if evaluated_index_type != TypeId::ERROR
+                && !crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    index_type,
+                ) {
+                self.format_type(evaluated_index_type)
+            } else {
+                let raw = self.format_type(index_type);
+                let evaluated = self.format_type(evaluated_index_type);
+                if raw != evaluated && raw.starts_with("keyof ") && evaluated.contains("keyof ") {
+                    evaluated
+                } else {
+                    raw
+                }
+            };
+
+            // Last resort: when the object type is an indexed access Obj[K] where Obj
+            // is a concrete type, evaluate the union of all value types and check if
+            // the index literal is valid. This handles patterns like:
+            //   { [K in keyof Obj]: Obj[K]['name'] }
+            // where Obj has an `as` clause or other constructs that prevent the solver
+            // from resolving Obj[K] with a generic K.
+            if let Some((base_obj, _base_idx)) = crate::query_boundaries::common::index_access_types(
+                self.ctx.types,
+                object_type_for_check,
+            ) {
+                if self.indexed_access_constraint_values_allow_index(base_obj, index_type_for_check)
+                {
+                    return;
+                }
+
+                let eval_base = self.evaluate_type_with_env(base_obj);
+                let is_concrete = !crate::query_boundaries::common::is_type_parameter_like(
+                    self.ctx.types,
+                    eval_base,
+                ) && !crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    eval_base,
+                ) && !crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types,
+                    eval_base,
+                ) && !crate::query_boundaries::common::is_conditional_type(
+                    self.ctx.types,
+                    eval_base,
+                ) && !crate::query_boundaries::common::is_generic_application(
+                    self.ctx.types,
+                    eval_base,
+                );
+                if is_concrete {
+                    let keyof_base = self.ctx.types.evaluate_keyof(eval_base);
+                    let values_union = self.evaluate_type_with_env(
+                        self.ctx.types.factory().index_access(eval_base, keyof_base),
+                    );
+                    if values_union != TypeId::ERROR
+                        && values_union != TypeId::UNDEFINED
+                        && !crate::query_boundaries::common::is_index_access_type(
+                            self.ctx.types,
+                            values_union,
+                        )
+                    {
+                        // Check if the index is a valid key of the values union
+                        let keyof_values = self.ctx.types.evaluate_keyof(values_union);
+                        if self.is_assignable_to(index_type_for_check, keyof_values) {
+                            return;
+                        }
+                        // Also try property access for string literal indices
+                        if let Some(prop_atom) =
+                            crate::query_boundaries::common::string_literal_value(
+                                self.ctx.types,
+                                index_type_for_check,
+                            )
+                        {
+                            let property_name = self.ctx.types.resolve_atom(prop_atom);
+                            if matches!(
+                                self.resolve_property_access_with_env(values_union, &property_name),
+                                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+                            ) {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            if object_type != object_type_for_check
+                && let Some((base_obj, _base_idx)) =
+                    crate::query_boundaries::common::index_access_types(self.ctx.types, object_type)
+                && self.indexed_access_constraint_values_allow_index(base_obj, index_type_for_check)
+            {
+                return;
+            }
+
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+        }
+    }
+
+    fn try_emit_concrete_index_access_error(
+        &mut self,
+        error_anchor: NodeIndex,
+        object_type: TypeId,
+        index_type: TypeId,
+        object_is_type_parameter_ref: bool,
+    ) -> bool {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if object_type == TypeId::ERROR || index_type == TypeId::ERROR {
+            return false;
+        }
+
+        let concrete_object_type =
+            if crate::query_boundaries::common::is_generic_application(self.ctx.types, object_type)
+            {
+                let evaluated = self.evaluate_type_with_env(object_type);
+                if evaluated != TypeId::ERROR
+                    && !crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        evaluated,
+                    )
+                {
+                    evaluated
+                } else {
+                    object_type
+                }
+            } else {
+                object_type
+            };
+        let object_shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            concrete_object_type,
+        );
+        let object_has_shape = object_shape.is_some();
+        let object_has_named_shape = object_shape.and_then(|shape| shape.symbol).is_some();
+        let object_is_array_like =
+            crate::query_boundaries::common::is_array_type(self.ctx.types, concrete_object_type)
+                || crate::query_boundaries::common::tuple_elements(
+                    self.ctx.types,
+                    concrete_object_type,
+                )
+                .is_some();
+
+        if crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            concrete_object_type,
+        ) || crate::query_boundaries::common::is_type_parameter_like(
+            self.ctx.types,
+            concrete_object_type,
+        ) || crate::query_boundaries::common::is_index_access_type(
+            self.ctx.types,
+            concrete_object_type,
+        ) || crate::query_boundaries::common::is_conditional_type(
+            self.ctx.types,
+            concrete_object_type,
+        ) || (crate::query_boundaries::common::is_primitive_type(
+            self.ctx.types,
+            concrete_object_type,
+        ) && !crate::query_boundaries::dispatch::is_object_like_type(
+            self.ctx.types,
+            concrete_object_type,
+        )) {
+            return false;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, index_type)
+        {
+            if members.len() == 2
+                && members.contains(&TypeId::STRING)
+                && members.contains(&TypeId::NUMBER)
+                && !self.is_element_indexable(concrete_object_type, false, true)
+            {
+                let object_type_str = self.format_type(object_type);
+                for index_kind in ["number", "string"] {
+                    let message = format_message(
+                        diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                        &[&object_type_str, index_kind],
+                    );
+                    self.error_at_index_type_span(
+                        error_anchor,
+                        &message,
+                        diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                    );
+                }
+                return true;
+            }
+            let mut emitted_any = false;
+            for &member in members.iter() {
+                if member == TypeId::BOOLEAN {
+                    for boolean_member in ["false", "true"] {
+                        let message = format_message(
+                            diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                            &[boolean_member],
+                        );
+                        self.error_at_index_type_span(
+                            error_anchor,
+                            &message,
+                            diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                        );
+                    }
+                    emitted_any = true;
+                    continue;
+                }
+
+                emitted_any |= self.try_emit_concrete_index_access_error(
+                    error_anchor,
+                    concrete_object_type,
+                    member,
+                    object_is_type_parameter_ref,
+                );
+            }
+            return emitted_any;
+        }
+
+        if index_type == TypeId::ANY {
+            if self.is_element_indexable(concrete_object_type, true, false)
+                || self.is_element_indexable(concrete_object_type, false, true)
+            {
+                return false;
+            }
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                &["any"],
+            );
+            self.error_at_index_type_span(
+                error_anchor,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+            );
+            return true;
+        }
+
+        if let Some(invalid_member) = crate::query_boundaries::common::get_invalid_index_type_member(
+            self.ctx.types,
+            index_type,
+        ) {
+            let index_type_str = self.format_type(invalid_member);
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                &[&index_type_str],
+            );
+            self.error_at_index_type_span(
+                error_anchor,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+            );
+            return true;
+        }
+
+        if let Some(prop_atom) =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+        {
+            let property_name = self.ctx.types.resolve_atom(prop_atom);
+            if self
+                .union_restricted_literal_property_is_missing(&property_name, concrete_object_type)
+            {
+                // Suppress TS2339 for types containing type parameters or deferred types.
+                let type_str_for_check = self.format_type(concrete_object_type);
+                let should_suppress = crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    concrete_object_type,
+                ) || crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types,
+                    concrete_object_type,
+                ) || crate::query_boundaries::common::is_conditional_type(
+                    self.ctx.types,
+                    concrete_object_type,
+                ) || concrete_object_type == TypeId::UNKNOWN
+                    || concrete_object_type == TypeId::ERROR
+                    || type_str_for_check.contains('['); // Index access type like T[K]
+                if !should_suppress {
+                    let object_type_str = self.format_type(object_type);
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        &[property_name.as_str(), &object_type_str],
+                    );
+                    self.error_at_node(
+                        error_anchor,
+                        &message,
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    );
+                }
+                return true;
+            }
+            if self.get_numeric_index_from_string(&property_name).is_some()
+                && self.is_element_indexable(concrete_object_type, false, true)
+            {
+                return false;
+            }
+            if !matches!(
+                self.resolve_property_access_with_env(concrete_object_type, &property_name),
+                tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+            ) && self.get_index_key_kind(index_type) == Some((true, false))
+                && !self.is_element_indexable(concrete_object_type, true, false)
+                && !object_is_type_parameter_ref
+                && (object_has_named_shape || object_is_array_like)
+            {
+                let object_type_str = self.format_type(object_type);
+                let message = format_message(
+                    diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    &[property_name.as_str(), &object_type_str],
+                );
+                self.error_at_node(
+                    error_anchor,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                );
+                return true;
+            }
+        }
+
+        if let Some((wants_string, wants_number)) = self.get_index_key_kind(index_type)
+            && !self.is_element_indexable(concrete_object_type, wants_string, wants_number)
+        {
+            let is_literal_index =
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+                    .is_some()
+                    || crate::query_boundaries::common::number_literal_value(
+                        self.ctx.types,
+                        index_type,
+                    )
+                    .is_some();
+            if is_literal_index {
+                return false;
+            }
+            if !object_has_shape && !object_is_array_like {
+                return false;
+            }
+            let object_type_str = self.format_type(object_type);
+            if wants_string {
+                let message = format_message(
+                    diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                    &[&object_type_str, "string"],
+                );
+                self.error_at_index_type_span(
+                    error_anchor,
+                    &message,
+                    diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                );
+            }
+            if wants_number {
+                let message = format_message(
+                    diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                    &[&object_type_str, "number"],
+                );
+                self.error_at_index_type_span(
+                    error_anchor,
+                    &message,
+                    diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                );
+            }
+            return wants_string || wants_number;
+        }
+
+        false
+    }
+}

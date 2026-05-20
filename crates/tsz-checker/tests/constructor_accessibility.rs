@@ -1,0 +1,541 @@
+//! Tests for constructor accessibility (Lawyer Layer).
+//!
+//! These tests verify that classes with private/protected constructors
+//! cannot be instantiated from invalid scopes.
+
+use crate::checker::context::CheckerOptions;
+use crate::checker::state::CheckerState;
+use crate::test_fixtures::TestContext;
+use std::sync::Arc;
+use tsz_binder::BinderState;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
+
+/// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
+/// Mocks the global types to bypass missing lib.d.ts issue.
+const GLOBAL_TYPE_MOCKS: &str = r#"
+interface Array<T> {}
+interface String {}
+interface Boolean {}
+interface Number {}
+interface Object {}
+interface Function {}
+interface RegExp {}
+interface IArguments {}
+"#;
+
+fn test_constructor_accessibility(source: &str, expected_error_code: u32) {
+    let source = format!("{GLOBAL_TYPE_MOCKS}\n{source}");
+
+    let ctx = TestContext::new(); // This loads lib files
+
+    let mut parser = ParserState::new("test.ts".to_string(), source);
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    // Set lib contexts for global symbol resolution
+    if !ctx.lib_files.is_empty() {
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
+            .lib_files
+            .iter()
+            .map(|lib| crate::checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
+
+    checker.check_source_file(root);
+
+    let error_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == expected_error_code)
+        .count();
+
+    assert!(
+        error_count >= 1,
+        "Expected at least 1 TS{} error, got {}: {:?}",
+        expected_error_code,
+        error_count,
+        checker.ctx.diagnostics
+    );
+}
+
+fn test_no_errors(source: &str) {
+    let source = format!("{GLOBAL_TYPE_MOCKS}\n{source}");
+
+    let ctx = TestContext::new(); // This loads lib files
+
+    let mut parser = ParserState::new("test.ts".to_string(), source);
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    // Set lib contexts for global symbol resolution
+    if !ctx.lib_files.is_empty() {
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
+            .lib_files
+            .iter()
+            .map(|lib| crate::checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
+
+    checker.check_source_file(root);
+
+    let errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.category == crate::checker::diagnostics::DiagnosticCategory::Error && d.code != 2318
+        })
+        .collect();
+
+    assert!(
+        errors.is_empty(),
+        "Expected no errors, got {}: {:?}",
+        errors.len(),
+        errors
+    );
+}
+
+/// Test that private constructors cannot be accessed outside the class.
+#[test]
+fn test_private_constructor_instantiation() {
+    // TS2673: Constructor of class 'A' is private and only accessible within the class declaration.
+    test_constructor_accessibility(
+        r#"
+        class A { private constructor() {} }
+        let a = new A();
+        "#,
+        2673,
+    );
+}
+
+/// Test that protected constructors cannot be accessed outside the class hierarchy.
+#[test]
+fn test_protected_constructor_instantiation() {
+    // TS2674: Constructor of class 'A' is protected and only accessible within the class declaration.
+    test_constructor_accessibility(
+        r#"
+        class A { protected constructor() {} }
+        let a = new A();
+        "#,
+        2674,
+    );
+}
+
+/// Test that private constructors CAN be accessed inside the class (static factory pattern).
+#[test]
+fn test_private_constructor_inside_class() {
+    // Should pass
+    test_no_errors(
+        r#"
+        // Workaround: Mock global types to avoid TS2318 errors
+        interface Array<T> {}
+        interface String {}
+        interface Boolean {}
+        interface Number {}
+        interface Object {}
+        interface Function {}
+        interface RegExp {}
+        interface IArguments {}
+
+        class A {
+            private constructor() {}
+            static create() { return new A(); }
+        }
+        "#,
+    );
+}
+
+/// Test that protected constructors CAN be accessed in subclasses.
+#[test]
+fn test_protected_constructor_in_subclass() {
+    // Should pass (super call allowed)
+    test_no_errors(
+        r#"
+        class A { protected constructor() {} }
+        class B extends A {
+            constructor() { super(); }
+        }
+        "#,
+    );
+}
+
+/// Test that private constructors fail in subclasses (subclass can't call super).
+#[test]
+fn test_private_constructor_in_subclass() {
+    // TS2675: Cannot extend a class with a private constructor
+    test_constructor_accessibility(
+        r#"
+        class A { private constructor() {} }
+        class B extends A {
+            constructor() { super(); }
+        }
+        "#,
+        2675,
+    );
+}
+
+/// Test that protected constructor can't be called from unrelated class.
+#[test]
+fn test_protected_constructor_cross_class() {
+    // TS2674: Constructor is protected
+    test_constructor_accessibility(
+        r#"
+        class A { protected constructor() {} }
+        class B {
+            foo() { return new A(); }
+        }
+        "#,
+        2674,
+    );
+}
+
+/// Test that public constructor has no restrictions (baseline).
+#[test]
+fn test_public_constructor_no_restrictions() {
+    // Should pass
+    test_no_errors(
+        r#"
+        class A { public constructor() {} }
+        let a = new A();
+        "#,
+    );
+}
+
+/// Test that default constructor (no accessibility modifier) is public.
+#[test]
+fn test_default_constructor_is_public() {
+    // Should pass
+    test_no_errors(
+        r#"
+        class A {}
+        let a = new A();
+        "#,
+    );
+}
+
+/// Test that class with private constructor can be used as a type annotation.
+/// Type annotation doesn't require instantiation.
+#[test]
+fn test_private_constructor_type_annotation() {
+    // Should pass (using as type, not constructing)
+    test_no_errors(
+        r#"
+        class A { private constructor() {} private x: number = 1; }
+        function foo(a: A) {}
+        foo(null as any);
+        "#,
+    );
+}
+
+/// Test that abstract classes can't be instantiated directly.
+#[test]
+fn test_abstract_class_instantiation() {
+    // TS2511: Cannot create an instance of an abstract class
+    test_constructor_accessibility(
+        r#"
+        abstract class A {}
+        let a = new A();
+        "#,
+        2511,
+    );
+}
+
+/// Test that abstract classes can be extended and subclass instantiated.
+#[test]
+fn test_abstract_class_subclass_instantiation() {
+    // Should pass
+    test_no_errors(
+        r#"
+        abstract class A {}
+        class B extends A {}
+        let b = new B();
+        "#,
+    );
+}
+
+/// Test that nested classes CAN extend class with private constructor.
+/// This is allowed because the nested class is within the scope of the base class.
+#[test]
+fn test_nested_class_private_constructor() {
+    // Should pass - nested class can extend private constructor
+    test_no_errors(
+        r#"
+        class A {
+            private constructor() {}
+            static Inner = class extends A {};
+        }
+        "#,
+    );
+}
+
+/// Test that inherited private constructor blocks extension.
+/// If a class extends a class with private constructor, it inherits the restriction.
+#[test]
+fn test_inherited_private_constructor() {
+    // TS2675: Cannot extend a class with inherited private constructor
+    // Class B inherits the private constructor from A
+    test_constructor_accessibility(
+        r#"
+        class A { private constructor() {} }
+        class B extends A {}
+        class C extends B {}
+        "#,
+        2675,
+    );
+}
+
+fn test_no_specific_error(source: &str, forbidden_code: u32) {
+    let source = format!("{GLOBAL_TYPE_MOCKS}\n{source}");
+
+    let ctx = TestContext::new();
+
+    let mut parser = ParserState::new("test.ts".to_string(), source);
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    if !ctx.lib_files.is_empty() {
+        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
+            .lib_files
+            .iter()
+            .map(|lib| crate::checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
+
+    checker.check_source_file(root);
+
+    let forbidden: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == forbidden_code)
+        .collect();
+
+    assert!(
+        forbidden.is_empty(),
+        "Expected no TS{} errors, got {}: {:?}",
+        forbidden_code,
+        forbidden.len(),
+        forbidden
+    );
+}
+
+/// Test that `super()` in if/else branches satisfies TS2377.
+/// Derived class constructors with `super()` in control flow should NOT emit TS2377.
+#[test]
+fn test_super_call_in_if_else_no_ts2377() {
+    test_no_specific_error(
+        r#"
+        class A { constructor(s: string, t: string) {} }
+        class B extends A {
+            constructor() {
+                if (true) {
+                    super('a', 'b');
+                } else {
+                    super('c', 'd');
+                }
+            }
+        }
+        "#,
+        2377,
+    );
+}
+
+/// Test that `super()` in try/catch satisfies TS2377.
+#[test]
+fn test_super_call_in_try_catch_no_ts2377() {
+    test_no_specific_error(
+        r#"
+        class Foo {
+            constructor(shouldThrow: boolean) {}
+        }
+        class Bar extends Foo {
+            constructor() {
+                try {
+                    super(true);
+                } catch (e) {
+                    super(false);
+                }
+            }
+        }
+        "#,
+        2377,
+    );
+}
+
+/// Test that `super()` in an expression context (object literal value) satisfies TS2377.
+#[test]
+fn test_super_call_in_expression_no_ts2377() {
+    test_no_specific_error(
+        r#"
+        class A { foo() {} }
+        class B extends A {
+            constructor() {
+                var x = { x: super() };
+            }
+        }
+        "#,
+        2377,
+    );
+}
+
+/// Test that a constructor with NO `super()` in a derived class DOES emit TS2377.
+#[test]
+fn test_missing_super_call_emits_ts2377() {
+    test_constructor_accessibility(
+        r#"
+        class A { constructor() {} }
+        class B extends A {
+            constructor() {
+                // no super() call
+            }
+        }
+        "#,
+        2377,
+    );
+}
+
+/// Test that nested classes inside a method can access outer class's private constructor.
+/// This matches tsc behavior: lexically enclosed classes inherit scope access.
+#[test]
+fn test_nested_class_in_method_accesses_private_constructor() {
+    test_no_specific_error(
+        r#"
+        class A {
+            private constructor() {}
+            method() {
+                class B {
+                    method() {
+                        new A(); // OK - lexically inside A
+                    }
+                }
+            }
+        }
+        "#,
+        2673,
+    );
+}
+
+/// Test that nested classes inside a method can access outer class's protected constructor.
+#[test]
+fn test_nested_class_in_method_accesses_protected_constructor() {
+    test_no_specific_error(
+        r#"
+        class D {
+            protected constructor() {}
+            method() {
+                class E {
+                    method() {
+                        new D(); // OK - lexically inside D
+                    }
+                }
+            }
+        }
+        "#,
+        2674,
+    );
+}
+
+/// Test that private constructors are still blocked from truly external code.
+#[test]
+fn test_private_constructor_blocked_from_external_nested() {
+    // A nested class in a DIFFERENT class should NOT have access
+    test_constructor_accessibility(
+        r#"
+        class A { private constructor() {} }
+        class Other {
+            method() {
+                new A(); // Error: private constructor
+            }
+        }
+        "#,
+        2673,
+    );
+}
+
+/// Test TS2415: parameter property with optional type incompatible with base.
+/// `constructor(public p?: number)` creates `p: number | undefined` which is
+/// not assignable to base class's `p: number`.
+#[test]
+fn test_parameter_property_optional_incompatible_with_base() {
+    test_constructor_accessibility(
+        r#"
+        class C {
+            p: number = 0;
+        }
+        class D extends C {
+            constructor(public p?: number) {
+                super();
+            }
+        }
+        "#,
+        2415,
+    );
+}
+
+/// Test TS2415: parameter property with visibility conflict.
+/// Derived `readonly x` (public) vs base `private readonly x`.
+#[test]
+fn test_parameter_property_visibility_conflict_with_base() {
+    test_constructor_accessibility(
+        r#"
+        class D {
+            constructor(private readonly x: number) {
+                this.x = 0;
+            }
+        }
+        class E extends D {
+            constructor(readonly x: number) {
+                super(x);
+            }
+        }
+        "#,
+        2415,
+    );
+}

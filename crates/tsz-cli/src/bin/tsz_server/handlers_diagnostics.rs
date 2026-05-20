@@ -1,0 +1,539 @@
+//! Diagnostic handlers for tsz-server.
+//!
+//! Handles semantic, syntactic, and suggestion diagnostic commands.
+
+use super::{Server, TsServerRequest, TsServerResponse};
+
+use tsz::checker::diagnostics::DiagnosticCategory;
+use tsz::lsp::position::LineMap;
+use tsz::parser::ParserState;
+
+pub(crate) struct DiagnosticFormatInput<'a> {
+    pub(crate) start_offset: u32,
+    pub(crate) length: u32,
+    pub(crate) message: &'a str,
+    pub(crate) code: u32,
+    pub(crate) category: DiagnosticCategory,
+    pub(crate) line_map: &'a LineMap,
+    pub(crate) content: &'a str,
+    pub(crate) include_line_position: bool,
+}
+
+impl Server {
+    const fn should_omit_per_file_semantic_diagnostic(
+        diag: &tsz::checker::diagnostics::Diagnostic,
+    ) -> bool {
+        diag.code == tsz::checker::diagnostics::diagnostic_codes::CANNOT_FIND_GLOBAL_TYPE
+            && diag.start == 0
+            && diag.length == 0
+    }
+
+    pub(super) fn extract_auto_import_file_exclude_patterns(
+        request: &TsServerRequest,
+    ) -> Option<Vec<String>> {
+        request
+            .arguments
+            .get("preferences")
+            .and_then(|p| p.get("autoImportFileExcludePatterns"))
+            .or_else(|| request.arguments.get("autoImportFileExcludePatterns"))
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
+                    .collect()
+            })
+    }
+
+    pub(super) fn extract_auto_import_specifier_exclude_regexes(
+        request: &TsServerRequest,
+    ) -> Option<Vec<String>> {
+        request
+            .arguments
+            .get("preferences")
+            .and_then(|p| p.get("autoImportSpecifierExcludeRegexes"))
+            .or_else(|| request.arguments.get("autoImportSpecifierExcludeRegexes"))
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
+                    .collect()
+            })
+    }
+
+    pub(crate) fn handle_configure(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let preferences = request
+            .arguments
+            .get("preferences")
+            .unwrap_or(&request.arguments);
+
+        self.completion_import_module_specifier_ending = preferences
+            .get("importModuleSpecifierEnding")
+            .and_then(|v| v.as_str())
+            .map(std::string::ToString::to_string);
+        self.import_module_specifier_preference = preferences
+            .get("importModuleSpecifierPreference")
+            .and_then(|v| v.as_str())
+            .map(std::string::ToString::to_string);
+        self.organize_imports_type_order = preferences
+            .get("organizeImportsTypeOrder")
+            .and_then(|v| v.as_str())
+            .map(std::string::ToString::to_string);
+        self.organize_imports_ignore_case = preferences
+            .get("organizeImportsIgnoreCase")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true);
+        self.auto_import_file_exclude_patterns =
+            Self::extract_auto_import_file_exclude_patterns(request).unwrap_or_default();
+        self.auto_import_specifier_exclude_regexes =
+            Self::extract_auto_import_specifier_exclude_regexes(request).unwrap_or_default();
+        self.include_completions_with_class_member_snippets = preferences
+            .get("includeCompletionsWithClassMemberSnippets")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        self.include_inlay_parameter_name_hints = preferences
+            .get("includeInlayParameterNameHints")
+            .and_then(|v| v.as_str())
+            .map(std::string::ToString::to_string);
+        // `generateReturnInDocTemplate` controls the `@returns` line in
+        // `docCommentTemplate`. Storing as `Option<bool>` so the per-request
+        // argument or the default still applies when `configure` doesn't set it.
+        self.generate_return_in_doc_template = preferences
+            .get("generateReturnInDocTemplate")
+            .and_then(serde_json::Value::as_bool);
+        if let Some(format_options) = request
+            .arguments
+            .get("formatOptions")
+            .and_then(serde_json::Value::as_object)
+            && let Some(new_line) = format_options
+                .get("newLineCharacter")
+                .and_then(serde_json::Value::as_str)
+        {
+            self.new_line_character = Some(new_line.to_string());
+        }
+
+        self.success_response(seq, request, None)
+    }
+
+    pub(crate) fn handle_semantic_diagnostics_sync(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let file = request.arguments.get("file").and_then(|v| v.as_str());
+        let include_line_position = request
+            .arguments
+            .get("includeLinePosition")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
+            // Client-supplied `open_files` content is never normalized: a
+            // real client opening `/fourslash.ts` with `//// const x = 1;`
+            // expects tsc-equivalent behavior (treat as a comment), not the
+            // harness's `////`-line extraction. See #3799. Disk-loaded
+            // fourslash *fixtures* (loaded by `read_virtual_harness_path`)
+            // continue to be normalized.
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
+        };
+        let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
+            if let Some(content) = get_content(file_path, &self.open_files) {
+                let line_map = LineMap::build(&content);
+                let mut full_diags = self.get_semantic_diagnostics_full(file_path, &content);
+                full_diags.retain(|diag| !Self::should_omit_per_file_semantic_diagnostic(diag));
+                let has_module_none_diagnostic = full_diags.iter().any(|d| {
+                    d.code
+                        == tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
+                });
+                if !has_module_none_diagnostic
+                    && full_diags.iter().all(|d| {
+                        d.code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                    })
+                    && let Some((_, binder, _, _)) = self.parse_and_bind_file(file_path)
+                {
+                    full_diags.extend(self.synthetic_missing_name_expression_diagnostics(
+                        file_path, &content, &binder,
+                    ));
+                }
+                if full_diags.iter().all(|d| d.code != 2420) {
+                    full_diags.extend(
+                        self.synthetic_implements_interface_diagnostics(file_path, &content),
+                    );
+                }
+                full_diags
+                    .iter()
+                    .map(|diag| {
+                        let (start_offset, length) =
+                            Self::normalized_diagnostic_span(diag, &content);
+                        Self::format_diagnostic(DiagnosticFormatInput {
+                            start_offset,
+                            length,
+                            message: &diag.message_text,
+                            code: diag.code,
+                            category: diag.category,
+                            line_map: &line_map,
+                            content: &content,
+                            include_line_position,
+                        })
+                    })
+                    .collect()
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        self.success_response(seq, request, Some(serde_json::json!(diagnostics)))
+    }
+
+    pub(crate) fn handle_syntactic_diagnostics_sync(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let file = request.arguments.get("file").and_then(|v| v.as_str());
+        let include_line_position = request
+            .arguments
+            .get("includeLinePosition")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
+            // Client-supplied `open_files` content is never normalized: a
+            // real client opening `/fourslash.ts` with `//// const x = 1;`
+            // expects tsc-equivalent behavior (treat as a comment), not the
+            // harness's `////`-line extraction. See #3799. Disk-loaded
+            // fourslash *fixtures* (loaded by `read_virtual_harness_path`)
+            // continue to be normalized.
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
+        };
+        let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
+            if let Some(content) = get_content(file_path, &self.open_files) {
+                let line_map = LineMap::build(&content);
+                let mut parser = ParserState::new(file_path.to_string(), content.clone());
+                let _root = parser.parse_source_file();
+                parser
+                    .get_diagnostics()
+                    .iter()
+                    .map(|d| {
+                        Self::format_diagnostic(DiagnosticFormatInput {
+                            start_offset: d.start,
+                            length: d.length,
+                            message: &d.message,
+                            code: d.code,
+                            category: DiagnosticCategory::Error,
+                            line_map: &line_map,
+                            content: &content,
+                            include_line_position,
+                        })
+                    })
+                    .collect()
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        self.success_response(seq, request, Some(serde_json::json!(diagnostics)))
+    }
+
+    /// Format a diagnostic for the tsserver protocol.
+    ///
+    /// When `include_line_position` is true (the `SessionClient` always sets this),
+    /// the response includes 0-based `start`/`length` fields plus `startLocation`/
+    /// `endLocation` with 1-based line/offset. When false, uses `start`/`end` as
+    /// 1-based line/offset objects (the traditional tsserver format).
+    pub(crate) fn format_diagnostic(input: DiagnosticFormatInput<'_>) -> serde_json::Value {
+        let start_pos = input
+            .line_map
+            .offset_to_position(input.start_offset, input.content);
+        let end_pos = input
+            .line_map
+            .offset_to_position(input.start_offset + input.length, input.content);
+        let cat_str = match input.category {
+            DiagnosticCategory::Error => "error",
+            DiagnosticCategory::Warning => "warning",
+            _ => "suggestion",
+        };
+
+        if input.include_line_position {
+            let start = Self::utf16_offset_for_byte_offset(input.content, input.start_offset);
+            let end = Self::utf16_offset_for_byte_offset(
+                input.content,
+                input.start_offset.saturating_add(input.length),
+            );
+            // When includeLinePosition is true, the harness expects:
+            // - start: 0-based UTF-16 offset (number)
+            // - length: UTF-16 length (number)
+            // - startLocation: {line, offset} (1-based)
+            // - endLocation: {line, offset} (1-based)
+            // - message: the diagnostic text
+            // - category: category string
+            // - code: error code
+            serde_json::json!({
+                "start": start,
+                "length": end.saturating_sub(start),
+                "startLocation": {
+                    "line": start_pos.line + 1,
+                    "offset": start_pos.character + 1,
+                },
+                "endLocation": {
+                    "line": end_pos.line + 1,
+                    "offset": end_pos.character + 1,
+                },
+                "message": input.message,
+                "code": input.code,
+                "category": cat_str,
+            })
+        } else {
+            // Traditional tsserver format: start/end as {line, offset}
+            serde_json::json!({
+                "start": {
+                    "line": start_pos.line + 1,
+                    "offset": start_pos.character + 1,
+                },
+                "end": {
+                    "line": end_pos.line + 1,
+                    "offset": end_pos.character + 1,
+                },
+                "text": input.message,
+                "code": input.code,
+                "category": cat_str,
+            })
+        }
+    }
+
+    fn utf16_offset_for_byte_offset(content: &str, byte_offset: u32) -> u32 {
+        let limit = usize::try_from(byte_offset)
+            .unwrap_or(content.len())
+            .min(content.len());
+        content
+            .char_indices()
+            .take_while(|(idx, _)| *idx < limit)
+            .map(|(_, ch)| u32::try_from(ch.len_utf16()).unwrap_or(0))
+            .sum()
+    }
+
+    fn normalized_diagnostic_span(
+        diag: &tsz::checker::diagnostics::Diagnostic,
+        content: &str,
+    ) -> (u32, u32) {
+        if diag.code
+            != tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
+        {
+            return (diag.start, diag.length);
+        }
+
+        let Ok(start) = usize::try_from(diag.start) else {
+            return (diag.start, diag.length);
+        };
+        let Some(mut end) = start.checked_add(diag.length as usize) else {
+            return (diag.start, diag.length);
+        };
+        end = end.min(content.len());
+        if start >= end || start >= content.len() {
+            return (diag.start, diag.length);
+        }
+
+        let bytes = content.as_bytes();
+        let slice = &bytes[start..end];
+        if let Some(rel) = slice.iter().position(|b| *b == b';') {
+            return (diag.start, (rel + 1) as u32);
+        }
+        if let Some(rel) = slice.iter().position(|b| *b == b'\n') {
+            return (diag.start, rel as u32);
+        }
+
+        (diag.start, diag.length)
+    }
+
+    pub(crate) fn handle_suggestion_diagnostics_sync(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        let file = request.arguments.get("file").and_then(|v| v.as_str());
+        let include_line_position = request
+            .arguments
+            .get("includeLinePosition")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let get_content = |file_path: &str, open_files: &rustc_hash::FxHashMap<String, String>| {
+            // Client-supplied `open_files` content is never normalized: a
+            // real client opening `/fourslash.ts` with `//// const x = 1;`
+            // expects tsc-equivalent behavior (treat as a comment), not the
+            // harness's `////`-line extraction. See #3799. Disk-loaded
+            // fourslash *fixtures* (loaded by `read_virtual_harness_path`)
+            // continue to be normalized.
+            open_files.get(file_path).cloned().or_else(|| {
+                Self::read_virtual_harness_path(file_path)
+                    .map(|raw| Self::normalize_fourslash_virtual_content(file_path, &raw))
+            })
+        };
+        let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
+            if let Some(content) = get_content(file_path, &self.open_files) {
+                let line_map = LineMap::build(&content);
+                let mut diags = self.get_suggestion_diagnostics(file_path, &content);
+                if diags.iter().all(|d| d.code != 80004)
+                    && let Some(diag) =
+                        Self::synthetic_jsdoc_suggestion_diagnostic(file_path, &content)
+                {
+                    diags.push(diag);
+                }
+                if diags.iter().all(|d| d.code != 1308)
+                    && let Some(diag) =
+                        Self::synthetic_missing_async_suggestion_diagnostic(file_path, &content)
+                {
+                    diags.push(diag);
+                }
+                let has_jsdoc_type_tags = content.contains("@type {")
+                    || content.contains("@param {")
+                    || content.contains("@return {")
+                    || content.contains("@returns {");
+                if !has_jsdoc_type_tags
+                    && diags.iter().all(|d| d.code != 7006)
+                    && let Some(diag) = Self::synthetic_add_parameter_names_suggestion_diagnostic(
+                        file_path, &content,
+                    )
+                {
+                    diags.push(diag);
+                }
+                if diags.iter().all(|d| d.code != 2739)
+                    && let Some(diag) = Self::synthetic_missing_attributes_suggestion_diagnostic(
+                        file_path, &content,
+                    )
+                {
+                    diags.push(diag);
+                }
+                if diags.iter().all(|d| d.code != 7043 && d.code != 7044) {
+                    diags.extend(Self::synthetic_jsdoc_infer_from_usage_diagnostics(
+                        file_path, &content,
+                    ));
+                }
+                diags
+                    .iter()
+                    .map(|d| {
+                        Self::format_diagnostic(DiagnosticFormatInput {
+                            start_offset: d.start,
+                            length: d.length,
+                            message: &d.message_text,
+                            code: d.code,
+                            category: d.category,
+                            line_map: &line_map,
+                            content: &content,
+                            include_line_position,
+                        })
+                    })
+                    .collect()
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        self.success_response(seq, request, Some(serde_json::json!(diagnostics)))
+    }
+
+    pub(crate) fn handle_geterr(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        // tsserver acknowledges immediately, then asynchronously fires
+        // `syntaxDiag`, `semanticDiag`, `suggestionDiag`, and finally
+        // `requestCompleted`. Without these events, clients see no
+        // diagnostics. See https://github.com/mohsen1/tsz/issues/3544.
+        let files: Vec<String> = request
+            .arguments
+            .get("files")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|f| f.as_str().map(std::string::ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for file in &files {
+            self.emit_geterr_events_for_file(file);
+        }
+
+        self.emit_event(
+            "requestCompleted",
+            serde_json::json!({"request_seq": request.seq}),
+        );
+
+        self.acknowledge_response(seq, request)
+    }
+
+    pub(crate) fn handle_geterr_for_project(
+        &mut self,
+        seq: u64,
+        request: &TsServerRequest,
+    ) -> TsServerResponse {
+        // Without a real project graph, behave like `geterr` over all
+        // currently-open files: emit per-file events plus a final
+        // `requestCompleted`. See #3544.
+        let files: Vec<String> = self.open_files.keys().cloned().collect();
+        for file in &files {
+            self.emit_geterr_events_for_file(file);
+        }
+        self.emit_event(
+            "requestCompleted",
+            serde_json::json!({"request_seq": request.seq}),
+        );
+        self.acknowledge_response(seq, request)
+    }
+
+    /// Compute and emit `syntaxDiag`, `semanticDiag`, `suggestionDiag`
+    /// events for a single file. Reuses the existing `*-Sync` handlers'
+    /// diagnostic shapes (each returns a JSON body of `{file, diagnostics}`)
+    /// by synthesizing a minimal request and extracting the response body.
+    fn emit_geterr_events_for_file(&mut self, file: &str) {
+        let synth_request = |command: &str| TsServerRequest {
+            seq: 0,
+            _msg_type: "request".to_string(),
+            command: command.to_string(),
+            arguments: serde_json::json!({"file": file}),
+        };
+        let body_of = |response: TsServerResponse| -> serde_json::Value {
+            response
+                .body
+                .unwrap_or(serde_json::Value::Array(Vec::new()))
+        };
+
+        let syntax = body_of(
+            self.handle_syntactic_diagnostics_sync(0, &synth_request("syntacticDiagnosticsSync")),
+        );
+        self.emit_event(
+            "syntaxDiag",
+            serde_json::json!({"file": file, "diagnostics": syntax}),
+        );
+
+        let semantic = body_of(
+            self.handle_semantic_diagnostics_sync(0, &synth_request("semanticDiagnosticsSync")),
+        );
+        self.emit_event(
+            "semanticDiag",
+            serde_json::json!({"file": file, "diagnostics": semantic}),
+        );
+
+        let suggestion = body_of(
+            self.handle_suggestion_diagnostics_sync(0, &synth_request("suggestionDiagnosticsSync")),
+        );
+        self.emit_event(
+            "suggestionDiag",
+            serde_json::json!({"file": file, "diagnostics": suggestion}),
+        );
+    }
+}

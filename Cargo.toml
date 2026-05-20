@@ -1,0 +1,188 @@
+[workspace]
+members = ["crates/*"]
+exclude = ["crates/.target"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.9"
+edition = "2024"
+repository = "https://github.com/mohsen1/tsz"
+homepage = "https://github.com/mohsen1/tsz"
+license = "Apache-2.0"
+authors = ["Mohsen Azimi <mohsen@users.noreply.github.com>"]
+keywords = ["typescript", "type-checker", "compiler", "language", "tsz"]
+categories = ["development-tools", "compilers", "parser-implementations"]
+readme = "README.md"
+
+[workspace.dependencies]
+# Internal workspace crates
+tsz = { path = "crates/tsz-core", version = "0.1.9", package = "tsz-core" }
+tsz-common = { path = "crates/tsz-common", version = "0.1.9" }
+tsz-scanner = { path = "crates/tsz-scanner", version = "0.1.9" }
+tsz-parser = { path = "crates/tsz-parser", version = "0.1.9" }
+tsz-binder = { path = "crates/tsz-binder", version = "0.1.9" }
+tsz-solver = { path = "crates/tsz-solver", version = "0.1.9" }
+tsz-lowering = { path = "crates/tsz-lowering", version = "0.1.9" }
+tsz-checker = { path = "crates/tsz-checker", version = "0.1.9" }
+tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.9", default-features = false }
+tsz-lsp = { path = "crates/tsz-lsp", version = "0.1.9" }
+
+# External dependencies (shared versions)
+anyhow = "1.0"
+bitflags = "2.6"
+clap = { version = "4.5", features = ["derive"] }
+colored = "2.1"
+console_error_panic_hook = "0.1"
+criterion = "0.5"
+bincode = "1.3"
+dashmap = "6.1"
+ena = "0.14"
+fixedbitset = "0.4"
+globset = "0.4"
+indexmap = "2.6"
+memchr = "2.7"
+notify = { version = "6.1", default-features = false, features = ["crossbeam-channel", "macos_kqueue"] }
+once_cell = "1.19"
+rayon = "1.10"
+regex = "1.11"
+rustc-hash = "2.0"
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+json5 = "0.4"
+serde-wasm-bindgen = "0.6"
+smallvec = { version = "1.13", features = ["serde"] }
+tempfile = "3"
+tracing = { version = "0.1", features = ["release_max_level_warn"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-tree = "0.4"
+unicode-ident = "1.0"
+walkdir = "2.5"
+wasm-bindgen = "0.2"
+web-time = "1.1"
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+rust_2024_compatibility = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+# Correctness - these are errors
+correctness = { level = "deny", priority = -1 }
+# Style - useful warnings
+style = { level = "deny", priority = -1 }
+dbg_macro = "deny"
+print_stderr = "deny"
+empty_structs_with_brackets = "warn"
+get_unwrap = "deny"
+match_same_arms = "warn"
+missing_const_for_fn = "warn"
+doc_markdown = "warn"
+uninlined_format_args = "warn"
+redundant_clone = "warn"
+# Performance
+perf = { level = "deny", priority = -1 }
+# Complexity
+complexity = { level = "deny", priority = -1 }
+# Allow some that may be too noisy for this codebase
+
+[profile.release]
+# Fast compilation with decent runtime performance (for testing)
+lto = false           # No LTO = much faster compilation
+codegen-units = 16    # Parallel codegen = faster compilation
+strip = false         # Keep symbols for debugging
+
+[profile.dist]
+# Maximum optimization for production binary (use: cargo build --profile dist).
+# This is the profile used to build the binary measured on the public
+# benchmarks page; keep it tuned for steady-state throughput, not build speed.
+inherits = "release"
+lto = "fat"           # Full link-time optimization for smaller, faster binary
+codegen-units = 1     # Single codegen unit for better optimization
+strip = "symbols"     # Strip debug symbols to reduce binary size
+panic = "abort"       # No unwinding: removes landing pads + unwind tables,
+                      # improves icache density on hot paths and shrinks the
+                      # binary. tsz aborts on panic at the CLI boundary anyway
+                      # (`crates/tsz-cli/src/bin/tsz.rs`), and no CLI-linked
+                      # code path catches unwinds — the only catch_unwind
+                      # call sites are `#[cfg(test)]` and the wasm crate,
+                      # neither of which is built with this profile.
+
+[profile.dist-fast]
+# Fast build for CI: correctness over runtime performance.
+# LTO disabled so linking is not the bottleneck (sccache can't cache the link step).
+# Use for: CI testing, conformance runs. Not for representative perf benchmarks.
+inherits = "release"
+lto = false           # No LTO: linking is ~5-10x faster; sccache hits the codegen step
+codegen-units = 8     # Parallel codegen — halved from 16 so peak RSS per rustc
+                      # drops ~2× (LLVM keeps each codegen unit's IR in memory). That
+                      # lets scripts/ci/gcp-full-ci.sh raise CARGO_BUILD_JOBS without
+                      # OOM-killing rustc on the cloud runners.
+strip = "debuginfo"
+
+[profile.dev-fast]
+inherits = "dev"
+opt-level = 2
+debug = true
+
+# Profile-friendly release build for `samply`, `cargo flamegraph`,
+# or `dtrace`-based tools. Keep full DWARF debug info and symbols so
+# leaf frames resolve to Rust function names. Use:
+#
+#   cargo build --profile flame --bin tsz
+#   samply record --save-only -o /tmp/prof.json -- <path>/flame/tsz ...
+#   samply load /tmp/prof.json   # interactive, requires GUI
+#
+# Or piped through `inferno` for a flamegraph SVG:
+#
+#   samply record --save-only --output-format=collapsed -o /tmp/prof.txt \
+#     -- <path>/flame/tsz ...
+#   cat /tmp/prof.txt | inferno-flamegraph > flame.svg
+#
+# NOTE: keeping debug info means the binary is ~2-3× larger than the
+# stripped `dist` build. That's fine for local profiling; don't ship it.
+[profile.flame]
+inherits = "release"
+debug = 2             # full DWARF debug info
+strip = false         # keep symbols
+codegen-units = 1     # single codegen unit: function boundaries match source
+lto = "thin"          # match `dist-fast` for representative hot-path shape
+
+[profile.bench]
+lto = "thin"
+
+[profile.ci-unit]
+# Used by cargo nextest in CI unit suite to cap peak LLVM memory.
+# debug=2 (inherited from dev) × codegen-units × concurrent jobs = OOM on 8-CPU runners.
+# Disabling debug info is the single largest memory win (~3-4× reduction in LLVM backend RSS).
+#
+# 2026-05-16: even at CARGO_BUILD_JOBS=1, a single rustc compiling
+# tsz-checker lib-test exceeded 32 GiB RSS during LLVM backend and was
+# SIGKILL'd on the 32 GiB Cloud Run worker. The chain of mitigations:
+#   * codegen-units = 1 (no in-flight LLVM IR sharding; minimum peak)
+#   * opt-level = 0 (no codegen passes that re-materialize IR)
+#   * debug = false (no DWARF emission)
+#   * scripts/ci/gcp-full-ci.sh caps cargo to -j1 via
+#     TSZ_CI_UNIT_CARGO_MB_PER_JOB so two lib-tests cannot share the box.
+# The real fix is the Cloud Build private pool path (PR #7591) which runs
+# the same compile in ~4 min on a 32 vCPU box where memory is not the
+# constraint.
+inherits = "dev"
+opt-level = 0
+debug = false
+codegen-units = 1
+
+[profile.ci-lint]
+# Used by `cargo clippy` in the CI lint suite. Clippy doesn't ship binaries
+# or run tests — it only needs `.rmeta` analysis output. So:
+#   debug = false      → no DWARF generation; clippy never reads it
+#   incremental = false → incremental fingerprinting fights sccache (sccache
+#                          can't cache work that depends on the per-target
+#                          incremental session) and CI runners are ephemeral
+#                          so the on-disk incremental cache is dead weight
+#   opt-level = 0      → inherited from dev; clippy doesn't need optimisation
+#   codegen-units      → inherits dev's 256 (set in .cargo/config.toml).
+#                          No reason to override here; if the dev default
+#                          changes we want ci-lint to follow it.
+# Goal: clippy in <2 min warm, with sccache shouldering cross-commit reuse.
+inherits = "dev"
+debug = false
+incremental = false

@@ -1,0 +1,279 @@
+//! Enum Type Checking
+//!
+//! Provides type checking for enum declarations including:
+//! - Duplicate member detection
+//! - Initializer type validation
+//! - Const enum usage validation
+//! - Ambient enum compatibility checking
+//!
+//! # Diagnostics
+//!
+//! - TS2300: Duplicate identifier
+//! - TS2335: 'super' can only be referenced in a derived class
+//! - TS2474: const enum member initializers can only contain literal values
+//! - TS2477: A const enum member can only be accessed using a string literal
+
+use crate::enums::evaluator::{EnumEvaluator, EnumValue};
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_common::diagnostics::Diagnostic;
+use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
+use tsz_scanner::SyntaxKind;
+
+/// Diagnostic code constants
+pub mod diagnostic_codes {
+    pub const DUPLICATE_IDENTIFIER: u32 = 2300;
+    pub const CONST_ENUM_LITERAL_ONLY: u32 = 2474;
+    pub const ENUM_MEMBER_MUST_HAVE_INITIALIZER: u32 = 1061;
+    pub const COMPUTED_ENUM_NOT_NUMERIC: u32 = 2553;
+}
+
+/// Type checker for enum declarations
+pub struct EnumChecker<'a> {
+    arena: &'a NodeArena,
+    diagnostics: Vec<Diagnostic>,
+    /// Evaluated enum values cache
+    enum_values: FxHashMap<NodeIndex, FxHashMap<String, EnumValue>>,
+}
+
+impl<'a> EnumChecker<'a> {
+    /// Create a new enum checker
+    pub fn new(arena: &'a NodeArena) -> Self {
+        EnumChecker {
+            arena,
+            diagnostics: Vec::new(),
+            enum_values: FxHashMap::default(),
+        }
+    }
+
+    /// Get diagnostics produced during checking
+    pub fn get_diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
+    /// Take diagnostics, consuming them
+    pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
+        std::mem::take(&mut self.diagnostics)
+    }
+
+    /// Check an enum declaration
+    pub fn check_enum_declaration(&mut self, enum_idx: NodeIndex) {
+        let Some(enum_node) = self.arena.get(enum_idx) else {
+            return;
+        };
+
+        let Some(enum_data) = self.arena.get_enum(enum_node) else {
+            return;
+        };
+
+        // Check for duplicate members
+        self.check_duplicate_members(&enum_data.members);
+
+        // Check if this is a const enum
+        let is_const = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
+        let is_ambient = self.arena.is_declare(&enum_data.modifiers);
+
+        // Evaluate enum values
+        let mut evaluator = EnumEvaluator::new(self.arena);
+        let values = evaluator.evaluate_enum(enum_idx);
+        self.enum_values.insert(enum_idx, values.clone());
+
+        // Check member initializers
+        self.check_member_initializers(&enum_data.members, is_const, is_ambient, &values);
+    }
+
+    /// Check for duplicate enum members
+    fn check_duplicate_members(&mut self, members: &NodeList) {
+        let mut seen: FxHashSet<String> = FxHashSet::default();
+
+        for &member_idx in &members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            let Some(member_data) = self.arena.get_enum_member(member_node) else {
+                continue;
+            };
+
+            let member_name =
+                crate::transforms::emit_utils::enum_member_name(self.arena, member_data.name);
+            if member_name.is_empty() {
+                continue;
+            }
+
+            if !seen.insert(member_name.clone()) {
+                // Duplicate found
+                self.diagnostics.push(Diagnostic::error(
+                    String::new(), // file name filled in later
+                    member_node.pos,
+                    member_node.end - member_node.pos,
+                    format!("Duplicate identifier '{member_name}'."),
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                ));
+            }
+        }
+    }
+
+    /// Check member initializers
+    fn check_member_initializers(
+        &mut self,
+        members: &NodeList,
+        is_const: bool,
+        is_ambient: bool,
+        values: &FxHashMap<String, EnumValue>,
+    ) {
+        let mut had_string = false;
+
+        for &member_idx in &members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            let Some(member_data) = self.arena.get_enum_member(member_node) else {
+                continue;
+            };
+
+            let member_name =
+                crate::transforms::emit_utils::enum_member_name(self.arena, member_data.name);
+            let has_initializer = member_data.initializer.is_some();
+
+            // Get evaluated value
+            let value = values.get(&member_name);
+
+            // Check if value is string
+            if let Some(EnumValue::String(_)) = value {
+                had_string = true;
+            }
+
+            // After a string member, all subsequent members must have initializers
+            // Check if value is Computed due to missing initializer after string member
+            let needs_initializer =
+                had_string && !has_initializer && matches!(value, Some(EnumValue::Computed) | None);
+            if needs_initializer {
+                self.diagnostics.push(Diagnostic::error(
+                    String::new(),
+                    member_node.pos,
+                    member_node.end - member_node.pos,
+                    "Enum member must have initializer.".to_string(),
+                    diagnostic_codes::ENUM_MEMBER_MUST_HAVE_INITIALIZER,
+                ));
+            }
+
+            // Const enum specific checks
+            if is_const && has_initializer {
+                self.check_const_enum_initializer(member_data.initializer);
+            }
+
+            // Ambient enum - all members should have initializers (warning)
+            if is_ambient && !has_initializer {
+                // In ambient context, uninitialized members get computed values
+                // This is allowed but we might want to warn
+            }
+        }
+    }
+
+    /// Check that const enum initializers only contain literal values and
+    /// references to other const enum members
+    fn check_const_enum_initializer(&mut self, init_idx: NodeIndex) {
+        if !self.is_valid_const_enum_initializer(init_idx) {
+            let node = self.arena.get(init_idx);
+            let (start, length) = if let Some(n) = node {
+                (n.pos, n.end - n.pos)
+            } else {
+                (0, 0)
+            };
+
+            self.diagnostics.push(Diagnostic::error(
+                String::new(),
+                start,
+                length,
+                "const enum member initializers can only contain literal values and other computed enum values.".to_string(),
+                diagnostic_codes::CONST_ENUM_LITERAL_ONLY,
+            ));
+        }
+    }
+
+    /// Check if an expression is valid as a const enum initializer
+    fn is_valid_const_enum_initializer(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        match node.kind {
+            // Literals are always valid
+            k if k == SyntaxKind::NumericLiteral as u16 => true,
+            k if k == SyntaxKind::StringLiteral as u16 => true,
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => true,
+
+            // Identifiers - must be enum member reference
+            k if k == SyntaxKind::Identifier as u16 => {
+                // Allow references to other enum members
+                true
+            }
+
+            // Binary expressions - both sides must be valid
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(bin) = self.arena.get_binary_expr(node) {
+                    // Check operator is allowed
+                    let valid_op = matches!(
+                        bin.operator_token,
+                        k if k == SyntaxKind::PlusToken as u16
+                            || k == SyntaxKind::MinusToken as u16
+                            || k == SyntaxKind::AsteriskToken as u16
+                            || k == SyntaxKind::SlashToken as u16
+                            || k == SyntaxKind::PercentToken as u16
+                            || k == SyntaxKind::LessThanLessThanToken as u16
+                            || k == SyntaxKind::GreaterThanGreaterThanToken as u16
+                            || k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16
+                            || k == SyntaxKind::AmpersandToken as u16
+                            || k == SyntaxKind::BarToken as u16
+                            || k == SyntaxKind::CaretToken as u16
+                            || k == SyntaxKind::AsteriskAsteriskToken as u16
+                    );
+                    valid_op
+                        && self.is_valid_const_enum_initializer(bin.left)
+                        && self.is_valid_const_enum_initializer(bin.right)
+                } else {
+                    false
+                }
+            }
+
+            // Unary expressions
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr(node) {
+                    let valid_op = matches!(
+                        unary.operator,
+                        k if k == SyntaxKind::PlusToken as u16
+                            || k == SyntaxKind::MinusToken as u16
+                            || k == SyntaxKind::TildeToken as u16
+                    );
+                    valid_op && self.is_valid_const_enum_initializer(unary.operand)
+                } else {
+                    false
+                }
+            }
+
+            // Parenthesized expression
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.arena.get_parenthesized(node) {
+                    self.is_valid_const_enum_initializer(paren.expression)
+                } else {
+                    false
+                }
+            }
+
+            // Property access - allowed for enum member references
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => true,
+
+            // Everything else is invalid
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/checker.rs"]
+mod tests;

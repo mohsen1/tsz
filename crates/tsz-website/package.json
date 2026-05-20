@@ -1,0 +1,23 @@
+{
+  "name": "tsz-website",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/sync-docs.mjs && node scripts/build-playground.mjs && eleventy",
+    "build:playground": "node scripts/build-playground.mjs",
+    "test:benchmarks": "node scripts/benchmark-data-smoke.mjs",
+    "test:loc": "node scripts/loc-smoke.mjs",
+    "dev": "node scripts/dev.mjs",
+    "build:legacy": "node build.mjs"
+  },
+  "dependencies": {
+    "@11ty/eleventy": "^3.0.0",
+    "marked": "^15.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.2"
+  }
+}

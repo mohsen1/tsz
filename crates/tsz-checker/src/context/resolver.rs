@@ -1,0 +1,1356 @@
+//! `TypeResolver` trait implementation for `CheckerContext`.
+//!
+//! Implements `TypeResolver` which enables the solver to resolve
+//! `TypeData::Lazy(DefId)` references back to cached types during evaluation.
+
+use crate::context::{
+    CheckerContext, ResolutionError, ResolutionModeOverride, ResolutionRequestKind,
+};
+use crate::module_resolution::module_specifier_candidates;
+use crate::query_boundaries::variance::Variance;
+use std::sync::Arc;
+use tsz_parser::parser::base::{NodeIndex, NodeList};
+use tsz_solver::computation::TypeResolver;
+
+impl<'a> CheckerContext<'a> {
+    /// Get the resolution error for a specifier under an explicit resolution-mode override.
+    pub fn get_resolution_error_with_mode(
+        &self,
+        specifier: &str,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+    ) -> Option<&ResolutionError> {
+        if let Some(error) = self.get_resolution_error_for_request(
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::EsmImport,
+        ) {
+            return Some(error);
+        }
+        if let Some(error) = self.get_resolution_error_for_request(
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::EsmReExport,
+        ) {
+            return Some(error);
+        }
+        if matches!(
+            resolution_mode_override,
+            Some(ResolutionModeOverride::Require)
+        ) && let Some(error) = self.get_resolution_error_for_request(
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::CjsRequire,
+        ) {
+            return Some(error);
+        }
+
+        self.get_resolution_error(specifier)
+    }
+
+    /// Get the resolution error for a specifier under the exact driver request.
+    pub fn get_resolution_error_for_request(
+        &self,
+        specifier: &str,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+        request_kind: ResolutionRequestKind,
+    ) -> Option<&ResolutionError> {
+        if let Some(errors) = self.resolved_module_request_errors.as_ref() {
+            for candidate in crate::module_resolution::module_specifier_error_candidates(specifier)
+            {
+                if let Some(error) = errors.get(&(
+                    self.current_file_idx,
+                    candidate,
+                    resolution_mode_override,
+                    request_kind,
+                )) {
+                    return Some(error);
+                }
+            }
+            return None;
+        }
+
+        self.get_resolution_error(specifier)
+    }
+
+    /// Resolve an import specifier from a specific file using an explicit
+    /// `resolution-mode` override when one was present in the original request.
+    pub fn resolve_import_target_from_file_with_mode(
+        &self,
+        source_file_idx: usize,
+        specifier: &str,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+    ) -> Option<usize> {
+        if let Some(target_idx) = self.resolve_import_target_from_file_for_request(
+            source_file_idx,
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::EsmImport,
+        ) {
+            return Some(target_idx);
+        }
+        if let Some(target_idx) = self.resolve_import_target_from_file_for_request(
+            source_file_idx,
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::EsmReExport,
+        ) {
+            return Some(target_idx);
+        }
+        if matches!(
+            resolution_mode_override,
+            Some(ResolutionModeOverride::Require)
+        ) && let Some(target_idx) = self.resolve_import_target_from_file_for_request(
+            source_file_idx,
+            specifier,
+            resolution_mode_override,
+            ResolutionRequestKind::CjsRequire,
+        ) {
+            return Some(target_idx);
+        }
+
+        self.resolve_import_target_from_file(source_file_idx, specifier)
+    }
+
+    /// Resolve an import specifier from a specific file using the exact driver request.
+    pub fn resolve_import_target_from_file_for_request(
+        &self,
+        source_file_idx: usize,
+        specifier: &str,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+        request_kind: ResolutionRequestKind,
+    ) -> Option<usize> {
+        if let Some(paths) = self.resolved_module_request_paths.as_ref() {
+            for candidate in module_specifier_candidates(specifier) {
+                if let Some(target_idx) = paths.get(&(
+                    source_file_idx,
+                    candidate.clone(),
+                    resolution_mode_override,
+                    request_kind,
+                )) {
+                    return Some(*target_idx);
+                }
+            }
+            return None;
+        }
+
+        self.resolve_import_target_from_file(source_file_idx, specifier)
+    }
+
+    /// Compute the checker-side resolution-mode key used by the CLI driver for a request.
+    pub fn resolution_mode_for_request(
+        &self,
+        request_kind: ResolutionRequestKind,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+    ) -> Option<ResolutionModeOverride> {
+        if resolution_mode_override.is_some() {
+            return resolution_mode_override;
+        }
+
+        match request_kind {
+            ResolutionRequestKind::DynamicImport => return Some(ResolutionModeOverride::Import),
+            ResolutionRequestKind::CjsRequire => return Some(ResolutionModeOverride::Require),
+            ResolutionRequestKind::EsmImport | ResolutionRequestKind::EsmReExport => {}
+        }
+
+        let file_name = self
+            .all_arenas
+            .as_ref()
+            .and_then(|arenas| arenas.get(self.current_file_idx))
+            .and_then(|arena| arena.source_files.first())
+            .map(|source_file| source_file.file_name.as_str())
+            .unwrap_or(self.file_name.as_str());
+
+        if self.compiler_options.module == tsz_common::common::ModuleKind::Preserve {
+            if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
+                return Some(ResolutionModeOverride::Import);
+            }
+            if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
+                return Some(ResolutionModeOverride::Require);
+            }
+            return Some(ResolutionModeOverride::Import);
+        }
+
+        if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
+            return Some(ResolutionModeOverride::Import);
+        }
+        if file_name.ends_with(".cts") || file_name.ends_with(".cjs") {
+            return Some(ResolutionModeOverride::Require);
+        }
+        if self.compiler_options.module.is_es_module() {
+            return Some(ResolutionModeOverride::Import);
+        }
+        if let Some(is_esm) = self
+            .file_is_esm_map
+            .as_ref()
+            .and_then(|map| map.get(file_name))
+            .copied()
+        {
+            return Some(if is_esm {
+                ResolutionModeOverride::Import
+            } else {
+                ResolutionModeOverride::Require
+            });
+        }
+        Some(if self.file_is_esm == Some(true) {
+            ResolutionModeOverride::Import
+        } else {
+            ResolutionModeOverride::Require
+        })
+    }
+
+    /// Check if a lib interface has a heritage-merged version in the cache.
+    ///
+    /// During lib resolution, interface bodies are registered in `symbol_types`/`type_env`
+    /// before heritage merging completes. Later, `lib_type_resolution_cache` stores the
+    /// final heritage-merged body. This helper detects when the cached body differs from
+    /// the current candidate and returns the upgraded version.
+    fn lib_heritage_cache_override(
+        &self,
+        sym_id: Option<tsz_binder::SymbolId>,
+        current_ty: tsz_solver::TypeId,
+    ) -> Option<tsz_solver::TypeId> {
+        let sym_id = sym_id?;
+
+        // Use the DefinitionStore (O(1)) for both the interface check and name
+        // lookup.  This avoids the previous O(N) scan over `lib_contexts` that
+        // was needed only to find the symbol and read its `escaped_name`.
+        //
+        // Lookup strategy:
+        //   1. DefinitionStore (O(1)): get DefKind + name via `get_existing_def_id`.
+        //   2. Primary binder only (O(1)): fallback for symbols not yet in the store.
+        //   No lib_contexts scan is needed — lib symbols always have DefIds in the
+        //   DefinitionStore after lib pre-population.
+        if let Some(def_id) = self.get_existing_def_id(sym_id) {
+            let kind = self.definition_store.get_kind(def_id)?;
+            if kind != tsz_solver::def::DefKind::Interface {
+                return None;
+            }
+            let name_atom = self.definition_store.get_name(def_id)?;
+            let name = self.types.resolve_atom(name_atom);
+            if name == "Atomics" {
+                return None;
+            }
+            let cached_ty = self
+                .lib_type_resolution_cache
+                .get(name.as_str())?
+                .as_ref()?;
+            return (*cached_ty != current_ty).then_some(*cached_ty);
+        }
+
+        // Fallback: no DefId yet — use the primary binder (O(1), no lib scan).
+        let symbol = self.binder.symbols.get(sym_id)?;
+        if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+            return None;
+        }
+        if symbol.escaped_name == "Atomics" {
+            return None;
+        }
+        let cached_ty = self
+            .lib_type_resolution_cache
+            .get(symbol.escaped_name.as_str())?
+            .as_ref()?;
+        (*cached_ty != current_ty).then_some(*cached_ty)
+    }
+
+    fn declared_type_param_variances_for_list(
+        &self,
+        type_params: &NodeList,
+    ) -> Option<Arc<[Variance]>> {
+        self.declared_type_param_variances_for_list_in_arena(self.arena, type_params)
+    }
+
+    fn declared_type_param_variances_for_list_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        type_params: &NodeList,
+    ) -> Option<Arc<[Variance]>> {
+        use tsz_scanner::SyntaxKind;
+
+        let mut saw_annotation = false;
+        let mut variances = Vec::with_capacity(type_params.nodes.len());
+
+        for &param_idx in &type_params.nodes {
+            let param_node = arena.get(param_idx)?;
+            let param = arena.get_type_parameter(param_node)?;
+            let mut declared_in = false;
+            let mut declared_out = false;
+
+            if let Some(modifiers) = &param.modifiers {
+                for &modifier_idx in &modifiers.nodes {
+                    let Some(modifier_node) = arena.get(modifier_idx) else {
+                        continue;
+                    };
+                    if modifier_node.kind == SyntaxKind::InKeyword as u16 {
+                        declared_in = true;
+                    } else if modifier_node.kind == SyntaxKind::OutKeyword as u16 {
+                        declared_out = true;
+                    }
+                }
+            }
+
+            let variance = match (declared_in, declared_out) {
+                (true, true) => Variance::COVARIANT | Variance::CONTRAVARIANT,
+                (true, false) => Variance::CONTRAVARIANT,
+                (false, true) => Variance::COVARIANT,
+                (false, false) => Variance::empty(),
+            };
+            saw_annotation |= declared_in || declared_out;
+            variances.push(variance);
+        }
+
+        saw_annotation.then(|| Arc::from(variances))
+    }
+
+    fn declared_type_param_variances_for_node(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> Option<Arc<[Variance]>> {
+        self.declared_type_param_variances_for_node_in_arena(self.arena, decl_idx)
+    }
+
+    fn declared_type_param_variances_for_node_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<Arc<[Variance]>> {
+        let node = arena.get(decl_idx)?;
+        if let Some(interface) = arena.get_interface(node) {
+            return interface.type_parameters.as_ref().and_then(|params| {
+                self.declared_type_param_variances_for_list_in_arena(arena, params)
+            });
+        }
+        if let Some(class) = arena.get_class(node) {
+            return class.type_parameters.as_ref().and_then(|params| {
+                self.declared_type_param_variances_for_list_in_arena(arena, params)
+            });
+        }
+        if let Some(alias) = arena.get_type_alias(node) {
+            // tsc rejects `in`/`out` annotations on type aliases whose body
+            // is not an object/function/constructor/mapped type (TS2637)
+            // and IGNORES the declared variance for assignability. We mirror
+            // that here: if the alias body is not one of the supported
+            // forms, report None so the relation checker falls back to the
+            // computed (default-covariant) variance instead of enforcing the
+            // user's `in out` annotation.
+            use tsz_parser::parser::syntax_kind_ext;
+            let body_kind = arena.kind_at(alias.type_node);
+            let variance_supported = body_kind.is_some_and(|kind| {
+                kind == syntax_kind_ext::TYPE_LITERAL
+                    || kind == syntax_kind_ext::FUNCTION_TYPE
+                    || kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                    || kind == syntax_kind_ext::MAPPED_TYPE
+            });
+            if !variance_supported {
+                return None;
+            }
+            return alias.type_parameters.as_ref().and_then(|params| {
+                self.declared_type_param_variances_for_list_in_arena(arena, params)
+            });
+        }
+        None
+    }
+
+    fn merged_interface_declared_type_param_variances(
+        &self,
+        symbol: &tsz_binder::Symbol,
+    ) -> Option<Arc<[Variance]>> {
+        if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+            return None;
+        }
+
+        let mut merged: Option<Vec<Variance>> = None;
+        for decl_idx in symbol.all_declarations() {
+            let decl_arena = self
+                .binder
+                .arena_for_declaration_or(symbol.id, decl_idx, self.arena);
+            let Some(node) = decl_arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_arena.get_interface(node).is_none() {
+                continue;
+            }
+            let Some(variances) =
+                self.declared_type_param_variances_for_node_in_arena(decl_arena, decl_idx)
+            else {
+                continue;
+            };
+
+            if let Some(existing) = &mut merged {
+                if existing.len() != variances.len() {
+                    continue;
+                }
+                for (slot, variance) in existing.iter_mut().zip(variances.iter()) {
+                    *slot |= *variance;
+                }
+            } else {
+                merged = Some(variances.iter().copied().collect());
+            }
+        }
+
+        merged.map(Arc::from)
+    }
+}
+
+/// Implement `TypeResolver` for `CheckerContext` to support Lazy type resolution.
+///
+/// This enables `ApplicationEvaluator` to resolve `TypeData::Lazy(DefId)` references
+/// by looking up the cached type for a symbol. The cache is populated during
+/// type checking when `get_type_of_symbol()` is called.
+///
+/// **Architecture Note:**
+/// - `resolve_lazy()` is read-only (looks up from cache)
+/// - Cache is populated by `CheckerState::get_type_of_symbol()` before Application evaluation
+/// - This separation keeps the solver layer (`ApplicationEvaluator`) independent of checker logic
+impl<'a> TypeResolver for CheckerContext<'a> {
+    /// Resolve a symbol reference to its cached type (deprecated).
+    ///
+    /// `TypeData::Ref` is removed, but we keep this for compatibility.
+    /// Converts `SymbolRef` to `SymbolId` and looks up in cache.
+    fn resolve_ref(
+        &self,
+        symbol: tsz_solver::SymbolRef,
+        _interner: &dyn tsz_solver::TypeDatabase,
+    ) -> Option<tsz_solver::TypeId> {
+        let sym_id = tsz_binder::SymbolId(symbol.0);
+        self.symbol_types.get(&sym_id).copied()
+    }
+
+    fn get_type_param_variance(&self, def_id: tsz_solver::DefId) -> Option<Arc<[Variance]>> {
+        let sym_id = self.def_to_symbol_id(def_id)?;
+        let symbol = self.binder.get_symbol(sym_id)?;
+        self.merged_interface_declared_type_param_variances(symbol)
+            .or_else(|| self.declared_type_param_variances_for_node(symbol.primary_declaration()?))
+    }
+
+    /// Resolve a `DefId` to its cached type.
+    ///
+    /// This looks up the type from the `symbol_types` cache, which is populated
+    /// during type checking. Returns None if the symbol hasn't been resolved yet.
+    ///
+    /// **Callers should ensure `get_type_of_symbol()` is called first** to populate
+    /// the cache before calling `resolve_lazy()`.
+    fn resolve_lazy(
+        &self,
+        def_id: tsz_solver::DefId,
+        _interner: &dyn tsz_solver::TypeDatabase,
+    ) -> Option<tsz_solver::TypeId> {
+        use tsz_binder::symbol_flags;
+
+        // Convert DefId to SymbolId using the reverse mapping.
+        // Fallback: if the DefId was created by `interner.reference(SymbolRef(N))`,
+        // the raw DefId value equals the SymbolId. In that case, use the SymbolId
+        // directly and redirect through the proper DefId mapping.
+        let def_identity = self.def_symbol_identity(def_id);
+        if let Some((sym_id, Some(file_idx))) = def_identity
+            && file_idx != self.current_file_idx
+        {
+            self.register_symbol_file_target(sym_id, file_idx);
+        }
+        let sym_id = def_identity.map(|(sym_id, _)| sym_id).or_else(|| {
+            // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
+            // where N is the raw SymbolId value. The DefId(N) doesn't exist in the
+            // definition store. Try using N as a SymbolId and redirect.
+            //
+            // Use the DefinitionStore to check if this raw SymbolId has a proper
+            // DefId, avoiding O(N) scans through all binders. If the store has a
+            // mapping, the symbol exists; if not, fall back to the primary binder
+            // as a lightweight check.
+            let candidate = tsz_binder::SymbolId(def_id.0);
+            let found = self
+                .definition_store
+                .find_def_by_symbol(candidate.0)
+                .is_some()
+                || self.binder.symbols.get(candidate).is_some();
+            found.then_some(candidate)
+        });
+        let is_atomics = self
+            .definition_store
+            .get_name(def_id)
+            .is_some_and(|name| self.types.resolve_atom(name) == "Atomics")
+            || sym_id.as_ref().is_some_and(|sym_id| {
+                self.get_existing_def_id(*sym_id)
+                    .and_then(|def_id| self.definition_store.get_name(def_id))
+                    .is_some_and(|name| self.types.resolve_atom(name) == "Atomics")
+                    || self
+                        .binder
+                        .symbols
+                        .get(*sym_id)
+                        .is_some_and(|sym| sym.escaped_name == "Atomics")
+            });
+        let definition_file_idx = def_identity
+            .and_then(|(_, file_idx)| file_idx)
+            .or_else(|| {
+                self.definition_store
+                    .get(def_id)
+                    .and_then(|info| info.file_id)
+                    .map(|idx| idx as usize)
+            })
+            .or_else(|| {
+                sym_id.and_then(|sym_id| {
+                    self.get_existing_def_id(sym_id)
+                        .and_then(|real_id| self.definition_store.get(real_id))
+                        .and_then(|info| info.file_id)
+                        .map(|idx| idx as usize)
+                })
+            });
+        let has_local_symbol_collision = sym_id.is_some_and(|sym_id| {
+            definition_file_idx.is_some_and(|file_idx| file_idx != self.current_file_idx)
+                && self.binder.symbols.get(sym_id).is_some()
+        });
+        if let Some(sym_id) = sym_id {
+            // If this is a fallback from a raw SymbolId-based DefId, check if there's
+            // a proper DefId registered for this symbol and redirect through it.
+            if self.def_to_symbol.borrow().get(&def_id).is_none()
+                && let Some(real_def_id) = self.get_existing_def_id(sym_id)
+                && real_def_id != def_id
+            {
+                return self.resolve_lazy(real_def_id, _interner);
+            }
+
+            // For classes/interfaces/type aliases, check if we should return
+            // instance type instead of constructor type. Use the DefinitionStore's
+            // DefKind (O(1)) to determine symbol kind, avoiding O(N) lib binder scans.
+            // Fall back to symbol flags only when DefKind is unavailable.
+            let def_kind = self.definition_store.get_kind(def_id).or_else(|| {
+                // If this is a zombie DefId (from interner.reference), try the
+                // real DefId's kind instead.
+                self.get_existing_def_id(sym_id)
+                    .and_then(|real_id| self.definition_store.get_kind(real_id))
+            });
+
+            if !has_local_symbol_collision
+                && let Some(instance_type) = self.symbol_instance_types.get(&sym_id)
+            {
+                if let Some(kind) = def_kind {
+                    if matches!(
+                        kind,
+                        tsz_solver::def::DefKind::Class
+                            | tsz_solver::def::DefKind::Interface
+                            | tsz_solver::def::DefKind::TypeAlias
+                    ) {
+                        let type_alias_self_wrapper = kind == tsz_solver::def::DefKind::TypeAlias
+                            && crate::query_boundaries::definition_identity::is_lazy_def_identity(
+                                self.types,
+                                *instance_type,
+                                def_id,
+                            );
+                        // A type-alias self wrapper is its public identity,
+                        // not a structural body. Let inference/evaluation
+                        // fall through to the type environment or
+                        // DefinitionStore body for transparent aliases.
+                        if !type_alias_self_wrapper {
+                            return Some(*instance_type);
+                        }
+                    }
+                } else {
+                    // Fallback: look up symbol flags from binder (primary binder only,
+                    // no O(N) lib scan — if the symbol is from a lib, its DefKind should
+                    // be in the DefinitionStore).
+                    let symbol = self.binder.symbols.get(sym_id);
+                    if let Some(symbol) = symbol
+                        && symbol.has_any_flags(
+                            symbol_flags::CLASS
+                                | symbol_flags::INTERFACE
+                                | symbol_flags::TYPE_ALIAS,
+                        )
+                    {
+                        return Some(*instance_type);
+                    }
+                }
+            }
+
+            // For type parameters, look up in type_parameter_scope by name.
+            // Type parameters are NOT stored in symbol_types — they live in the
+            // dynamic type_parameter_scope which maps name → TypeParameter TypeId.
+            // The symbol_types cache may contain a fallback `any` for type params
+            // from compute_type_of_symbol, which is incorrect for Lazy resolution.
+            // When the type parameter is in the current scope, return its TypeParameter
+            // TypeId directly. When out of scope (e.g., a generic alias's own T),
+            // fall through to symbol_types which handles already-instantiated contexts.
+            //
+            // Type parameters are always local symbols (never from lib binders), so
+            // only check the primary binder.
+            if let Some(symbol) = self.binder.symbols.get(sym_id)
+                && symbol.has_any_flags(symbol_flags::TYPE_PARAMETER)
+                && let Some(&tp_type) = self.type_parameter_scope.get(symbol.escaped_name.as_str())
+            {
+                return Some(tp_type);
+            }
+
+            // Look up the cached type for this symbol (constructor type for classes).
+            // For generic interfaces/type aliases, the symbol cache can hold the
+            // public `Lazy(DefId)` wrapper while the structural body lives in the
+            // type environment. Returning the self-lazy wrapper here loses generic
+            // application instantiation (`Foo<T>` collapses to bare `Foo`), so give
+            // the type environment a chance to provide the real body first.
+            if !is_atomics
+                && !has_local_symbol_collision
+                && let Some(&ty) = self.symbol_types.get(&sym_id)
+            {
+                if ty == tsz_solver::TypeId::ERROR {
+                    // Skip poisoned ERROR entries (e.g., from stack overflow protection
+                    // tripping during deep recursive type resolution). Fall through to
+                    // the type environment, which may have the correct resolved type from
+                    // an earlier successful resolution.
+                } else if ty == tsz_solver::TypeId::UNKNOWN {
+                    // Skip placeholder UNKNOWN entries written by recursion guards
+                    // / stub registrations during cross-file alias body lowering.
+                    // Returning UNKNOWN here would let the evaluator collapse a
+                    // generic application like `Pick<member, ...>` to bare
+                    // unknown, silently erasing the alias's structural shape
+                    // for downstream object spreads / intersections. A real
+                    // resolved body is reachable through the later
+                    // `type_env.get_def` and `DefinitionStore::get_body`
+                    // fallbacks, so let the function continue past this entry.
+                } else if crate::query_boundaries::common::lazy_def_id(self.types, ty)
+                    == Some(def_id)
+                {
+                    // Defer this self-wrapper until after the type environment fallback.
+                } else {
+                    if let Some(override_ty) = self.lib_heritage_cache_override(Some(sym_id), ty) {
+                        tracing::trace!(
+                            def_id = def_id.0,
+                            type_id = override_ty.0,
+                            "resolve_lazy: lib heritage override (symbol_types path)"
+                        );
+                        return Some(override_ty);
+                    }
+                    tracing::trace!(
+                        def_id = def_id.0,
+                        sym_id = sym_id.0,
+                        type_id = ty.0,
+                        name = self
+                            .binder
+                            .symbols
+                            .get(sym_id)
+                            .map_or("?", |s| s.escaped_name.as_str()),
+                        "resolve_lazy: found in symbol_types cache"
+                    );
+                    return Some(ty);
+                }
+            }
+        }
+
+        // Fall back to type_env for types registered via insert_def_with_params
+        // (generic lib interfaces like PromiseLike<T>, Map<K,V>, Set<T>, etc.)
+        if !is_atomics
+            && let Ok(env) = self.type_env.try_borrow()
+            && let Some(body) = TypeResolver::resolve_lazy(&*env, def_id, self.types)
+            && body != tsz_solver::TypeId::UNKNOWN
+            && body != tsz_solver::TypeId::ERROR
+        {
+            // For lib interfaces, check if the heritage-merged version is available.
+            if let Some(override_ty) = self.lib_heritage_cache_override(sym_id, body) {
+                tracing::trace!(
+                    def_id = def_id.0,
+                    type_id = override_ty.0,
+                    "resolve_lazy: lib heritage override (type_env path)"
+                );
+                return Some(override_ty);
+            }
+            tracing::trace!(
+                def_id = def_id.0,
+                type_id = body.0,
+                "resolve_lazy: found in type_env"
+            );
+            return Some(body);
+        }
+
+        if let Some(sym_id) = self.def_to_symbol_id_with_fallback(def_id)
+            && !has_local_symbol_collision
+            && let Some(&ty) = self.symbol_types.get(&sym_id)
+            && crate::query_boundaries::common::lazy_def_id(self.types, ty) == Some(def_id)
+            && self
+                .definition_store
+                .get_name(def_id)
+                .is_none_or(|name| self.types.resolve_atom(name) != "Atomics")
+        {
+            tracing::trace!(
+                def_id = def_id.0,
+                sym_id = sym_id.0,
+                type_id = ty.0,
+                "resolve_lazy: falling back to self-lazy symbol_types entry"
+            );
+            return Some(ty);
+        }
+
+        // Fallback: check the canonical cross-file query cache (SYMBOL_TYPE bucket).
+        // When a symbol from another file (e.g., an interface referenced in a
+        // property type) was resolved by that file's checker, the result is
+        // written here. This enables cross-module Lazy type resolution for types
+        // that aren't directly imported (e.g., `Foo.server?: IServer` where
+        // `IServer` is defined in the same file as `Foo` but not imported by
+        // the consumer).
+        //
+        // Restrict this fallback to genuine cross-file scenarios (symbol's
+        // definition file differs from the current file) to avoid interfering
+        // with same-file name resolution, where the formatter relies on the
+        // DefId-based display of types declared in the current scope.
+        // Note: this site intentionally does NOT use the
+        // `cached_cross_file_symbol_type` helper. The helper filters out
+        // both `TypeId::ERROR` and `TypeId::UNKNOWN`, but `resolve_lazy`
+        // historically returned `Some(TypeId::UNKNOWN)` when the cache
+        // contained that value (only `ERROR` was rejected). Forwarding
+        // `UNKNOWN` lets callers distinguish "lazy reference resolved but
+        // the symbol's type is genuinely unknown" from "lazy reference not
+        // resolved" (`None`), which the helper collapses. The other three
+        // call sites of the helper (exports_resolution, computed helpers)
+        // do want `UNKNOWN` filtered — keep the inlined block here.
+        if let Some(sym_id) = sym_id
+            && let Some(file_idx) = definition_file_idx
+            && file_idx != self.current_file_idx
+            && self.share_owner_symbol_type_results
+            && let Some((resolved, _)) = self.definition_store.get_resolved_cross_file_query(
+                crate::state_type_analysis::cross_file::CrossFileQueryKind::SymbolType
+                    .as_storage_kind(),
+                file_idx as u32,
+                sym_id.0,
+                0,
+                0,
+            )
+            && resolved != tsz_solver::TypeId::ERROR
+        {
+            tracing::trace!(
+                def_id = def_id.0,
+                sym_id = sym_id.0,
+                file_idx = file_idx,
+                type_id = resolved.0,
+                "resolve_lazy: found in SYMBOL_TYPE bucket"
+            );
+            return Some(resolved);
+        }
+
+        // Final fallback: consult the shared `DefinitionStore` for a body
+        // registered by a sibling file's checker (e.g., `Pick`/`Exclude` from
+        // `helpers/util.ts` referenced by another file's alias body). Without
+        // this, cross-file type-alias bodies that reference file-local
+        // helpers from their declaring file evaluate to `None` and the
+        // downstream evaluator collapses them to `unknown`, silently
+        // erasing the alias's structural contributions in object spreads,
+        // intersections, and other consumers.
+        if let Some(body) = self.definition_store.get_body(def_id) {
+            tracing::trace!(
+                def_id = def_id.0,
+                type_id = body.0,
+                "resolve_lazy: found in DefinitionStore body"
+            );
+            return Some(body);
+        }
+
+        tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");
+        None
+    }
+
+    fn resolve_this_type(
+        &self,
+        _interner: &dyn tsz_solver::TypeDatabase,
+    ) -> Option<tsz_solver::TypeId> {
+        // Prefer the active `this` binding from the checker stack. Class-member
+        // checking pushes the concrete receiver type here, which is more precise
+        // than the enclosing-class fallback for static members and partially
+        // constructed generic instance contexts.
+        if let Some(this_type) = self.this_type_stack.last().copied() {
+            return Some(this_type);
+        }
+
+        // Try enclosing class cache first.
+        if let Some(class_info) = self.enclosing_class.as_ref() {
+            if let Some(cached) = class_info.cached_instance_this_type {
+                return Some(cached);
+            }
+            // Fallback within enclosing class: look up the instance type via the binder symbol.
+            if let Some(sym_id) = self.binder.get_node_symbol(class_info.class_idx)
+                && let Some(ty) = self.symbol_instance_types.get(&sym_id).copied()
+            {
+                return Some(ty);
+            }
+        }
+        None
+    }
+
+    /// Get type parameters for a symbol reference (deprecated).
+    ///
+    /// Type parameters are embedded in the type itself rather than stored separately.
+    fn get_type_params(
+        &self,
+        _symbol: tsz_solver::SymbolRef,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        None
+    }
+
+    /// Get type parameters for a Lazy type.
+    ///
+    /// For type aliases, type parameters are stored in `def_type_params`
+    /// and used by the Solver to expand Application(Lazy(DefId), Args).
+    ///
+    /// For classes/interfaces, type parameters are embedded in the resolved type's shape
+    /// (`Callable.type_params`, `Interface.type_params`, etc.) rather than stored separately.
+    fn get_lazy_type_params(
+        &self,
+        def_id: tsz_solver::DefId,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        self.get_def_type_params(def_id)
+    }
+
+    fn is_boxed_def_id(&self, def_id: tsz_solver::DefId, kind: tsz_solver::IntrinsicKind) -> bool {
+        if let Ok(env) = self.type_env.try_borrow() {
+            env.is_boxed_def_id(def_id, kind)
+        } else {
+            false
+        }
+    }
+
+    fn is_boxed_type_id(
+        &self,
+        type_id: tsz_solver::TypeId,
+        kind: tsz_solver::IntrinsicKind,
+    ) -> bool {
+        if let Ok(env) = self.type_env.try_borrow() {
+            env.is_boxed_type_id(type_id, kind)
+        } else {
+            false
+        }
+    }
+
+    /// Get the boxed interface type for a primitive intrinsic.
+    /// Delegates to the type environment which stores boxed types registered from lib.d.ts.
+    fn get_boxed_type(&self, kind: tsz_solver::IntrinsicKind) -> Option<tsz_solver::TypeId> {
+        if let Ok(env) = self.type_env.try_borrow() {
+            env.get_boxed_type(kind)
+        } else {
+            None
+        }
+    }
+
+    /// Get the Array<T> interface type from lib.d.ts.
+    /// Uses the interner (`QueryDatabase`) which stores the same value as the
+    /// type environment, avoiding `RefCell` borrow conflicts when the subtype
+    /// checker is called from within a mutable borrow of the type environment.
+    fn get_array_base_type(&self) -> Option<tsz_solver::TypeId> {
+        TypeResolver::get_array_base_type(&self.types)
+    }
+
+    /// Get the type parameters for the Array<T> interface.
+    /// Delegates to the type environment.
+    fn get_array_base_type_params(&self) -> &[tsz_solver::TypeParamInfo] {
+        // We can't borrow type_env and return a reference from it (lifetime issue),
+        // so we fall back to the interner which stores the same data.
+        TypeResolver::get_array_base_type_params(&self.types)
+    }
+
+    fn get_readonly_array_base_type(&self) -> Option<tsz_solver::TypeId> {
+        TypeResolver::get_readonly_array_base_type(&self.types)
+    }
+
+    /// Get the base class type for a class/interface type.
+    ///
+    /// This implements the `TypeResolver` trait method for Best Common Type (BCT) algorithm.
+    /// For example, given Dog that extends Animal, this returns the type for Animal.
+    ///
+    /// **Architecture**: Bridges Solver (BCT computation) to Binder (extends clauses) via:
+    /// 1. `TypeId` -> `DefId` (from Lazy type)
+    /// 2. `DefId` -> `SymbolId` (via `def_to_symbol` mapping)
+    /// 3. `SymbolId` -> Parent `SymbolId` (via `InheritanceGraph`)
+    /// 4. Parent `SymbolId` -> `TypeId` (via `symbol_types` cache)
+    ///
+    /// Returns None if:
+    /// - The type is not a Lazy type (not a class/interface)
+    /// - The `DefId` has no corresponding `SymbolId`
+    /// - The class has no base class (no parents in `InheritanceGraph`)
+    fn get_base_type(
+        &self,
+        type_id: tsz_solver::TypeId,
+        interner: &dyn tsz_solver::TypeDatabase,
+    ) -> Option<tsz_solver::TypeId> {
+        use crate::query_boundaries::common::callable_shape_id;
+        use crate::query_boundaries::common::{lazy_def_id, object_symbol};
+
+        // 1. First try Lazy types (type aliases, class/interface references)
+        if let Some(def_id) = lazy_def_id(self.types, type_id) {
+            // 2. Convert DefId to SymbolId
+            let sym_id = self.def_to_symbol_id(def_id)?;
+
+            // 3. Get parents from InheritanceGraph (populated during class/interface binding)
+            // Works for both classes (single inheritance) and interfaces (multiple extends)
+            let parents = self.inheritance_graph.get_parents(sym_id);
+
+            // 4. Return the first parent's type (the immediate base class/interface)
+            // Note: For interfaces with multiple parents, we only return the first one.
+            // This is sufficient for BCT which checks all candidates in the set.
+            if let Some(parent_sym_id) = parents.first() {
+                // Look up the cached type for the parent symbol
+                // For classes, we need the instance type, not constructor type
+                if let Some(instance_type) = self.symbol_instance_types.get(parent_sym_id) {
+                    return Some(*instance_type);
+                }
+                // Fallback to symbol_types (constructor type) if instance type not available
+                return self.symbol_types.get(parent_sym_id).copied();
+            }
+            return None;
+        }
+
+        // 2. For class instance types (Object/ObjectWithIndex), check the shape symbol
+        if let Some(sym_id) = object_symbol(interner, type_id) {
+            // Use InheritanceGraph to get parent
+            let parents = self.inheritance_graph.get_parents(sym_id);
+            if let Some(&parent_sym_id) = parents.first() {
+                // For classes, try instance_types first; for interfaces, use symbol_types
+                if let Some(instance_type) = self.symbol_instance_types.get(&parent_sym_id) {
+                    return Some(*instance_type);
+                }
+                // Fallback to symbol_types (for interfaces)
+                return self.symbol_types.get(&parent_sym_id).copied();
+            }
+        }
+
+        // 3. For class instance types (Callable types), get the class declaration and check InheritanceGraph
+        if let Some(_shape_id) = callable_shape_id(interner, type_id) {
+            // Step 1: TypeId -> NodeIndex (Class Declaration)
+            if let Some(&decl_idx) = self.class_instance_type_to_decl.get(&type_id) {
+                // Step 2: NodeIndex -> SymbolId (Class Symbol)
+                // This is the correct way to get the symbol without scope/name lookup issues
+                if let Some(sym_id) = self.binder.get_node_symbol(decl_idx) {
+                    // Step 3: SymbolId -> Parent SymbolId (via InheritanceGraph)
+                    let parents = self.inheritance_graph.get_parents(sym_id);
+                    if let Some(&parent_sym_id) = parents.first() {
+                        // Step 4: Parent SymbolId -> Parent TypeId (Instance Type)
+                        if let Some(instance_type) = self.symbol_instance_types.get(&parent_sym_id)
+                        {
+                            return Some(*instance_type);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Check if a `DefId` corresponds to a numeric enum (not a string enum).
+    ///
+    /// This determines whether an enum allows bidirectional number assignability (Rule #7).
+    /// Numeric enums like `enum E { A = 0 }` allow `number <-> E` assignments.
+    /// String enums like `enum F { A = "a" }` do NOT allow `string <-> F` assignments.
+    fn is_numeric_enum(&self, def_id: tsz_solver::DefId) -> bool {
+        use tsz_binder::symbol_flags;
+        use tsz_scanner::SyntaxKind;
+
+        // Convert DefId to SymbolId
+        let Some(sym_id) = self.def_to_symbol_id(def_id) else {
+            return false;
+        };
+
+        // Get the symbol
+        let Some(symbol) = self.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Enum members resolve via their parent ENUM symbol.
+        let enum_symbol = if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+            // It's a member, get the parent enum symbol
+            let Some(parent) = self.binder.get_symbol(symbol.parent) else {
+                return false;
+            };
+            parent
+        } else if symbol.has_any_flags(symbol_flags::ENUM) {
+            // It's the enum itself
+            symbol
+        } else {
+            return false;
+        };
+
+        // Get the enum declaration from the arena
+        let decl_idx = if enum_symbol.value_declaration.is_some() {
+            enum_symbol.value_declaration
+        } else {
+            *enum_symbol
+                .declarations
+                .first()
+                .unwrap_or(&tsz_parser::parser::NodeIndex(0))
+        };
+
+        if decl_idx == tsz_parser::parser::NodeIndex(0) {
+            return false;
+        }
+
+        let Some(enum_decl) = self.arena.get_enum_at(decl_idx) else {
+            return false;
+        };
+
+        let mut has_string_member = false;
+
+        for &member_idx in &enum_decl.members.nodes {
+            let Some(member) = self.arena.get_enum_member_at(member_idx) else {
+                continue;
+            };
+
+            if member.initializer.is_some() {
+                let Some(init_node) = self.arena.get(member.initializer) else {
+                    continue;
+                };
+                if init_node.kind == SyntaxKind::StringLiteral as u16 {
+                    has_string_member = true;
+                    break;
+                }
+            }
+        }
+
+        // It's a numeric enum if no string members were found
+        !has_string_member
+    }
+
+    /// Get the `DefKind` for a `DefId` (Task #32: Graph Isomorphism).
+    ///
+    /// This enables the Canonicalizer to distinguish between structural types
+    /// (`TypeAlias`) and nominal types (Interface/Class/Enum).
+    ///
+    /// ## Structural vs Nominal
+    ///
+    /// - **`TypeAlias`**: Structural - `type A = { x: A }` and `type B = { x: B }`
+    ///   should canonicalize to the same type with Recursive(0)
+    /// - **Interface/Class**: Nominal - Different interfaces are incompatible even
+    ///   if structurally identical, so they must keep their Lazy(DefId) reference
+    fn get_def_kind(&self, def_id: tsz_solver::DefId) -> Option<tsz_solver::def::DefKind> {
+        self.definition_store.get_kind(def_id)
+    }
+
+    fn get_def_name(&self, def_id: tsz_solver::DefId) -> Option<tsz_common::interner::Atom> {
+        self.definition_store.get_name(def_id)
+    }
+
+    fn is_builtin_readonly_array_def(&self, def_id: tsz_solver::DefId) -> bool {
+        let has_readonly_array_name = self
+            .definition_store
+            .get_name(def_id)
+            .is_some_and(|name| self.types.resolve_atom_ref(name).as_ref() == "ReadonlyArray");
+        has_readonly_array_name
+            && self
+                .def_to_symbol_id(def_id)
+                .is_some_and(|sym_id| self.symbol_is_from_actual_or_cloned_lib(sym_id))
+    }
+
+    /// Get the `SymbolId` for a `DefId`.
+    ///
+    /// Uses the `DefinitionStore` to look up the `symbol_id` stored in `DefinitionInfo`.
+    /// This works across checker contexts because `DefinitionStore` is shared.
+    fn def_to_symbol_id(&self, def_id: tsz_solver::DefId) -> Option<tsz_binder::SymbolId> {
+        self.definition_store
+            .get_symbol_id(def_id)
+            .map(tsz_binder::SymbolId)
+    }
+
+    /// Get the `DefId` for a `SymbolRef` (Phase 4.2: Ref -> Lazy migration).
+    ///
+    /// This enables converting `SymbolRef` to `DefId` by looking up the `symbol_to_def` mapping.
+    /// This is the reverse of `def_to_symbol_id`.
+    ///
+    /// Returns None if the `SymbolRef` doesn't have a corresponding `DefId`.
+    fn symbol_to_def_id(&self, symbol: tsz_solver::SymbolRef) -> Option<tsz_solver::DefId> {
+        use tsz_binder::SymbolId;
+
+        // Convert SymbolRef to SymbolId
+        let sym_id = SymbolId(symbol.0);
+
+        // Look up via get_existing_def_id (checks local cache + authoritative index)
+        self.get_existing_def_id(sym_id)
+    }
+
+    /// Resolve an `UnresolvedTypeName(name)` text to a `DefId` using the
+    /// merged binder graph. This recovers cross-file qualified names whose
+    /// lowering pass landed `Application(UnresolvedTypeName(name), args)`
+    /// because the alias body was lowered before the merged binder was
+    /// available. Mirrors `resolve_entity_name_text_to_def_id_for_lowering`
+    /// from `CheckerState` but lives on `CheckerContext` so the solver-side
+    /// type evaluator can call it via the `TypeResolver` trait.
+    fn resolve_unresolved_type_name(&self, name: &str) -> Option<tsz_solver::def::DefId> {
+        let mut segments = name.split('.');
+        let root_name = segments.next()?;
+        // Prefer a non-alias entry from `global_file_locals_index` so we
+        // walk the actual declaration symbol directly. Fall back to the
+        // current binder's local entry (typically an import alias) only
+        // when no concrete declaration is reachable cross-file.
+        let global_concrete = self
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(root_name))
+            .and_then(|entries| {
+                entries.iter().find(|(file_idx, sym)| {
+                    self.all_binders
+                        .as_ref()
+                        .and_then(|b| b.as_ref().get(*file_idx))
+                        .and_then(|binder| binder.get_symbol(*sym))
+                        .is_some_and(|symbol| {
+                            !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+                        })
+                })
+            })
+            .map(|&(_, sym)| sym);
+        let mut current_sym = global_concrete
+            .or_else(|| self.binder.file_locals.get(root_name))
+            .or_else(|| {
+                self.lib_contexts
+                    .iter()
+                    .find_map(|ctx| ctx.binder.file_locals.get(root_name))
+            })?;
+
+        for segment in segments {
+            // Walk through alias chains (e.g. `import { util } from "..."` ->
+            // the actual namespace symbol).
+            let mut visited = 0u32;
+            while let Some(symbol) = self.binder.get_symbol(current_sym) {
+                if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
+                    break;
+                }
+                let Some(target) = self.binder.resolve_import_symbol(current_sym) else {
+                    break;
+                };
+                if target == current_sym || visited >= 8 {
+                    break;
+                }
+                current_sym = target;
+                visited += 1;
+            }
+            let symbol = self.binder.get_symbol(current_sym).or_else(|| {
+                self.lib_contexts
+                    .iter()
+                    .find_map(|ctx| ctx.binder.get_symbol(current_sym))
+            })?;
+            current_sym = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(segment))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(segment))
+                })?;
+        }
+
+        let def_id = self.get_or_create_def_id(current_sym);
+        // Cache the resolution into `type_env` so the next solver-side
+        // evaluator pass (which uses `TypeEnvironment` as resolver) can
+        // reduce `Application(UnresolvedTypeName(name), args)` without
+        // having to bounce back into the wider CheckerContext path. The
+        // first-pass evaluator runs with `&*self.type_env`, so without
+        // this cache share every nested Application keeps producing
+        // opaque results for the rest of an instantiated body.
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            env.insert_unresolved_resolution(name.to_string(), def_id);
+        }
+        Some(def_id)
+    }
+
+    /// Check if a `TypeId` represents a full Enum type (not a specific member).
+    ///
+    /// Used to distinguish between:
+    /// - `enum E` (the enum TYPE - allows `let x: E = 1`)
+    /// - `enum E.A` (an enum MEMBER - rejects `let x: E.A = 1`)
+    ///
+    /// Returns true if:
+    /// - `TypeId` is `TypeData::Enum` where Symbol has ENUM flag but not `ENUM_MEMBER` flag
+    /// - `TypeId` is a Union of `TypeData::Enum` members from the same parent enum
+    ///
+    /// Returns false for:
+    /// - Enum members (symbols with `ENUM_MEMBER` flag)
+    /// - Non-enum types
+    fn is_enum_type(
+        &self,
+        type_id: tsz_solver::TypeId,
+        _interner: &dyn tsz_solver::TypeDatabase,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        // Case 1: Direct Enum type key
+        if let Some((def_id, _inner)) =
+            crate::query_boundaries::common::enum_components(self.types, type_id)
+        {
+            // Convert DefId to SymbolId
+            let Some(sym_id) = self.def_to_symbol_id(def_id) else {
+                return false;
+            };
+
+            // Get the symbol
+            let Some(symbol) = self.binder.get_symbol(sym_id) else {
+                return false;
+            };
+
+            // It's an enum type if it has ENUM flag but not ENUM_MEMBER flag
+            return symbol.has_any_flags(symbol_flags::ENUM)
+                && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER);
+        }
+
+        // Case 2: Union of Enum members (e.g., the full enum type E = E.A | E.B | ...)
+        if let Some(members) = crate::query_boundaries::common::union_list_id(self.types, type_id) {
+            let member_list = self.types.type_list(members);
+
+            // Check if all members are enum members from the same parent enum
+            let mut common_parent_sym_id: Option<tsz_binder::SymbolId> = None;
+            let mut has_enum_members = false;
+
+            for &member in member_list.iter() {
+                if let Some((def_id, _inner)) =
+                    crate::query_boundaries::common::enum_components(self.types, member)
+                {
+                    has_enum_members = true;
+
+                    // Check if this is an enum member (not the enum type itself)
+                    let Some(sym_id) = self.def_to_symbol_id(def_id) else {
+                        return false;
+                    };
+
+                    let Some(symbol) = self.binder.get_symbol(sym_id) else {
+                        return false;
+                    };
+
+                    // If this is an enum member, track the PARENT enum symbol
+                    if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+                        // Get the parent symbol (the enum itself)
+                        let parent_sym_id = symbol.parent;
+
+                        if let Some(existing_parent) = common_parent_sym_id {
+                            if existing_parent != parent_sym_id {
+                                // Mixed enums in the union (different parents)
+                                return false;
+                            }
+                        } else {
+                            // Track the common parent symbol
+                            common_parent_sym_id = Some(parent_sym_id);
+                        }
+                    } else {
+                        // Found an enum type (not a member) in the union
+                        // This is unusual but treat it as an enum type
+                        return true;
+                    }
+                }
+            }
+
+            // If the union consists entirely of enum members from the same enum,
+            // treat it as the enum type
+            has_enum_members && common_parent_sym_id.is_some()
+        } else {
+            false
+        }
+    }
+
+    /// Get the parent Enum's `DefId` for an Enum Member's `DefId`.
+    ///
+    /// This enables the Solver to check nominal relationships between enum members
+    /// and their parent types (e.g., E.A -> E) without directly accessing Binder symbols.
+    fn get_enum_parent_def_id(
+        &self,
+        member_def_id: tsz_solver::DefId,
+    ) -> Option<tsz_solver::DefId> {
+        use tsz_binder::symbol_flags;
+
+        // Convert member DefId to SymbolId
+        let sym_id = self.def_to_symbol_id(member_def_id)?;
+
+        // Get the symbol — check local binder first, then cross-file binders.
+        // Cross-file enum members (e.g., `Foo.ConstFooEnum.Some` from an imported
+        // namespace) live in the source file's binder, not the current file's binder.
+        // Failing to find them here causes `get_enum_parent_def_id` to return `None`,
+        // which makes the compat checker's enum-member-to-enum check fall into the
+        // "different parents" branch and emit a false TS2678.
+        let symbol = self.binder.get_symbol(sym_id).or_else(|| {
+            self.lib_contexts
+                .iter()
+                .find_map(|lib| lib.binder.get_symbol(sym_id))
+        });
+        // O(1) fast-path: check symbol file index before O(N) binder scan
+        let symbol = symbol.or_else(|| {
+            let file_idx = self.resolve_symbol_file_index(sym_id);
+            if let Some(file_idx) = file_idx
+                && let Some(binder) = self.get_binder_for_file(file_idx)
+            {
+                return binder.get_symbol(sym_id);
+            }
+            self.all_binders
+                .as_ref()?
+                .iter()
+                .find_map(|b| b.get_symbol(sym_id))
+        })?;
+
+        // Check if this is an enum member
+        if !symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+            return None;
+        }
+
+        // Get the parent symbol (the enum itself)
+        let parent_sym_id = symbol.parent;
+
+        // Convert parent SymbolId back to DefId.
+        //
+        // We cannot use `symbol_to_def_id` here because `symbol_to_def` is a per-file
+        // (local) map that is NOT merged across checker contexts (see cross_file.rs comment).
+        // The parent enum may live in a different file (e.g., `foo.ts`'s binder), so its
+        // SymbolId is absent from the current file's `symbol_to_def`.
+        //
+        // Instead, we use `def_to_symbol`, which IS merged from child checkers into the
+        // parent during cross-file type analysis (see cross_file.rs lines 326-330).
+        // By scanning it for the parent's SymbolId, we can find the parent's DefId
+        // regardless of which file it originates from.
+        //
+        // Prefer this merged map over scanning `definition_store` (which lacks direct
+        // reverse lookup and would be O(n) on the global store).
+        let parent_def_id = self
+            .def_to_symbol
+            .borrow()
+            .iter()
+            .find_map(|(&def_id, &sym_id)| {
+                if sym_id == parent_sym_id {
+                    Some(def_id)
+                } else {
+                    None
+                }
+            });
+
+        if let Some(parent_def_id) = parent_def_id {
+            return Some(parent_def_id);
+        }
+
+        // Final fallback: if the parent's DefId is not in the merged def_to_symbol map
+        // (which can happen when the parent was not yet processed), we can't provide
+        // the mapping. This shouldn't happen in well-formed code.
+        None
+    }
+
+    fn is_user_enum_def(&self, def_id: tsz_solver::DefId) -> bool {
+        use tsz_binder::symbol_flags;
+
+        // Convert DefId to SymbolId
+        let sym_id = match self.def_to_symbol_id(def_id) {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // Get the symbol
+        let symbol = match self.binder.get_symbol(sym_id) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        // Check if this is a user-defined enum or enum member
+        if symbol.has_any_flags(symbol_flags::ENUM) {
+            // This is an enum type - check it's not an intrinsic
+            return !symbol.has_any_flags(symbol_flags::ENUM_MEMBER);
+        }
+
+        if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+            // This is an enum member - check if the parent is a user-defined enum
+            let parent_sym_id = symbol.parent;
+            if let Some(parent_symbol) = self.binder.get_symbol(parent_sym_id) {
+                // Parent is a user enum if it has ENUM flag but not ENUM_MEMBER
+                return parent_symbol.has_any_flags(symbol_flags::ENUM)
+                    && !parent_symbol.has_any_flags(symbol_flags::ENUM_MEMBER);
+            }
+        }
+
+        false
+    }
+
+    fn get_enum_namespace_type(&self, def_id: tsz_solver::DefId) -> Option<tsz_solver::TypeId> {
+        let sym_id = self.def_to_symbol_id(def_id)?;
+        self.enum_namespace_types.get(&sym_id).copied()
+    }
+}

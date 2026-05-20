@@ -1,0 +1,4069 @@
+//! JS export collection (CJS, namespace, expando, prototype)
+
+#[allow(unused_imports)]
+use super::super::{
+    DeclarationEmitter, ImportPlan, JsNestedModuleExportNamespaces, PlannedImportModule,
+    PlannedImportSymbol,
+};
+#[allow(unused_imports)]
+use crate::emitter::type_printer::TypePrinter;
+#[allow(unused_imports)]
+use crate::output::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
+#[allow(unused_imports)]
+use rustc_hash::{FxHashMap, FxHashSet};
+#[allow(unused_imports)]
+use std::sync::Arc;
+#[allow(unused_imports)]
+use tracing::debug;
+#[allow(unused_imports)]
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
+#[allow(unused_imports)]
+use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+#[allow(unused_imports)]
+use tsz_parser::parser::ParserState;
+#[allow(unused_imports)]
+use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
+#[allow(unused_imports)]
+use tsz_parser::parser::syntax_kind_ext;
+#[allow(unused_imports)]
+use tsz_parser::parser::{NodeIndex, NodeList};
+#[allow(unused_imports)]
+use tsz_scanner::SyntaxKind;
+
+use super::{
+    JsClassDefinePropertyAccessor, JsClassDefinePropertySetter, JsClassLikePrototypeMembers,
+    JsCommonjsExpandoDeclKind, JsCommonjsExpandoDeclarations, JsCommonjsNamedExports,
+    JsCommonjsSyntheticStatements, JsNamespaceExportAlias, JsNamespaceExportAliases,
+    JsStaticMethodAugmentationEntry, JsStaticMethodAugmentationGroup, JsStaticMethodAugmentations,
+    JsStaticMethodInfo, JsStaticMethodKey,
+};
+
+pub(in crate::declaration_emitter) struct JsCjsExportAliasCollection {
+    pub aliases: Vec<(String, String)>,
+    pub value_declarations: Vec<(String, String)>,
+    pub skipped_statements: FxHashSet<NodeIndex>,
+}
+
+#[derive(Default)]
+pub(in crate::declaration_emitter) struct JsLocalNamedExportPlan {
+    pub(in crate::declaration_emitter) folded_names: Vec<String>,
+    pub(in crate::declaration_emitter) plain_interface_names: Vec<String>,
+    pub(in crate::declaration_emitter) folded_target_statements: Vec<NodeIndex>,
+    pub(in crate::declaration_emitter) interface_statements: Vec<NodeIndex>,
+    pub(in crate::declaration_emitter) alias_specifiers: Vec<NodeIndex>,
+}
+
+impl<'a> DeclarationEmitter<'a> {
+    fn is_js_commonjs_export_identifier_text(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !matches!(first, 'A'..='Z' | 'a'..='z' | '_' | '$') {
+            return false;
+        }
+        chars.all(|ch| matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_' | '$'))
+    }
+
+    pub(in crate::declaration_emitter) fn js_commonjs_export_name_text(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self.get_identifier_text(name_idx),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let literal = self.arena.get_literal(name_node)?;
+                if Self::is_js_commonjs_export_identifier_text(&literal.text) {
+                    Some(literal.text.clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn js_commonjs_export_alias_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        if let Some(name) = self.js_commonjs_export_name_text(name_idx) {
+            return Some(name);
+        }
+
+        let name_node = self.arena.get(name_idx)?;
+        match name_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let literal = self.arena.get_literal(name_node)?;
+                let sanitized = crate::transforms::emit_utils::sanitize_module_name(&literal.text);
+                Some(format!("_{sanitized}"))
+            }
+            _ => None,
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn is_js_function_initializer(
+        &self,
+        node_idx: NodeIndex,
+    ) -> bool {
+        self.arena.get(node_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+        })
+    }
+
+    pub(crate) fn collect_js_export_equals_names(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return names;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+                continue;
+            }
+            let Some(assign) = self.arena.get_export_assignment(stmt_node) else {
+                continue;
+            };
+            if !assign.is_export_equals {
+                continue;
+            }
+
+            let Some(expr_node) = self.arena.get(assign.expression) else {
+                continue;
+            };
+            if expr_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(ident) = self.arena.get_identifier(expr_node) else {
+                continue;
+            };
+            names.insert(ident.escaped_text.clone());
+        }
+
+        if !self.source_file_has_native_esm_syntax(source_file) {
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(name) = self.js_commonjs_export_equals_name(stmt_idx) else {
+                    continue;
+                };
+                names.insert(name);
+            }
+        }
+
+        names
+    }
+
+    /// Collect identifiers used in `export default <Identifier>` statements when the
+    /// source file is JS *and* the identifier resolves to a top-level local
+    /// declaration. tsc emits these default exports at the export statement's
+    /// source position and moves the referenced local declaration after it when
+    /// the local declaration is otherwise unexported.
+    pub(crate) fn collect_js_export_default_names(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return names;
+        }
+
+        // Build the set of top-level local declaration names so we only hoist
+        // exports of same-file locals. Re-exports of imported identifiers do not
+        // need hoisting (tsc emits them in source order, after the import line).
+        let mut top_level_names: FxHashSet<String> = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if let Some(name) = self.extract_declaration_name(stmt_idx) {
+                top_level_names.insert(name);
+                continue;
+            }
+            if let Some(var_stmt) = self.arena.get_variable(stmt_node) {
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                        continue;
+                    };
+                    let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                        continue;
+                    };
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        let Some(decl_node) = self.arena.get(decl_idx) else {
+                            continue;
+                        };
+                        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                            continue;
+                        };
+                        if let Some(name) = self.get_identifier_text(decl.name) {
+                            top_level_names.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            // tsz parses `export default <Identifier>;` as `EXPORT_DECLARATION`
+            // with `is_default_export: true` (NOT as `EXPORT_ASSIGNMENT`, which
+            // is reserved for `export = X;`).
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if !export.is_default_export {
+                continue;
+            }
+            if export.export_clause.is_none() {
+                continue;
+            }
+            let Some(expr_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if expr_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(ident) = self.arena.get_identifier(expr_node) else {
+                continue;
+            };
+            if !top_level_names.contains(&ident.escaped_text) {
+                continue;
+            }
+            names.insert(ident.escaped_text.clone());
+        }
+
+        names
+    }
+
+    pub(crate) fn js_default_export_declaration_should_defer_until_export(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file
+            || self.js_export_default_names.is_empty()
+            || self.statement_has_effective_export(stmt_idx)
+        {
+            return false;
+        }
+
+        self.js_default_export_declaration_names_for_statement(stmt_idx)
+            .into_iter()
+            .any(|name| self.js_export_default_names.contains(&name))
+    }
+
+    pub(crate) fn emit_js_default_export_deferred_declaration_for_name(&mut self, name: &str) {
+        let Some(root_idx) = self.current_source_file_idx else {
+            return;
+        };
+        let Some(root_node) = self.arena.get(root_idx) else {
+            return;
+        };
+        let Some(source_file) = self.arena.get_source_file(root_node) else {
+            return;
+        };
+        let stmt_idx = source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find(|&stmt_idx| {
+                self.js_default_export_declaration_names_for_statement(stmt_idx)
+                    .iter()
+                    .any(|declared| declared == name)
+                    && self.js_default_export_declaration_should_defer_until_export(stmt_idx)
+            });
+
+        let Some(stmt_idx) = stmt_idx else {
+            return;
+        };
+
+        let deferred_jsdoc = self
+            .arena
+            .get(stmt_idx)
+            .map(|stmt_node| {
+                (
+                    stmt_node.pos,
+                    self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos),
+                )
+            })
+            .filter(|(_, chain)| !chain.is_empty());
+
+        if let Some((pos, chain)) = deferred_jsdoc
+            && !self.emit_jsdoc_comment_chain_preserving_source_for_pos(pos, &chain)
+        {
+            self.emit_jsdoc_comment_chain(&chain);
+        }
+
+        let previous = self.emitting_js_default_export_declaration;
+        self.emitting_js_default_export_declaration = true;
+        self.emit_statement(stmt_idx);
+        self.emitting_js_default_export_declaration = previous;
+    }
+
+    fn js_default_export_declaration_names_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Vec<String> {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return Vec::new();
+        };
+
+        if let Some(name) = self.extract_declaration_name(stmt_idx) {
+            return vec![name];
+        }
+
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return Vec::new();
+        };
+
+        let mut names = Vec::new();
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if let Some(name) = self.get_identifier_text(decl.name) {
+                    names.push(name);
+                }
+            }
+        }
+        names
+    }
+
+    pub(in crate::declaration_emitter) fn js_module_exports_assignment_initializer(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16
+            || !self.is_module_exports_reference(binary.left)
+        {
+            return None;
+        }
+
+        Some(
+            self.arena
+                .skip_parenthesized_and_assertions_and_comma(binary.right),
+        )
+    }
+
+    pub(in crate::declaration_emitter) fn js_anonymous_module_exports_assignment_initializer(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        if !self.source_is_js_file {
+            return None;
+        }
+        if self.js_commonjs_export_equals_name(stmt_idx).is_some() {
+            return None;
+        }
+        self.js_module_exports_assignment_initializer(stmt_idx)
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_cross_file_commonjs_merge_diagnostic(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        if !self.source_file_is_js(source_file)
+            || self.source_file_has_native_esm_syntax(source_file)
+        {
+            return false;
+        }
+
+        let mut require_aliases = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            self.collect_js_require_aliases_for_statement(stmt_idx, &mut require_aliases);
+        }
+
+        let mut has_active_cross_file_export = false;
+        let mut augmenting_export = None;
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(initializer) = self.js_module_exports_assignment_initializer(stmt_idx) {
+                has_active_cross_file_export = self
+                    .js_initializer_references_required_module_export(
+                        initializer,
+                        &require_aliases,
+                    );
+                continue;
+            }
+
+            if has_active_cross_file_export
+                && self
+                    .js_commonjs_named_export_for_statement_with_options(stmt_idx, true)
+                    .is_some()
+            {
+                augmenting_export = Some(stmt_idx);
+                break;
+            }
+        }
+
+        if !has_active_cross_file_export {
+            return false;
+        }
+        let Some(augmenting_export) = augmenting_export else {
+            return false;
+        };
+        let Some(stmt_node) = self.arena.get(augmenting_export) else {
+            return false;
+        };
+
+        self.diagnostics.push(tsz_common::diagnostics::Diagnostic::from_code(
+            tsz_common::diagnostics::diagnostic_codes::DECLARATION_AUGMENTS_DECLARATION_IN_ANOTHER_FILE_THIS_CANNOT_BE_SERIALIZED,
+            &source_file.file_name,
+            stmt_node.pos,
+            stmt_node.end.saturating_sub(stmt_node.pos),
+            &[],
+        ));
+        true
+    }
+
+    fn collect_js_require_aliases_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        aliases: &mut FxHashSet<String>,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return;
+        };
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if self.initializer_is_bare_require_call(decl.initializer)
+                    && let Some(name) = self.get_identifier_text(decl.name)
+                {
+                    aliases.insert(name);
+                }
+            }
+        }
+    }
+
+    fn js_initializer_references_required_module_export(
+        &self,
+        initializer: NodeIndex,
+        require_aliases: &FxHashSet<String>,
+    ) -> bool {
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(initializer);
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && init_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.arena.get_access_expr(init_node) else {
+            return false;
+        };
+        if self
+            .js_commonjs_export_name_text(access.name_or_argument)
+            .as_deref()
+            == Some("default")
+        {
+            return false;
+        }
+
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
+        if self.initializer_is_bare_require_call(receiver) {
+            return true;
+        }
+
+        self.get_identifier_text(receiver)
+            .is_some_and(|name| require_aliases.contains(&name))
+    }
+
+    pub(in crate::declaration_emitter) fn js_anonymous_export_equals_class_expression_initializer(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let initializer = self.js_anonymous_module_exports_assignment_initializer(stmt_idx)?;
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return None;
+        }
+        let class = self.arena.get_class(init_node)?;
+        if class.name.is_some() {
+            return None;
+        }
+        Some(initializer)
+    }
+
+    pub(in crate::declaration_emitter) fn js_named_export_equals_class_expression(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let initializer = self.js_module_exports_assignment_initializer(stmt_idx)?;
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return None;
+        }
+        let class = self.arena.get_class(init_node)?;
+        let name_idx = class.name;
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        Some((name_idx, initializer))
+    }
+
+    pub(in crate::declaration_emitter) fn current_file_has_named_export_equals_class_root_name(
+        &self,
+        name: &str,
+    ) -> bool {
+        let Some(source_file_idx) = self.current_source_file_idx else {
+            return false;
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return false;
+        };
+        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .filter_map(|stmt_idx| self.js_named_export_equals_class_expression(stmt_idx))
+            .any(|(name_idx, _)| self.get_identifier_text(name_idx).as_deref() == Some(name))
+    }
+
+    pub(in crate::declaration_emitter) fn js_shadowed_export_equals_local_alias(
+        &mut self,
+        name: &str,
+    ) -> Option<String> {
+        if let Some(alias) = self.js_shadowed_export_equals_local_aliases.get(name) {
+            return Some(alias.clone());
+        }
+        if !self.current_file_has_named_export_equals_class_root_name(name) {
+            return None;
+        }
+
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+
+        let has_shadowed_local_class =
+            source_file
+                .statements
+                .nodes
+                .iter()
+                .copied()
+                .any(|stmt_idx| {
+                    self.arena
+                        .get(stmt_idx)
+                        .and_then(|stmt_node| self.arena.get_class(stmt_node))
+                        .and_then(|class| self.get_identifier_text(class.name))
+                        .as_deref()
+                        == Some(name)
+                });
+        if !has_shadowed_local_class {
+            return None;
+        }
+
+        let alias = self.generate_unique_name(name);
+        self.reserved_names.insert(alias.clone());
+        self.js_shadowed_export_equals_local_aliases
+            .insert(name.to_string(), alias.clone());
+        Some(alias)
+    }
+
+    pub(in crate::declaration_emitter) fn js_commonjs_named_export_for_statement_with_options(
+        &self,
+        stmt_idx: NodeIndex,
+        allow_module_exports_receiver: bool,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let receiver_is_supported = self.is_exports_identifier_reference(receiver)
+            || (allow_module_exports_receiver && self.is_module_exports_reference(receiver));
+        if !receiver_is_supported {
+            return None;
+        }
+        self.js_commonjs_export_name_text(lhs_access.name_or_argument)?;
+
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        Some((lhs_access.name_or_argument, rhs))
+    }
+
+    fn js_commonjs_named_export_alias_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let receiver_is_supported = self.is_exports_identifier_reference(receiver)
+            || self.is_module_exports_reference(receiver);
+        if !receiver_is_supported {
+            return None;
+        }
+        let export_name = self.js_commonjs_export_alias_name_text(lhs_access.name_or_argument)?;
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        Some((export_name, rhs))
+    }
+
+    pub(in crate::declaration_emitter) fn js_anonymous_module_exports_named_members_initializer(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let initializer = self.js_anonymous_module_exports_assignment_initializer(stmt_idx)?;
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            return None;
+        }
+
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+
+        let has_secondary_exports = source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|other_stmt_idx| *other_stmt_idx != stmt_idx)
+            .any(|other_stmt_idx| {
+                self.js_commonjs_named_export_for_statement_with_options(other_stmt_idx, true)
+                    .is_some()
+            });
+        if !has_secondary_exports {
+            return None;
+        }
+
+        if init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return Some(initializer);
+        }
+        if self
+            .js_new_expression_class_declaration(initializer)
+            .is_some()
+        {
+            return Some(initializer);
+        }
+
+        let type_id = self.get_node_type_or_names(&[initializer])?;
+        if matches!(
+            type_id,
+            tsz_solver::types::TypeId::ANY
+                | tsz_solver::types::TypeId::UNKNOWN
+                | tsz_solver::types::TypeId::ERROR
+                | tsz_solver::types::TypeId::NEVER
+        ) {
+            return None;
+        }
+        let interner = self.type_interner?;
+        let properties = interner.get_display_properties(type_id)?;
+        if properties.is_empty() {
+            return None;
+        }
+
+        Some(initializer)
+    }
+
+    pub(crate) fn source_file_export_equals_names(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+                continue;
+            }
+            let Some(assign) = self.arena.get_export_assignment(stmt_node) else {
+                continue;
+            };
+            if !assign.is_export_equals {
+                continue;
+            }
+
+            let Some(expr_node) = self.arena.get(assign.expression) else {
+                continue;
+            };
+            if expr_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(ident) = self.arena.get_identifier(expr_node) else {
+                continue;
+            };
+            names.insert(ident.escaped_text.clone());
+        }
+
+        names
+    }
+
+    pub(crate) fn collect_js_namespace_export_aliases(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        js_export_equals_names: &FxHashSet<String>,
+    ) -> JsNamespaceExportAliases {
+        let mut aliases = FxHashMap::default();
+        if !self.source_file_is_js(source_file) {
+            return aliases;
+        }
+
+        let commonjs_root = if js_export_equals_names.len() == 1 {
+            js_export_equals_names.iter().next().cloned()
+        } else {
+            None
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((root_name, export_name, local_name, use_import_alias)) =
+                self.js_namespace_export_alias_for_statement(stmt_idx, commonjs_root.as_deref())
+            else {
+                if let Some((root_name, member_name, _initializer)) =
+                    self.js_namespace_class_expando_for_statement(stmt_idx)
+                    && let Some(member_text) = self.get_identifier_text(member_name)
+                {
+                    Self::push_js_namespace_export_alias(
+                        &mut aliases,
+                        &root_name,
+                        member_text.clone(),
+                        member_text,
+                    );
+                    continue;
+                }
+                if let Some((root_name, member_name, _initializer, kind)) =
+                    self.js_commonjs_expando_decl_for_statement(stmt_idx, js_export_equals_names)
+                    && matches!(
+                        kind,
+                        JsCommonjsExpandoDeclKind::Function | JsCommonjsExpandoDeclKind::Value
+                    )
+                    && let Some(member_text) = self.get_identifier_text(member_name)
+                {
+                    Self::push_js_namespace_export_alias(
+                        &mut aliases,
+                        &root_name,
+                        member_text.clone(),
+                        member_text,
+                    );
+                }
+                continue;
+            };
+
+            Self::push_js_namespace_export_alias_with_kind(
+                &mut aliases,
+                &root_name,
+                export_name,
+                local_name,
+                use_import_alias,
+            );
+        }
+
+        if let Some(root_name) = commonjs_root.as_deref() {
+            for alias_name in self.collect_top_level_jsdoc_alias_names(source_file) {
+                Self::push_js_namespace_export_alias(
+                    &mut aliases,
+                    root_name,
+                    alias_name.clone(),
+                    alias_name,
+                );
+            }
+        }
+
+        aliases
+    }
+
+    pub(crate) fn collect_js_namespace_alias_declaration_statements(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        js_export_equals_names: &FxHashSet<String>,
+    ) -> FxHashMap<String, Vec<NodeIndex>> {
+        if !self.source_file_is_js(source_file) {
+            return FxHashMap::default();
+        }
+
+        let commonjs_root = if js_export_equals_names.len() == 1 {
+            js_export_equals_names.iter().next().map(String::as_str)
+        } else {
+            None
+        };
+
+        let mut declarations_by_local_name: FxHashMap<String, Vec<NodeIndex>> =
+            FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let local_name = match stmt_node.kind {
+                k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                    .arena
+                    .get_class(stmt_node)
+                    .and_then(|class| self.get_identifier_text(class.name)),
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                    .arena
+                    .get_function(stmt_node)
+                    .and_then(|func| self.get_identifier_text(func.name)),
+                _ => None,
+            };
+            let Some(local_name) = local_name else {
+                continue;
+            };
+            declarations_by_local_name
+                .entry(local_name)
+                .or_default()
+                .push(stmt_idx);
+        }
+        if declarations_by_local_name.is_empty() {
+            return FxHashMap::default();
+        }
+
+        let mut declarations: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((root_name, _export_name, local_name, _use_import_alias)) =
+                self.js_namespace_export_alias_for_statement(stmt_idx, commonjs_root)
+            else {
+                continue;
+            };
+            if local_name == root_name {
+                continue;
+            }
+            let Some(local_declaration_stmts) = declarations_by_local_name.get(&local_name) else {
+                continue;
+            };
+
+            let root_declarations = declarations.entry(root_name).or_default();
+            for &local_declaration_stmt in local_declaration_stmts {
+                if !root_declarations.contains(&local_declaration_stmt) {
+                    root_declarations.push(local_declaration_stmt);
+                }
+            }
+        }
+
+        declarations
+    }
+
+    pub(crate) fn collect_js_namespace_class_expando_declarations(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> JsCommonjsSyntheticStatements {
+        let mut declarations = FxHashMap::default();
+        if !self.source_file_is_js(source_file) {
+            return declarations;
+        }
+
+        let mut commonjs_exported_property_refs: FxHashSet<(String, String)> = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((_export_name_idx, initializer)) =
+                self.js_commonjs_named_export_for_statement(stmt_idx)
+            else {
+                continue;
+            };
+            let initializer = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(initializer);
+            let Some(init_node) = self.arena.get(initializer) else {
+                continue;
+            };
+            if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(access) = self.arena.get_access_expr(init_node) else {
+                continue;
+            };
+            let receiver = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(access.expression);
+            if let (Some(root_name), Some(member_name)) = (
+                self.get_identifier_text(receiver),
+                self.get_identifier_text(access.name_or_argument),
+            ) {
+                commonjs_exported_property_refs.insert((root_name, member_name));
+            }
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((root_name, member_name, initializer)) =
+                self.js_namespace_class_expando_for_statement(stmt_idx)
+            else {
+                continue;
+            };
+            if let Some(member_text) = self.get_identifier_text(member_name)
+                && commonjs_exported_property_refs.contains(&(root_name, member_text))
+            {
+                continue;
+            }
+            declarations.insert(stmt_idx, (member_name, initializer));
+        }
+
+        declarations
+    }
+
+    /// Collect CJS export aliases for `exports.X = Y` / `module.exports.X = Y`.
+    pub(in crate::declaration_emitter) fn collect_js_cjs_export_aliases(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> JsCjsExportAliasCollection {
+        let empty = JsCjsExportAliasCollection {
+            aliases: Vec::new(),
+            value_declarations: Vec::new(),
+            skipped_statements: FxHashSet::default(),
+        };
+        if !self.source_file_is_js(source_file) {
+            return empty;
+        }
+        if self.source_file_has_native_esm_syntax(source_file) {
+            return empty;
+        }
+        if !self.js_export_equals_names.is_empty() {
+            return empty;
+        }
+        let export_targets = self.collect_js_named_export_targets(source_file);
+        let mut alias_map: FxHashMap<String, (String, Vec<NodeIndex>, usize)> =
+            FxHashMap::default();
+        for (order, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
+            if let Some((export_name, rhs_idx)) =
+                self.js_commonjs_named_export_alias_for_statement(stmt_idx)
+            {
+                let rhs_idx = self
+                    .arena
+                    .skip_parenthesized_and_assertions_and_comma(rhs_idx);
+                let local_name = self
+                    .get_identifier_text(rhs_idx)
+                    .or_else(|| self.module_exports_property_reference_name(rhs_idx));
+                let entry = alias_map
+                    .entry(export_name.clone())
+                    .or_insert_with(|| (String::new(), Vec::new(), order));
+                entry.1.push(stmt_idx);
+                if let Some(ref ln) = local_name
+                    && *ln != export_name
+                {
+                    entry.0 = ln.clone();
+                }
+                continue;
+            }
+            if let Some((export_name, local_name, stmt)) =
+                self.js_module_exports_property_alias(stmt_idx)
+            {
+                let entry = alias_map
+                    .entry(export_name.clone())
+                    .or_insert_with(|| (String::new(), Vec::new(), order));
+                entry.1.push(stmt);
+                if export_name != local_name {
+                    entry.0 = local_name;
+                }
+            }
+        }
+        let mut aliases = Vec::new();
+        let mut value_declarations = Vec::new();
+        let mut skipped = FxHashSet::default();
+        let mut seen = FxHashSet::default();
+        let mut ordered_aliases: Vec<_> = alias_map.iter().collect();
+        ordered_aliases.sort_by_key(|(_, (_, _, order))| *order);
+        for (export_name, (local_name, stmts, _)) in ordered_aliases {
+            if local_name.is_empty() {
+                continue;
+            }
+            if !export_targets.contains_key(local_name) && !alias_map.contains_key(local_name) {
+                continue;
+            }
+            for &s in stmts {
+                skipped.insert(s);
+            }
+            if let Some(type_text) =
+                self.js_commonjs_export_alias_value_type_text(source_file, export_name, local_name)
+            {
+                value_declarations.push((export_name.clone(), type_text));
+            }
+            if seen.insert((export_name.clone(), local_name.clone())) {
+                aliases.push((export_name.clone(), local_name.clone()));
+            }
+        }
+        JsCjsExportAliasCollection {
+            aliases,
+            value_declarations,
+            skipped_statements: skipped,
+        }
+    }
+
+    fn js_commonjs_export_alias_value_type_text(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        export_name: &str,
+        alias_local_name: &str,
+    ) -> Option<String> {
+        let mut alias_type = false;
+        let mut value_types = Vec::new();
+        let mut has_undefined = false;
+        let mut seen = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((name_idx, initializer)) =
+                self.js_commonjs_named_export_for_statement_with_options(stmt_idx, true)
+            else {
+                continue;
+            };
+            if self.js_commonjs_export_name_text(name_idx).as_deref() != Some(export_name) {
+                continue;
+            }
+            if self.get_identifier_text(initializer).as_deref() == Some(alias_local_name) {
+                alias_type = true;
+                continue;
+            }
+            let Some(type_text) = self.js_commonjs_export_alias_assignment_type_text(initializer)
+            else {
+                continue;
+            };
+            if type_text == "undefined" {
+                has_undefined = true;
+                continue;
+            }
+            if seen.insert(type_text.clone()) {
+                value_types.push(type_text);
+            }
+        }
+        if value_types.is_empty() {
+            return None;
+        }
+
+        let mut parts = Vec::new();
+        if alias_type {
+            parts.push(format!("typeof {alias_local_name}"));
+        }
+        parts.extend(value_types);
+        if has_undefined {
+            parts.push("undefined".to_string());
+        }
+        if parts.len() <= 1 {
+            return None;
+        }
+        Some(parts.join(" | "))
+    }
+
+    fn js_commonjs_export_alias_assignment_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(initializer);
+        let init_node = self.arena.get(initializer)?;
+        if self.get_identifier_text(initializer).as_deref() == Some("undefined")
+            || init_node.kind == SyntaxKind::UndefinedKeyword as u16
+            || self.is_void_expression(init_node)
+        {
+            return Some("undefined".to_string());
+        }
+        if init_node.kind == SyntaxKind::StringLiteral as u16
+            || init_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            let literal = self.arena.get_literal(init_node)?;
+            return Some(format!("{:?}", literal.text));
+        }
+        self.js_synthetic_export_value_type_text(initializer)
+    }
+
+    pub(crate) fn collect_js_local_export_aliases(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> (Vec<NodeIndex>, FxHashSet<NodeIndex>) {
+        let mut aliases = Vec::new();
+        let mut skipped = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return (aliases, skipped);
+        }
+        let export_targets = self.collect_js_named_export_targets(source_file);
+        let enum_targets = self.js_local_enum_targets_by_name(source_file);
+        let interface_targets = self.js_local_interface_targets_by_name(source_file);
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            if named.name.is_some() || named.elements.nodes.is_empty() {
+                continue;
+            }
+            if let Some(plan) = self.js_local_named_export_plan(
+                named,
+                &export_targets,
+                &enum_targets,
+                &interface_targets,
+            ) {
+                aliases.extend(plan.alias_specifiers.iter().copied());
+                if !plan.alias_specifiers.is_empty() && plan.folded_names.is_empty() {
+                    skipped.insert(stmt_idx);
+                }
+            }
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            if named.elements.nodes.is_empty() {
+                continue;
+            }
+            let all_plain_enum_exports = named.elements.nodes.iter().copied().all(|spec_idx| {
+                self.arena
+                    .get(spec_idx)
+                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                    .and_then(|spec| {
+                        if spec.property_name.is_some() || spec.is_type_only {
+                            return None;
+                        }
+                        self.get_identifier_text(spec.name)
+                    })
+                    .is_some_and(|name| enum_targets.contains_key(&name))
+            });
+            if all_plain_enum_exports {
+                skipped.insert(stmt_idx);
+            }
+        }
+
+        (aliases, skipped)
+    }
+
+    pub(crate) fn collect_js_deferred_local_export_alias_function_statements(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<NodeIndex> {
+        let mut deferred = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return deferred;
+        }
+
+        let export_targets = self.collect_js_named_export_targets(source_file);
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec) = self
+                    .arena
+                    .get(spec_idx)
+                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                else {
+                    continue;
+                };
+                if spec.is_type_only || spec.property_name.is_none() {
+                    continue;
+                }
+                let Some(local_name) = self.get_identifier_text(spec.property_name) else {
+                    continue;
+                };
+                let Some(&target_stmt_idx) = export_targets.get(&local_name) else {
+                    continue;
+                };
+                if self.js_function_declaration_has_signature_jsdoc(target_stmt_idx) {
+                    deferred.insert(target_stmt_idx);
+                }
+            }
+        }
+
+        deferred
+    }
+
+    fn js_function_declaration_has_signature_jsdoc(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+            return false;
+        }
+        self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos)
+            .iter()
+            .any(|jsdoc| Self::jsdoc_has_function_signature_tags(jsdoc))
+    }
+
+    pub(crate) fn collect_js_local_export_enum_statements(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<NodeIndex> {
+        let mut deferred = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return deferred;
+        }
+        let enum_targets = self.js_local_enum_targets_by_name(source_file);
+        if enum_targets.is_empty() {
+            return deferred;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec) = self
+                    .arena
+                    .get(spec_idx)
+                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                else {
+                    continue;
+                };
+                if spec.is_type_only {
+                    continue;
+                }
+                let local_name_idx = if spec.property_name.is_some() {
+                    spec.property_name
+                } else {
+                    spec.name
+                };
+                let Some(local_name) = self.get_identifier_text(local_name_idx) else {
+                    continue;
+                };
+                if let Some(&enum_stmt) = enum_targets.get(&local_name) {
+                    deferred.insert(enum_stmt);
+                }
+            }
+        }
+
+        deferred
+    }
+
+    pub(crate) fn collect_js_local_export_interface_statements(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> (FxHashSet<NodeIndex>, FxHashSet<NodeIndex>) {
+        let mut deferred = FxHashSet::default();
+        let mut skipped_exports = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return (deferred, skipped_exports);
+        }
+        let interface_targets = self.js_local_interface_targets_by_name(source_file);
+        if interface_targets.is_empty() {
+            return (deferred, skipped_exports);
+        }
+        let export_targets = self.collect_js_named_export_targets(source_file);
+        let enum_targets = self.js_local_enum_targets_by_name(source_file);
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            let Some(plan) = self.js_local_named_export_plan(
+                named,
+                &export_targets,
+                &enum_targets,
+                &interface_targets,
+            ) else {
+                continue;
+            };
+            if plan.interface_statements.is_empty() {
+                continue;
+            }
+            if !plan.folded_names.is_empty() {
+                continue;
+            }
+            deferred.extend(plan.interface_statements.iter().copied());
+            if plan.folded_names.is_empty() && plan.alias_specifiers.is_empty() {
+                skipped_exports.insert(stmt_idx);
+            }
+        }
+
+        (deferred, skipped_exports)
+    }
+
+    pub(crate) fn emit_deferred_js_local_export_enum_statements(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if self.js_deferred_local_export_enum_statements.is_empty() {
+            return;
+        }
+        for &stmt_idx in &source_file.statements.nodes {
+            if !self
+                .js_deferred_local_export_enum_statements
+                .contains(&stmt_idx)
+            {
+                continue;
+            }
+            if self.js_local_enum_has_plain_export(stmt_idx, source_file) {
+                self.emit_exported_enum(stmt_idx);
+                self.emitted_module_indicator = true;
+            } else {
+                self.emit_enum_declaration(stmt_idx);
+            }
+        }
+    }
+
+    pub(crate) fn emit_deferred_js_local_export_interface_statements(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if self
+            .js_deferred_local_export_interface_statements
+            .is_empty()
+        {
+            return;
+        }
+        for &stmt_idx in &source_file.statements.nodes {
+            if !self
+                .js_deferred_local_export_interface_statements
+                .contains(&stmt_idx)
+            {
+                continue;
+            }
+            if self.js_local_interface_has_plain_export(stmt_idx, source_file) {
+                self.emit_exported_interface(stmt_idx);
+                self.emitted_module_indicator = true;
+            } else {
+                self.emit_interface_declaration(stmt_idx);
+            }
+        }
+    }
+
+    pub(crate) fn emit_deferred_js_local_export_alias_function_statements(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if self
+            .js_deferred_local_export_alias_function_statements
+            .is_empty()
+        {
+            return;
+        }
+        for &stmt_idx in &source_file.statements.nodes {
+            if !self
+                .js_deferred_local_export_alias_function_statements
+                .contains(&stmt_idx)
+            {
+                continue;
+            }
+            self.emit_hoisted_js_function_statement(stmt_idx);
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn js_local_enum_targets_by_name(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashMap<String, NodeIndex> {
+        let mut targets = FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+                continue;
+            }
+            let Some(enum_data) = self.arena.get_enum(stmt_node) else {
+                continue;
+            };
+            if self
+                .arena
+                .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword)
+            {
+                continue;
+            }
+            if let Some(name) = self.get_identifier_text(enum_data.name) {
+                targets.insert(name, stmt_idx);
+            }
+        }
+        targets
+    }
+
+    pub(in crate::declaration_emitter) fn js_local_interface_targets_by_name(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashMap<String, NodeIndex> {
+        let mut targets = FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
+                continue;
+            }
+            let Some(iface) = self.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            if self
+                .arena
+                .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
+            {
+                continue;
+            }
+            if let Some(name) = self.get_identifier_text(iface.name) {
+                targets.insert(name, stmt_idx);
+            }
+        }
+        targets
+    }
+
+    fn js_local_enum_has_plain_export(
+        &self,
+        enum_stmt: NodeIndex,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        let Some(enum_name) = self
+            .arena
+            .get(enum_stmt)
+            .and_then(|node| self.arena.get_enum(node))
+            .and_then(|enum_data| self.get_identifier_text(enum_data.name))
+        else {
+            return false;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec) = self
+                    .arena
+                    .get(spec_idx)
+                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                else {
+                    continue;
+                };
+                if spec.is_type_only || spec.property_name.is_some() {
+                    continue;
+                }
+                if self.get_identifier_text(spec.name).as_deref() == Some(enum_name.as_str()) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn js_local_interface_has_plain_export(
+        &self,
+        interface_stmt: NodeIndex,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        let Some(interface_name) = self
+            .arena
+            .get(interface_stmt)
+            .and_then(|node| self.arena.get_interface(node))
+            .and_then(|iface| self.get_identifier_text(iface.name))
+        else {
+            return false;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec) = self
+                    .arena
+                    .get(spec_idx)
+                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                else {
+                    continue;
+                };
+                if spec.is_type_only || spec.property_name.is_some() {
+                    continue;
+                }
+                if self.get_identifier_text(spec.name).as_deref() == Some(interface_name.as_str()) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub(in crate::declaration_emitter) fn js_local_named_export_plan(
+        &self,
+        named: &tsz_parser::parser::node::NamedImportsData,
+        export_targets: &FxHashMap<String, NodeIndex>,
+        enum_targets: &FxHashMap<String, NodeIndex>,
+        interface_targets: &FxHashMap<String, NodeIndex>,
+    ) -> Option<JsLocalNamedExportPlan> {
+        if named.name.is_some() || named.elements.nodes.is_empty() {
+            return None;
+        }
+
+        let mut plan = JsLocalNamedExportPlan::default();
+        let mut seen_folded_targets = FxHashSet::default();
+        let mut seen_interface_targets = FxHashSet::default();
+
+        for &spec_idx in &named.elements.nodes {
+            let spec = self
+                .arena
+                .get(spec_idx)
+                .and_then(|spec_node| self.arena.get_specifier(spec_node))?;
+            if spec.is_type_only {
+                return None;
+            }
+
+            let local_name_idx = if spec.property_name.is_some() {
+                spec.property_name
+            } else {
+                spec.name
+            };
+            let local_name = self.get_identifier_text(local_name_idx)?;
+
+            if let Some(&interface_stmt) = interface_targets.get(&local_name) {
+                if seen_interface_targets.insert(interface_stmt) {
+                    plan.interface_statements.push(interface_stmt);
+                }
+                if spec.property_name.is_some() {
+                    plan.alias_specifiers.push(spec_idx);
+                } else {
+                    plan.plain_interface_names.push(local_name);
+                }
+                continue;
+            }
+
+            if spec.property_name.is_some() {
+                plan.alias_specifiers.push(spec_idx);
+                continue;
+            }
+
+            if let Some(&target_stmt_idx) = export_targets.get(&local_name) {
+                plan.folded_names.push(local_name);
+                if seen_folded_targets.insert(target_stmt_idx) {
+                    plan.folded_target_statements.push(target_stmt_idx);
+                }
+                continue;
+            }
+
+            if enum_targets.contains_key(&local_name) {
+                continue;
+            }
+
+            return None;
+        }
+
+        Some(plan)
+    }
+
+    /// Parse `module.exports.X = Y` and return `(export_name, local_name, stmt_idx)`.
+    pub(in crate::declaration_emitter) fn js_module_exports_property_alias(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, String, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(lhs_node)?;
+        let export_name = self.get_identifier_text(access.name_or_argument)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
+        if !self.is_module_exports_reference(receiver) {
+            return None;
+        }
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        let local_name = self
+            .get_identifier_text(rhs)
+            .or_else(|| self.module_exports_property_reference_name(rhs))?;
+        Some((export_name, local_name, stmt_idx))
+    }
+
+    pub(crate) fn collect_js_commonjs_expando_declarations(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        js_export_equals_names: &FxHashSet<String>,
+    ) -> JsCommonjsExpandoDeclarations {
+        let mut declarations = JsCommonjsExpandoDeclarations::default();
+        if !self.source_file_is_js(source_file) || js_export_equals_names.is_empty() {
+            return declarations;
+        }
+        if self.source_file_has_native_esm_syntax(source_file) {
+            return declarations;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((root_name, member_name, initializer, kind)) =
+                self.js_commonjs_expando_decl_for_statement(stmt_idx, js_export_equals_names)
+            else {
+                continue;
+            };
+
+            match kind {
+                JsCommonjsExpandoDeclKind::Function => {
+                    declarations
+                        .function_statements
+                        .insert(stmt_idx, (member_name, initializer));
+                }
+                JsCommonjsExpandoDeclKind::Value => {
+                    declarations
+                        .value_statements
+                        .insert(stmt_idx, (member_name, initializer));
+                }
+                JsCommonjsExpandoDeclKind::PrototypeMethod => {
+                    let entry = declarations
+                        .prototype_methods
+                        .entry(root_name)
+                        .or_insert_with(Vec::new);
+                    if !entry.iter().any(|(existing_name, existing_initializer)| {
+                        *existing_name == member_name && *existing_initializer == initializer
+                    }) {
+                        entry.push((member_name, initializer));
+                    }
+                }
+            }
+        }
+
+        declarations
+    }
+
+    /// Collect `X.prototype.Y = expr` assignments for top-level variables that are
+    /// NOT already handled by the CJS expando machinery.  tsc uses a "class-like
+    /// heuristic": any variable whose name appears in a `Name.prototype.prop = ...`
+    /// statement is emitted as `declare class Name { private constructor(); ... }`
+    /// instead of `declare let Name: any;`.
+    pub(crate) fn collect_js_class_like_prototype_members(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        js_export_equals_names: &FxHashSet<String>,
+    ) -> JsClassLikePrototypeMembers {
+        let mut result = JsClassLikePrototypeMembers::default();
+        if !self.source_file_is_js(source_file) {
+            return result;
+        }
+
+        // First, collect all top-level names that may acquire a prototype
+        // surface through `Name.prototype.member = ...` assignments.
+        let mut top_level_names: FxHashSet<String> = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                        continue;
+                    };
+                    for &decl_list_idx in &var_stmt.declarations.nodes {
+                        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                            continue;
+                        };
+                        if decl_list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                            continue;
+                        }
+                        let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                            continue;
+                        };
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            if let Some(decl_node) = self.arena.get(decl_idx)
+                                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                                && let Some(name) = self.get_identifier_text(decl.name)
+                                && !js_export_equals_names.contains(&name)
+                            {
+                                top_level_names.insert(name);
+                            }
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    if let Some(func) = self.arena.get_function(stmt_node)
+                        && let Some(name) = self.get_identifier_text(func.name)
+                        && !js_export_equals_names.contains(&name)
+                    {
+                        top_level_names.insert(name);
+                    }
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    if let Some(class) = self.arena.get_class(stmt_node)
+                        && let Some(name) = self.get_identifier_text(class.name)
+                        && !js_export_equals_names.contains(&name)
+                    {
+                        top_level_names.insert(name);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if top_level_names.is_empty() {
+            return result;
+        }
+
+        // Now scan for `X.prototype.Y = expr` expression statements.
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let expr_idx = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+
+            // LHS must be `X.prototype.Y`
+            let lhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.left);
+            let Some(lhs_node) = self.arena.get(lhs) else {
+                continue;
+            };
+            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(lhs_access) = self.arena.get_access_expr(lhs_node) else {
+                continue;
+            };
+            let Some(_member_name) = self.get_identifier_text(lhs_access.name_or_argument) else {
+                continue;
+            };
+
+            // Receiver must be `X.prototype` where X is a top-level variable
+            let receiver = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+            let Some(receiver_node) = self.arena.get(receiver) else {
+                continue;
+            };
+            if receiver_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(receiver_access) = self.arena.get_access_expr(receiver_node) else {
+                continue;
+            };
+            if self
+                .get_identifier_text(receiver_access.name_or_argument)
+                .as_deref()
+                != Some("prototype")
+            {
+                continue;
+            }
+            let Some(root_name) = self.get_identifier_text(receiver_access.expression) else {
+                continue;
+            };
+            if !top_level_names.contains(&root_name) {
+                continue;
+            }
+
+            let rhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.right);
+            let entry = result.members.entry(root_name).or_default();
+            if !entry.iter().any(|(existing_name, existing_init)| {
+                *existing_name == lhs_access.name_or_argument && *existing_init == rhs
+            }) {
+                entry.push((lhs_access.name_or_argument, rhs));
+            }
+            result.consumed_stmts.insert(stmt_idx);
+        }
+
+        result
+    }
+
+    pub(crate) fn collect_js_class_static_members(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> crate::declaration_emitter::helpers::JsClassStaticMembers {
+        let mut result = crate::declaration_emitter::helpers::JsClassStaticMembers::default();
+        if !self.source_file_is_js(source_file) {
+            return result;
+        }
+
+        let mut top_level_names = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    if let Some(func) = self.arena.get_function(stmt_node)
+                        && let Some(name) = self.get_identifier_text(func.name)
+                    {
+                        top_level_names.insert(name);
+                    }
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    if let Some(class) = self.arena.get_class(stmt_node)
+                        && let Some(name) = self.get_identifier_text(class.name)
+                    {
+                        top_level_names.insert(name);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if top_level_names.is_empty() {
+            return result;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let expr_idx = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            let lhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.left);
+            let Some(lhs_node) = self.arena.get(lhs) else {
+                continue;
+            };
+            if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(lhs_access) = self.arena.get_access_expr(lhs_node) else {
+                continue;
+            };
+            if self
+                .get_identifier_text(lhs_access.name_or_argument)
+                .as_deref()
+                == Some("prototype")
+            {
+                continue;
+            }
+            let Some(root_name) = self.get_identifier_text(lhs_access.expression) else {
+                continue;
+            };
+            if self.js_export_equals_names.contains(&root_name) {
+                continue;
+            }
+            if !top_level_names.contains(&root_name) {
+                continue;
+            }
+            let rhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.right);
+            if !(self.is_js_function_initializer(rhs)
+                || self.js_namespace_object_member_initializer_supported(rhs))
+            {
+                continue;
+            }
+            let entry = result.members.entry(root_name).or_default();
+            if !entry.iter().any(|(existing_name, existing_init)| {
+                *existing_name == lhs_access.name_or_argument && *existing_init == rhs
+            }) {
+                entry.push((lhs_access.name_or_argument, rhs));
+            }
+            result.consumed_stmts.insert(stmt_idx);
+        }
+
+        result
+    }
+
+    pub(crate) fn collect_js_commonjs_named_exports(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> JsCommonjsNamedExports {
+        let mut exported_names = FxHashSet::default();
+        let mut function_statements = FxHashMap::default();
+        let mut value_statements = FxHashMap::default();
+        if !self.source_file_is_js(source_file) {
+            return (exported_names, function_statements, value_statements);
+        }
+        if self.source_file_has_native_esm_syntax(source_file) {
+            return (exported_names, function_statements, value_statements);
+        }
+        if !self.js_export_equals_names.is_empty() {
+            return (exported_names, function_statements, value_statements);
+        }
+
+        let export_targets = self.collect_js_named_export_targets(source_file);
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((name_idx, initializer)) =
+                self.js_supported_commonjs_named_export_for_statement(stmt_idx)
+            else {
+                continue;
+            };
+            let Some(export_name) = self.js_commonjs_export_name_text(name_idx) else {
+                continue;
+            };
+
+            if let Some(local_name) = self.get_identifier_text(initializer)
+                && local_name == export_name
+                && export_targets.contains_key(&local_name)
+            {
+                exported_names.insert(local_name);
+                continue;
+            }
+
+            if self.is_js_function_initializer(initializer) {
+                function_statements.insert(stmt_idx, (name_idx, initializer));
+                continue;
+            }
+
+            value_statements.insert(stmt_idx, (name_idx, initializer));
+        }
+
+        (exported_names, function_statements, value_statements)
+    }
+
+    /// Collect named export names from `module.exports = { Name1, Name2 }` patterns.
+    ///
+    /// When a JS file has `module.exports = { Foo, Bar }` where the shorthand
+    /// property names refer to top-level declarations, tsc treats those names
+    /// as named exports (emitting `export class Foo ...` rather than
+    /// `declare class Foo ...`).
+    pub(crate) fn collect_js_module_exports_object_names(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> (FxHashSet<String>, FxHashSet<NodeIndex>) {
+        let empty = (FxHashSet::default(), FxHashSet::default());
+        if !self.source_file_is_js(source_file) {
+            return empty;
+        }
+        if self.source_file_has_native_esm_syntax(source_file) {
+            return empty;
+        }
+
+        let mut top_level_names = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if let Some(name) = self.extract_declaration_name(stmt_idx) {
+                top_level_names.insert(name);
+                continue;
+            }
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    if let Some(name) = self.get_identifier_text(decl.name) {
+                        top_level_names.insert(name);
+                    }
+                }
+            }
+        }
+
+        let mut names = FxHashSet::default();
+        let mut skipped_stmts = FxHashSet::default();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            // Look for expression statements: `module.exports = { ... }`
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let expr_idx = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            if !self.is_module_exports_reference(binary.left) {
+                continue;
+            }
+
+            let rhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.right);
+            let Some(rhs_node) = self.arena.get(rhs) else {
+                continue;
+            };
+            if rhs_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            let Some(obj) = self.arena.get_literal_expr(rhs_node) else {
+                continue;
+            };
+
+            let mut found_any = false;
+            for &member_idx in &obj.elements.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                // Handle shorthand properties: `{ FancyError }` -> name is `FancyError`
+                if member_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                    if let Some(data) = self.arena.get_shorthand_property(member_node)
+                        && let Some(name) = self.get_identifier_text(data.name)
+                        && top_level_names.contains(&name)
+                    {
+                        names.insert(name);
+                        found_any = true;
+                    }
+                }
+                // Handle property assignments: `{ FancyError: FancyError }`
+                else if member_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    && let Some(prop) = self.arena.get_property_assignment(member_node)
+                    && let Some(prop_name) = self.get_identifier_text(prop.name)
+                    && let Some(init_name) = self.get_identifier_text(prop.initializer)
+                    && prop_name == init_name
+                    && top_level_names.contains(&prop_name)
+                {
+                    names.insert(prop_name);
+                    found_any = true;
+                }
+            }
+            if found_any {
+                skipped_stmts.insert(stmt_idx);
+            }
+        }
+
+        (names, skipped_stmts)
+    }
+
+    pub(crate) fn js_supported_commonjs_named_export_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let (name_idx, initializer) = self.js_commonjs_named_export_for_statement(stmt_idx)?;
+
+        if let Some(export_name) = self.js_commonjs_export_name_text(name_idx)
+            && let Some(local_name) = self.get_identifier_text(initializer)
+            && local_name == export_name
+        {
+            return Some((name_idx, initializer));
+        }
+
+        if self.js_commonjs_void_zero_export_init(initializer) {
+            return None;
+        }
+
+        if self.is_js_function_initializer(initializer) {
+            return Some((name_idx, initializer));
+        }
+
+        if self.js_named_class_expression_matches_export(initializer, name_idx) {
+            return Some((name_idx, initializer));
+        }
+
+        if self.js_commonjs_named_export_value_initializer_supported(initializer) {
+            return Some((name_idx, initializer));
+        }
+
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn js_commonjs_named_export_value_initializer_supported(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        self.js_synthetic_export_value_type_text(initializer)
+            .is_some()
+    }
+
+    pub(in crate::declaration_emitter) fn js_named_class_expression_matches_export(
+        &self,
+        initializer: NodeIndex,
+        export_name_idx: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return false;
+        }
+        let Some(class) = self.arena.get_class(init_node) else {
+            return false;
+        };
+        let Some(export_name) = self.js_commonjs_export_name_text(export_name_idx) else {
+            return false;
+        };
+        self.get_identifier_text(class.name)
+            .is_some_and(|class_name| class_name == export_name)
+    }
+
+    pub(in crate::declaration_emitter) fn js_commonjs_void_zero_export_init(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if self.is_void_expression(expr_node)
+            || expr_node.kind == SyntaxKind::UndefinedKeyword as u16
+        {
+            return true;
+        }
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return false;
+        }
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let Some(lhs_node) = self.arena.get(lhs) else {
+            return false;
+        };
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(lhs_access) = self.arena.get_access_expr(lhs_node) else {
+            return false;
+        };
+        if !self.is_exports_identifier_reference(lhs_access.expression) {
+            return false;
+        }
+
+        self.js_commonjs_void_zero_export_init(binary.right)
+    }
+
+    pub(crate) fn js_assigned_initializer_for_value_reference(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let target_text = self.nameable_constructor_expression_text(expr_idx)?;
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let expr_idx = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+            let Some(expr_node) = self.arena.get(expr_idx) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+
+            let lhs = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(binary.left);
+            if self.nameable_constructor_expression_text(lhs).as_deref() != Some(&target_text) {
+                continue;
+            }
+
+            return Some(
+                self.arena
+                    .skip_parenthesized_and_assertions_and_comma(binary.right),
+            );
+        }
+
+        None
+    }
+
+    pub(crate) fn collect_js_class_static_method_augmentations(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> JsStaticMethodAugmentations {
+        let mut augmentations = JsStaticMethodAugmentations::default();
+        if !self.source_file_is_js(source_file) {
+            return augmentations;
+        }
+
+        let mut static_methods: FxHashMap<JsStaticMethodKey, JsStaticMethodInfo> =
+            FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            self.collect_js_static_class_methods_for_statement(stmt_idx, &mut static_methods);
+        }
+
+        let mut grouped: FxHashMap<JsStaticMethodKey, JsStaticMethodAugmentationEntry> =
+            FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((class_name, method_name, member_name, initializer)) =
+                self.js_class_static_method_augmentation_for_statement(stmt_idx)
+            else {
+                continue;
+            };
+            let Some(&(class_idx, method_idx, class_is_exported)) =
+                static_methods.get(&(class_name.clone(), method_name.clone()))
+            else {
+                continue;
+            };
+
+            let entry = grouped.entry((class_name, method_name)).or_insert_with(|| {
+                (
+                    stmt_idx,
+                    class_idx,
+                    method_idx,
+                    class_is_exported,
+                    Vec::new(),
+                )
+            });
+            if !entry.4.iter().any(|(existing_name, existing_initializer)| {
+                *existing_name == member_name && *existing_initializer == initializer
+            }) {
+                entry.4.push((member_name, initializer));
+            }
+        }
+
+        for (_key, (first_stmt_idx, class_idx, method_idx, class_is_exported, properties)) in
+            grouped
+        {
+            augmentations.augmented_method_nodes.insert(method_idx);
+            augmentations.statements.insert(
+                first_stmt_idx,
+                JsStaticMethodAugmentationGroup {
+                    class_idx,
+                    method_idx,
+                    class_is_exported,
+                    properties,
+                },
+            );
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some((class_name, method_name, _, _)) =
+                self.js_class_static_method_augmentation_for_statement(stmt_idx)
+                && static_methods.contains_key(&(class_name, method_name))
+                && !augmentations.statements.contains_key(&stmt_idx)
+            {
+                augmentations.skipped_statements.insert(stmt_idx);
+            }
+        }
+
+        augmentations
+    }
+
+    pub(crate) fn collect_js_class_define_property_accessors(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> (
+        FxHashMap<String, Vec<JsClassDefinePropertyAccessor>>,
+        FxHashSet<NodeIndex>,
+    ) {
+        let mut accessors: FxHashMap<String, Vec<JsClassDefinePropertyAccessor>> =
+            FxHashMap::default();
+        let mut consumed = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return (accessors, consumed);
+        }
+
+        let class_names = self.js_top_level_class_names(source_file);
+        if class_names.is_empty() {
+            return (accessors, consumed);
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((class_name, accessor)) =
+                self.js_class_define_property_accessor_for_statement(stmt_idx, &class_names)
+            else {
+                continue;
+            };
+            accessors.entry(class_name).or_default().push(accessor);
+            consumed.insert(stmt_idx);
+        }
+
+        (accessors, consumed)
+    }
+
+    fn js_top_level_class_names(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                if let Some(class) = self.arena.get_class(stmt_node)
+                    && let Some(name) = self.get_identifier_text(class.name)
+                {
+                    names.insert(name);
+                }
+                continue;
+            }
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                continue;
+            }
+            if let Some(class) = self.arena.get_class(clause_node)
+                && let Some(name) = self.get_identifier_text(class.name)
+            {
+                names.insert(name);
+            }
+        }
+        names
+    }
+
+    fn js_class_define_property_accessor_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        class_names: &FxHashSet<String>,
+    ) -> Option<(String, JsClassDefinePropertyAccessor)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let args = call.arguments.as_ref()?;
+        if !self.is_object_define_property_call(call.expression) || args.nodes.len() < 3 {
+            return None;
+        }
+
+        let target = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(args.nodes[0]);
+        let target_node = self.arena.get(target)?;
+        if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let target_access = self.arena.get_access_expr(target_node)?;
+        if self
+            .get_identifier_text(target_access.name_or_argument)
+            .as_deref()
+            != Some("prototype")
+        {
+            return None;
+        }
+        let class_name = self.get_identifier_text(target_access.expression)?;
+        if !class_names.contains(&class_name) {
+            return None;
+        }
+
+        let property_name = self.js_define_property_name(args.nodes[1])?;
+        let descriptor_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(args.nodes[2]);
+        let descriptor_node = self.arena.get(descriptor_idx)?;
+        if descriptor_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let descriptor = self.arena.get_literal_expr(descriptor_node)?;
+        let mut getter = None;
+        let mut setter = None;
+
+        for &member_idx in &descriptor.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                let Some(method) = self.arena.get_method_decl(member_node) else {
+                    continue;
+                };
+                match self.get_identifier_text(method.name).as_deref() {
+                    Some("get") => getter = Some(member_idx),
+                    Some("set") => {
+                        setter = Some(JsClassDefinePropertySetter {
+                            initializer: member_idx,
+                            preserve_param_name: true,
+                        });
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            if member_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                continue;
+            }
+            let Some(prop) = self.arena.get_property_assignment(member_node) else {
+                continue;
+            };
+            match self.get_identifier_text(prop.name).as_deref() {
+                Some("get") => getter = Some(prop.initializer),
+                Some("set") => {
+                    setter = Some(JsClassDefinePropertySetter {
+                        initializer: prop.initializer,
+                        preserve_param_name: false,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        if getter.is_none() && setter.is_none() {
+            return None;
+        }
+
+        Some((
+            class_name,
+            JsClassDefinePropertyAccessor {
+                property_name,
+                getter,
+                setter,
+            },
+        ))
+    }
+
+    pub(crate) fn collect_js_grouped_reexports(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> (FxHashMap<NodeIndex, Vec<NodeIndex>>, FxHashSet<NodeIndex>) {
+        let mut groups = FxHashMap::default();
+        let mut skipped = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return (groups, skipped);
+        }
+
+        let statements = &source_file.statements.nodes;
+        let mut i = 0;
+        while i < statements.len() {
+            let stmt_idx = statements[i];
+            let Some((module_specifier, is_type_only)) = self.groupable_js_reexport_info(stmt_idx)
+            else {
+                i += 1;
+                continue;
+            };
+            if is_type_only {
+                i += 1;
+                continue;
+            }
+
+            let mut group = vec![stmt_idx];
+            let mut j = i + 1;
+            while j < statements.len() {
+                let candidate_idx = statements[j];
+                let Some((candidate_module, candidate_type_only)) =
+                    self.groupable_js_reexport_info(candidate_idx)
+                else {
+                    break;
+                };
+                if candidate_type_only || candidate_module != module_specifier {
+                    break;
+                }
+                group.push(candidate_idx);
+                j += 1;
+            }
+
+            if group.len() > 1 {
+                for &member in group.iter().skip(1) {
+                    skipped.insert(member);
+                }
+                groups.insert(stmt_idx, group);
+            }
+
+            i = j.max(i + 1);
+        }
+
+        (groups, skipped)
+    }
+
+    pub(crate) fn collect_js_namespace_object_statements(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<NodeIndex> {
+        let mut deferred = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return deferred;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT
+                || self.statement_has_attached_jsdoc(source_file, stmt_node)
+            {
+                continue;
+            }
+
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            if self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            {
+                continue;
+            }
+
+            let mut candidate_decl: Option<NodeIndex> = None;
+            let mut initializer: Option<NodeIndex> = None;
+            let mut valid = true;
+
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    valid = false;
+                    break;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    valid = false;
+                    break;
+                };
+                if decl_list.declarations.nodes.len() != 1 {
+                    valid = false;
+                    break;
+                }
+                let decl_idx = decl_list.declarations.nodes[0];
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    valid = false;
+                    break;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    valid = false;
+                    break;
+                };
+                let Some(name_node) = self.arena.get(decl.name) else {
+                    valid = false;
+                    break;
+                };
+                if name_node.kind != SyntaxKind::Identifier as u16 || !decl.initializer.is_some() {
+                    valid = false;
+                    break;
+                }
+                let Some(init_node) = self.arena.get(decl.initializer) else {
+                    valid = false;
+                    break;
+                };
+                if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                    valid = false;
+                    break;
+                }
+                let Some(object) = self.arena.get_literal_expr(init_node) else {
+                    valid = false;
+                    break;
+                };
+                if object.elements.nodes.is_empty() {
+                    valid = false;
+                    break;
+                }
+
+                for &member_idx in &object.elements.nodes {
+                    let Some(member_node) = self.arena.get(member_idx) else {
+                        valid = false;
+                        break;
+                    };
+                    match member_node.kind {
+                        k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                            let Some(prop) = self.arena.get_property_assignment(member_node) else {
+                                valid = false;
+                                break;
+                            };
+                            if self
+                                .arena
+                                .get(prop.name)
+                                .is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
+                            {
+                                valid = false;
+                                break;
+                            }
+                            let Some(_) = self.arena.get(prop.initializer) else {
+                                valid = false;
+                                break;
+                            };
+                            if !self
+                                .js_namespace_object_member_initializer_supported(prop.initializer)
+                            {
+                                valid = false;
+                                break;
+                            }
+                        }
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                            let Some(method) = self.arena.get_method_decl(member_node) else {
+                                valid = false;
+                                break;
+                            };
+                            if self
+                                .arena
+                                .get(method.name)
+                                .is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
+                            {
+                                valid = false;
+                                break;
+                            }
+                        }
+                        _ => {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+
+                if !valid {
+                    break;
+                }
+
+                candidate_decl = Some(decl.name);
+                initializer = Some(decl.initializer);
+            }
+
+            if valid && candidate_decl.is_some() && initializer.is_some() {
+                deferred.insert(stmt_idx);
+            }
+        }
+
+        deferred
+    }
+
+    pub(in crate::declaration_emitter) fn js_namespace_object_stmt_emits_in_source_order(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return false;
+        };
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if self.is_js_named_exported_name(decl.name) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    pub(crate) fn js_namespace_object_member_initializer_supported(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+
+        match init_node.kind {
+            k if k == syntax_kind_ext::ARROW_FUNCTION => true,
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => true,
+            k if k == SyntaxKind::StringLiteral as u16 => true,
+            k if k == SyntaxKind::NumericLiteral as u16 => true,
+            k if k == SyntaxKind::BigIntLiteral as u16 => true,
+            k if k == SyntaxKind::TrueKeyword as u16 => true,
+            k if k == SyntaxKind::FalseKeyword as u16 => true,
+            k if k == SyntaxKind::NullKeyword as u16 => true,
+            k if k == SyntaxKind::UndefinedKeyword as u16 => true,
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                self.js_empty_object_literal_initializer(initializer)
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => true,
+            k if k == syntax_kind_ext::NEW_EXPRESSION => true,
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .js_namespace_property_reference_text(initializer)
+                .or_else(|| self.js_namespace_value_member_type_text(initializer))
+                .is_some(),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                self.is_negative_literal(init_node)
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn js_empty_object_literal_initializer(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        self.arena
+            .get_literal_expr(init_node)
+            .is_some_and(|object| object.elements.nodes.is_empty())
+    }
+
+    pub(in crate::declaration_emitter) fn groupable_js_reexport_info(
+        &self,
+        export_idx: NodeIndex,
+    ) -> Option<(String, bool)> {
+        let export_node = self.arena.get(export_idx)?;
+        if export_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+            return None;
+        }
+        let export = self.arena.get_export_decl(export_node)?;
+        let clause_node = self.arena.get(export.export_clause)?;
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS || export.module_specifier.is_none() {
+            return None;
+        }
+        let module_node = self.arena.get(export.module_specifier)?;
+        let module_specifier = self.arena.get_literal(module_node)?.text.clone();
+        Some((module_specifier, export.is_type_only))
+    }
+
+    pub(crate) fn is_js_named_exported_name(&self, name_idx: NodeIndex) -> bool {
+        if !self.source_is_js_file || self.js_named_export_names.is_empty() {
+            return false;
+        }
+
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(name_ident) = self.arena.get_identifier(name_node) else {
+            return false;
+        };
+        self.js_named_export_names
+            .contains(&name_ident.escaped_text)
+    }
+
+    pub(in crate::declaration_emitter) fn record_js_require_property_import_alias_statement(
+        &mut self,
+        stmt_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file || self.inside_non_ambient_namespace {
+            return false;
+        }
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return false;
+        };
+
+        let mut aliases = Vec::new();
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                return false;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                return false;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    return false;
+                };
+                let Some(local_name) = self
+                    .arena
+                    .get_variable_declaration(decl_node)
+                    .and_then(|decl| self.get_identifier_text(decl.name))
+                else {
+                    return false;
+                };
+                let Some((module_name, export_name)) =
+                    self.require_property_initializer_parts(decl_node)
+                else {
+                    return false;
+                };
+                aliases.push((local_name, module_name, export_name));
+            }
+        }
+
+        if aliases.is_empty() {
+            return false;
+        }
+        for alias in aliases {
+            if !self
+                .js_require_property_import_aliases
+                .iter()
+                .any(|existing| existing == &alias)
+            {
+                self.js_require_property_import_aliases.push(alias);
+            }
+        }
+        true
+    }
+
+    pub(in crate::declaration_emitter) fn require_property_initializer_parts(
+        &self,
+        decl_node: &Node,
+    ) -> Option<(String, String)> {
+        let decl = self.arena.get_variable_declaration(decl_node)?;
+        let init_node = self.arena.get(decl.initializer)?;
+        if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.arena.get_access_expr(init_node)?;
+        let export_name = self.get_identifier_text(access.name_or_argument)?;
+        let call_node = self.arena.get(access.expression)?;
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(call_node)?;
+        let callee = self.get_identifier_text(call.expression)?;
+        let args = call.arguments.as_ref()?;
+        if callee != "require" || args.nodes.len() != 1 {
+            return None;
+        }
+
+        let arg_node = self.arena.get(args.nodes[0])?;
+        if arg_node.kind != SyntaxKind::StringLiteral as u16 {
+            return None;
+        }
+        let module_name = self.arena.get_literal(arg_node)?.text.clone();
+        Some((module_name, export_name))
+    }
+
+    pub(in crate::declaration_emitter) fn js_local_bare_require_alias_without_export_surface(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file
+            || !self.js_named_export_names.is_empty()
+            || !self.js_export_equals_names.is_empty()
+            || !self.js_namespace_export_aliases.is_empty()
+        {
+            return false;
+        }
+
+        self.initializer_is_bare_require_call(initializer)
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_require_property_import_aliases(&mut self) {
+        let aliases = std::mem::take(&mut self.js_require_property_import_aliases);
+        for (local_name, module_name, export_name) in &aliases {
+            let module_alias_candidate = format!("{local_name}_1");
+            let module_alias = if self.reserved_names.contains(&module_alias_candidate) {
+                self.generate_unique_name(local_name)
+            } else {
+                module_alias_candidate
+            };
+            self.reserved_names.insert(module_alias.clone());
+            self.write_indent();
+            self.write("import ");
+            self.write(&module_alias);
+            self.write(" = require(\"");
+            self.write(module_name);
+            self.write("\");");
+            self.write_line();
+
+            self.write_indent();
+            self.write("import ");
+            self.write(local_name);
+            self.write(" = ");
+            self.write(&module_alias);
+            self.write(".");
+            self.write(export_name);
+            self.write(";");
+            self.write_line();
+            self.emitted_module_indicator = true;
+        }
+        self.js_require_property_import_aliases = aliases;
+    }
+
+    pub(in crate::declaration_emitter) fn record_js_require_property_import_alias_for_new_expression(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return;
+        };
+        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return;
+        }
+        let Some(new_expr) = self.arena.get_call_expr(expr_node) else {
+            return;
+        };
+        let Some(local_name) = self.get_identifier_text(new_expr.expression) else {
+            return;
+        };
+        let Some(binder) = self.binder else {
+            return;
+        };
+        let Some(sym_id) = self.resolve_identifier_symbol(new_expr.expression, &local_name) else {
+            return;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return;
+        };
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some((module_name, export_name)) =
+                self.require_property_initializer_parts(decl_node)
+            else {
+                continue;
+            };
+            let alias = (local_name, module_name, export_name);
+            if !self
+                .js_require_property_import_aliases
+                .iter()
+                .any(|existing| existing == &alias)
+            {
+                self.js_require_property_import_aliases.push(alias);
+            }
+            return;
+        }
+    }
+
+    pub(crate) fn collect_js_module_exports_nested_namespaces(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> (JsNestedModuleExportNamespaces, FxHashSet<NodeIndex>) {
+        let mut roots = FxHashMap::<String, NodeIndex>::default();
+        let mut nested = FxHashMap::<NodeIndex, Vec<(NodeIndex, NodeIndex)>>::default();
+        let mut skipped = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return (nested, skipped);
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((root_name, initializer)) =
+                self.js_module_exports_property_assignment(stmt_idx)
+            else {
+                continue;
+            };
+            let Some(init_node) = self.arena.get(initializer) else {
+                continue;
+            };
+            if init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                && self
+                    .arena
+                    .get_literal_expr(init_node)
+                    .is_some_and(|object| object.elements.nodes.is_empty())
+            {
+                roots.insert(root_name, stmt_idx);
+            }
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((root_name, member_name, initializer)) =
+                self.js_module_exports_nested_property_assignment(stmt_idx)
+            else {
+                continue;
+            };
+            let Some(root_stmt) = roots.get(&root_name).copied() else {
+                continue;
+            };
+            let Some(init_node) = self.arena.get(initializer) else {
+                continue;
+            };
+            if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            nested
+                .entry(root_stmt)
+                .or_default()
+                .push((member_name, initializer));
+            skipped.insert(stmt_idx);
+        }
+
+        for root_stmt in nested.keys().copied() {
+            skipped.insert(root_stmt);
+        }
+        (nested, skipped)
+    }
+
+    pub(in crate::declaration_emitter) fn js_module_exports_property_assignment(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let root_name = self.module_exports_property_reference_name(lhs)?;
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        Some((root_name, rhs))
+    }
+
+    fn js_module_exports_nested_property_assignment(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        let member_name = lhs_access.name_or_argument;
+        self.get_identifier_text(member_name)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let root_name = self.module_exports_property_reference_name(receiver)?;
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        Some((root_name, member_name, rhs))
+    }
+
+    pub(crate) const fn should_emit_declare_keyword(&self, is_exported: bool) -> bool {
+        !(self.inside_declare_namespace
+            || self.source_is_declaration_file
+            || (self.source_is_js_file && is_exported))
+    }
+
+    /// Whether an exported declaration should emit its `export` keyword.
+    ///
+    /// Inside a `declare namespace` (including non-ambient namespaces that
+    /// gain `declare` in the .d.ts output), `export` is only emitted when
+    /// the namespace body has a mix of exported and non-exported members
+    /// (i.e., a "scope marker" is present).  Outside a `declare namespace`,
+    /// `export` is always emitted.
+    pub(crate) const fn should_emit_export_keyword(&self) -> bool {
+        !self.inside_declare_namespace || self.ambient_module_has_scope_marker
+    }
+
+    pub(crate) fn is_js_export_equals_name(&self, name_idx: NodeIndex) -> bool {
+        if !self.source_is_js_file || self.js_export_equals_names.is_empty() {
+            return false;
+        }
+
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(name_ident) = self.arena.get_identifier(name_node) else {
+            return false;
+        };
+        self.js_export_equals_names
+            .contains(&name_ident.escaped_text)
+    }
+
+    pub(crate) fn emit_js_namespace_export_aliases_for_name(
+        &mut self,
+        name_idx: NodeIndex,
+        is_exported: bool,
+    ) {
+        if !self.source_is_js_file || self.js_namespace_export_aliases.is_empty() {
+            return;
+        }
+
+        let Some(name) = self.get_identifier_text(name_idx) else {
+            return;
+        };
+        let Some(aliases) = self.js_namespace_export_aliases.get(&name).cloned() else {
+            return;
+        };
+        if aliases.is_empty() {
+            return;
+        }
+
+        self.write_indent();
+        if is_exported {
+            self.write("export ");
+        }
+        if self.should_emit_declare_keyword(is_exported) {
+            self.write("declare ");
+        }
+        self.write("namespace ");
+        self.emit_node(name_idx);
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        let mut import_alias_exports = Vec::new();
+        let mut plain_exports = Vec::new();
+        let mut renamed_exports = Vec::new();
+        for alias in aliases {
+            let export_name = alias.export_name;
+            let local_name = self
+                .js_shadowed_export_equals_local_aliases
+                .get(&alias.local_name)
+                .cloned()
+                .unwrap_or(alias.local_name);
+            if alias.use_import_alias {
+                import_alias_exports.push((export_name, local_name));
+                continue;
+            }
+            if export_name == local_name {
+                plain_exports.push(local_name);
+            } else {
+                renamed_exports.push((export_name, local_name));
+            }
+        }
+
+        for (export_name, local_name) in import_alias_exports {
+            self.write_indent();
+            self.write("import ");
+            self.write(&export_name);
+            self.write(" = ");
+            self.write(&local_name);
+            self.write(";");
+            self.write_line();
+
+            self.write_indent();
+            self.write("export { ");
+            self.write(&export_name);
+            self.write(" };");
+            self.write_line();
+        }
+
+        if !plain_exports.is_empty() {
+            self.write_indent();
+            self.write("export { ");
+            for (idx, local_name) in plain_exports.iter().enumerate() {
+                if idx > 0 {
+                    self.write(", ");
+                }
+                self.write(local_name);
+            }
+            self.write(" };");
+            self.write_line();
+        }
+
+        for (export_name, local_name) in renamed_exports {
+            self.write_indent();
+            self.write("export { ");
+            self.write(&local_name);
+            if export_name != local_name {
+                self.write(" as ");
+                self.write(&export_name);
+            }
+            self.write(" };");
+            self.write_line();
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
+        self.emit_deferred_js_namespace_alias_declarations_for_name(&name);
+    }
+
+    fn emit_deferred_js_namespace_alias_declarations_for_name(&mut self, root_name: &str) {
+        let Some(stmt_idxs) = self
+            .js_deferred_namespace_alias_declarations
+            .get(root_name)
+            .cloned()
+        else {
+            return;
+        };
+
+        for stmt_idx in stmt_idxs {
+            if self
+                .js_deferred_namespace_alias_declaration_stmts
+                .remove(&stmt_idx)
+            {
+                self.emit_statement(stmt_idx);
+                self.js_deferred_namespace_alias_declaration_stmts
+                    .insert(stmt_idx);
+            }
+        }
+    }
+
+    pub(crate) fn emit_pending_js_export_equals_for_name(&mut self, name_idx: NodeIndex) {
+        if !self.is_js_export_equals_name(name_idx) {
+            return;
+        }
+
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+        let Some(name_ident) = self.arena.get_identifier(name_node) else {
+            return;
+        };
+        if !self
+            .emitted_js_export_equals_names
+            .insert(name_ident.escaped_text.clone())
+        {
+            return;
+        }
+
+        self.write_indent();
+        self.write("export = ");
+        self.emit_node(name_idx);
+        self.write(";");
+        self.write_line();
+        self.emitted_scope_marker = true;
+        self.emitted_module_indicator = true;
+    }
+
+    pub(in crate::declaration_emitter) fn js_commonjs_export_equals_name(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<String> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+        if !self.is_module_exports_reference(binary.left) {
+            return None;
+        }
+
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        if let Some(name) = self.get_identifier_text(rhs) {
+            return Some(name);
+        }
+
+        let rhs_node = self.arena.get(rhs)?;
+        if rhs_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            let class = self.arena.get_class(rhs_node)?;
+            return self.get_identifier_text(class.name);
+        }
+
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn js_namespace_class_expando_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        let member_name = self.get_identifier_text(lhs_access.name_or_argument)?;
+        if member_name == "prototype" {
+            return None;
+        }
+
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let root_name = self
+            .get_identifier_text(receiver)
+            .filter(|name| name != "exports" && name != "module")
+            .or_else(|| self.module_exports_property_reference_name(receiver))?;
+
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        let rhs_node = self.arena.get(rhs)?;
+        if rhs_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return None;
+        }
+        let class = self.arena.get_class(rhs_node)?;
+        if let Some(class_name) = self.get_identifier_text(class.name)
+            && class_name != member_name
+        {
+            return None;
+        }
+
+        Some((root_name, lhs_access.name_or_argument, rhs))
+    }
+
+    pub(in crate::declaration_emitter) fn js_commonjs_expando_decl_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        js_export_equals_names: &FxHashSet<String>,
+    ) -> Option<(String, NodeIndex, NodeIndex, JsCommonjsExpandoDeclKind)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        self.get_identifier_text(lhs_access.name_or_argument)?;
+
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let (root_name, is_prototype) =
+            self.js_commonjs_expando_receiver(receiver, js_export_equals_names)?;
+
+        if is_prototype {
+            if self.is_js_function_initializer(rhs) {
+                return Some((
+                    root_name,
+                    lhs_access.name_or_argument,
+                    rhs,
+                    JsCommonjsExpandoDeclKind::PrototypeMethod,
+                ));
+            }
+            return None;
+        }
+
+        if self.is_js_function_initializer(rhs) {
+            return Some((
+                root_name,
+                lhs_access.name_or_argument,
+                rhs,
+                JsCommonjsExpandoDeclKind::Function,
+            ));
+        }
+
+        if self.js_namespace_object_member_initializer_supported(rhs) {
+            return Some((
+                root_name,
+                lhs_access.name_or_argument,
+                rhs,
+                JsCommonjsExpandoDeclKind::Value,
+            ));
+        }
+
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn js_commonjs_named_export_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        self.js_commonjs_named_export_for_statement_with_options(stmt_idx, true)
+    }
+
+    pub(in crate::declaration_emitter) fn module_exports_property_reference_name(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(expr_node)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
+        if !self.is_module_exports_reference(receiver) {
+            return None;
+        }
+        self.get_identifier_text(access.name_or_argument)
+    }
+
+    pub(in crate::declaration_emitter) fn js_namespace_export_alias_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        commonjs_root: Option<&str>,
+    ) -> Option<(String, String, String, bool)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        let module_exports_local_name = self.module_exports_property_reference_name(rhs);
+        let local_name = self
+            .get_identifier_text(rhs)
+            .or_else(|| module_exports_local_name.clone())?;
+        let (root_name, export_name) =
+            self.js_namespace_export_alias_target(binary.left, commonjs_root)?;
+        Some((
+            root_name,
+            export_name,
+            local_name,
+            module_exports_local_name.is_some(),
+        ))
+    }
+
+    pub(in crate::declaration_emitter) fn js_namespace_export_alias_target(
+        &self,
+        lhs: NodeIndex,
+        commonjs_root: Option<&str>,
+    ) -> Option<(String, String)> {
+        let lhs = self.arena.skip_parenthesized_and_assertions_and_comma(lhs);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(lhs_node)?;
+        let export_name = self.get_identifier_text(access.name_or_argument)?;
+
+        let receiver_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
+        if let Some(receiver_name) = self.get_identifier_text(receiver_idx)
+            && receiver_name != "exports"
+            && receiver_name != "module"
+        {
+            return Some((receiver_name, export_name));
+        }
+
+        if self.is_module_exports_reference(receiver_idx)
+            && let Some(root_name) = commonjs_root
+        {
+            return Some((root_name.to_string(), export_name));
+        }
+
+        if let Some(root_name) = self.module_exports_property_reference_name(receiver_idx) {
+            return Some((root_name, export_name));
+        }
+
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn js_commonjs_expando_receiver(
+        &self,
+        receiver_idx: NodeIndex,
+        js_export_equals_names: &FxHashSet<String>,
+    ) -> Option<(String, bool)> {
+        let receiver_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(receiver_idx);
+
+        if let Some(root_name) = self.get_identifier_text(receiver_idx)
+            && js_export_equals_names.contains(&root_name)
+        {
+            return Some((root_name, false));
+        }
+
+        let receiver_node = self.arena.get(receiver_idx)?;
+        if receiver_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let receiver_access = self.arena.get_access_expr(receiver_node)?;
+        if self
+            .get_identifier_text(receiver_access.name_or_argument)
+            .as_deref()
+            != Some("prototype")
+        {
+            return None;
+        }
+
+        let root_name = self.get_identifier_text(receiver_access.expression)?;
+        if !js_export_equals_names.contains(&root_name) {
+            return None;
+        }
+
+        Some((root_name, true))
+    }
+
+    pub(in crate::declaration_emitter) fn js_class_static_method_augmentation_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(String, String, NodeIndex, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        let prop_name = lhs_access.name_or_argument;
+        self.get_identifier_text(prop_name)?;
+
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let receiver_node = self.arena.get(receiver)?;
+        if receiver_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let receiver_access = self.arena.get_access_expr(receiver_node)?;
+
+        let class_name = self.get_identifier_text(receiver_access.expression)?;
+        let method_name = self.get_identifier_text(receiver_access.name_or_argument)?;
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        let is_supported = self.is_js_function_initializer(initializer)
+            || self.js_namespace_object_member_initializer_supported(initializer);
+        if !is_supported {
+            return None;
+        }
+
+        Some((class_name, method_name, prop_name, initializer))
+    }
+
+    pub(in crate::declaration_emitter) fn collect_js_static_class_methods_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        methods: &mut FxHashMap<JsStaticMethodKey, JsStaticMethodInfo>,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                let Some(class) = self.arena.get_class(stmt_node) else {
+                    return;
+                };
+                let class_is_exported = self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                    || self.is_js_named_exported_name(class.name);
+                self.collect_js_static_class_methods(stmt_idx, class, class_is_exported, methods);
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                    return;
+                };
+                let Some(clause_node) = self.arena.get(export.export_clause) else {
+                    return;
+                };
+                if clause_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                    return;
+                }
+                let Some(class) = self.arena.get_class(clause_node) else {
+                    return;
+                };
+                self.collect_js_static_class_methods(export.export_clause, class, true, methods);
+            }
+            _ => {}
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn collect_js_static_class_methods(
+        &self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+        class_is_exported: bool,
+        methods: &mut FxHashMap<JsStaticMethodKey, JsStaticMethodInfo>,
+    ) {
+        let Some(class_name) = self.get_identifier_text(class.name) else {
+            return;
+        };
+
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                continue;
+            }
+            let Some(method) = self.arena.get_method_decl(member_node) else {
+                continue;
+            };
+            if !self.arena.is_static(&method.modifiers) {
+                continue;
+            }
+            let Some(method_name) = self.get_identifier_text(method.name) else {
+                continue;
+            };
+            methods.insert(
+                (class_name.clone(), method_name),
+                (class_idx, member_idx, class_is_exported),
+            );
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn is_module_exports_reference(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        let idx = self.arena.skip_parenthesized_and_assertions_and_comma(idx);
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.arena.get_access_expr(node) else {
+            return false;
+        };
+
+        self.get_identifier_text(access.expression).as_deref() == Some("module")
+            && self.get_identifier_text(access.name_or_argument).as_deref() == Some("exports")
+    }
+
+    pub(in crate::declaration_emitter) fn is_exports_identifier_reference(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        self.get_identifier_text(idx).as_deref() == Some("exports")
+    }
+
+    pub(crate) fn collect_top_level_jsdoc_alias_names(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut seen = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return names;
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
+                if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc)
+                    && seen.insert(decl.name.clone())
+                {
+                    names.push(decl.name);
+                }
+            }
+        }
+
+        let Ok(eof_pos) = u32::try_from(source_file.text.len()) else {
+            return names;
+        };
+        for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
+            if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc)
+                && seen.insert(decl.name.clone())
+            {
+                names.push(decl.name);
+            }
+        }
+
+        names
+    }
+
+    pub(in crate::declaration_emitter) fn push_js_namespace_export_alias(
+        aliases: &mut JsNamespaceExportAliases,
+        root_name: &str,
+        export_name: String,
+        local_name: String,
+    ) {
+        Self::push_js_namespace_export_alias_with_kind(
+            aliases,
+            root_name,
+            export_name,
+            local_name,
+            false,
+        );
+    }
+
+    pub(in crate::declaration_emitter) fn push_js_namespace_export_alias_with_kind(
+        aliases: &mut JsNamespaceExportAliases,
+        root_name: &str,
+        export_name: String,
+        local_name: String,
+        use_import_alias: bool,
+    ) {
+        let entry = aliases.entry(root_name.to_string()).or_default();
+        if !entry.iter().any(|existing| {
+            existing.export_name == export_name
+                && existing.local_name == local_name
+                && existing.use_import_alias == use_import_alias
+        }) {
+            entry.push(JsNamespaceExportAlias {
+                export_name,
+                local_name,
+                use_import_alias,
+            });
+        }
+    }
+}

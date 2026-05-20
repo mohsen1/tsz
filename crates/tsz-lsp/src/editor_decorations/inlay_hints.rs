@@ -1,0 +1,599 @@
+//! Inlay Hints for the LSP.
+//!
+//! Inlay hints are inline annotations that show helpful information directly in the source code.
+//!
+//! Features:
+//! - Parameter name hints for function calls
+//! - Type hints for variables with implicit types (e.g., `let x = 1` shows `: number`)
+//! - Return type hints for arrow functions and function expressions
+//!
+//! ## Type Hints
+//!
+//! Type hints require integration with the type checker (`CheckerState`) and
+//! type storage (`TypeInterner`). The checker infers types from initializer
+//! expressions, and the formatter produces human-readable type strings.
+//!
+//! Type hints are skipped when:
+//! - The variable already has an explicit type annotation
+//! - There is no initializer expression
+//! - The inferred type is `any`, `unknown`, or `error`
+
+use serde::{Deserialize, Serialize};
+use tsz_binder::BinderState;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
+use tsz_common::position::{LineMap, Position, Range};
+use tsz_parser::NodeIndex;
+use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
+use tsz_parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeInterner;
+use tsz_solver::types::TypeId;
+
+/// Kind of inlay hint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InlayHintKind {
+    /// Parameter name hint (e.g., `fn(arg)` -> `fn(arg: paramName)`)
+    #[serde(rename = "parameter")]
+    Parameter,
+    /// Type hint (e.g., `let x = 1` -> `let x: number = 1`)
+    #[serde(rename = "type")]
+    Type,
+    /// Generic parameter hint
+    #[serde(rename = "generic")]
+    Generic,
+}
+
+/// An inlay hint - an inline annotation in the source code.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InlayHint {
+    /// Position where the hint should be shown.
+    pub position: Position,
+    /// The label to show (e.g., ": paramName" or ": number").
+    pub label: String,
+    /// Kind of hint.
+    pub kind: InlayHintKind,
+    /// Optional tooltip with additional information.
+    pub tooltip: Option<String>,
+}
+
+impl InlayHint {
+    /// Create a new inlay hint.
+    pub const fn new(position: Position, label: String, kind: InlayHintKind) -> Self {
+        Self {
+            position,
+            label,
+            kind,
+            tooltip: None,
+        }
+    }
+
+    /// Create a parameter name hint.
+    pub fn parameter(position: Position, param_name: String) -> Self {
+        Self::new(
+            position,
+            format!(": {param_name}"),
+            InlayHintKind::Parameter,
+        )
+    }
+
+    /// Create a type hint.
+    pub fn type_hint(position: Position, type_name: String) -> Self {
+        Self::new(position, format!(": {type_name}"), InlayHintKind::Type)
+    }
+
+    /// Convert to LSP range (for compatibility with other LSP features).
+    pub const fn to_range(&self) -> Range {
+        Range::new(self.position, self.position)
+    }
+}
+
+/// Provider for inlay hints.
+pub struct InlayHintsProvider<'a> {
+    /// The AST node arena.
+    pub arena: &'a NodeArena,
+    /// The binder state with symbols.
+    pub binder: &'a BinderState,
+    /// Line map for position calculations.
+    pub line_map: &'a LineMap,
+    /// Source file text.
+    pub source: &'a str,
+    /// Type interner for type checking integration.
+    pub interner: &'a TypeInterner,
+    /// File name for checker context.
+    pub file_name: String,
+}
+
+impl<'a> InlayHintsProvider<'a> {
+    /// Create a new inlay hints provider with type checking support.
+    pub const fn new(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        line_map: &'a LineMap,
+        source: &'a str,
+        interner: &'a TypeInterner,
+        file_name: String,
+    ) -> Self {
+        InlayHintsProvider {
+            arena,
+            binder,
+            line_map,
+            source,
+            interner,
+            file_name,
+        }
+    }
+
+    /// Provide inlay hints for the given range.
+    pub fn provide_inlay_hints(&self, root: NodeIndex, range: Range) -> Vec<InlayHint> {
+        let mut hints = Vec::new();
+
+        // Convert range to byte offsets for filtering
+        let range_start = self
+            .line_map
+            .position_to_offset(range.start, self.source)
+            .unwrap_or(0);
+        let range_end = self
+            .line_map
+            .position_to_offset(range.end, self.source)
+            .unwrap_or(self.source.len() as u32);
+
+        // Initialize CheckerState for type inference
+        let options = CheckerOptions::default();
+        let mut checker = CheckerState::new(
+            self.arena,
+            self.binder,
+            self.interner,
+            self.file_name.clone(),
+            options,
+        );
+
+        // Traverse AST and collect hints
+        self.collect_hints(root, range_start, range_end, &mut hints, &mut checker);
+
+        hints
+    }
+
+    /// Recursively collect inlay hints from the AST.
+    fn collect_hints(
+        &self,
+        node_idx: NodeIndex,
+        range_start: u32,
+        range_end: u32,
+        hints: &mut Vec<InlayHint>,
+        checker: &mut CheckerState,
+    ) {
+        let Some(node) = self.arena.get(node_idx) else {
+            return;
+        };
+
+        // Skip nodes outside the requested range
+        if node.end < range_start || node.pos > range_end {
+            return;
+        }
+
+        // Collect parameter name hints for call and new expressions
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION
+            || node.kind == syntax_kind_ext::NEW_EXPRESSION
+        {
+            self.collect_parameter_hints(node_idx, hints);
+        }
+
+        // Collect type hints for variable declarations without explicit types
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            self.collect_type_hints(node_idx, hints, checker);
+        }
+
+        // Collect return type hints for arrow functions and function expressions
+        if node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            self.collect_return_type_hints(node_idx, hints, checker);
+        }
+
+        // Recurse into children
+        for child_idx in self.arena.get_children(node_idx) {
+            self.collect_hints(child_idx, range_start, range_end, hints, checker);
+        }
+    }
+
+    /// Collect parameter name hints for a call expression.
+    fn collect_parameter_hints(&self, call_idx: NodeIndex, hints: &mut Vec<InlayHint>) {
+        let Some(node) = self.arena.get(call_idx) else {
+            return;
+        };
+        let Some(call) = self.arena.get_call_expr(node) else {
+            return;
+        };
+
+        // Get the function being called and resolve its symbol.
+        // Handles both direct calls (foo(arg)) and method calls (obj.method(arg)).
+        let symbol_id = self
+            .binder
+            .resolve_identifier(self.arena, call.expression)
+            .or_else(|| self.resolve_method_call_target(call.expression));
+        let Some(symbol_id) = symbol_id else {
+            return;
+        };
+        let Some(symbol) = self.binder.symbols.get(symbol_id) else {
+            return;
+        };
+
+        // Get the function declaration to extract parameter names
+        let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
+
+        if decl_idx.is_none() {
+            return;
+        }
+
+        let param_names = self.get_parameter_names(decl_idx);
+
+        // A spread argument terminates positional pairing — it can consume any
+        // number of parameter slots at runtime, so neither the spread itself
+        // nor anything after it has a static position. Matches tsserver.
+        if let Some(args) = &call.arguments {
+            for (i, &arg_idx) in args.nodes.iter().enumerate() {
+                if i >= param_names.len() {
+                    break;
+                }
+                let Some(param_name) = param_names[i].as_ref() else {
+                    continue;
+                };
+                let Some(arg_node) = self.arena.get(arg_idx) else {
+                    continue;
+                };
+                if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                    break;
+                }
+                if self.should_skip_parameter_hint(arg_idx, arg_node, param_name) {
+                    continue;
+                }
+                let pos = self.line_map.offset_to_position(arg_node.pos, self.source);
+                hints.push(InlayHint::new(
+                    pos,
+                    format!("{param_name}: "),
+                    InlayHintKind::Parameter,
+                ));
+            }
+        }
+    }
+
+    /// Get parameter names from a function, method, or constructor declaration.
+    fn get_parameter_names(&self, decl_idx: NodeIndex) -> Vec<Option<String>> {
+        let Some(node) = self.arena.get(decl_idx) else {
+            return Vec::new();
+        };
+
+        let params = if let Some(func) = self.arena.get_function(node) {
+            Some(&func.parameters)
+        } else if let Some(method) = self.arena.get_method_decl(node) {
+            Some(&method.parameters)
+        } else if let Some(ctor) = self.arena.get_constructor(node) {
+            Some(&ctor.parameters)
+        } else if node.is_class_like() {
+            // For class declarations (from new expressions), find the constructor
+            return self.get_constructor_param_names(node);
+        } else {
+            return Vec::new();
+        };
+
+        let Some(params) = params else {
+            return Vec::new();
+        };
+
+        self.extract_param_names(params)
+    }
+
+    /// Extract parameter names from a `NodeList` of parameters.
+    ///
+    /// A trailing rest parameter annotated as a labeled tuple type expands into
+    /// one name per labeled tuple position, so that `function f(...args: [a:
+    /// number, b: number])` emits `a:`/`b:` hints instead of a single `args:`.
+    fn extract_param_names(
+        &self,
+        params: &tsz_parser::parser::base::NodeList,
+    ) -> Vec<Option<String>> {
+        let mut names: Vec<Option<String>> = Vec::with_capacity(params.nodes.len());
+        let last_index = params.nodes.len().saturating_sub(1);
+        for (i, &param_idx) in params.nodes.iter().enumerate() {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                names.push(None);
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                names.push(None);
+                continue;
+            };
+
+            if i == last_index
+                && param.dot_dot_dot_token
+                && let Some(expanded) = self.expand_named_tuple_rest(param.type_annotation)
+            {
+                names.extend(expanded);
+                continue;
+            }
+
+            names.push(
+                self.arena
+                    .get_identifier_text(param.name)
+                    .map(std::string::ToString::to_string),
+            );
+        }
+        names
+    }
+
+    /// If the annotation is a tuple type with at least one labeled member,
+    /// return one name per element. Returns `None` for non-tuple or fully
+    /// unlabeled tuples so callers fall back to the rest-parameter's own name.
+    fn expand_named_tuple_rest(&self, type_annotation: NodeIndex) -> Option<Vec<Option<String>>> {
+        let type_node = self.arena.get(type_annotation)?;
+        let tuple = self.arena.get_tuple_type(type_node)?;
+        let mut expanded: Vec<Option<String>> = Vec::with_capacity(tuple.elements.nodes.len());
+        for &element_idx in &tuple.elements.nodes {
+            let label = self.arena.get(element_idx).and_then(|element_node| {
+                let member = self.arena.get_named_tuple_member(element_node)?;
+                self.arena
+                    .get_identifier_text(member.name)
+                    .map(std::string::ToString::to_string)
+            });
+            expanded.push(label);
+        }
+        expanded.iter().any(Option::is_some).then_some(expanded)
+    }
+
+    /// Find and extract parameter names from the constructor of a class declaration.
+    fn get_constructor_param_names(&self, class_node: &Node) -> Vec<Option<String>> {
+        let Some(class) = self.arena.get_class(class_node) else {
+            return Vec::new();
+        };
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR
+                && let Some(ctor) = self.arena.get_constructor(member_node)
+            {
+                return self.extract_param_names(&ctor.parameters);
+            }
+        }
+        Vec::new()
+    }
+
+    /// Check if we should skip showing a parameter hint for this argument.
+    fn should_skip_parameter_hint(
+        &self,
+        arg_idx: NodeIndex,
+        arg_node: &Node,
+        param_name: &str,
+    ) -> bool {
+        // Skip if the argument is an identifier with the same name as the parameter
+        if arg_node.kind == SyntaxKind::Identifier as u16
+            && let Some(text) = self.arena.get_identifier_text(arg_idx)
+            && text == param_name
+        {
+            return true;
+        }
+
+        // Skip for object literals — the properties make the structure clear
+        if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return true;
+        }
+
+        // Skip for arrow functions — the parameter structure is visible
+        if arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return true;
+        }
+
+        // Skip if it's a property access whose property name matches the param
+        // e.g., user.name for param "name"
+        if arg_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(arg_node)
+            && let Some(prop_name) = self.arena.get_identifier_text(access.name_or_argument)
+            && prop_name == param_name
+        {
+            return true;
+        }
+
+        false
+    }
+
+    /// Resolve the method symbol for a property access call like `obj.method(arg)`.
+    fn resolve_method_call_target(&self, expr_idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(expr_node)?;
+        let method_name = self.arena.get_identifier_text(access.name_or_argument)?;
+        let obj_symbol_id = self
+            .binder
+            .resolve_identifier(self.arena, access.expression)?;
+        let obj_symbol = self.binder.symbols.get(obj_symbol_id)?;
+
+        // Direct lookup on the symbol (class/namespace)
+        if let Some(id) = obj_symbol
+            .members
+            .as_ref()
+            .and_then(|m| m.get(method_name))
+            .or_else(|| obj_symbol.exports.as_ref().and_then(|e| e.get(method_name)))
+        {
+            return Some(id);
+        }
+
+        // For variables: check type annotation or new-expression initializer
+        for &decl_idx in &obj_symbol.declarations {
+            let decl_node = self.arena.get(decl_idx)?;
+            if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                continue;
+            }
+            let var = self.arena.get_variable_declaration(decl_node)?;
+
+            // Type annotation: const obj: MyClass = ...
+            if var.type_annotation.is_some()
+                && let Some(type_node) = self.arena.get(var.type_annotation)
+                && type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(type_ref) = self.arena.get_type_ref(type_node)
+                && let Some(type_sym) = self
+                    .binder
+                    .resolve_identifier(self.arena, type_ref.type_name)
+                && let Some(type_symbol) = self.binder.symbols.get(type_sym)
+                && let Some(id) = type_symbol
+                    .members
+                    .as_ref()
+                    .and_then(|m| m.get(method_name))
+            {
+                return Some(id);
+            }
+
+            // Initializer: const obj = new MyClass()
+            if var.initializer.is_some()
+                && let Some(init_node) = self.arena.get(var.initializer)
+                && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                && let Some(new_call) = self.arena.get_call_expr(init_node)
+                && let Some(class_sym) = self
+                    .binder
+                    .resolve_identifier(self.arena, new_call.expression)
+                && let Some(class_symbol) = self.binder.symbols.get(class_sym)
+                && let Some(id) = class_symbol
+                    .members
+                    .as_ref()
+                    .and_then(|m| m.get(method_name))
+            {
+                return Some(id);
+            }
+        }
+
+        None
+    }
+
+    /// Collect type hints for variable declarations without explicit type annotations.
+    ///
+    /// This examines each `VariableDeclaration` node and, when it has an initializer
+    /// but no explicit type annotation, uses the checker to infer the type and create
+    /// an inlay hint showing `: type` after the variable name.
+    fn collect_type_hints(
+        &self,
+        decl_idx: NodeIndex,
+        hints: &mut Vec<InlayHint>,
+        checker: &mut CheckerState,
+    ) {
+        let Some(node) = self.arena.get(decl_idx) else {
+            return;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(node) else {
+            return;
+        };
+
+        // Skip if the variable already has an explicit type annotation
+        if decl.type_annotation.is_some() {
+            return;
+        }
+
+        // Skip if there is no initializer (cannot infer type)
+        if decl.initializer.is_none() {
+            return;
+        }
+
+        // Get the inferred type of the declaration node
+        let type_id = checker.get_type_of_node(decl_idx);
+
+        // Filter out unhelpful types: error, any, unknown
+        if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
+            return;
+        }
+
+        // Format the type to a string
+        let type_text = checker.format_type(type_id);
+
+        // Additional string-based filter for "any", "unknown", and "error"
+        if type_text == "any" || type_text == "unknown" || type_text == "error" {
+            return;
+        }
+
+        // Position the hint after the variable name identifier
+        let Some(name_node) = self.arena.get(decl.name) else {
+            return;
+        };
+
+        let pos = self.line_map.offset_to_position(name_node.end, self.source);
+
+        hints.push(InlayHint::new(
+            pos,
+            format!(": {type_text}"),
+            InlayHintKind::Type,
+        ));
+    }
+
+    /// Collect return type hints for arrow functions and function expressions
+    /// that lack explicit return type annotations.
+    fn collect_return_type_hints(
+        &self,
+        func_idx: NodeIndex,
+        hints: &mut Vec<InlayHint>,
+        checker: &mut CheckerState,
+    ) {
+        let Some(node) = self.arena.get(func_idx) else {
+            return;
+        };
+        let Some(func) = self.arena.get_function(node) else {
+            return;
+        };
+
+        // Skip if the function already has an explicit return type annotation
+        if func.type_annotation.is_some() {
+            return;
+        }
+
+        // Get the inferred type of the function node (this gives us the full function type)
+        let type_id = checker.get_type_of_node(func_idx);
+
+        // Filter out unhelpful types
+        if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
+            return;
+        }
+
+        let type_text = checker.format_type(type_id);
+
+        // The checker returns the full function type, e.g. "(x: number) => number".
+        // We want only the return type portion after "=> ".
+        let return_type = if let Some(arrow_pos) = type_text.find("=> ") {
+            &type_text[arrow_pos + 3..]
+        } else {
+            // If we cannot extract a return type from the formatted string, skip
+            return;
+        };
+
+        // Filter out unhelpful return types
+        if return_type == "any" || return_type == "unknown" || return_type == "void" {
+            return;
+        }
+
+        // Position the hint after the closing paren of the parameter list.
+        // Use the end of the last parameter, or if no params, use the body position.
+        let hint_offset = if let Some(&last_param) = func.parameters.nodes.last() {
+            if let Some(last_node) = self.arena.get(last_param) {
+                last_node.end
+            } else {
+                return;
+            }
+        } else if let Some(body_node) = self.arena.get(func.body) {
+            body_node.pos
+        } else {
+            return;
+        };
+
+        let pos = self.line_map.offset_to_position(hint_offset, self.source);
+
+        hints.push(InlayHint::new(
+            pos,
+            format!(": {return_type}"),
+            InlayHintKind::Type,
+        ));
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/inlay_hints_tests.rs"]
+mod inlay_hints_tests;

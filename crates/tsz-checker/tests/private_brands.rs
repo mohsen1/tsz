@@ -1,0 +1,1031 @@
+//! Tests for private/protected member nominal typing (Lawyer Layer).
+//!
+//! These tests verify that classes with private/protected members behave nominally,
+//! not structurally. This implements TypeScript's "brand checking" where private
+//! members create a nominal identity that overrides structural compatibility.
+
+use tsz_binder::BinderState;
+use tsz_checker::{context::CheckerOptions, diagnostics::Diagnostic, state::CheckerState};
+use tsz_common::common::ScriptTarget;
+use tsz_parser::parser::ParserState;
+use tsz_solver::TypeInterner;
+
+fn test_private_brands(source: &str, expected_errors: usize) {
+    test_private_brands_with_codes(source, expected_errors, &[2322])
+}
+
+fn has_error_code(source: &str, code: u32) -> bool {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Check both parser and checker diagnostics
+    let in_parser = parser.get_diagnostics().iter().any(|d| d.code == code);
+    let in_checker = checker.ctx.diagnostics.iter().any(|d| d.code == code);
+    in_parser || in_checker
+}
+
+fn test_private_brands_with_codes(source: &str, expected_errors: usize, error_codes: &[u32]) {
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    let error_count = diagnostics
+        .iter()
+        .filter(|d| error_codes.contains(&d.code))
+        .count();
+
+    assert_eq!(
+        error_count, expected_errors,
+        "Expected {expected_errors} errors with codes {error_codes:?}, got {error_count}: {diagnostics:?}"
+    );
+}
+
+fn collect_private_brand_diagnostics(source: &str) -> Vec<Diagnostic> {
+    collect_private_brand_diagnostics_with_options(source, "test.ts", CheckerOptions::default())
+}
+
+fn collect_private_brand_diagnostics_with_options(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<Diagnostic> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    checker.ctx.diagnostics.clone()
+}
+
+#[test]
+fn private_name_missing_property_source_display_uses_base_class() {
+    let diagnostics = collect_private_brand_diagnostics_with_options(
+        r#"
+class A1 { }
+interface A2 extends A1 { }
+declare const a: A2;
+
+class C { #something: number }
+const c: C = a;
+"#,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2741: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2741)
+        .collect();
+    assert_eq!(
+        ts2741.len(),
+        1,
+        "expected exactly one TS2741 diagnostic, got: {diagnostics:#?}"
+    );
+    let message = &ts2741[0].message_text;
+    assert!(
+        message.contains("Property '#something' is missing in type 'A1' but required in type 'C'."),
+        "TS2741 should use the interface's base class in the source display. Got: {message:?}"
+    );
+    assert!(
+        !message.contains("type 'A2'"),
+        "TS2741 should not use the derived interface name for this private-name mismatch. Got: {message:?}"
+    );
+}
+
+/// Test that private members are nominal - different classes with same private member shape
+/// are NOT compatible, even though structurally they match.
+#[test]
+fn test_private_members_are_nominal() {
+    // TS2322: Type 'B' is not assignable to type 'A'.
+    //   Types have separate declarations of a private property 'x'.
+    let source = r"
+        class A { private x: number = 1; }
+        class B { private x: number = 1; }
+        let a: A = new B();
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for private nominal mismatch");
+    assert!(
+        ts2322.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a private property 'x'.")),
+        "Expected nominal private-property detail in TS2322 related info, got: {ts2322:?}"
+    );
+}
+
+/// Test that private members prevent structural assignment to object literals.
+/// Even if the object literal has the same shape, the private brand is missing.
+#[test]
+fn test_private_member_prevents_structural_assignment() {
+    let source = r"
+        class A { private x: number = 1; }
+        let a: A = { x: 1 };
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for private-brand structural assignment");
+    assert!(
+        !has_error_code(source, 2741),
+        "Private-brand structural assignment should report TS2322, not TS2741"
+    );
+    // TODO: Improve TS2322 elaboration to include "Property 'x' is private in type 'A'"
+    assert!(
+        ts2322.message_text.contains("not assignable to type"),
+        "Expected TS2322 for private-brand structural assignment, got: {ts2322:?}"
+    );
+}
+
+/// Test that protected members are also nominal.
+/// Protected members create a brand just like private members.
+#[test]
+fn test_protected_members_are_nominal() {
+    // TS2322: Type 'B' is not assignable to type 'A'.
+    //   Types have separate declarations of a protected property 'x'.
+    let source = r"
+        class A { protected x: number = 1; }
+        class B { protected x: number = 1; }
+        let a: A = new B();
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for protected nominal mismatch");
+    assert!(
+        ts2322.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a protected property 'x'.")),
+        "Expected nominal protected-property detail in TS2322 related info, got: {ts2322:?}"
+    );
+}
+
+#[test]
+fn test_protected_member_visibility_mismatch_elaborates_ts2322() {
+    let source = r"
+        class A { protected x: number = 1; }
+        class B { public x: number = 1; }
+        let a: A = new B();
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for protected/public visibility mismatch");
+    // TODO: Improve TS2322 elaboration to include visibility detail
+    assert!(
+        ts2322.message_text.contains("not assignable to type"),
+        "Expected TS2322 for protected/public visibility mismatch, got: {ts2322:?}"
+    );
+}
+
+/// Test that subclasses ARE compatible with their base classes.
+/// The subclass inherits the private brand from the parent.
+#[test]
+fn test_subclass_compatibility() {
+    // Should pass (subclass shares the private brand)
+    test_private_brands(
+        r"
+        class A { private x: number = 1; }
+        class B extends A {}
+        let a: A = new B();
+        ",
+        0,
+    );
+}
+
+/// Test that public members are structural (default TypeScript behavior).
+/// Public members don't create a nominal brand.
+#[test]
+fn test_public_members_are_structural() {
+    // Should pass (public members are structural)
+    test_private_brands(
+        r"
+        class A { public x: number = 1; }
+        class B { public x: number = 1; }
+        let a: A = new B();
+        ",
+        0,
+    );
+}
+
+/// Test that multiple private members create a stronger brand.
+/// Classes must match ALL private members to be compatible.
+#[test]
+fn test_multiple_private_members() {
+    // TS2322: Types have separate declarations of private properties 'x' and 'y'.
+    test_private_brands(
+        r"
+        class A { private x: number = 1; private y: number = 2; }
+        class B { private x: number = 1; private y: number = 2; }
+        let a: A = new B();
+        ",
+        1,
+    );
+}
+
+/// Test that classes with different private member sets are incompatible.
+#[test]
+fn test_different_private_members() {
+    // TS2322: Types with different private members are incompatible
+    let source = r"
+        class A { private x: number = 1; }
+        class B { private y: number = 1; }
+        let a: A = new B();
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for different private members");
+    assert!(
+        ts2322.related_information.iter().any(|info| {
+            info.message_text.contains("Property 'y' in type 'B'")
+                && !info.message_text.contains("[private field]")
+        }),
+        "Expected nominal mismatch related info to mention the concrete private member, got: {ts2322:?}"
+    );
+}
+
+/// Test that private methods also create nominal brands.
+#[test]
+fn test_private_methods_create_brands() {
+    // TS2322: Types have separate declarations of a private method 'foo'
+    test_private_brands(
+        r"
+        class A { private foo() {} }
+        class B { private foo() {} }
+        let a: A = new B();
+        ",
+        1,
+    );
+}
+
+/// Generic instantiations with the same ECMAScript private brand are still
+/// incompatible when the private member types differ.
+#[test]
+fn test_generic_private_identifiers_still_check_member_types() {
+    test_private_brands(
+        r#"
+        class C<T> {
+            #foo: T;
+            constructor(t: T) {
+                this.#foo = t;
+            }
+        }
+
+        let a = new C(3);
+        let b = new C("hello");
+        a = b;
+        b = a;
+        "#,
+        2,
+    );
+}
+
+/// Test that assigning object literal with extra property to class with private member.
+/// Object literals can't have private members, so this should fail with TS2353 (excess property).
+#[test]
+fn test_object_literal_extra_property_to_class_with_private() {
+    // TSC emits TS2353: "Object literal may only specify known properties, and 'y' does not exist in type 'A'."
+    test_private_brands_with_codes(
+        r"
+        class A { private x: number = 1; }
+        let a: A = { x: 1, y: 2 };
+        ",
+        1,
+        &[2353],
+    );
+}
+
+/// Test that same class is assignable to itself (trivial case).
+#[test]
+fn test_same_class_compatibility() {
+    // Should pass
+    test_private_brands(
+        r"
+        class A { private x: number = 1; }
+        let a1: A = new A();
+        let a2: A = a1;
+        ",
+        0,
+    );
+}
+
+// ============================================================
+// TS18016: Private identifiers not allowed outside class bodies
+// ============================================================
+
+/// TS18016 should be emitted for private identifiers in type literal property signatures.
+#[test]
+fn test_ts18016_private_id_in_type_literal() {
+    assert!(
+        has_error_code(r"type A = { #foo: string; };", 18016,),
+        "Should emit TS18016 for private identifier in type literal"
+    );
+}
+
+/// TS18016 should be emitted for private identifiers in interface property signatures.
+#[test]
+fn test_ts18016_private_id_in_interface() {
+    assert!(
+        has_error_code(r"interface B { #bar: number; }", 18016,),
+        "Should emit TS18016 for private identifier in interface"
+    );
+}
+
+/// Private identifier on `any` type outside class body → TS18016.
+#[test]
+fn test_ts18016_private_id_on_any_outside_class() {
+    assert!(
+        has_error_code(
+            r"
+            declare var x: any;
+            x.#nope;
+            ",
+            18016,
+        ),
+        "Should emit TS18016 for undeclared private name on any outside class"
+    );
+}
+
+/// Private identifier on a function prototype assignment outside class body -> TS18016.
+#[test]
+fn test_ts18016_private_id_on_js_prototype_assignment_outside_class() {
+    let diagnostics = collect_private_brand_diagnostics_with_options(
+        r"
+        function A() {}
+        A.prototype.#no = 2;
+        ",
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts18016_count = diagnostics.iter().filter(|d| d.code == 18016).count();
+    assert_eq!(
+        ts18016_count, 1,
+        "Should emit TS18016 for private name assignment on a JS prototype outside class, got: {diagnostics:?}"
+    );
+}
+
+/// Private identifier on `any` type INSIDE class body (but undeclared) → TS2339.
+#[test]
+fn test_ts2339_private_id_on_any_inside_class() {
+    assert!(
+        has_error_code(
+            r"
+            class C {
+                #foo = 1;
+                m(x: any) { x.#unknown; }
+            }
+            ",
+            2339,
+        ),
+        "Should emit TS2339 for undeclared private name on any inside class"
+    );
+    // Should NOT emit TS18013 for this case
+    assert!(
+        !has_error_code(
+            r"
+            class C {
+                #foo = 1;
+                m(x: any) { x.#unknown; }
+            }
+            ",
+            18013,
+        ),
+        "Should NOT emit TS18013 for undeclared private name on any inside class"
+    );
+}
+
+/// Private identifier brand check in nested static block should resolve to outer class.
+/// `#field in obj` inside a nested class static block should find the outer class's private field.
+#[test]
+fn test_private_identifier_in_nested_static_block() {
+    // This tests the autoAccessor10.ts conformance case
+    // The private field is declared on C3, and accessed via `#a2_accessor_storage in C3`
+    // inside a nested class's static block.
+    let source = r#"
+class C3 {
+    static #a2_accessor_storage = 1;
+    static {
+        class C3_Inner {
+            static {
+                #a2_accessor_storage in C3;
+            }
+        }
+    }
+}
+"#;
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    // Filter for TS2339 errors
+    let ts2339_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
+
+    assert!(
+        ts2339_errors.is_empty(),
+        "Should NOT emit TS2339 for private identifier in nested static block brand check. \
+        The private field #a2_accessor_storage should be resolved from the outer class C3. \
+        Got {} errors: {:?}",
+        ts2339_errors.len(),
+        ts2339_errors
+    );
+}
+
+/// Test that TS2420 fires when an interface inherits a private member from a
+/// base class and the implementing class declares that member with wider
+/// (public) visibility. The class widens visibility, which is a structural
+/// mismatch regardless of whether the class extends the same base.
+#[test]
+fn test_ts2420_for_public_class_member_vs_private_interface_member() {
+    let source = r"
+        class Foo {
+            private x!: string;
+        }
+        interface I extends Foo {
+            y: number;
+        }
+        class Bar2 extends Foo implements I {
+            x!: string;
+            y!: number;
+        }
+    ";
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    let ts2420_for_bar2 = diagnostics.iter().find(|d| {
+        d.code == 2420
+            && d.message_text.contains("Bar2")
+            && d.message_text.contains("interface 'I'")
+    });
+    assert!(
+        ts2420_for_bar2.is_some(),
+        "expected TS2420 for Bar2 implementing I: class declares public 'x' but I inherits a private 'x' from Foo. Got diagnostics: {diagnostics:?}"
+    );
+    let d = ts2420_for_bar2.unwrap();
+    assert!(
+        d.message_text
+            .contains("Property 'x' is private in type 'I' but not in type 'Bar2'")
+            || d.related_information.iter().any(|r| r
+                .message_text
+                .contains("Property 'x' is private in type 'I' but not in type 'Bar2'")),
+        "expected visibility-widening elaboration for TS2420 on Bar2, got: {d:?}"
+    );
+}
+
+/// Regression: `interfaceExtendsClassWithPrivate2` conformance test.
+///
+/// When a class redeclares a `private x` of a base class with a compatible
+/// type while also declaring extra private members (so the brand differs),
+/// tsc reports TS2415 + TS2420 with a "Types have separate declarations of a
+/// private property 'x'." elaboration nested under each error.
+#[test]
+fn test_ts2415_ts2420_separate_declarations_private_property() {
+    let source = r#"
+class C {
+    public foo(x: any) { return x; }
+    private x = 1;
+}
+
+interface I extends C {
+    other(x: any): any;
+}
+
+class D extends C implements I {
+    public foo(x: any) { return x; }
+    private x = 2;
+    private y = 3;
+    other(x: any) { return x; }
+    bar() {}
+}
+"#;
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    let ts2415 = diagnostics
+        .iter()
+        .find(|d| d.code == 2415 && d.message_text.contains("Class 'D'"))
+        .expect("expected TS2415 for D incorrectly extends C");
+    assert!(
+        ts2415.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a private property 'x'."))
+            || ts2415
+                .message_text
+                .contains("Types have separate declarations of a private property 'x'."),
+        "expected TS2415 to carry the 'separate declarations' elaboration, got: {ts2415:?}"
+    );
+
+    let ts2420 = diagnostics
+        .iter()
+        .find(|d| {
+            d.code == 2420
+                && d.message_text.contains("Class 'D'")
+                && d.message_text.contains("interface 'I'")
+        })
+        .expect("expected TS2420 for D incorrectly implements I");
+    assert!(
+        ts2420.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a private property 'x'."))
+            || ts2420
+                .message_text
+                .contains("Types have separate declarations of a private property 'x'."),
+        "expected TS2420 to carry the 'separate declarations' elaboration, got: {ts2420:?}"
+    );
+}
+
+/// Regression: when both class and interface have a private same-named
+/// property with **incompatible** types, tsc emits TS2416 (per-base) at the
+/// property position rather than the visibility-widening TS2420 form.
+#[test]
+fn test_ts2416_per_base_for_private_property_type_mismatch() {
+    let source = r#"
+class C {
+    public foo(x: any) { return x; }
+    private x = 1;
+}
+
+interface I extends C {
+    other(x: any): any;
+}
+
+class D2 extends C implements I {
+    public foo(x: any) { return x; }
+    private x = "";
+    other(x: any) { return x; }
+    bar() {}
+}
+"#;
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    let ts2416_for_c = diagnostics
+        .iter()
+        .find(|d| {
+            d.code == 2416
+                && d.message_text.contains("type 'D2'")
+                && d.message_text.contains("base type 'C'")
+        })
+        .expect("expected TS2416 for D2.x vs C.x");
+    let ts2416_for_i = diagnostics
+        .iter()
+        .find(|d| {
+            d.code == 2416
+                && d.message_text.contains("type 'D2'")
+                && d.message_text.contains("base type 'I'")
+        })
+        .expect("expected TS2416 for D2.x vs I.x (interface inherits C.x)");
+
+    // Both TS2416 errors should carry the type-mismatch elaboration.
+    for diag in [ts2416_for_c, ts2416_for_i] {
+        assert!(
+            diag.related_information.iter().any(|info| info
+                .message_text
+                .contains("Type 'string' is not assignable to type 'number'.")),
+            "expected 'Type string is not assignable to type number' related info on TS2416, got: {diag:?}"
+        );
+    }
+
+    // Verify there is no spurious TS2420 with the "private in D2 but not in I"
+    // form — the brands differ but tsc reports the type mismatch instead.
+    let bogus_ts2420 = diagnostics.iter().find(|d| {
+        d.code == 2420 && d.message_text.contains("type 'D2'") && d.message_text.contains("private")
+    });
+    assert!(
+        bogus_ts2420.is_none(),
+        "did not expect TS2420 'private in D2 but not in I' when types are incompatible (TS2416 covers it). Got: {bogus_ts2420:?}"
+    );
+}
+
+// ============================================================
+// Ergonomic brand check (`#field in expr`) diagnostics
+// ============================================================
+
+/// TS1451: `(#field) in v` — private identifier in a parenthesized expression is a
+/// standalone expression (not the direct LHS of `in`).
+#[test]
+fn test_ts1451_parenthesized_private_identifier_in_expression() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+    check(v: any) {
+        return (#field) in v; // TS1451
+    }
+}
+"#,
+    );
+    let ts1451_count = diagnostics.iter().filter(|d| d.code == 1451).count();
+    assert_eq!(
+        ts1451_count, 1,
+        "Expected exactly 1 TS1451 for parenthesized private identifier in `in` expression. Got: {diagnostics:?}"
+    );
+}
+
+/// TS18016: `#field in v` used outside any class body.
+#[test]
+fn test_ts18016_private_in_expression_outside_class() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+}
+function check(v: C) {
+    return #field in v; // TS18016 - outside class body
+}
+"#,
+    );
+    let ts18016_count = diagnostics.iter().filter(|d| d.code == 18016).count();
+    assert_eq!(
+        ts18016_count, 1,
+        "Expected TS18016 for #field in expression outside class body. Got: {diagnostics:?}"
+    );
+}
+
+/// TS2339: typo in private identifier name (`#fiel` vs `#field`) — error even when RHS is `any`.
+#[test]
+fn test_ts2339_typo_private_identifier_in_expression_any_rhs() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+    check(v: any) {
+        return #fiel in v; // TS2339 - typo, even though v is any
+    }
+}
+"#,
+    );
+    let ts2339_count = diagnostics.iter().filter(|d| d.code == 2339).count();
+    assert_eq!(
+        ts2339_count, 1,
+        "Expected TS2339 for undeclared private identifier #fiel even when RHS is any. Got: {diagnostics:?}"
+    );
+}
+
+/// TS2406: `for (#field in v)` — private identifier as for-in LHS.
+#[test]
+fn test_ts2406_private_identifier_as_for_in_lhs() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+    check(v: any) {
+        for (#field in v) {} // TS2406
+    }
+}
+"#,
+    );
+    let ts2406_count = diagnostics.iter().filter(|d| d.code == 2406).count();
+    let ts2405_count = diagnostics.iter().filter(|d| d.code == 2405).count();
+    assert_eq!(
+        ts2406_count, 1,
+        "Expected TS2406 (not TS2405) for private identifier as for-in LHS. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2405_count, 0,
+        "Should NOT emit TS2405 for private identifier as for-in LHS. Got: {diagnostics:?}"
+    );
+}
+
+/// TS18047: `#field in u` where `u: object | null` — null is not valid RHS.
+#[test]
+fn test_ts18047_possibly_null_rhs_in_private_in_expression() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+    check(u: object | null) {
+        return #field in u; // TS18047 - u is possibly null
+    }
+}
+"#,
+    );
+    let ts18047_count = diagnostics.iter().filter(|d| d.code == 18047).count();
+    assert_eq!(
+        ts18047_count, 1,
+        "Expected TS18047 for possibly-null RHS in #field in expr. Got: {diagnostics:?}"
+    );
+    // Must NOT emit TS2719 (spurious "two different types" error)
+    let ts2719_count = diagnostics.iter().filter(|d| d.code == 2719).count();
+    assert_eq!(
+        ts2719_count, 0,
+        "Should NOT emit TS2719 for possibly-null RHS. Got: {diagnostics:?}"
+    );
+}
+
+/// Regression for issue #3067: a user-authored public property whose name
+/// happens to start with `__private_brand` must not be filtered out of
+/// missing-property diagnostics. Internal brand markers minted by the
+/// checker have the form `__private_brand_<u32>` / `__private_brand_node_<u32>`,
+/// so a user property like `__private_brand_value` is structurally distinct.
+///
+/// Expected: same TS2741 missing-property diagnostic as TypeScript reports,
+/// naming `__private_brand_value` as the missing property.
+#[test]
+fn test_user_property_with_private_brand_prefix_emits_ts2741() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+interface NeedsBrandPrefix {
+    __private_brand_value: string;
+    visible: number;
+}
+const missing: NeedsBrandPrefix = {
+    visible: 1,
+};
+missing;
+"#,
+    );
+
+    let ts2741: Vec<_> = diagnostics.iter().filter(|d| d.code == 2741).collect();
+    assert_eq!(
+        ts2741.len(),
+        1,
+        "Expected exactly one TS2741 naming the missing user-authored \
+         `__private_brand_value` property. Got: {diagnostics:?}"
+    );
+    let msg = &ts2741[0].message_text;
+    assert!(
+        msg.contains("__private_brand_value"),
+        "TS2741 message must name the missing user property. Got: {msg:?}"
+    );
+
+    // The diagnostic must not be downgraded to a generic TS2322 for this
+    // assignment (we want the specific TS2741, not the fallback).
+    let ts2322 = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322, 0,
+        "Must not emit a generic TS2322 alongside the TS2741 for a user \
+         property whose name happens to share the brand prefix. Got: {diagnostics:?}"
+    );
+}
+
+/// Control for #3067: ordinary user property names continue to receive
+/// TS2741 detail (this passed before the fix; covered to lock the baseline).
+#[test]
+fn test_user_property_ordinary_name_emits_ts2741() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+interface NeedsPlainPrefix {
+    ordinary_missing: string;
+    visible: number;
+}
+const plain: NeedsPlainPrefix = {
+    visible: 1,
+};
+plain;
+"#,
+    );
+
+    let ts2741: Vec<_> = diagnostics.iter().filter(|d| d.code == 2741).collect();
+    assert_eq!(
+        ts2741.len(),
+        1,
+        "Expected one TS2741 naming `ordinary_missing`. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2741[0].message_text.contains("ordinary_missing"),
+        "TS2741 must name the missing user property. Got: {:?}",
+        ts2741[0].message_text,
+    );
+}
+
+/// Control for #3067: real synthetic private-brand internals from a class
+/// with private members must NOT be rendered as a user-required missing
+/// property. The mismatch should still be reported (a class with private
+/// members is not assignable from a plain object literal), but the
+/// diagnostic must not name `__private_brand_<sym_id>` as a missing user
+/// property.
+#[test]
+fn test_synthetic_private_brand_internals_not_rendered_as_user_property() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class HasPrivate {
+    #secret: number = 1;
+    visible: number = 0;
+}
+const fake: HasPrivate = { visible: 1 };
+fake;
+"#,
+    );
+
+    // The assignment must be rejected — class with private members cannot be
+    // satisfied by a plain object literal.
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected an assignability diagnostic, got none."
+    );
+
+    // Synthetic brand atoms must never leak into rendered diagnostics, even
+    // when the brand happens to be the only "missing" structural piece.
+    for d in &diagnostics {
+        assert!(
+            !d.message_text.contains("__private_brand"),
+            "Synthetic brand marker leaked into diagnostic message: {:?}",
+            d.message_text
+        );
+    }
+
+    // And no TS2741 should name a synthetic brand as a missing user property.
+    let bad_ts2741 = diagnostics
+        .iter()
+        .any(|d| d.code == 2741 && d.message_text.contains("__private_brand"));
+    assert!(
+        !bad_ts2741,
+        "TS2741 must not surface a synthetic brand atom as a user property. \
+         Got: {diagnostics:?}"
+    );
+}
+
+/// No errors for valid `#field in expr` with non-class RHS types.
+/// tsc does NOT require the RHS to be assignable to the declaring class type.
+#[test]
+fn test_no_error_private_in_expression_non_class_rhs() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+    check(v: any) {
+        const a = #field in v;             // ok - any
+        const b = #field in {};            // ok - object literal
+        const c = #field in (v as object); // ok - object type
+        const d = #field in new C();       // ok - instance of C
+    }
+}
+"#,
+    );
+    // Should emit no errors for these valid uses
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| [2339, 1451, 18016, 18047, 2719, 2322].contains(&d.code))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Expected no errors for valid #field in expressions. Got: {errors:?}"
+    );
+}
+
+const GENERIC_CLASS_SOURCE: &str = r#"class C<T> {
+    #foo: T;
+    constructor(t: T) {
+        this.#foo = t;
+    }
+    #method() {
+        return this.#foo;
+    }
+    get #prop() {
+        return this.#foo;
+    }
+}
+
+declare let cs: C<string>;
+declare let cn: C<number>;
+
+  cs.#foo;
+  cs.#method;
+  cs.#prop;
+cn = cs;
+cs = cn;
+"#;
+
+#[test]
+fn test_private_names_in_generic_classes() {
+    let diagnostics = collect_private_brand_diagnostics(GENERIC_CLASS_SOURCE);
+
+    let ts18013: Vec<_> = diagnostics.iter().filter(|d| d.code == 18013).collect();
+    assert_eq!(
+        ts18013.len(),
+        3,
+        "Expected 3 TS18013. Got: {diagnostics:#?}"
+    );
+    for name in &["#foo", "#method", "#prop"] {
+        let expected = format!(
+            "Property '{name}' is not accessible outside class 'C' because it has a private identifier."
+        );
+        assert!(
+            ts18013.iter().any(|d| d.message_text == expected),
+            "Expected TS18013 for {name}. Got: {ts18013:#?}"
+        );
+    }
+
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(ts2322.len(), 2, "Expected 2 TS2322. Got: {diagnostics:#?}");
+    assert!(
+        ts2322
+            .iter()
+            .any(|d| d.message_text == "Type 'C<string>' is not assignable to type 'C<number>'."),
+        "Expected TS2322 for C<string>->C<number>. Got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|d| d.message_text == "Type 'C<number>' is not assignable to type 'C<string>'."),
+        "Expected TS2322 for C<number>->C<string>. Got: {ts2322:#?}"
+    );
+
+    let unexpected: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code != 18013 && d.code != 2322)
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "Got unexpected diagnostics (only 18013 and 2322 expected): {unexpected:#?}"
+    );
+}
+
+#[test]
+fn test_private_names_in_generic_classes_different_type_param_names() {
+    for type_param in &["T", "K", "U", "Value"] {
+        let source = format!(
+            r#"class Container<{type_param}> {{
+    #data: {type_param};
+    constructor(v: {type_param}) {{
+        this.#data = v;
+    }}
+    #transform() {{
+        return this.#data;
+    }}
+}}
+
+declare let c1: Container<string>;
+declare let c2: Container<number>;
+
+c1 = c2;
+c2 = c1;
+"#
+        );
+
+        let diagnostics = collect_private_brand_diagnostics(&source);
+        let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+        assert_eq!(
+            ts2322_count, 2,
+            "Expected 2 TS2322 for Container<string> vs Container<number> with type param '{type_param}'.\nGot: {diagnostics:#?}"
+        );
+    }
+}
+
+#[test]
+fn test_private_getter_and_method_outside_generic_class() {
+    let source = r#"class Box<T> {
+    #value: T;
+    constructor(v: T) { this.#value = v; }
+    #getValue() { return this.#value; }
+    get #current() { return this.#value; }
+}
+
+declare let b: Box<string>;
+b.#getValue;
+b.#current;
+"#;
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts18013_count = diagnostics.iter().filter(|d| d.code == 18013).count();
+    assert_eq!(
+        ts18013_count, 2,
+        "Expected 2 TS18013 for #getValue and #current outside Box. Got: {diagnostics:#?}"
+    );
+}

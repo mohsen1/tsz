@@ -1,0 +1,59 @@
+use super::*;
+
+#[test]
+fn test_emit_flags_defaults() {
+    let flags = EmitFlags::default();
+    assert!(!flags.in_async);
+    assert!(!flags.in_generator);
+    assert!(!flags.capture_this);
+}
+
+#[test]
+fn test_destructuring_temp_vars() {
+    let mut state = DestructuringState::default();
+
+    assert_eq!(state.next_temp_var(), "_a");
+    assert_eq!(state.next_temp_var(), "_b");
+    assert_eq!(state.next_temp_var(), "_c");
+
+    state.reset();
+    assert_eq!(state.next_temp_var(), "_a");
+}
+
+#[test]
+fn test_emit_context_es5_detection() {
+    let es5 = EmitContext::es5();
+    assert!(es5.is_es5());
+
+    let es6 = EmitContext::es6();
+    assert!(!es6.is_es5());
+}
+
+#[test]
+fn test_module_state() {
+    let mut state = ModuleTransformState::default();
+
+    assert!(!state.commonjs_mode);
+
+    state.enter_commonjs();
+    assert!(state.commonjs_mode);
+
+    state.add_export("foo".to_string());
+    state.add_export("bar".to_string());
+
+    let exports = state.take_exports();
+    assert_eq!(exports, vec!["foo", "bar"]);
+    assert!(state.pending_exports.is_empty());
+}
+
+#[test]
+fn test_emit_context_set_target_syncs_flags() {
+    let mut ctx = EmitContext::new();
+    ctx.set_target(ScriptTarget::ES2018);
+
+    assert!(!ctx.is_es5());
+    assert!(!ctx.needs_es2016_lowering);
+    assert!(ctx.needs_es2019_lowering);
+    assert!(ctx.needs_es2020_lowering);
+    assert!(ctx.needs_es2021_lowering);
+}

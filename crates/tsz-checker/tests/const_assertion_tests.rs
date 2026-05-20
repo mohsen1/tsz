@@ -1,0 +1,229 @@
+//! Integration tests for const assertions (`as const`).
+//!
+//! These tests verify that TypeScript's `as const` assertion works correctly:
+//! - Primitives preserve literal types
+//! - Arrays become readonly tuples
+//! - Object properties become readonly recursively
+//! - Nested structures are handled correctly
+
+use crate::checker::context::CheckerOptions;
+use crate::test_fixtures::TestContext;
+
+/// Workaround for TS2318 (Cannot find global type) errors in test infrastructure.
+const GLOBAL_TYPE_MOCKS: &str = r#"
+interface Array<T> {}
+interface String {}
+interface Boolean {}
+interface Number {}
+interface Object {}
+interface Function {}
+interface RegExp {}
+interface IArguments {}
+interface Promise<T> {}
+"#;
+
+fn test_no_errors(source: &str) {
+    let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
+    let ctx = TestContext::new();
+    let diagnostics = crate::checker::test_utils::check_source_with_libs(
+        &source,
+        "test.ts",
+        CheckerOptions::default(),
+        &ctx.lib_files,
+    );
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code != 2318) // Ignore TS2318: Cannot find global type (no lib files in tests)
+        .collect();
+
+    if !errors.is_empty() {
+        panic!(
+            "Expected no errors, but got:\n{}",
+            errors
+                .iter()
+                .map(|d| format!("  {}", d.message_text))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}
+
+fn test_expect_error(source: &str, expected_error_substring: &str) {
+    let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
+    let ctx = TestContext::new();
+    let diagnostics = crate::checker::test_utils::check_source_with_libs(
+        &source,
+        "test.ts",
+        CheckerOptions::default(),
+        &ctx.lib_files,
+    );
+    let found_error = diagnostics
+        .iter()
+        .any(|d| d.message_text.contains(expected_error_substring));
+
+    if !found_error {
+        panic!(
+            "Expected error containing '{}', but got:\n{}",
+            expected_error_substring,
+            diagnostics
+                .iter()
+                .map(|d| format!("  {}", d.message_text))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}
+
+#[test]
+fn test_const_assertion_primitive_literal() {
+    // "hello" as const should preserve the literal type "hello"
+    test_no_errors(
+        r#"
+const x = "hello" as const;
+// x should have type "hello", not string
+let y: "hello" = x; // Should be allowed
+"#,
+    );
+}
+
+#[test]
+fn test_const_assertion_number_literal() {
+    // 42 as const should preserve the literal type 42
+    test_no_errors(
+        r#"
+const x = 42 as const;
+// x should have type 42, not number
+let y: 42 = x; // Should be allowed
+"#,
+    );
+}
+
+#[test]
+fn test_const_assertion_boolean_literal() {
+    // true as const should preserve the literal type true
+    test_no_errors(
+        r#"
+const x = true as const;
+// x should have type true, not boolean
+let y: true = x; // Should be allowed
+"#,
+    );
+}
+
+#[test]
+fn test_const_assertion_array_becomes_readonly_tuple() {
+    // [1, 2, 3] as const becomes readonly [1, 2, 3]
+    test_no_errors(
+        r#"
+const arr = [1, 2, 3] as const;
+// arr should be readonly tuple [1, 2, 3]
+let first: 1 = arr[0]; // Should be allowed
+let second: 2 = arr[1]; // Should be allowed
+"#,
+    );
+}
+
+#[test]
+fn test_const_assertion_object_properties_readonly() {
+    // { x: 1 } as const should have readonly x property
+    test_no_errors(
+        r#"
+const obj = { x: 1, y: "hello" } as const;
+// obj.x should be readonly with type 1
+// obj.y should be readonly with type "hello"
+const val1: 1 = obj.x; // Should be allowed
+const val2: "hello" = obj.y; // Should be allowed
+"#,
+    );
+}
+
+#[test]
+fn test_const_assertion_nested_object() {
+    // Nested objects should have readonly properties recursively
+    test_no_errors(
+        r#"
+const obj = {
+    a: 1,
+    nested: {
+        b: "hello",
+        c: true
+    }
+} as const;
+// All properties should be readonly with literal types
+const val1: 1 = obj.a; // Should be allowed
+const val2: "hello" = obj.nested.b; // Should be allowed
+const val3: true = obj.nested.c; // Should be allowed
+"#,
+    );
+}
+
+#[test]
+fn test_const_assertion_mixed_array_and_object() {
+    // Arrays in objects should also be readonly tuples
+    test_no_errors(
+        r#"
+const obj = {
+    x: 1,
+    arr: [1, 2, 3]
+} as const;
+// obj.x should be readonly 1
+// obj.arr should be readonly tuple [1, 2, 3]
+const val: 1 = obj.x; // Should be allowed
+"#,
+    );
+}
+
+#[test]
+fn test_const_assertion_template_literal() {
+    // Template literals should preserve their literal type
+    test_no_errors(
+        r#"
+const x = `hello` as const;
+// x should have type `hello`, not string
+const y: `hello` = x; // Should be allowed
+"#,
+    );
+}
+
+#[test]
+fn test_const_assertion_null_and_undefined() {
+    // tsc emits TS1355 for `null as const` and `undefined as const` because
+    // null/undefined are not in the allowed list (enum members, string, number,
+    // boolean, array, or object literals).
+    test_expect_error(
+        r#"
+const x = null as const;
+"#,
+        "A 'const' assertion can only be applied to",
+    );
+    test_expect_error(
+        r#"
+const y = undefined as const;
+"#,
+        "A 'const' assertion can only be applied to",
+    );
+}
+
+#[test]
+fn test_const_assertion_nested_array() {
+    // Nested arrays should become readonly tuples recursively
+    test_no_errors(
+        r#"
+const arr = [[1, 2], [3, 4]] as const;
+// arr should be readonly tuple of readonly tuples
+const val: 1 = arr[0][0]; // Should be allowed
+"#,
+    );
+}
+
+#[test]
+fn test_const_assertion_array_of_objects() {
+    // Arrays of objects should have readonly objects
+    test_no_errors(
+        r#"
+const arr = [{ x: 1 }, { y: 2 }] as const;
+// Each object should have readonly properties
+const val: 1 = arr[0].x; // Should be allowed
+"#,
+    );
+}

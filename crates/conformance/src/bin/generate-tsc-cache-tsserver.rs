@@ -1,0 +1,738 @@
+//! TSC Cache Generator using tsserver
+//!
+//! Uses TypeScript's language server for much faster cache generation.
+//! Instead of spawning thousands of tsc processes, we maintain a single
+//! tsserver process and query it for diagnostics.
+
+use anyhow::Result;
+use clap::Parser;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
+use tsz_conformance::compiler_options::canonical_option_name;
+use walkdir::WalkDir;
+
+/// Timeout for reading tsserver responses (in seconds)
+const RESPONSE_TIMEOUT_SECS: u64 = 30;
+
+#[derive(Parser, Debug)]
+#[command(name = "generate-tsc-cache-tsserver")]
+#[command(about = "Generate TSC cache using tsserver (faster)", long_about = None)]
+struct Args {
+    /// Test directory path
+    #[arg(long, default_value = "./TypeScript/tests/cases")]
+    test_dir: String,
+
+    /// Output cache file path
+    #[arg(long, default_value = "./tsc-cache.json")]
+    output: String,
+
+    /// Path to tsserver binary (or use npx tsserver)
+    #[arg(
+        long,
+        default_value = "scripts/node_modules/typescript/lib/tsserver.js"
+    )]
+    tsserver: String,
+
+    /// Maximum number of tests to process (0 = unlimited)
+    #[arg(long, default_value_t = 0)]
+    max: usize,
+
+    /// Show verbose output
+    #[arg(short, long)]
+    verbose: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TscCacheEntry {
+    metadata: FileMetadata,
+    error_codes: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FileMetadata {
+    mtime_ms: u64,
+    size: u64,
+    #[serde(default)]
+    typescript_version: Option<String>,
+}
+
+/// Sequence number for tsserver requests
+static SEQ: AtomicU32 = AtomicU32::new(1);
+
+fn next_seq() -> u32 {
+    SEQ.fetch_add(1, Ordering::SeqCst)
+}
+
+/// tsserver request
+#[derive(Serialize)]
+struct TsServerRequest {
+    seq: u32,
+    #[serde(rename = "type")]
+    msg_type: &'static str,
+    command: &'static str,
+    arguments: serde_json::Value,
+}
+
+/// tsserver response
+#[derive(Deserialize, Debug)]
+struct TsServerResponse {
+    #[serde(rename = "type")]
+    msg_type: String,
+    request_seq: Option<u32>,
+    body: Option<serde_json::Value>,
+}
+
+/// TsServer client for communicating with tsserver
+struct TsServerClient {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    verbose: bool,
+}
+
+impl TsServerClient {
+    fn new(tsserver_path: &str, verbose: bool) -> Result<Self> {
+        let mut cmd = if tsserver_path == "npx" {
+            let mut c = Command::new("npx");
+            c.arg("tsserver");
+            c
+        } else if tsserver_path.ends_with(".js") {
+            let mut c = Command::new("node");
+            c.arg(tsserver_path);
+            c
+        } else {
+            Command::new(tsserver_path)
+        };
+
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+
+        let stdin = child.stdin.take().expect("Failed to open stdin");
+        let stdout = BufReader::new(child.stdout.take().expect("Failed to open stdout"));
+
+        Ok(Self {
+            child,
+            stdin,
+            stdout,
+            verbose,
+        })
+    }
+
+    fn send_request(&mut self, command: &'static str, arguments: serde_json::Value) -> Result<u32> {
+        let seq = next_seq();
+        let request = TsServerRequest {
+            seq,
+            msg_type: "request",
+            command,
+            arguments,
+        };
+
+        let json = serde_json::to_string(&request)?;
+        if self.verbose {
+            println!("-> {}", json);
+        }
+
+        writeln!(self.stdin, "{}", json)?;
+        self.stdin.flush()?;
+
+        Ok(seq)
+    }
+
+    fn read_response(&mut self, expected_seq: u32) -> Result<Option<serde_json::Value>> {
+        loop {
+            let mut line = String::new();
+            let bytes_read = self.stdout.read_line(&mut line)?;
+
+            if bytes_read == 0 {
+                return Ok(None);
+            }
+
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            // Skip Content-Length headers
+            if line.starts_with("Content-Length:") {
+                continue;
+            }
+
+            if self.verbose {
+                println!("<- {}", line);
+            }
+
+            // Try to parse as JSON
+            if let Ok(response) = serde_json::from_str::<TsServerResponse>(line) {
+                // Check if this is the response we're waiting for
+                if response.msg_type == "response" {
+                    if let Some(req_seq) = response.request_seq {
+                        if req_seq == expected_seq {
+                            return Ok(response.body);
+                        }
+                    }
+                }
+                // Skip events and other responses
+            }
+        }
+    }
+
+    fn open_file(&mut self, file_path: &str, content: &str) -> Result<()> {
+        let args = serde_json::json!({
+            "file": file_path,
+            "fileContent": content,
+            "scriptKindName": if file_path.ends_with(".tsx") { "TSX" }
+                             else if file_path.ends_with(".jsx") { "JSX" }
+                             else if file_path.ends_with(".js") { "JS" }
+                             else { "TS" }
+        });
+
+        self.send_request("open", args)?;
+        // Open doesn't return a response
+        Ok(())
+    }
+
+    fn close_file(&mut self, file_path: &str) -> Result<()> {
+        let args = serde_json::json!({
+            "file": file_path
+        });
+
+        self.send_request("close", args)?;
+        Ok(())
+    }
+
+    fn get_semantic_diagnostics(&mut self, file_path: &str) -> Result<Vec<u32>> {
+        let args = serde_json::json!({
+            "file": file_path,
+            "includeLinePosition": false
+        });
+
+        let seq = self.send_request("semanticDiagnosticsSync", args)?;
+
+        let body = self.read_response(seq)?;
+
+        let mut codes = Vec::new();
+        if let Some(diagnostics) = body {
+            if let Some(arr) = diagnostics.as_array() {
+                for diag in arr {
+                    if let Some(code) = diag.get("code").and_then(serde_json::Value::as_u64) {
+                        codes.push(code as u32);
+                    }
+                }
+            }
+        }
+
+        codes.sort();
+        codes.dedup();
+        Ok(codes)
+    }
+
+    fn get_syntactic_diagnostics(&mut self, file_path: &str) -> Result<Vec<u32>> {
+        let args = serde_json::json!({
+            "file": file_path,
+            "includeLinePosition": false
+        });
+
+        let seq = self.send_request("syntacticDiagnosticsSync", args)?;
+
+        let body = self.read_response(seq)?;
+
+        let mut codes = Vec::new();
+        if let Some(diagnostics) = body {
+            if let Some(arr) = diagnostics.as_array() {
+                for diag in arr {
+                    if let Some(code) = diag.get("code").and_then(serde_json::Value::as_u64) {
+                        codes.push(code as u32);
+                    }
+                }
+            }
+        }
+
+        codes.sort();
+        codes.dedup();
+        Ok(codes)
+    }
+
+    fn shutdown(&mut self) -> Result<()> {
+        self.send_request("exit", serde_json::json!({}))?;
+        self.child.wait()?;
+        Ok(())
+    }
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+
+    println!("🔍 Discovering test files in: {}", args.test_dir);
+    let test_files = discover_tests(&args.test_dir, args.max)?;
+    println!("✓ Found {} test files", test_files.len());
+
+    let tsc_version = resolve_tsc_version().unwrap_or_else(|_| "unknown".to_string());
+    println!("📍 TypeScript version: {tsc_version}");
+    println!("\n🚀 Starting tsserver...");
+    let mut client = TsServerClient::new(&args.tsserver, args.verbose)?;
+    println!("✓ tsserver started");
+
+    println!("\n🔨 Processing {} tests...", test_files.len());
+    let start = Instant::now();
+
+    // Create temp directory for tsserver to write to
+    let temp_dir = std::env::temp_dir().join(format!("tsz-tsserver-{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let mut cache = HashMap::new();
+    let mut processed = 0;
+    let mut errors = 0;
+
+    // Restart tsserver every N files to prevent memory/state buildup
+    const RESTART_INTERVAL: usize = 500;
+
+    for path in &test_files {
+        // Restart tsserver periodically to prevent hangs and memory buildup
+        if processed > 0 && processed % RESTART_INTERVAL == 0 {
+            print!(
+                "\r[{}/{}] Restarting tsserver...                    ",
+                processed,
+                test_files.len()
+            );
+            std::io::stdout().flush()?;
+            let _ = client.shutdown();
+            client = TsServerClient::new(&args.tsserver, args.verbose)?;
+        }
+
+        let file_start = Instant::now();
+        let test_dir_base = Path::new(&args.test_dir)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(&args.test_dir));
+        match process_test_file(&mut client, path, &temp_dir, &test_dir_base, &tsc_version) {
+            Ok(Some((key, entry))) => {
+                cache.insert(key, entry);
+            }
+            Ok(None) => {
+                // Skipped
+            }
+            Err(e) => {
+                if args.verbose {
+                    println!("✗ Error processing {}: {}", path.display(), e);
+                }
+                errors += 1;
+
+                // Restart tsserver after errors to recover
+                let _ = client.shutdown();
+                client = TsServerClient::new(&args.tsserver, args.verbose)?;
+            }
+        }
+
+        // Check if this file took too long (might indicate tsserver is stuck)
+        let elapsed = file_start.elapsed();
+        if elapsed > Duration::from_secs(RESPONSE_TIMEOUT_SECS) {
+            if args.verbose {
+                println!(
+                    "⚠ File {} took {:.1}s, restarting tsserver",
+                    path.display(),
+                    elapsed.as_secs_f64()
+                );
+            }
+            let _ = client.shutdown();
+            client = TsServerClient::new(&args.tsserver, args.verbose)?;
+        }
+
+        processed += 1;
+        if processed % 100 == 0 {
+            print!(
+                "\r[{}/{}] processed ({} errors)",
+                processed,
+                test_files.len(),
+                errors
+            );
+            std::io::stdout().flush()?;
+        }
+    }
+
+    println!(
+        "\r✓ Completed in {:.1}s ({:.0} tests/sec)                    ",
+        start.elapsed().as_secs_f64(),
+        test_files.len() as f64 / start.elapsed().as_secs_f64()
+    );
+
+    if errors > 0 {
+        println!("  {} errors encountered", errors);
+    }
+
+    println!("\n🛑 Shutting down tsserver...");
+    let _ = client.shutdown();
+
+    // Clean up temp directory
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    println!("\n💾 Writing cache to: {}", args.output);
+    write_cache(&args.output, &cache)?;
+    println!("✓ Cache written with {} entries", cache.len());
+
+    Ok(())
+}
+
+fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
+    use tsz_conformance::test_filter::is_conformance_source_file;
+
+    let mut files = Vec::new();
+
+    for entry in WalkDir::new(test_dir)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+    {
+        let path = entry.path();
+
+        if path.is_dir() {
+            continue;
+        }
+
+        if !is_conformance_source_file(path) {
+            continue;
+        }
+
+        files.push(path.to_path_buf());
+    }
+
+    files.sort();
+
+    if max > 0 && files.len() > max {
+        files.truncate(max);
+    }
+
+    Ok(files)
+}
+
+/// Test harness-specific directives that should NOT be passed to tsconfig.json
+/// These are handled by the test infrastructure, not the TypeScript compiler
+const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
+    "filename",
+    "allowNonTsExtensions",
+    "useCaseSensitiveFileNames",
+    "baselineFile",
+    "noErrorTruncation",
+    "suppressOutputPathCheck",
+    "noImplicitReferences",
+    "currentDirectory",
+    "traceResolution",
+    "symlink",
+    "link",
+    "noTypesAndSymbols",
+    "fullEmitPaths",
+    "noCheck",
+    "nocheck",
+    "reportDiagnostics",
+    "captureSuggestions",
+    "typeScriptVersion",
+    "skip",
+];
+
+/// List-type compiler options that accept comma-separated values
+const LIST_OPTIONS: &[&str] = &[
+    "lib",
+    "types",
+    "typeRoots",
+    "rootDirs",
+    "moduleSuffixes",
+    "customConditions",
+];
+
+/// Convert test directive options to tsconfig compiler options JSON
+///
+/// Handles:
+/// - Boolean options (true/false)
+/// - List options (comma-separated values like @lib: es6,dom)
+/// - String/enum options (target, module, etc.)
+/// - Filters out test harness-specific directives
+fn convert_options_to_tsconfig(
+    options: &std::collections::HashMap<String, String>,
+) -> serde_json::Value {
+    let mut opts = serde_json::Map::new();
+    let mut strict_explicit = false;
+
+    for (key, value) in options {
+        let key_lower = key.to_lowercase();
+        if HARNESS_ONLY_DIRECTIVES
+            .iter()
+            .any(|&d| d.to_lowercase() == key_lower)
+        {
+            continue;
+        }
+
+        if key_lower == "strict" {
+            strict_explicit = true;
+        }
+
+        let canonical_key = canonical_option_name(&key_lower);
+        let json_value = if value == "true" {
+            serde_json::Value::Bool(true)
+        } else if value == "false" {
+            serde_json::Value::Bool(false)
+        } else if LIST_OPTIONS
+            .iter()
+            .any(|&opt| opt.to_lowercase() == key_lower)
+        {
+            // For typeRoots: strip leading '/' from virtual absolute paths (e.g.
+            // "/types" → "types").  Tests use absolute paths as virtual FS roots;
+            // files are written at {test_dir}/{path}, so relative paths are needed.
+            let is_type_roots = key_lower == "typeroots";
+            let items: Vec<serde_json::Value> = value
+                .split(',')
+                .map(|s| {
+                    let s = s.trim();
+                    let s = if is_type_roots {
+                        s.trim_start_matches('/')
+                    } else {
+                        s
+                    };
+                    serde_json::Value::String(s.to_string())
+                })
+                .collect();
+            serde_json::Value::Array(items)
+        } else {
+            // For non-list options, take only the first comma-separated value
+            let effective_value = value.split(',').next().unwrap_or(value).trim();
+            if let Ok(num) = effective_value.parse::<i64>() {
+                serde_json::Value::Number(num.into())
+            } else {
+                serde_json::Value::String(effective_value.to_string())
+            }
+        };
+
+        opts.insert(canonical_key.to_string(), json_value);
+    }
+
+    // Mirror TypeScript harness behavior by leaving `strict` absent unless the
+    // test explicitly requested it.
+    //
+    // Mirror TypeScript strict-family defaulting behavior when `strict` is specified.
+    if strict_explicit {
+        if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
+            let strict = *strict;
+            for key in [
+                "noImplicitAny",
+                "noImplicitThis",
+                "strictNullChecks",
+                "strictFunctionTypes",
+                "strictBindCallApply",
+                "strictPropertyInitialization",
+                "useUnknownInCatchVariables",
+                "alwaysStrict",
+            ] {
+                opts.entry(key.to_string())
+                    .or_insert(serde_json::Value::Bool(strict));
+            }
+        }
+    }
+
+    // Keep compilerOptions ordering deterministic so TS5023/TS5025 line/column
+    // locations are stable across cache generation runs.
+    opts.sort_keys();
+
+    serde_json::Value::Object(opts)
+}
+
+fn process_test_file(
+    client: &mut TsServerClient,
+    path: &Path,
+    temp_dir: &Path,
+    test_dir_base: &Path,
+    tsc_version: &str,
+) -> Result<Option<(String, TscCacheEntry)>> {
+    use std::fs;
+    use std::sync::atomic::AtomicU64;
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    // Read and decode file content (UTF-8/UTF-8 BOM/UTF-16 BOM).
+    let bytes = fs::read(path)?;
+    let (content, filenames, options) =
+        match tsz_conformance::text_decode::decode_source_text(&bytes) {
+            tsz_conformance::text_decode::DecodedSourceText::Text(content) => {
+                // Parse directives
+                let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
+
+                // Check if should skip
+                if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
+                    return Ok(None);
+                }
+
+                (
+                    content,
+                    parsed.directives.filenames,
+                    parsed.directives.options,
+                )
+            }
+            tsz_conformance::text_decode::DecodedSourceText::TextWithOriginalBytes(content, _) => {
+                let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
+                if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
+                    return Ok(None);
+                }
+                (
+                    content,
+                    parsed.directives.filenames,
+                    parsed.directives.options,
+                )
+            }
+            tsz_conformance::text_decode::DecodedSourceText::Binary(bytes) => (
+                String::from_utf8_lossy(&bytes).into_owned(),
+                Vec::new(),
+                HashMap::new(),
+            ),
+        };
+
+    // Get file metadata
+    let metadata = fs::metadata(path)?;
+    let mtime_ms = metadata
+        .modified()?
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis() as u64;
+    let size = metadata.len();
+
+    // Cache key is relative file path from test directory
+    let key = tsz_conformance::cache::cache_key(path, test_dir_base).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Path {} is not under test dir {}",
+            path.display(),
+            test_dir_base.display()
+        )
+    })?;
+
+    // Create unique subdirectory for this test (for multi-file support)
+    let unique_id = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let test_dir = temp_dir.join(format!("test_{}", unique_id));
+    fs::create_dir_all(&test_dir)?;
+
+    // Create tsconfig.json with parsed @-directives unless test provides its own.
+    // This ensures tsserver respects options like @target: es6, @module: commonjs, etc.
+    let has_tsconfig_file = filenames
+        .iter()
+        .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
+    if !has_tsconfig_file {
+        let tsconfig_path = test_dir.join("tsconfig.json");
+        let tsconfig_content = serde_json::json!({
+            "compilerOptions": convert_options_to_tsconfig(&options),
+            "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
+            "exclude": ["node_modules"]
+        });
+        fs::write(
+            &tsconfig_path,
+            serde_json::to_string_pretty(&tsconfig_content)?,
+        )?;
+    }
+
+    // Track all files we open
+    let mut opened_files: Vec<String> = Vec::new();
+
+    // Write and open additional files from @filename directives first
+    for (filename, file_content) in &filenames {
+        // Sanitize filename to prevent path traversal
+        let sanitized = filename
+            .replace("..", "_")
+            .trim_start_matches('/')
+            .to_string();
+        let file_path = test_dir.join(&sanitized);
+
+        // Skip if path would escape test directory
+        if !file_path.starts_with(&test_dir) {
+            continue;
+        }
+
+        // Create parent directories if needed
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        fs::write(&file_path, file_content)?;
+        let file_path_str = file_path.to_string_lossy().to_string();
+        client.open_file(&file_path_str, file_content)?;
+        opened_files.push(file_path_str);
+    }
+
+    // Write main file
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("ts");
+    let main_file = test_dir.join(format!("main.{}", ext));
+    fs::write(&main_file, &content)?;
+    let main_path = main_file.to_string_lossy().to_string();
+    client.open_file(&main_path, &content)?;
+    opened_files.push(main_path.clone());
+
+    // Get diagnostics from all files
+    let mut error_codes = Vec::new();
+    for file_path in &opened_files {
+        let syntactic = client.get_syntactic_diagnostics(file_path)?;
+        let semantic = client.get_semantic_diagnostics(file_path)?;
+        error_codes.extend(syntactic);
+        error_codes.extend(semantic);
+    }
+    error_codes.sort();
+    error_codes.dedup();
+
+    // Close all files
+    for file_path in &opened_files {
+        client.close_file(file_path)?;
+    }
+
+    // Clean up test directory
+    let _ = fs::remove_dir_all(&test_dir);
+
+    Ok(Some((
+        key,
+        TscCacheEntry {
+            metadata: FileMetadata {
+                mtime_ms,
+                size,
+                typescript_version: Some(tsc_version.to_string()),
+            },
+            error_codes,
+        },
+    )))
+}
+
+fn write_cache(path: &str, cache: &HashMap<String, TscCacheEntry>) -> Result<()> {
+    use std::fs::File;
+    use std::io::BufWriter;
+
+    let file = File::create(path)?;
+    let writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(writer, cache)?;
+    Ok(())
+}
+
+fn resolve_tsc_version() -> Result<String> {
+    // Prefer reading version from the project-local TypeScript installation
+    // to ensure the reported version matches the tsc actually being used.
+    let local_pkg = std::path::Path::new("scripts/node_modules/typescript/package.json");
+    if local_pkg.exists() {
+        if let Ok(content) = std::fs::read_to_string(local_pkg) {
+            if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(version) = pkg.get("version").and_then(|v| v.as_str()) {
+                    return Ok(version.to_string());
+                }
+            }
+        }
+    }
+    let script = "const fs = require('fs'); const p = require.resolve('typescript/package.json'); const pkg = JSON.parse(fs.readFileSync(p, 'utf8')); console.log(pkg.version || 'unknown');";
+    let output = std::process::Command::new("node")
+        .args(["-e", script])
+        .output()?;
+
+    if !output.status.success() {
+        return Ok("unknown".to_string());
+    }
+
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if version.is_empty() {
+        Ok("unknown".to_string())
+    } else {
+        Ok(version)
+    }
+}

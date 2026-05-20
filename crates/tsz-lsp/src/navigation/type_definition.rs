@@ -1,0 +1,400 @@
+//! LSP Type Definition implementation.
+//!
+//! Provides "Go to Type Definition" functionality that navigates to the
+//! type declaration of a symbol, rather than its value declaration.
+//!
+//! For example:
+//! - `let x: Foo = ...` → Go to Definition goes to the variable declaration
+//! - `let x: Foo = ...` → Go to Type Definition goes to `interface Foo { ... }`
+
+use crate::resolver::ScopeWalker;
+use crate::utils::find_node_at_offset;
+use tsz_common::position::{Location, Position, Range};
+use tsz_parser::{
+    NodeIndex,
+    syntax_kind_ext::{
+        ARRAY_TYPE, ARROW_FUNCTION, CLASS_DECLARATION, CONDITIONAL_TYPE, ENUM_DECLARATION,
+        FUNCTION_DECLARATION, FUNCTION_TYPE, INDEXED_ACCESS_TYPE, INTERFACE_DECLARATION,
+        INTERSECTION_TYPE, LITERAL_TYPE, MAPPED_TYPE, METHOD_DECLARATION, NEW_EXPRESSION,
+        PARAMETER, PARENTHESIZED_TYPE, PROPERTY_DECLARATION, PROPERTY_SIGNATURE,
+        TEMPLATE_LITERAL_TYPE, TUPLE_TYPE, TYPE_ALIAS_DECLARATION, TYPE_LITERAL, TYPE_QUERY,
+        TYPE_REFERENCE, UNION_TYPE, VARIABLE_DECLARATION,
+    },
+};
+use tsz_scanner::SyntaxKind;
+
+define_lsp_provider!(binder TypeDefinitionProvider, "Provider for Go to Type Definition.");
+
+impl<'a> TypeDefinitionProvider<'a> {
+    /// Get the type definition location for the symbol at the given position.
+    ///
+    /// Returns the location(s) where the type is defined. For primitive types
+    /// (number, string, boolean, etc.), returns None since they have no
+    /// user-defined declaration.
+    ///
+    /// Limited inference support is intentionally included for declarationless
+    /// initializers such as `const x = new Foo()`, where we can resolve the
+    /// constructor callee to a type declaration.
+    pub fn get_type_definition(
+        &self,
+        root: NodeIndex,
+        position: Position,
+    ) -> Option<Vec<Location>> {
+        // Convert position to byte offset
+        let offset = self
+            .line_map
+            .position_to_offset(position, self.source_text)?;
+
+        // Find the node at this offset
+        let node_idx = find_node_at_offset(self.arena, offset);
+        if node_idx.is_none() {
+            return None;
+        }
+
+        // Resolve the symbol at this position
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let symbol_id = walker.resolve_node(root, node_idx)?;
+
+        // Get the symbol
+        let symbol = self.binder.symbols.get(symbol_id)?;
+
+        // Look for type annotation on the symbol's declarations
+        for &decl_idx in &symbol.declarations {
+            if let Some(type_loc) = self.find_type_definition_from_declaration(root, decl_idx) {
+                return Some(type_loc);
+            }
+        }
+
+        // If no explicit type annotation, try to infer from the value
+        // (This would require full type checking, so for now we just return None)
+        None
+    }
+
+    /// Find the type definition from a declaration node.
+    ///
+    /// Looks for type annotations (: Type) on the declaration and resolves them.
+    fn find_type_definition_from_declaration(
+        &self,
+        root: NodeIndex,
+        decl_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let node = self.arena.get(decl_idx)?;
+
+        match node.kind {
+            // Variable declaration: look for type annotation
+            k if k == VARIABLE_DECLARATION => {
+                self.find_type_from_variable_declaration(root, decl_idx)
+            }
+
+            // Parameter: look for type annotation
+            k if k == PARAMETER => self.find_type_from_parameter(root, decl_idx),
+
+            // Property declaration/signature: look for type annotation
+            k if k == PROPERTY_DECLARATION || k == PROPERTY_SIGNATURE => {
+                self.find_type_from_property(root, decl_idx)
+            }
+
+            // Function/method: look at return type
+            k if k == FUNCTION_DECLARATION || k == METHOD_DECLARATION || k == ARROW_FUNCTION => {
+                self.find_type_from_function(root, decl_idx)
+            }
+
+            _ => None,
+        }
+    }
+
+    /// Find type from a variable declaration's type annotation.
+    fn find_type_from_variable_declaration(
+        &self,
+        root: NodeIndex,
+        decl_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let type_node = self.find_type_annotation_child(decl_idx);
+        if let Some(type_node) = type_node {
+            return self.resolve_type_to_location(root, type_node);
+        }
+
+        let decl_node = self.arena.get(decl_idx)?;
+        let decl = self.arena.get_variable_declaration(decl_node)?;
+        if decl.initializer.is_none() {
+            return None;
+        }
+
+        self.resolve_inferred_type_from_expression(root, decl.initializer)
+    }
+
+    /// Resolve types from limited inference, currently focused on `new`
+    /// expression initializers and direct identifier expressions.
+    fn resolve_inferred_type_from_expression(
+        &self,
+        root: NodeIndex,
+        expr_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let expr_idx = self.arena.skip_parenthesized(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+
+        let target_expr = if expr_node.kind == NEW_EXPRESSION {
+            self.arena.get_call_expr(expr_node)?.expression
+        } else {
+            expr_idx
+        };
+
+        self.resolve_value_symbol_declarations_as_types(root, target_expr)
+    }
+
+    /// Resolve a value position to declarations that are type-like declarations.
+    fn resolve_value_symbol_declarations_as_types(
+        &self,
+        root: NodeIndex,
+        node_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let symbol_id = walker.resolve_node(root, node_idx)?;
+        let symbol = self.binder.symbols.get(symbol_id)?;
+
+        let locations: Vec<Location> = symbol
+            .declarations
+            .iter()
+            .filter_map(|&decl_idx| {
+                let decl_node = self.arena.get(decl_idx)?;
+
+                if !self.is_type_declaration(decl_node.kind) {
+                    return None;
+                }
+
+                Some(Location {
+                    file_path: self.file_name.clone(),
+                    range: Range::new(
+                        self.line_map
+                            .offset_to_position(decl_node.pos, self.source_text),
+                        self.line_map
+                            .offset_to_position(decl_node.end, self.source_text),
+                    ),
+                })
+            })
+            .collect();
+
+        if locations.is_empty() {
+            None
+        } else {
+            Some(locations)
+        }
+    }
+
+    /// Find type from a parameter's type annotation.
+    fn find_type_from_parameter(
+        &self,
+        root: NodeIndex,
+        decl_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let type_node = self.find_type_annotation_child(decl_idx)?;
+        self.resolve_type_to_location(root, type_node)
+    }
+
+    /// Find type from a property's type annotation.
+    fn find_type_from_property(
+        &self,
+        root: NodeIndex,
+        decl_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let type_node = self.find_type_annotation_child(decl_idx)?;
+        self.resolve_type_to_location(root, type_node)
+    }
+
+    /// Find return type from a function declaration.
+    fn find_type_from_function(
+        &self,
+        root: NodeIndex,
+        decl_idx: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        // Look for return type annotation
+        let type_node = self.find_return_type_child(decl_idx)?;
+        self.resolve_type_to_location(root, type_node)
+    }
+
+    /// Find a type annotation child node within a declaration.
+    fn find_type_annotation_child(&self, parent_idx: NodeIndex) -> Option<NodeIndex> {
+        self.find_type_annotation_children(parent_idx)
+            .into_iter()
+            .next()
+    }
+
+    /// Find every type-node child of `parent_idx`, in arena order.
+    ///
+    /// Used by union/intersection resolution to enumerate all constituents
+    /// rather than truncating to the first one.
+    fn find_type_annotation_children(&self, parent_idx: NodeIndex) -> Vec<NodeIndex> {
+        let mut children = Vec::new();
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            let idx = NodeIndex(i as u32);
+            let parent = self
+                .arena
+                .get_extended(idx)
+                .map_or(NodeIndex::NONE, |ext| ext.parent);
+
+            if parent == parent_idx && self.is_type_node(node.kind) {
+                children.push(idx);
+            }
+        }
+        children
+    }
+
+    /// Find a return type child node within a function declaration.
+    fn find_return_type_child(&self, parent_idx: NodeIndex) -> Option<NodeIndex> {
+        // Similar to find_type_annotation_child but looks for return type position
+        self.find_type_annotation_child(parent_idx)
+    }
+
+    /// Check if a node kind represents a type.
+    const fn is_type_node(&self, kind: u16) -> bool {
+        matches!(
+            kind,
+            TYPE_REFERENCE
+                | ARRAY_TYPE
+                | TUPLE_TYPE
+                | UNION_TYPE
+                | INTERSECTION_TYPE
+                | FUNCTION_TYPE
+                | TYPE_LITERAL
+                | TYPE_QUERY
+                | INDEXED_ACCESS_TYPE
+                | MAPPED_TYPE
+                | CONDITIONAL_TYPE
+                | PARENTHESIZED_TYPE
+                | LITERAL_TYPE
+                | TEMPLATE_LITERAL_TYPE
+        )
+    }
+
+    /// Resolve a type node to its definition location.
+    fn resolve_type_to_location(
+        &self,
+        root: NodeIndex,
+        type_node: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        let node = self.arena.get(type_node)?;
+
+        // Handle TypeReference (the most common case)
+        if node.kind == TYPE_REFERENCE {
+            return self.resolve_type_reference(root, type_node);
+        }
+
+        // For array types, resolve the element type
+        if node.kind == ARRAY_TYPE {
+            // Find the element type child and resolve it
+            if let Some(elem_type) = self.find_type_annotation_child(type_node) {
+                return self.resolve_type_to_location(root, elem_type);
+            }
+        }
+
+        // For union/intersection, surface every constituent's definition.
+        // LSP allows multiple locations in a TypeDefinitionResult, so we
+        // recurse into each member, flatten the results, and dedupe by
+        // (file_path, range) while preserving declaration order.
+        if node.kind == UNION_TYPE || node.kind == INTERSECTION_TYPE {
+            let members = self.find_type_annotation_children(type_node);
+            if members.is_empty() {
+                return None;
+            }
+
+            let mut locations: Vec<Location> = Vec::new();
+            for member in members {
+                if let Some(member_locations) = self.resolve_type_to_location(root, member) {
+                    for loc in member_locations {
+                        if !locations.iter().any(|existing| {
+                            existing.file_path == loc.file_path && existing.range == loc.range
+                        }) {
+                            locations.push(loc);
+                        }
+                    }
+                }
+            }
+
+            return if locations.is_empty() {
+                None
+            } else {
+                Some(locations)
+            };
+        }
+
+        None
+    }
+
+    /// Resolve a `TypeReference` node to its definition.
+    fn resolve_type_reference(
+        &self,
+        root: NodeIndex,
+        type_ref: NodeIndex,
+    ) -> Option<Vec<Location>> {
+        // Find the identifier within the type reference
+        let type_name_idx = self.find_type_name(type_ref)?;
+
+        // Resolve the type name to a symbol
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let symbol_id = walker.resolve_node(root, type_name_idx)?;
+
+        // Get the symbol's declarations
+        let symbol = self.binder.symbols.get(symbol_id)?;
+
+        // Convert declarations to locations
+        let locations: Vec<Location> = symbol
+            .declarations
+            .iter()
+            .filter_map(|&decl_idx| {
+                let decl_node = self.arena.get(decl_idx)?;
+
+                // Only include type declarations (interface, type alias, class, enum)
+                if !self.is_type_declaration(decl_node.kind) {
+                    return None;
+                }
+
+                let start_pos = self
+                    .line_map
+                    .offset_to_position(decl_node.pos, self.source_text);
+                let end_pos = self
+                    .line_map
+                    .offset_to_position(decl_node.end, self.source_text);
+
+                Some(Location {
+                    file_path: self.file_name.clone(),
+                    range: Range::new(start_pos, end_pos),
+                })
+            })
+            .collect();
+
+        if locations.is_empty() {
+            None
+        } else {
+            Some(locations)
+        }
+    }
+
+    /// Find the type name identifier within a type reference.
+    fn find_type_name(&self, type_ref: NodeIndex) -> Option<NodeIndex> {
+        // Look for an Identifier child
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            let idx = NodeIndex(i as u32);
+            let parent = self
+                .arena
+                .get_extended(idx)
+                .map_or(NodeIndex::NONE, |ext| ext.parent);
+
+            if parent == type_ref && node.kind == SyntaxKind::Identifier as u16 {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    /// Check if a node kind represents a type declaration.
+    const fn is_type_declaration(&self, kind: u16) -> bool {
+        matches!(
+            kind,
+            INTERFACE_DECLARATION | TYPE_ALIAS_DECLARATION | CLASS_DECLARATION | ENUM_DECLARATION
+        )
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/type_definition_tests.rs"]
+mod type_definition_tests;

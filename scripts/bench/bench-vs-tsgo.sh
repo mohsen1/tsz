@@ -1,0 +1,3719 @@
+#!/usr/bin/env bash
+#
+# Benchmark: tsz vs tsgo (TypeScript 7 / typescript-go)
+#
+# Compares compilation performance across various file sizes and complexities.
+# Requires: hyperfine (brew install hyperfine)
+# tsgo is auto-installed locally (pinned) unless TSGO is explicitly provided.
+#
+# Usage:
+#   ./scripts/bench/bench-vs-tsgo.sh                    # Full benchmark suite
+#   ./scripts/bench/bench-vs-tsgo.sh --quick            # Quick smoke test (fewer runs, fewer files)
+#   ./scripts/bench/bench-vs-tsgo.sh --json             # Export results to JSON
+#   ./scripts/bench/bench-vs-tsgo.sh --filter 'BCT|CFA' # Run only tests matching regex
+#   ./scripts/bench/bench-vs-tsgo.sh --filter 'utility-types' # Run only utility-types benchmarks
+#   ./scripts/bench/bench-vs-tsgo.sh --rebuild          # Force rebuild of optimized binary
+#   ./scripts/bench/bench-vs-tsgo.sh --prepare-only     # Build/install benchmark prerequisites, then exit
+#
+# The benchmark uses an isolated target directory (.target-bench/) to prevent
+# interference from other cargo builds. The binary is built with the 'dist' profile
+# which enables maximum optimizations (LTO=fat, codegen-units=1, stripped symbols).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BENCH_TIMEOUT_RUNNER="$SCRIPT_DIR/run-with-timeout.sh"
+
+# Synthetic fixture generators are shared with the precommit microbench gate.
+# shellcheck source=lib/synthetic-generators.sh
+source "$SCRIPT_DIR/lib/synthetic-generators.sh"
+
+# Lib assets: benchmark tsz with embedded (comment-stripped) lib files by default.
+# Setting TSZ_LIB_DIR forces disk-based loading for explicit local overrides.
+if [ -n "${TSZ_LIB_DIR:-}" ]; then
+    export TSZ_LIB_DIR
+elif [ -z "${TSZ_USE_EMBEDDED_LIBS+x}" ]; then
+    export TSZ_USE_EMBEDDED_LIBS=1
+else
+    export TSZ_USE_EMBEDDED_LIBS
+fi
+
+# Dedicated target directory for benchmarks - isolated from dev builds.
+BENCH_TARGET_DIR="$PROJECT_ROOT/.target-bench"
+TSZ_OUTPUT_DIR="$BENCH_TARGET_DIR/dist"
+
+# Compilers. TSZ can be provided by CI so benchmark runs reuse the already
+# compiled binary instead of spending the bench job rebuilding it.
+TSZ="${TSZ:-$TSZ_OUTPUT_DIR/tsz}"
+TSZ_IS_OVERRIDE=false
+if [ "$TSZ" != "$TSZ_OUTPUT_DIR/tsz" ]; then
+    TSZ_IS_OVERRIDE=true
+fi
+TSGO="${TSGO:-}"
+TSGO_TOOL_DIR="${TSGO_TOOL_DIR:-$BENCH_TARGET_DIR/tools/tsgo}"
+TSGO_LOCAL_BIN="$TSGO_TOOL_DIR/node_modules/.bin/tsgo"
+# tsc (TypeScript reference compiler)
+TSC="${TSC:-}"
+TSC_TOOL_DIR="${TSC_TOOL_DIR:-$BENCH_TARGET_DIR/tools/tsc}"
+TSC_LOCAL_BIN="$TSC_TOOL_DIR/node_modules/.bin/tsc"
+# pinned tsgo package for reproducible benchmark runs
+TSGO_NPM_SPEC="${TSGO_NPM_SPEC:-@typescript/native-preview@7.0.0-dev.20260206.1}"
+TSC_NPM_SPEC="${TSC_NPM_SPEC:-}"
+
+# External benchmark fixtures (not checked into git)
+EXTERNAL_BENCH_DIR="${EXTERNAL_BENCH_DIR:-$BENCH_TARGET_DIR/external}"
+# shellcheck source=scripts/bench/project-fixtures.sh
+source "$SCRIPT_DIR/project-fixtures.sh"
+# Keep benchmark/CI project metadata aligned with a single source of truth.
+tsz_sync_project_row_groups
+if command -v node >/dev/null 2>&1; then
+    tsz_validate_project_row_metadata
+fi
+# Project fixture pins live in project-fixtures.sh for benchmark/CI parity.
+UTILITY_TYPES_DIR="$EXTERNAL_BENCH_DIR/utility-types"
+TS_TOOLBELT_DIR="$EXTERNAL_BENCH_DIR/ts-toolbelt"
+TS_ESSENTIALS_DIR="$EXTERNAL_BENCH_DIR/ts-essentials"
+NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
+NEXT_APP_BENCH_DIR="${NEXT_APP_BENCH_DIR:-$EXTERNAL_BENCH_DIR/next-app-live}"
+VITE_APP_BENCH_DIR="${VITE_APP_BENCH_DIR:-$EXTERNAL_BENCH_DIR/vite-vanilla-ts-live}"
+RXJS_DIR="$EXTERNAL_BENCH_DIR/rxjs"
+TYPE_FEST_DIR="$EXTERNAL_BENCH_DIR/type-fest"
+ZOD_DIR="$EXTERNAL_BENCH_DIR/zod"
+KYSELY_DIR="$EXTERNAL_BENCH_DIR/kysely"
+LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
+# The local fallback was previously implicit, which silently contaminated
+# PR-quality numbers on any developer machine that happened to have a
+# checkout. Gate it behind TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1 so the default
+# is the pinned external clone. See docs/plan/PERFORMANCE_PLAN.md §3.5.1.
+if [ -n "${LARGE_TS_DIR:-}" ]; then
+    LARGE_TS_DIR="$LARGE_TS_DIR"
+elif [ "${TSZ_BENCH_ALLOW_LOCAL_FIXTURE:-0}" = "1" ] \
+     && [ -d "$LARGE_TS_LOCAL_DIR/.git" ]; then
+    LARGE_TS_DIR="$LARGE_TS_LOCAL_DIR"
+else
+    LARGE_TS_DIR="$EXTERNAL_BENCH_DIR/large-ts-repo"
+fi
+LARGE_TS_NODE_OPTIONS="${LARGE_TS_NODE_OPTIONS:---max-old-space-size=8192}"
+# Deep project fixtures can exhaust Rust's default worker-thread stack before
+# producing a benchmark result. Keep the default overrideable for local runs.
+TSZ_RUST_MIN_STACK="${TSZ_RUST_MIN_STACK:-536870912}"
+
+# Parse arguments
+QUICK_MODE=false
+JSON_OUTPUT=false
+JSON_FILE=""
+FILTER=""
+FORCE_REBUILD=false
+PREPARE_ONLY=false
+NEXTJS_BENCHMARK_ENABLED="${NEXTJS_BENCHMARK_ENABLED:-0}"
+TSZ_BENCH_INCLUDE_COMPILE_CANARIES="${TSZ_BENCH_INCLUDE_COMPILE_CANARIES:-0}"
+BENCH_NPM_INSTALL_TIMEOUT="${BENCH_NPM_INSTALL_TIMEOUT:-900}"
+BENCH_PGO_TSZ_TIMEOUT="${BENCH_PGO_TSZ_TIMEOUT:-900}"
+BENCH_CARGO_BUILD_TIMEOUT="${BENCH_CARGO_BUILD_TIMEOUT:-1200}"
+BENCH_PGO_MARKER="$TSZ_OUTPUT_DIR/.bench-pgo-optimized"
+declare -a BENCH_PGO_TRAINING_INPUTS=()
+declare -a BENCH_PGO_TRAINING_FAILED_INPUTS=()
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --quick) QUICK_MODE=true; shift ;;
+        --json) JSON_OUTPUT=true; shift ;;
+        --json-file) JSON_OUTPUT=true; JSON_FILE="$2"; shift 2 ;;
+        --filter) FILTER="$2"; shift 2 ;;
+        --rebuild) FORCE_REBUILD=true; shift ;;
+        --prepare-only) PREPARE_ONLY=true; shift ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --quick     Quick smoke test (fewer runs, fewer files)"
+            echo "  --json      Export results to JSON (default path: artifacts/bench-vs-tsgo-<timestamp>.json)"
+            echo "  --json-file Write JSON results to a specific path"
+            echo "  --filter    Run only tests matching regex (e.g., --filter 'BCT|CFA')"
+            echo "  --rebuild   Force rebuild of tsz binary (ensures fresh optimized build)"
+            echo "  --prepare-only Build/install benchmark prerequisites and exit"
+            echo "  --help      Show this help"
+            echo ""
+            echo "The benchmark uses an isolated target directory (.target-bench/) to prevent"
+            echo "interference from other cargo builds."
+            echo ""
+            echo "Environment overrides:"
+            echo "  TSGO=<path>            Use a specific tsgo binary (skip auto-install)"
+            echo "  TSGO_NPM_SPEC=<spec>   Override pinned npm package (default: $TSGO_NPM_SPEC)"
+            echo "  TSC=<path>             Use a specific tsc binary (skip auto-install)"
+            echo "  TSC_NPM_SPEC=<spec>    Override pinned typescript npm version"
+            echo "  TSZ=<path>             Use a specific tsz binary (skip benchmark build)"
+            echo "  TSZ_LIB_DIR=<path>     Override tsz lib assets (default: embedded)"
+            echo "  TSZ_BENCH_INCLUDE_COMPILE_CANARIES=1 Include known-red project rows in local full runs"
+            echo "  UTILITY_TYPES_REF=<sha> Override pinned utility-types commit"
+            echo "  TS_TOOLBELT_REF=<sha>  Override pinned ts-toolbelt commit"
+            echo "  TS_ESSENTIALS_REF=<sha> Override pinned ts-essentials commit"
+            echo "  NEXTJS_REF=<sha>       Override pinned next.js commit"
+            echo "  VITE_APP_BENCH_DIR=<path> Override generated Vite fixture directory"
+            echo "  BENCH_PGO=0            Skip PGO training (default: 1 when llvm-profdata is available)"
+            echo "  BENCH_REQUIRE_PGO=1    Fail instead of falling back to a non-PGO build (default: 0)"
+            echo "  BENCH_PGO_CACHE=0      Don't reuse the cached profdata across runs (default: 1)"
+            echo "  BENCH_PGO_FETCH_UTILITY_TYPES=0  Don't fetch utility-types for PGO training (default: 1)"
+            echo "  BENCH_PGO_TSZ_TIMEOUT=<seconds>  Timeout for each PGO training compiler invocation (default: 900)"
+            echo "  BENCH_CARGO_BUILD_TIMEOUT=<seconds>  Timeout for each cargo build in check_prerequisites (default: 1200)"
+            echo "  BENCH_PGO_FETCH_CORE_PROJECTS=1  Fetch/train ts-toolbelt/ts-essentials during PGO (default: 0; slower)"
+            echo "  BENCH_PGO_SYNTHETIC=0  Don't train PGO on generated benchmark stress cases (default: 1)"
+            echo "  BENCH_PGO_PANIC_UNWIND=1  Build the trainer with panic=unwind for crashy inputs (default: 0)"
+            echo "  BENCH_PGO_EXTRA_INPUTS=<path[:path]>  Extra .ts or tsconfig files to feed the PGO trainer"
+            echo "  BENCH_PGO_VERBOSE=1    Print per-input wall time during PGO Step 2"
+            exit 0
+            ;;
+        *) shift ;;
+    esac
+done
+
+# Benchmark settings
+if [ "$QUICK_MODE" = true ]; then
+    WARMUP=1
+    MIN_RUNS=3
+    MAX_RUNS=5
+    echo "Quick mode: fewer runs, subset of files"
+else
+    WARMUP=3
+    MIN_RUNS=10
+    MAX_RUNS=50
+fi
+
+if [ -n "$FILTER" ]; then
+    echo "Filter: only running tests matching /$FILTER/"
+fi
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+print_header() {
+    echo
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BOLD}  $1${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+hash_stdin_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | awk '{print $1}'
+    else
+        shasum -a 256 | awk '{print $1}'
+    fi
+}
+
+hash_file_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+pgo_profile_fingerprint() {
+    {
+        printf 'rustc=%s\n' "$(rustc -vV 2>/dev/null | tr '\n' ';')"
+        printf 'BENCH_PGO_SYNTHETIC=%s\n' "${BENCH_PGO_SYNTHETIC:-1}"
+        printf 'BENCH_PGO_FETCH_UTILITY_TYPES=%s\n' "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}"
+        printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
+        printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
+        printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'UTILITY_TYPES_REF=%s\n' "$UTILITY_TYPES_REF"
+        printf 'TS_TOOLBELT_REF=%s\n' "$TS_TOOLBELT_REF"
+        printf 'TS_ESSENTIALS_REF=%s\n' "$TS_ESSENTIALS_REF"
+        printf 'RXJS_REF=%s\n' "$RXJS_REF"
+        printf 'TYPE_FEST_REF=%s\n' "$TYPE_FEST_REF"
+        if git -C "$PROJECT_ROOT/TypeScript" rev-parse HEAD >/dev/null 2>&1; then
+            printf 'TypeScript=%s\n' "$(git -C "$PROJECT_ROOT/TypeScript" rev-parse HEAD)"
+        fi
+        git -C "$PROJECT_ROOT" ls-files \
+            Cargo.lock \
+            Cargo.toml \
+            .cargo/config.toml \
+            'crates/**/Cargo.toml' \
+            'crates/**/*.rs' \
+            scripts/bench/project-fixtures.sh \
+            scripts/bench/project-rows.mjs \
+            scripts/bench/bench-vs-tsgo.sh |
+            sort |
+            while IFS= read -r file; do
+                [ -f "$PROJECT_ROOT/$file" ] || continue
+                printf '%s  %s\n' "$(hash_file_sha256 "$PROJECT_ROOT/$file")" "$file"
+            done
+    } | hash_stdin_sha256
+}
+
+pgo_training_fingerprint() {
+    {
+        printf 'BENCH_PGO_SYNTHETIC=%s\n' "${BENCH_PGO_SYNTHETIC:-1}"
+        printf 'BENCH_PGO_FETCH_UTILITY_TYPES=%s\n' "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}"
+        printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
+        printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
+        printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        local label
+        for label in "${BENCH_PGO_TRAINING_INPUTS[@]}"; do
+            printf 'training_input=%s\n' "$label"
+        done
+        for label in "${BENCH_PGO_TRAINING_FAILED_INPUTS[@]}"; do
+            printf 'training_failed=%s\n' "$label"
+        done
+    } | hash_stdin_sha256
+}
+
+write_pgo_training_metadata() {
+    local out_file="$1"
+    local profile_fingerprint="$2"
+    local llvm_profdata="$3"
+    local training_fingerprint
+    training_fingerprint="$(pgo_training_fingerprint)"
+    {
+        printf 'profile_fingerprint=%s\n' "$profile_fingerprint"
+        printf 'training_fingerprint=%s\n' "$training_fingerprint"
+        printf 'llvm_profdata=%s\n' "$llvm_profdata"
+        printf 'training_metadata_available=1\n'
+        printf 'BENCH_PGO_SYNTHETIC=%s\n' "${BENCH_PGO_SYNTHETIC:-1}"
+        printf 'BENCH_PGO_FETCH_UTILITY_TYPES=%s\n' "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}"
+        printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
+        printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
+        printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        printf 'training_input_count=%s\n' "${#BENCH_PGO_TRAINING_INPUTS[@]}"
+        printf 'training_failure_count=%s\n' "${#BENCH_PGO_TRAINING_FAILED_INPUTS[@]}"
+        local label
+        for label in "${BENCH_PGO_TRAINING_INPUTS[@]}"; do
+            printf 'training_input=%s\n' "$label"
+        done
+        for label in "${BENCH_PGO_TRAINING_FAILED_INPUTS[@]}"; do
+            printf 'training_failed=%s\n' "$label"
+        done
+    } > "$out_file"
+}
+
+write_pgo_training_unavailable_metadata() {
+    local out_file="$1"
+    local profile_fingerprint="$2"
+    local llvm_profdata="$3"
+    {
+        printf 'profile_fingerprint=%s\n' "$profile_fingerprint"
+        printf 'training_fingerprint=\n'
+        printf 'llvm_profdata=%s\n' "$llvm_profdata"
+        printf 'training_metadata_available=0\n'
+        printf 'BENCH_PGO_SYNTHETIC=%s\n' "${BENCH_PGO_SYNTHETIC:-1}"
+        printf 'BENCH_PGO_FETCH_UTILITY_TYPES=%s\n' "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}"
+        printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
+        printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
+        printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'BENCH_PGO_TSZ_TIMEOUT=%s\n' "$BENCH_PGO_TSZ_TIMEOUT"
+        printf 'training_input_count=0\n'
+        printf 'training_failure_count=0\n'
+    } > "$out_file"
+}
+
+write_pgo_marker() {
+    local marker="$1"
+    local profile_use="$2"
+    local metadata_file="$3"
+    local profile_data_source="$4"
+    {
+        printf 'optimized=1\n'
+        printf 'binary_profile=release-pgo\n'
+        printf 'profile-use=%s\n' "$profile_use"
+        printf 'built_at=%s\n' "$(date -u +%FT%TZ)"
+        printf 'profile_data_source=%s\n' "$profile_data_source"
+        if [ -f "$metadata_file" ]; then
+            cat "$metadata_file"
+        else
+            printf 'training_metadata_available=0\n'
+        fi
+    } > "$marker"
+}
+
+print_subheader() {
+    echo
+    echo -e "${CYAN}▶ $1${NC}"
+    echo -e "${CYAN}─────────────────────────────────────────────────────────────────────────────${NC}"
+}
+
+file_info() {
+    local file="$1"
+    local lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
+    local bytes=$(wc -c < "$file" 2>/dev/null | tr -d ' ')
+    local kb=$((bytes / 1024))
+    echo "${lines} lines, ${kb}KB"
+}
+
+measure_peak_rss_enabled() {
+    case "${TSZ_BENCH_PROJECT_PEAK_RSS:-}" in
+        1|true|TRUE|yes|YES) return 0 ;;
+        0|false|FALSE|no|NO) return 1 ;;
+    esac
+
+    [ "${CI:-}" = "true" ] && [ "$(uname -s 2>/dev/null || echo unknown)" = "Linux" ]
+}
+
+# Echoes the structured reason peak-RSS sampling is not active, or empty when
+# sampling is active (a subsequent empty measurement then means the process
+# exited before any sample). Reasons come from the closed vocabulary owned by
+# scripts/ci/project-compatibility.mjs.
+peak_rss_unavailable_reason() {
+    case "${TSZ_BENCH_PROJECT_PEAK_RSS:-}" in
+        0|false|FALSE|no|NO)
+            printf 'measurement disabled\n'
+            return
+            ;;
+        1|true|TRUE|yes|YES)
+            return
+            ;;
+    esac
+
+    if [ "${CI:-}" != "true" ] || [ "$(uname -s 2>/dev/null || echo unknown)" != "Linux" ]; then
+        printf 'not measured on platform\n'
+    fi
+}
+
+process_tree_rss_kb() {
+    local root_pid="$1"
+
+    ps -e -o pid=,ppid=,rss= 2>/dev/null | awk -v root="$root_pid" '
+        {
+            pid[NR] = $1
+            ppid[NR] = $2
+            rss[NR] = $3
+            count = NR
+        }
+        END {
+            live[root] = 1
+            changed = 1
+            while (changed) {
+                changed = 0
+                for (i = 1; i <= count; i += 1) {
+                    if (live[ppid[i]] && !live[pid[i]]) {
+                        live[pid[i]] = 1
+                        changed = 1
+                    }
+                }
+            }
+            total = 0
+            for (i = 1; i <= count; i += 1) {
+                if (live[pid[i]]) {
+                    total += rss[i]
+                }
+            }
+            print total + 0
+        }
+    '
+}
+
+# Run a command with a timeout (in seconds). Returns the command's exit code,
+# or 124 if it was killed due to timeout (matching GNU timeout convention).
+# Usage: run_with_timeout <seconds> <command...>
+run_with_timeout() {
+    local timeout_secs="$1"
+    shift
+    # Empty (not "0") is the "no positive sample yet" sentinel so the
+    # record-time reason logic can distinguish it from a deliberate zero.
+    LAST_PEAK_RSS_BYTES=""
+
+    # Run the command in a background subshell
+    "$@" &
+    local pid=$!
+    local rss_file=""
+    local rss_monitor_pid=""
+
+    # Watchdog: SIGKILL directly after timeout (SIGTERM can be ignored by Rust binaries)
+    ( sleep "$timeout_secs" && kill -KILL "$pid" 2>/dev/null || true ) &
+    local watchdog_pid=$!
+    if measure_peak_rss_enabled; then
+        rss_file=$(mktemp)
+        : > "$rss_file"
+        (
+            local peak_kb=0
+            local rss_kb
+            while kill -0 "$pid" 2>/dev/null; do
+                rss_kb="$(process_tree_rss_kb "$pid" || true)"
+                if [[ "$rss_kb" =~ ^[0-9]+$ ]] && [ "$rss_kb" -gt "$peak_kb" ]; then
+                    peak_kb="$rss_kb"
+                    printf '%s\n' "$((peak_kb * 1024))" > "$rss_file"
+                fi
+                sleep 1
+            done
+        ) &
+        rss_monitor_pid=$!
+    fi
+
+    # Wait for the main process (|| true for set -e safety)
+    local exit_code=0
+    wait "$pid" 2>/dev/null || exit_code=$?
+
+    # Clean up watchdog (|| true since it may have already exited)
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+    if [ -n "$rss_monitor_pid" ]; then
+        kill "$rss_monitor_pid" 2>/dev/null || true
+        wait "$rss_monitor_pid" 2>/dev/null || true
+    fi
+    if [ -n "$rss_file" ]; then
+        LAST_PEAK_RSS_BYTES="$(cat "$rss_file" 2>/dev/null || true)"
+        rm -f "$rss_file"
+    fi
+
+    # SIGKILL exit code is 137 (128+9)
+    if [ "$exit_code" -eq 137 ]; then
+        return 124
+    fi
+    return "$exit_code"
+}
+
+run_cargo_build() {
+    local description="$1"
+    shift
+
+    (cd "$PROJECT_ROOT" && run_with_timeout "$BENCH_CARGO_BUILD_TIMEOUT" env "$@")
+    local exit_code=$?
+    if [ "$exit_code" -eq 0 ]; then
+        return 0
+    fi
+
+    if [ "$exit_code" -eq 124 ]; then
+        echo -e "${RED}✗ $description timed out after ${BENCH_CARGO_BUILD_TIMEOUT}s${NC}"
+    else
+        echo -e "${RED}✗ $description failed (exit $exit_code)${NC}"
+    fi
+    return "$exit_code"
+}
+
+capture_diagnostic_lines() {
+    local label="$1"
+    local timeout_secs="$2"
+    shift 2
+
+    { run_with_timeout "$timeout_secs" "$@" 2>&1 || true; } \
+        | awk -v label="$label" '
+            {
+                sub(/\r$/, "")
+                if ($0 ~ /^[[:space:]]*$/) {
+                    next
+                }
+                print label ": " $0
+                seen += 1
+                if (seen >= 20) {
+                    exit
+                }
+            }
+        '
+}
+
+diagnostic_lines_from_file() {
+    local label="$1"
+    local file="$2"
+
+    awk -v label="$label" '
+        {
+            sub(/\r$/, "")
+            if ($0 ~ /^[[:space:]]*$/) {
+                next
+            }
+            print label ": " $0
+            seen += 1
+            if (seen >= 20) {
+                exit
+            }
+        }
+    ' "$file" 2>/dev/null || true
+}
+
+append_diagnostic_delta() {
+    local existing="$1"
+    local addition="$2"
+
+    if [ -z "$addition" ]; then
+        printf '%s' "$existing"
+    elif [ -z "$existing" ]; then
+        printf '%s' "$addition"
+    else
+        printf '%s\n%s' "$existing" "$addition"
+    fi
+}
+
+hyperfine_mean_for() {
+    local json_file="$1"
+    local command_name="$2"
+    jq -r --arg command_name "$command_name" \
+        '.results[] | select(.command == $command_name) | .mean // empty' \
+        "$json_file" 2>/dev/null || true
+}
+
+hyperfine_exit_status_for() {
+    local json_file="$1"
+    local command_name="$2"
+    local exit_count
+    local nonzero_count
+    local exit_codes
+
+    exit_count=$(jq -r --arg command_name "$command_name" \
+        '[.results[] | select(.command == $command_name) | .exit_codes[]?] | length' \
+        "$json_file" 2>/dev/null || echo "0")
+    if [ "$exit_count" = "0" ]; then
+        echo "missing exit codes"
+        return 1
+    fi
+
+    nonzero_count=$(jq -r --arg command_name "$command_name" \
+        '[.results[] | select(.command == $command_name) | .exit_codes[]? | select(. != 0)] | length' \
+        "$json_file" 2>/dev/null || echo "1")
+    if [ "$nonzero_count" != "0" ]; then
+        exit_codes=$(jq -r --arg command_name "$command_name" \
+            '[.results[] | select(.command == $command_name) | .exit_codes[]?] | unique | map(tostring) | join("|")' \
+            "$json_file" 2>/dev/null || echo "unknown")
+        echo "exit codes ${exit_codes}"
+        return 1
+    fi
+
+    echo "ok"
+    return 0
+}
+
+project_failure_class() {
+    local status="$1"
+    shift || true
+
+    if [[ "$status" == *"timeout"* ]]; then
+        echo "timeout"
+        return
+    fi
+
+    local code
+    for code in "$@"; do
+        case "$code" in
+            124|142)
+                echo "timeout"
+                return
+                ;;
+            137)
+                echo "oom"
+                return
+                ;;
+            132|134|136|139)
+                echo "crash"
+                return
+                ;;
+        esac
+    done
+
+    echo "nonzero exit"
+}
+
+project_failure_status() {
+    case "$1" in
+        timeout) echo "compiler timed out" ;;
+        oom) echo "compiler OOM or killed" ;;
+        crash) echo "compiler crashed" ;;
+        "oracle unavailable") echo "tsc oracle unavailable" ;;
+        *) echo "diagnostic mismatch or compiler error" ;;
+    esac
+}
+
+exit_codes_from_status() {
+    local status="$1"
+    printf '%s\n' "$status" | sed -E 's/[^0-9]+/\
+/g' | sed '/^$/d'
+}
+
+sum_ts_lines() {
+    local src_dir="$1"
+    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print0 2>/dev/null \
+        | while IFS= read -r -d '' file; do
+            wc -l < "$file" 2>/dev/null || true
+        done \
+        | awk '{ total += $1 } END { print total + 0 }'
+}
+
+sum_ts_bytes() {
+    local src_dir="$1"
+    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print0 2>/dev/null \
+        | xargs -0 cat 2>/dev/null | wc -c | tr -d ' '
+}
+
+count_ts_files() {
+    local src_dir="$1"
+    find "$src_dir" \( -path '*/node_modules/*' -o -path '*/.next/*' \) -prune -o \( -name '*.ts' -o -name '*.tsx' -o -name '*.mts' -o -name '*.cts' \) -type f -print 2>/dev/null \
+        | wc -l | tr -d ' '
+}
+
+project_tsconfig_stats() {
+    local tsconfig="$1"
+    local fallback_src_dir="$2"
+    local stats
+
+    if stats="$(TSC_TOOL_DIR_VALUE="$TSC_TOOL_DIR" TSC_BIN_VALUE="$TSC" node "$SCRIPT_DIR/project-file-stats.mjs" "$tsconfig" 2>/dev/null)"; then
+        echo "$stats"
+        return
+    fi
+
+    local lines
+    local bytes
+    local file_count
+    lines=$(sum_ts_lines "$fallback_src_dir")
+    bytes=$(sum_ts_bytes "$fallback_src_dir")
+    file_count=$(count_ts_files "$fallback_src_dir")
+    echo "$lines $bytes $file_count"
+}
+
+# Timeout for pre-validation checks (seconds). Generous enough for heavy
+# type-level libraries but catches infinite loops.
+BENCH_TIMEOUT="${BENCH_TIMEOUT:-60}"
+
+ensure_tsgo() {
+    # Honor explicit TSGO override when provided by caller.
+    if [ -n "$TSGO" ]; then
+        if [ ! -x "$TSGO" ]; then
+            echo -e "${RED}✗ TSGO is set but not executable: $TSGO${NC}"
+            exit 1
+        fi
+        return
+    fi
+
+    if ! command -v npm &>/dev/null; then
+        echo -e "${RED}✗ npm not found${NC}"
+        echo "  npm is required to auto-install tsgo ($TSGO_NPM_SPEC)"
+        exit 1
+    fi
+
+    mkdir -p "$TSGO_TOOL_DIR"
+    local spec_file="$TSGO_TOOL_DIR/.tsgo-spec"
+    local installed_spec=""
+    if [ -f "$spec_file" ]; then
+        installed_spec="$(cat "$spec_file")"
+    fi
+
+    if [ ! -x "$TSGO_LOCAL_BIN" ] || [ "$installed_spec" != "$TSGO_NPM_SPEC" ]; then
+        echo -e "${CYAN}Installing tsgo locally (${TSGO_NPM_SPEC})...${NC}"
+        if ! run_with_timeout "$BENCH_NPM_INSTALL_TIMEOUT" npm install \
+            --prefix "$TSGO_TOOL_DIR" \
+            --no-audit \
+            --no-fund \
+            --loglevel=error \
+            "$TSGO_NPM_SPEC" >/dev/null; then
+            echo -e "${RED}✗ tsgo install timed out after ${BENCH_NPM_INSTALL_TIMEOUT}s${NC}"
+            echo -e "${RED}  command: npm install --prefix \"$TSGO_TOOL_DIR\" \"$TSGO_NPM_SPEC\"${NC}"
+            exit 1
+        fi
+        printf '%s\n' "$TSGO_NPM_SPEC" > "$spec_file"
+    fi
+
+    if [ ! -x "$TSGO_LOCAL_BIN" ]; then
+        echo -e "${RED}✗ tsgo install failed: binary not found at $TSGO_LOCAL_BIN${NC}"
+        exit 1
+    fi
+
+    TSGO="$TSGO_LOCAL_BIN"
+}
+
+resolve_tsc_npm_spec() {
+    local sha=""
+    if [ -d "$PROJECT_ROOT/TypeScript" ]; then
+        sha="$(git -C "$PROJECT_ROOT/TypeScript" rev-parse HEAD 2>/dev/null || echo "")"
+    fi
+
+    node -e "const v=require('./scripts/conformance/typescript-versions.json'); const sha=process.argv[1]; const current=v.current && v.mappings?.[v.current]?.npm; const m=sha && v.mappings?.[sha]; console.log(m?.npm || (sha ? v.default?.npm : current) || '');" "$sha"
+}
+
+ensure_tsc() {
+    # Honor explicit TSC override when provided by caller.
+    if [ -n "$TSC" ]; then
+        if [ ! -x "$TSC" ]; then
+            echo -e "${RED}✗ TSC is set but not executable: $TSC${NC}"
+            exit 1
+        fi
+        return
+    fi
+
+    if ! command -v npm &>/dev/null; then
+        echo -e "${RED}✗ npm not found${NC}"
+        echo "  npm is required to auto-install tsc"
+        exit 1
+    fi
+
+    local resolved_spec="$TSC_NPM_SPEC"
+    if [ -z "$resolved_spec" ]; then
+        resolved_spec="$(resolve_tsc_npm_spec)"
+    fi
+    if [ -z "$resolved_spec" ]; then
+        echo -e "${RED}✗ Unable to resolve tsc npm spec${NC}"
+        echo "  Set TSC_NPM_SPEC or update scripts/conformance/typescript-versions.json."
+        exit 1
+    fi
+
+    mkdir -p "$TSC_TOOL_DIR"
+    local spec_file="$TSC_TOOL_DIR/.tsc-spec"
+    local installed_spec=""
+    if [ -f "$spec_file" ]; then
+        installed_spec="$(cat "$spec_file")"
+    fi
+
+    if [ ! -x "$TSC_LOCAL_BIN" ] || [ "$installed_spec" != "$resolved_spec" ]; then
+        echo -e "${CYAN}Installing tsc locally (${resolved_spec})...${NC}"
+        if ! run_with_timeout "$BENCH_NPM_INSTALL_TIMEOUT" npm install \
+            --prefix "$TSC_TOOL_DIR" \
+            --no-audit \
+            --no-fund \
+            --loglevel=error \
+            "typescript@${resolved_spec}" >/dev/null; then
+            echo -e "${RED}✗ tsc install timed out after ${BENCH_NPM_INSTALL_TIMEOUT}s${NC}"
+            echo -e "${RED}  command: npm install --prefix \"$TSC_TOOL_DIR\" \"typescript@${resolved_spec}\"${NC}"
+            exit 1
+        fi
+        printf '%s\n' "$resolved_spec" > "$spec_file"
+    fi
+
+    if [ ! -x "$TSC_LOCAL_BIN" ]; then
+        echo -e "${RED}✗ tsc install failed: binary not found at $TSC_LOCAL_BIN${NC}"
+        exit 1
+    fi
+
+    TSC="$TSC_LOCAL_BIN"
+}
+
+# Run the PGO instrumented binary over a workload mix that exercises the same
+# code paths the website plots: lib loading, mapped/conditional types, deep
+# generics, project-mode resolution, best-common-type, inference, and CFA
+# stress. Always trains on generated synthetic inputs first (available even in
+# a clean checkout), then layers on whichever external bench fixtures are
+# present. utility-types/ts-toolbelt/ts-essentials can be opportunistically
+# fetched by the caller; the rest are picked up only when prior bench runs left
+# them in place.
+#
+# Set BENCH_PGO_EXTRA_INPUTS to a colon-separated list of additional
+# tsconfig or .ts paths to include in training. Set BENCH_PGO_VERBOSE=1
+# to surface the per-input wall time.
+collect_pgo_workload() {
+    local pgo_tsz="$1"
+    local env_prefix=()
+    [[ -n "${TSZ_LIB_DIR:-}" ]] && env_prefix=("TSZ_LIB_DIR=$TSZ_LIB_DIR")
+    BENCH_PGO_TRAINING_INPUTS=()
+    BENCH_PGO_TRAINING_FAILED_INPUTS=()
+
+    _pgo_run() {
+        local label="$1"
+        shift
+        local run_status=0
+        BENCH_PGO_TRAINING_INPUTS+=("$label")
+        if [[ "${BENCH_PGO_VERBOSE:-0}" == "1" ]]; then
+            local t0 t1
+            t0=$(date +%s)
+            if run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+                run_status=0
+            else
+                run_status=$?
+                BENCH_PGO_TRAINING_FAILED_INPUTS+=("$label:$run_status")
+                if [ "$run_status" -eq 124 ]; then
+                    echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"
+                else
+                    echo -e "${YELLOW}PGO training input \"$label\" failed (exit $run_status)${NC}"
+                fi
+            fi
+            t1=$(date +%s)
+            echo -e "  ${CYAN}pgo${NC} $label ($((t1 - t0))s)"
+        else
+            if run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+                run_status=0
+            else
+                run_status=$?
+                BENCH_PGO_TRAINING_FAILED_INPUTS+=("$label:$run_status")
+                if [ "$run_status" -eq 124 ]; then
+                    echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"
+                else
+                    echo -e "${YELLOW}PGO training input \"$label\" failed (exit $run_status)${NC}"
+                fi
+            fi
+        fi
+    }
+
+    # 1. Tiny inline expression — exercises argv parsing, lib-resolver
+    #    bootstrap, scanner/parser/binder warm-up paths.
+    echo "const x: number = 1; type T<U> = U extends string ? U[] : U; const y: T<string> = ['a'];" \
+        | _pgo_run "stdin:scalar" "$pgo_tsz" --noEmit /dev/stdin
+
+    # 2. Generated stress cases mirror the benchmark shards directly, so the
+    #    profile is not dominated by one project fixture or one tiny input.
+    if [[ "${BENCH_PGO_SYNTHETIC:-1}" == "1" ]]; then
+        local pgo_tmp
+        pgo_tmp="$(mktemp -d "$BENCH_TARGET_DIR/pgo-train.XXXXXX")"
+        local -a generated_inputs=()
+
+        generate_complex_file 50 "$pgo_tmp/complex_generics.ts"
+        generated_inputs+=("$pgo_tmp/complex_generics.ts")
+        generate_deeppartial_optional_chain_file 50 "$pgo_tmp/deeppartial_optional_chain.ts"
+        generated_inputs+=("$pgo_tmp/deeppartial_optional_chain.ts")
+        generate_shallow_optional_chain_file 50 "$pgo_tmp/shallow_optional_chain.ts"
+        generated_inputs+=("$pgo_tmp/shallow_optional_chain.ts")
+        generate_union_file 100 "$pgo_tmp/union_members.ts"
+        generated_inputs+=("$pgo_tmp/union_members.ts")
+        generate_recursive_generic_file 25 "$pgo_tmp/recursive_generic.ts"
+        generated_inputs+=("$pgo_tmp/recursive_generic.ts")
+        generate_conditional_distribution_file 50 "$pgo_tmp/conditional_dist.ts"
+        generated_inputs+=("$pgo_tmp/conditional_dist.ts")
+        generate_mapped_type_file 100 "$pgo_tmp/mapped_type.ts"
+        generated_inputs+=("$pgo_tmp/mapped_type.ts")
+        generate_template_literal_file 50 "$pgo_tmp/template_literal.ts"
+        generated_inputs+=("$pgo_tmp/template_literal.ts")
+        generate_deep_subtype_file 30 "$pgo_tmp/deep_subtype.ts"
+        generated_inputs+=("$pgo_tmp/deep_subtype.ts")
+        generate_intersection_file 50 "$pgo_tmp/intersection.ts"
+        generated_inputs+=("$pgo_tmp/intersection.ts")
+        generate_infer_stress_file 15 "$pgo_tmp/infer_stress.ts"
+        generated_inputs+=("$pgo_tmp/infer_stress.ts")
+        generate_cfa_stress_file 50 "$pgo_tmp/cfa_stress.ts"
+        generated_inputs+=("$pgo_tmp/cfa_stress.ts")
+        generate_bct_stress_file 50 "$pgo_tmp/bct_stress.ts"
+        generated_inputs+=("$pgo_tmp/bct_stress.ts")
+        generate_constraint_conflict_file 30 "$pgo_tmp/constraint_conflict.ts"
+        generated_inputs+=("$pgo_tmp/constraint_conflict.ts")
+        generate_mapped_complex_template_file 50 "$pgo_tmp/mapped_complex_template.ts"
+        generated_inputs+=("$pgo_tmp/mapped_complex_template.ts")
+
+        local generated
+        for generated in "${generated_inputs[@]}"; do
+            _pgo_run "synthetic:$(basename "$generated")" \
+                "$pgo_tsz" --noEmit "$generated"
+        done
+        rm -rf "$pgo_tmp"
+    fi
+
+    # 3. utility-types: small (~150 src files) but very heavy on mapped/
+    #    conditional types — the shape that dominates the website plot.
+    if [ -d "$UTILITY_TYPES_DIR" ] && [ -f "$UTILITY_TYPES_DIR/tsconfig.flat.json" ]; then
+        _pgo_run "utility-types" \
+            "$pgo_tsz" --noEmit -p "$UTILITY_TYPES_DIR/tsconfig.flat.json"
+    fi
+
+    # 4. ts-toolbelt + ts-essentials are useful deep-generic training inputs,
+    #    but too slow for the default cold bench-prepare path. Keep them opt-in
+    #    for deliberate local/CI experiments.
+    if [[ "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}" == "1" ]]; then
+        if [ -d "$TS_TOOLBELT_DIR" ] && [ -f "$TS_TOOLBELT_DIR/tsconfig.flat.json" ]; then
+            _pgo_run "ts-toolbelt" \
+                "$pgo_tsz" --noEmit -p "$TS_TOOLBELT_DIR/tsconfig.flat.json"
+        fi
+        if [ -d "$TS_ESSENTIALS_DIR" ] && [ -f "$TS_ESSENTIALS_DIR/tsconfig.flat.json" ]; then
+            _pgo_run "ts-essentials" \
+                "$pgo_tsz" --noEmit -p "$TS_ESSENTIALS_DIR/tsconfig.flat.json"
+        fi
+    fi
+    if [ -d "$RXJS_DIR" ] && [ -f "$RXJS_DIR/tsconfig.flat.json" ]; then
+        _pgo_run "rxjs" "$pgo_tsz" --noEmit -p "$RXJS_DIR/tsconfig.flat.json"
+    fi
+    if [ -d "$TYPE_FEST_DIR" ] && [ -f "$TYPE_FEST_DIR/tsconfig.flat.json" ]; then
+        _pgo_run "type-fest" "$pgo_tsz" --noEmit -p "$TYPE_FEST_DIR/tsconfig.flat.json"
+    fi
+    if [ -d "$VITE_APP_BENCH_DIR" ] && [ -f "$VITE_APP_BENCH_DIR/tsconfig.json" ]; then
+        _pgo_run "vite-vanilla-ts-app" "$pgo_tsz" --noEmit -p "$VITE_APP_BENCH_DIR/tsconfig.json"
+    fi
+    if [ -d "$NEXT_APP_BENCH_DIR" ] && [ -f "$NEXT_APP_BENCH_DIR/tsconfig.json" ]; then
+        _pgo_run "nextjs-fresh-app" "$pgo_tsz" --noEmit -p "$NEXT_APP_BENCH_DIR/tsconfig.json"
+    fi
+
+    # 5. TypeScript compiler test fixture — kept for back-compat with the
+    #    pre-existing training input. Only triggers when the upstream
+    #    TypeScript submodule is checked out locally (rare; tracked in
+    #    `.claude/CLAUDE.md` §19.5).
+    if [ -f "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" ]; then
+        for _i in 1 2; do
+            _pgo_run "manyConstExports.ts" \
+                "$pgo_tsz" --noEmit \
+                "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts"
+        done
+    fi
+
+    # 6. Caller-provided extras (colon-separated). Useful when adding a new
+    #    benchmark fixture: warm PGO against it before measuring.
+    if [ -n "${BENCH_PGO_EXTRA_INPUTS:-}" ]; then
+        local IFS=":"
+        # shellcheck disable=SC2206
+        local extras=( ${BENCH_PGO_EXTRA_INPUTS} )
+        for input in "${extras[@]}"; do
+            [ -z "$input" ] && continue
+            if [ -f "$input" ] && [[ "$input" == *tsconfig*.json ]]; then
+                _pgo_run "extra:$(basename "$input")" \
+                    "$pgo_tsz" --noEmit -p "$input"
+            elif [ -f "$input" ]; then
+                _pgo_run "extra:$(basename "$input")" \
+                    "$pgo_tsz" --noEmit "$input"
+            fi
+        done
+    fi
+}
+
+check_prerequisites() {
+    print_header "Prerequisites Check"
+    
+    # Check hyperfine
+    if ! command -v hyperfine &>/dev/null; then
+        echo -e "${RED}✗ hyperfine not found${NC}"
+        echo "  Install with: brew install hyperfine"
+        exit 1
+    fi
+    echo -e "${GREEN}✓${NC} hyperfine $(hyperfine --version | head -1)"
+    
+    # Check jq (optional, for results table)
+    if command -v jq &>/dev/null; then
+        echo -e "${GREEN}✓${NC} jq $(jq --version)"
+    else
+        echo -e "${YELLOW}○${NC} jq not found (optional, install for results table)"
+    fi
+    
+    # Check for lib assets directory used by tsz
+    if [ -n "${TSZ_LIB_DIR:-}" ]; then
+        if [ ! -d "$TSZ_LIB_DIR" ]; then
+            echo -e "${RED}✗ lib directory not found: $TSZ_LIB_DIR${NC}"
+            echo "  Set TSZ_LIB_DIR or ensure crates/tsz-core/src/lib-assets exists."
+            exit 1
+        fi
+        echo -e "${GREEN}✓${NC} tsz lib assets: $TSZ_LIB_DIR"
+    else
+        echo -e "${GREEN}✓${NC} tsz lib assets: embedded (built-in)"
+    fi
+
+    # Check/build tsz with the dedicated benchmark target directory unless
+    # caller provided TSZ.
+    local need_rebuild=false
+
+    if [ "$TSZ_IS_OVERRIDE" = true ]; then
+        if [ "$FORCE_REBUILD" = true ]; then
+            echo -e "${YELLOW}Ignoring --rebuild because TSZ override is set: $TSZ${NC}"
+        fi
+        if [ ! -x "$TSZ" ]; then
+            echo -e "${RED}✗ TSZ is set but not executable: $TSZ${NC}"
+            exit 1
+        fi
+    elif [ "$FORCE_REBUILD" = true ]; then
+        echo -e "${YELLOW}Force rebuild requested...${NC}"
+        need_rebuild=true
+    elif [ ! -x "$TSZ" ]; then
+        echo -e "${YELLOW}Binary not found, building...${NC}"
+        need_rebuild=true
+    else
+        # Verify binary is recent (rebuilt if any Rust source in the workspace
+        # changed since the last benchmark build).
+        local newest_src
+        newest_src="$(find "$PROJECT_ROOT" \
+            \( -path "$BENCH_TARGET_DIR" -o -path "$PROJECT_ROOT/.git" \) -prune -o \
+            -type f -name "*.rs" -newer "$TSZ" -print -quit 2>/dev/null)"
+        if [ -n "$newest_src" ]; then
+            echo -e "${YELLOW}Source changed since last build, rebuilding...${NC}"
+            need_rebuild=true
+        elif [[ "${BENCH_REQUIRE_PGO:-0}" == "1" && ! -f "$BENCH_PGO_MARKER" ]]; then
+            echo -e "${YELLOW}Existing tsz binary is not marked PGO optimized, rebuilding...${NC}"
+            need_rebuild=true
+        fi
+    fi
+    
+    if [ "$need_rebuild" = true ]; then
+        echo -e "${CYAN}Building tsz with dist profile (LTO=fat, codegen-units=1)${NC}"
+        echo -e "${CYAN}Target directory: $BENCH_TARGET_DIR${NC}"
+
+        # PGO (Profile-Guided Optimization): collect profile data then rebuild.
+        # This typically gives a better optimized binary for full benchmark
+        # runs, but quick mode prefers a deterministic fast rebuild.
+        local pgo_dir="$BENCH_TARGET_DIR/pgo-data"
+        local pgo_merged="$pgo_dir/merged.profdata"
+        local pgo_training_metadata="$pgo_dir/profile.metadata"
+        # Cross-run profdata cache so iterative bench dev doesn't redo the
+        # instrumented-build + training cycle when the source/toolchain/training
+        # workload fingerprint has not changed since the last bench run.
+        local pgo_cache_dir="$BENCH_TARGET_DIR/pgo-cache"
+        local pgo_cache_profdata="$pgo_cache_dir/merged.profdata"
+        local pgo_cache_marker="$pgo_cache_dir/profile.fingerprint"
+        local pgo_cache_metadata="$pgo_cache_dir/profile.metadata"
+        local pgo_target_dir
+        local optimized_target_dir
+        local pgo_profile_data_source="fresh"
+        local pgo_optimized=false
+        mkdir -p "$BENCH_TARGET_DIR"
+        pgo_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/pgo-build.XXXXXX")"
+        optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
+        local llvm_profdata
+        llvm_profdata="$(ls "$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-profdata 2>/dev/null | head -1 || true)"
+        local use_pgo=true
+        if [[ "$QUICK_MODE" == true || "${BENCH_PGO:-1}" != "1" ]]; then
+            use_pgo=false
+        fi
+
+        if [ "$use_pgo" = true ] && [ -n "$llvm_profdata" ] && [ -x "$llvm_profdata" ]; then
+            local skip_pgo_collect=false
+            local profdata_ready=false
+            local pgo_fingerprint
+            pgo_fingerprint="$(pgo_profile_fingerprint)"
+            if [[ "${BENCH_PGO_CACHE:-1}" == "1" && -f "$pgo_cache_profdata" && -f "$pgo_cache_marker" ]]; then
+                local cached_fingerprint
+                cached_fingerprint="$(tr -d '[:space:]' < "$pgo_cache_marker" 2>/dev/null || true)"
+                if [[ "$cached_fingerprint" == "$pgo_fingerprint" ]]; then
+                    echo -e "${CYAN}PGO cache hit: reusing $pgo_cache_profdata${NC}"
+                    mkdir -p "$pgo_dir"
+                    cp "$pgo_cache_profdata" "$pgo_merged"
+                    if [ -f "$pgo_cache_metadata" ]; then
+                        cp "$pgo_cache_metadata" "$pgo_training_metadata"
+                    else
+                        write_pgo_training_unavailable_metadata "$pgo_training_metadata" "$pgo_fingerprint" "$llvm_profdata"
+                    fi
+                    pgo_profile_data_source="cache"
+                    skip_pgo_collect=true
+                    profdata_ready=true
+                else
+                    echo -e "${YELLOW}PGO cache stale (training fingerprint changed); regenerating profile data${NC}"
+                fi
+            fi
+
+            if [ "$skip_pgo_collect" = false ]; then
+                echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
+                rm -rf "$pgo_dir"
+                mkdir -p "$pgo_dir"
+                # Keep trainer codegen aligned with the final dist build by
+                # default; otherwise LLVM discards a lot of profile counts as
+                # CFG hash mismatches during profile-use. BENCH_PGO_PANIC_UNWIND=1
+                # is still useful when deliberately training on crashy inputs,
+                # because panic=abort can skip LLVM's profiling atexit flush.
+                local pgo_generate_rustflags="-Cprofile-generate=$pgo_dir -Ctarget-cpu=native"
+                if [[ "${BENCH_PGO_PANIC_UNWIND:-0}" == "1" ]]; then
+                    pgo_generate_rustflags="$pgo_generate_rustflags -Cpanic=unwind"
+                fi
+                run_cargo_build \
+                    "PGO Step 1/3: instrumented binary build" \
+                    CARGO_TARGET_DIR="$pgo_target_dir" \
+                    CARGO_INCREMENTAL=0 \
+                    RUSTFLAGS="$pgo_generate_rustflags" \
+                    cargo build --profile dist -p tsz-cli --bin tsz || true
+
+                # Ensure representative external bench fixtures are present so
+                # PGO trains on workload shapes the website actually measures,
+                # not a single-token const expression. The clones are best-effort:
+                # transient network failures should not abort bench-prepare; PGO
+                # still trains on generated synthetic inputs.
+                if [[ "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}" == "1" ]]; then
+                    if ! ensure_utility_types_fixture; then
+                        echo -e "${YELLOW}Warning: utility-types fetch failed; continuing without it for PGO training${NC}"
+                    fi
+                fi
+                if [[ "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}" == "1" ]]; then
+                    if ! ensure_ts_toolbelt_fixture; then
+                        echo -e "${YELLOW}Warning: ts-toolbelt fetch failed; continuing without it for PGO training${NC}"
+                    fi
+                    if ! ensure_ts_essentials_fixture; then
+                        echo -e "${YELLOW}Warning: ts-essentials fetch failed; continuing without it for PGO training${NC}"
+                    fi
+                fi
+
+                echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
+                local pgo_tsz="$pgo_target_dir/dist/tsz"
+                collect_pgo_workload "$pgo_tsz"
+
+                # An empty glob (bash without nullglob) passes a literal "*.profraw"
+                # path to llvm-profdata and fails; array-glob + -e avoids the fork
+                # and the TOCTOU window between a count check and the merge call.
+                local profraw_files=("$pgo_dir"/*.profraw)
+                if [[ -e "${profraw_files[0]}" ]]; then
+                    "$llvm_profdata" merge -o "$pgo_merged" "${profraw_files[@]}"
+                    write_pgo_training_metadata "$pgo_training_metadata" "$pgo_fingerprint" "$llvm_profdata"
+                    profdata_ready=true
+                    if [[ "${BENCH_PGO_CACHE:-1}" == "1" ]]; then
+                        mkdir -p "$pgo_cache_dir"
+                        cp "$pgo_merged" "$pgo_cache_profdata"
+                        cp "$pgo_training_metadata" "$pgo_cache_metadata"
+                        printf '%s\n' "$pgo_fingerprint" > "$pgo_cache_marker"
+                    fi
+                else
+                    echo -e "${YELLOW}PGO training produced no profraw files; skipping PGO optimization${NC}"
+                fi
+            fi
+
+            if [[ "$profdata_ready" == true ]]; then
+                echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
+                if ! run_cargo_build \
+                    "PGO Step 3/3: optimized binary build" \
+                    CARGO_TARGET_DIR="$optimized_target_dir" \
+                    CARGO_INCREMENTAL=0 \
+                    RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
+                    cargo build --profile dist -p tsz-cli --bin tsz; then
+                    if [[ "${BENCH_REQUIRE_PGO:-0}" == "1" ]]; then
+                        echo -e "${RED}✗ PGO dist build failed and BENCH_REQUIRE_PGO=1${NC}"
+                        exit 1
+                    fi
+                    # LLVM PGO can fail when the profile-use link step encounters
+                    # incompatible bitcode/ProfileSummary metadata in this toolchain.
+                    echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
+                    rm -rf "$optimized_target_dir"
+                    optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
+                    run_cargo_build \
+                        "PGO Step 3 fallback: standard dist build" \
+                        CARGO_TARGET_DIR="$optimized_target_dir" \
+                        CARGO_INCREMENTAL=0 \
+                        RUSTFLAGS="-Ctarget-cpu=native" \
+                        cargo build --profile dist -p tsz-cli --bin tsz
+                else
+                    pgo_optimized=true
+                fi
+            else
+                if [[ "${BENCH_REQUIRE_PGO:-0}" == "1" ]]; then
+                    echo -e "${RED}✗ PGO profile data unavailable and BENCH_REQUIRE_PGO=1${NC}"
+                    exit 1
+                fi
+                echo -e "${YELLOW}PGO Step 3/3: no profile data available; using standard dist build${NC}"
+                rm -rf "$optimized_target_dir"
+                optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
+                run_cargo_build \
+                    "PGO Step 3: standard dist build" \
+                    CARGO_TARGET_DIR="$optimized_target_dir" \
+                    CARGO_INCREMENTAL=0 \
+                    RUSTFLAGS="-Ctarget-cpu=native" \
+                    cargo build --profile dist -p tsz-cli --bin tsz
+            fi
+            mkdir -p "$TSZ_OUTPUT_DIR"
+            install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
+            if [[ "$pgo_optimized" == true ]]; then
+                write_pgo_marker "$BENCH_PGO_MARKER" "$pgo_merged" "$pgo_training_metadata" "$pgo_profile_data_source"
+            else
+                rm -f "$BENCH_PGO_MARKER"
+            fi
+            rm -rf "$optimized_target_dir"
+            rm -rf "$pgo_target_dir"
+        else
+            if [[ "$QUICK_MODE" == true || "${BENCH_PGO:-1}" != "1" ]]; then
+                echo -e "${YELLOW}PGO skipped (quick mode or BENCH_PGO=0); using standard dist build${NC}"
+            else
+                echo -e "${YELLOW}PGO unavailable (llvm-profdata not found), using standard build${NC}"
+            fi
+            if [[ "${BENCH_REQUIRE_PGO:-0}" == "1" ]]; then
+                echo -e "${RED}✗ PGO is required for this benchmark run${NC}"
+                exit 1
+            fi
+            run_cargo_build \
+                "Standard dist build" \
+                CARGO_TARGET_DIR="$optimized_target_dir" \
+                CARGO_INCREMENTAL=0 \
+                RUSTFLAGS="-Ctarget-cpu=native" \
+                cargo build --profile dist -p tsz-cli --bin tsz
+            mkdir -p "$TSZ_OUTPUT_DIR"
+            install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
+            rm -f "$BENCH_PGO_MARKER"
+            rm -rf "$optimized_target_dir"
+            rm -rf "$pgo_target_dir"
+        fi
+    fi
+    
+    echo -e "${GREEN}✓${NC} tsz: $($TSZ --version 2>&1 | head -1)"
+    echo -e "   Binary: $TSZ"
+    echo -e "   Size: $(ls -lh "$TSZ" | awk '{print $5}')"
+    echo -e "   Built: $(stat -c '%y' "$TSZ" 2>/dev/null | cut -d. -f1 || stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$TSZ" 2>/dev/null || echo 'unknown')"
+    
+    # Check/install tsgo
+    ensure_tsgo
+    echo -e "${GREEN}✓${NC} tsgo: $($TSGO --version 2>&1 | head -1)"
+    echo -e "   Binary: $TSGO"
+
+    # Check/install tsc
+    ensure_tsc
+    echo -e "${GREEN}✓${NC} tsc: $($TSC --version 2>&1 | head -1)"
+    echo -e "   Binary: $TSC"
+}
+
+RESULTS_CSV=""
+BENCHMARKS_RUN=0
+PROJECT_COMPATIBILITY_JSONL=""
+LAST_PEAK_RSS_BYTES=0
+
+record_project_compatibility() {
+    local name="$1"
+    local exit_class="$2"
+    local phase="$3"
+    local diagnostic_status="$4"
+    local diagnostic_delta="${5:-}"
+    local files_reached="${6:-0}"
+    local peak_memory_bytes="${7:-}"
+    local tsc_exit_codes="${8:-}"
+    local tsz_exit_codes="${9:-}"
+    local tsgo_exit_codes="${10:-}"
+    local fixture_sources
+
+    [ -z "$PROJECT_COMPATIBILITY_JSONL" ] && return
+    fixture_sources="$(tsz_project_fixture_sources "$name")"
+
+    local peak_memory_bytes_reason=""
+    if [ -z "$peak_memory_bytes" ]; then
+        peak_memory_bytes_reason="$(peak_rss_unavailable_reason)"
+        if [ -z "$peak_memory_bytes_reason" ]; then
+            peak_memory_bytes_reason="process exited before sampling"
+        fi
+    fi
+
+    COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
+    COMPAT_OUTPUT_ROOT="$TEMP_DIR" \
+    COMPAT_FIXTURE_ROOT="$EXTERNAL_BENCH_DIR" \
+    COMPAT_NAME="$name" \
+    COMPAT_EXIT_CLASS="$exit_class" \
+    COMPAT_PHASE="$phase" \
+    COMPAT_DIAGNOSTIC_STATUS="$diagnostic_status" \
+    COMPAT_DIAGNOSTIC_DELTA="$diagnostic_delta" \
+    COMPAT_FILES_REACHED="$files_reached" \
+    COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
+    COMPAT_PEAK_MEMORY_BYTES_REASON="$peak_memory_bytes_reason" \
+    COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
+    COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
+    COMPAT_TSGO_EXIT_CODES="$tsgo_exit_codes" \
+    COMPAT_FIXTURE_SOURCES="$fixture_sources" \
+    node "$PROJECT_ROOT/scripts/ci/project-compatibility.mjs" record
+}
+
+# run_isolated <label> <command...>
+#
+# Runs a fixture function and swallows any non-zero exit so one bad fixture
+# (network blip on git clone, pnpm install flake, OOM during a project bench,
+# tsgo segfault on large-ts-repo) doesn't abort the entire bench run.
+# Records a degraded CSV row so the failure surfaces in the published JSON
+# instead of vanishing silently.
+#
+# Note: bash suspends `set -e` inside functions called from a conditional
+# context (cmd || ..., cmd && ..., if cmd, etc.), so commands inside the
+# fixture that fail individually won't abort the function automatically.
+# This matches the prior `fixture_call || true` behavior; it just adds
+# logging + a tracked failure row.
+run_isolated() {
+    local label="$1"; shift
+    local rc=0
+    "$@" || rc=$?
+    if (( rc != 0 )); then
+        echo -e "${YELLOW}warning:${NC} fixture '$label' exited rc=$rc — continuing with remaining benchmarks" >&2
+        record_fixture_failure "$label" "$rc"
+    fi
+    return 0
+}
+
+# Append a degraded row to RESULTS_CSV when a fixture group fails outright
+# (no individual benchmarks were recorded). The schema matches existing error
+# rows: name, lines, kb, tsz_ms, tsgo_ms, tsz_lps, tsgo_lps, winner, ratio, status.
+record_fixture_failure() {
+    local label="$1" rc="$2"
+    RESULTS_CSV="${RESULTS_CSV}${label},0,0,ERR,ERR,N/A,N/A,error,0,fixture failed (rc=${rc})\n"
+}
+
+record_benchmark_source() {
+    local name="$1"
+    local file="$2"
+    [ -z "${BENCHMARK_SOURCES_JSONL:-}" ] && return
+    [ ! -f "$file" ] && return
+
+    SOURCE_NAME="$name" \
+    SOURCE_FILE="$file" \
+    PROJECT_ROOT_VALUE="$PROJECT_ROOT" \
+    UTILITY_TYPES_DIR_VALUE="$UTILITY_TYPES_DIR" \
+    UTILITY_TYPES_REF_VALUE="$UTILITY_TYPES_REF" \
+    TS_TOOLBELT_DIR_VALUE="$TS_TOOLBELT_DIR" \
+    TS_TOOLBELT_REF_VALUE="$TS_TOOLBELT_REF" \
+    TS_ESSENTIALS_DIR_VALUE="$TS_ESSENTIALS_DIR" \
+    TS_ESSENTIALS_REF_VALUE="$TS_ESSENTIALS_REF" \
+    BENCHMARK_SOURCES_JSONL_VALUE="$BENCHMARK_SOURCES_JSONL" \
+    node <<'NODE'
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const name = process.env.SOURCE_NAME || "";
+const file = process.env.SOURCE_FILE || "";
+const root = process.env.PROJECT_ROOT_VALUE || "";
+const out = process.env.BENCHMARK_SOURCES_JSONL_VALUE || "";
+
+function relativeIfInside(base, target) {
+  if (!base) return null;
+  const rel = path.relative(base, target);
+  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel.split(path.sep).join("/") : null;
+}
+
+function originFor(absPath) {
+  const rootRel = relativeIfInside(root, absPath);
+  if (rootRel?.startsWith("TypeScript/")) {
+    return { origin: "typescript", path: rootRel };
+  }
+
+  const external = [
+    ["utility-types", process.env.UTILITY_TYPES_DIR_VALUE, process.env.UTILITY_TYPES_REF_VALUE],
+    ["ts-toolbelt", process.env.TS_TOOLBELT_DIR_VALUE, process.env.TS_TOOLBELT_REF_VALUE],
+    ["ts-essentials", process.env.TS_ESSENTIALS_DIR_VALUE, process.env.TS_ESSENTIALS_REF_VALUE],
+  ];
+  for (const [origin, dir, ref] of external) {
+    const rel = relativeIfInside(dir || "", absPath);
+    if (rel) return { origin, ref: ref || null, path: `${origin}/${rel}` };
+  }
+
+  if (rootRel) return { origin: "workspace", path: rootRel };
+  return { origin: "generated", path: path.basename(absPath) };
+}
+
+try {
+  const absPath = path.resolve(file);
+  const content = fs.readFileSync(absPath, "utf8").replace(/\s+$/u, "");
+  const source = originFor(absPath);
+  fs.appendFileSync(out, `${JSON.stringify({
+    name,
+    source: {
+      ...source,
+      sha256: crypto.createHash("sha256").update(content).digest("hex"),
+      content,
+    },
+  })}\n`, "utf8");
+} catch {
+  // Source metadata improves website robustness but must never break a bench run.
+}
+NODE
+}
+
+run_benchmark() {
+    local name="$1"
+    local file="$2"
+    local extra_args="${3:-}"
+
+    # Skip if filter is set and name doesn't match
+    if [ -n "$FILTER" ] && ! echo "$name" | grep -qE "$FILTER"; then
+        return
+    fi
+
+    BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
+
+    local lines=$(wc -l < "$file" 2>/dev/null | tr -d ' ')
+    local bytes=$(wc -c < "$file" 2>/dev/null | tr -d ' ')
+    local kb=$((bytes / 1024))
+    local info="${lines} lines, ${kb}KB"
+
+    # Benchmark fixtures must be valid TypeScript for the reference compiler.
+    # If tsc fails or times out, treat the fixture as invalid benchmark input and skip it.
+    local tsc_check=0
+    run_with_timeout "$BENCH_TIMEOUT" $TSC --noEmit $extra_args "$file" >/dev/null 2>&1 || tsc_check=$?
+    if [ "$tsc_check" -ne 0 ]; then
+        if [ "$tsc_check" -eq 124 ]; then
+            echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${BENCH_TIMEOUT}s)"
+        else
+            local tsc_error=$($TSC --noEmit $extra_args "$file" 2>&1 | head -1)
+            echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
+            echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
+        fi
+        return
+    fi
+
+    record_benchmark_source "$name" "$file"
+
+    # Pre-validate with timeout: record errors/timeouts in summary table
+    local tsz_check=0
+    run_with_timeout "$BENCH_TIMEOUT" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit $extra_args "$file" >/dev/null 2>&1 || tsz_check=$?
+    local tsgo_check=0
+    run_with_timeout "$BENCH_TIMEOUT" $TSGO --noEmit $extra_args "$file" >/dev/null 2>&1 || tsgo_check=$?
+
+    if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
+        local status=""
+        local tsz_ms="N/A"
+        local tsgo_ms="N/A"
+        local tsz_lps="N/A"
+        local tsgo_lps="N/A"
+        local winner="error"
+        local ratio="0"
+
+        echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC}"
+
+        if [ "$tsz_check" -eq 124 ]; then
+            status="tsz timeout"
+            tsz_ms="TIMEOUT"
+            echo -e "  ${CYAN}tsz:${NC} timed out after ${BENCH_TIMEOUT}s" >&2
+        elif [ "$tsz_check" -ne 0 ]; then
+            status="tsz error"
+            tsz_ms="ERR"
+            local tsz_error=$(run_with_timeout "$BENCH_TIMEOUT" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit $extra_args "$file" 2>&1 | head -1)
+            echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
+        fi
+
+        if [ "$tsgo_check" -eq 124 ]; then
+            status="${status:+${status}; }tsgo timeout"
+            tsgo_ms="TIMEOUT"
+            echo -e "  ${CYAN}tsgo:${NC} timed out after ${BENCH_TIMEOUT}s" >&2
+        elif [ "$tsgo_check" -ne 0 ]; then
+            status="${status:+${status}; }tsgo error"
+            tsgo_ms="ERR"
+            local tsgo_error=$($TSGO --noEmit $extra_args "$file" 2>&1 | head -1)
+            echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
+        fi
+
+        status="${status:+${status}; }tsc ok"
+
+        RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
+        return
+    fi
+
+    echo -e "${GREEN}$name${NC} ($info)"
+
+    # Run benchmark and capture JSON output.
+    # Wrap commands with the repo timeout runner to kill runs that hit infinite loops.
+    # Normal single-file runs complete in <5s, so 15s is generous.
+    # Use --ignore-failure so hyperfine continues even if a rare iteration is killed.
+    local run_timeout=15
+    local json_file=$(mktemp)
+    if ! hyperfine \
+        --warmup "$WARMUP" \
+        --min-runs "$MIN_RUNS" \
+        --max-runs "$MAX_RUNS" \
+        --style full \
+        --ignore-failure \
+        --export-json "$json_file" \
+        -n "tsz" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${TSZ_LIB_DIR:+env TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit $extra_args $file 2>/dev/null" \
+        -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- $TSGO --noEmit $extra_args $file 2>/dev/null"; then
+        local status="hyperfine error"
+        RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
+        rm -f "$json_file"
+        return
+    fi
+    
+    # Extract times and calculate throughput
+    if [ -f "$json_file" ] && command -v jq &>/dev/null; then
+        local tsz_exit_status
+        local tsgo_exit_status
+        tsz_exit_status="$(hyperfine_exit_status_for "$json_file" "tsz" || true)"
+        tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
+        if [ "$tsz_exit_status" != "ok" ] || [ "$tsgo_exit_status" != "ok" ]; then
+            local status=""
+            [ "$tsz_exit_status" != "ok" ] && status="tsz ${tsz_exit_status}"
+            [ "$tsgo_exit_status" != "ok" ] && status="${status:+${status}; }tsgo ${tsgo_exit_status}"
+            echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
+            rm -f "$json_file"
+            return
+        fi
+
+        local tsz_mean=$(hyperfine_mean_for "$json_file" "tsz")
+        local tsgo_mean=$(hyperfine_mean_for "$json_file" "tsgo")
+        
+        if [ -n "$tsz_mean" ] && [ -n "$tsgo_mean" ] && [ "$tsz_mean" != "0" ] && [ "$tsgo_mean" != "0" ]; then
+            # Calculate throughput (lines/sec) and format times (2 decimal places)
+            local tsz_lps=$(printf "%.0f" "$(echo "$lines / $tsz_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            local tsgo_lps=$(printf "%.0f" "$(echo "$lines / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            local tsz_ms=$(printf "%.2f" "$(echo "$tsz_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            local tsgo_ms=$(printf "%.2f" "$(echo "$tsgo_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            
+            # Determine winner and calculate speedup ratio
+            local winner="tsgo"
+            local ratio
+            if (( $(echo "$tsz_mean < $tsgo_mean" | bc -l) )); then
+                winner="tsz"
+                ratio=$(printf "%.2f" "$(echo "$tsgo_mean / $tsz_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            else
+                ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            fi
+            
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
+        fi
+    fi
+    rm -f "$json_file"
+}
+
+run_project_benchmark() {
+    local name="$1"
+    local tsconfig="$2"
+    local src_dir="$3"
+    local peak_memory_bytes=""
+    local check_log_dir="${TEMP_DIR:-${TMPDIR:-/tmp}}"
+    local check_log_prefix
+    check_log_prefix="$(printf '%s' "$name" | tr -c '[:alnum:]_.-' '_')"
+    local tsc_check_log="$check_log_dir/${check_log_prefix}.tsc-check.log"
+    local tsz_check_log="$check_log_dir/${check_log_prefix}.tsz-check.log"
+    local tsgo_check_log="$check_log_dir/${check_log_prefix}.tsgo-check.log"
+
+    update_project_peak_memory() {
+        local observed="${LAST_PEAK_RSS_BYTES:-0}"
+        if [[ "$observed" =~ ^[0-9]+$ ]] && [ "$observed" -gt 0 ]; then
+            if [ -z "$peak_memory_bytes" ] || [ "$observed" -gt "$peak_memory_bytes" ]; then
+                peak_memory_bytes="$observed"
+            fi
+        fi
+    }
+
+    # Skip if filter is set and name doesn't match
+    if [ -n "$FILTER" ] && ! echo "$name" | grep -qE "$FILTER"; then
+        return
+    fi
+
+    BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
+
+    # Count TS-family files from the same tsconfig used for project-mode
+    # compilation. This keeps full-project metadata aligned with the files
+    # passed to `tsz/tsgo --noEmit -p`.
+    local lines
+    local bytes
+    local file_count
+    read -r lines bytes file_count < <(project_tsconfig_stats "$tsconfig" "$src_dir")
+    local kb=$((bytes / 1024))
+    local info="${lines} lines, ${kb}KB (${file_count} project files)"
+
+    # Set project-level Node options for large-ts-repo so tsc/tsgo/tsz can
+    # run with a larger heap during compilation.
+    local -a project_node_prefix=()
+    if [ "$name" = "large-ts-repo" ] && [ -n "$LARGE_TS_NODE_OPTIONS" ]; then
+        project_node_prefix=(env "NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS")
+    fi
+    local -a tsz_prefix=()
+    if [ "${#project_node_prefix[@]}" -gt 0 ]; then
+        tsz_prefix=("${project_node_prefix[@]}")
+    fi
+    if [ -n "${TSZ_LIB_DIR:-}" ]; then
+        tsz_prefix+=(env "TSZ_LIB_DIR=$TSZ_LIB_DIR")
+    fi
+    if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
+        tsz_prefix+=(env "RUST_MIN_STACK=$TSZ_RUST_MIN_STACK")
+    fi
+
+    # For project fixtures (except nextjs and large-ts-repo), require
+    # a clean tsc pass before benchmarking. large-ts-repo is too expensive
+    # to validate twice, so its hyperfine result is validated via exit_codes
+    # before any timing is recorded as a valid compiler pass.
+    local tsc_exit_codes=""
+    if [ "$name" != "nextjs" ] && [ "$name" != "large-ts-repo" ]; then
+        local project_tsc_timeout
+        project_tsc_timeout=$((BENCH_TIMEOUT * 2))
+        local tsc_check=0
+        if [ "${#project_node_prefix[@]}" -gt 0 ]; then
+            run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" >"$tsc_check_log" 2>&1 || tsc_check=$?
+            update_project_peak_memory
+        else
+            run_with_timeout "$project_tsc_timeout" "$TSC" --noEmit -p "$tsconfig" >"$tsc_check_log" 2>&1 || tsc_check=$?
+            update_project_peak_memory
+        fi
+        tsc_exit_codes="$tsc_check"
+        if [ "$tsc_check" -ne 0 ]; then
+            local status
+            local tsc_error=""
+            if [ "$tsc_check" -eq 124 ]; then
+                status="tsc timeout after ${project_tsc_timeout}s"
+                echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${project_tsc_timeout}s)"
+                tsc_error="tsc timed out after ${project_tsc_timeout}s"
+            else
+                status="tsc fixture error"
+                tsc_error="$(diagnostic_lines_from_file "tsc" "$tsc_check_log")"
+                echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
+                echo -e "  ${CYAN}tsc error:${NC} $(printf '%s' "$tsc_error" | head -1)" >&2
+            fi
+            record_project_compatibility "$name" "fixture invalid" "fixture setup" "tsc fixture failed" "$tsc_error" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes"
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
+            return
+        fi
+    fi
+
+    # Pre-validate with timeout: record errors/timeouts in summary table.
+    # Project-level benchmarks get a longer timeout since they check many files.
+    # large-ts-repo skips pre-validation entirely (the cold check itself takes
+    # several minutes for both compilers). Its measured run is rejected below
+    # unless hyperfine reports zero exit codes for every measured iteration.
+    local project_timeout=$((BENCH_TIMEOUT * 2))
+    local tsz_check=0
+    local tsgo_check=0
+    if [ "$name" != "large-ts-repo" ]; then
+        if [ "${#tsz_prefix[@]}" -gt 0 ]; then
+            run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" >"$tsz_check_log" 2>&1 || tsz_check=$?
+            update_project_peak_memory
+        else
+            run_with_timeout "$project_timeout" "$TSZ" --noEmit -p "$tsconfig" >"$tsz_check_log" 2>&1 || tsz_check=$?
+            update_project_peak_memory
+        fi
+        if [ "${#project_node_prefix[@]}" -gt 0 ]; then
+            run_with_timeout "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" >"$tsgo_check_log" 2>&1 || tsgo_check=$?
+            update_project_peak_memory
+        else
+            run_with_timeout "$project_timeout" "$TSGO" --noEmit -p "$tsconfig" >"$tsgo_check_log" 2>&1 || tsgo_check=$?
+            update_project_peak_memory
+        fi
+    fi
+
+    # `tsz_failed_expected` is reserved for fixtures where tsz is known to fail.
+    # large-ts-repo is no longer pre-validated (see comment above); the actual
+    # hyperfine run determines whether tsz produces a valid zero-exit timing.
+    local tsz_failed_expected=false
+
+    if { [ "$tsz_check" -ne 0 ] && [ "$tsz_failed_expected" = false ]; } || [ "$tsgo_check" -ne 0 ]; then
+        local status=""
+        local tsz_ms="N/A"
+        local tsgo_ms="N/A"
+        local tsz_lps="N/A"
+        local tsgo_lps="N/A"
+        local winner="error"
+        local ratio="0"
+        local diagnostic_delta=""
+
+        echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC}"
+
+        if [ "$tsz_check" -eq 124 ]; then
+            status="tsz timeout"
+            tsz_ms="TIMEOUT"
+            diagnostic_delta="tsz timed out after ${project_timeout}s"
+            echo -e "  ${CYAN}tsz:${NC} timed out after ${project_timeout}s" >&2
+        elif [ "$tsz_check" -ne 0 ]; then
+            status="tsz error"
+            tsz_ms="ERR"
+            local tsz_error
+            tsz_error="$(diagnostic_lines_from_file "tsz" "$tsz_check_log")"
+            diagnostic_delta="$(append_diagnostic_delta "$diagnostic_delta" "$tsz_error")"
+            echo -e "  ${CYAN}tsz error:${NC} $(printf '%s' "$tsz_error" | head -1)" >&2
+        fi
+
+        if [ "$tsgo_check" -eq 124 ]; then
+            status="${status:+${status}; }tsgo timeout"
+            tsgo_ms="TIMEOUT"
+            diagnostic_delta="${diagnostic_delta:+${diagnostic_delta}; }tsgo timed out after ${project_timeout}s"
+            echo -e "  ${CYAN}tsgo:${NC} timed out after ${project_timeout}s" >&2
+        elif [ "$tsgo_check" -ne 0 ]; then
+            status="${status:+${status}; }tsgo error"
+            tsgo_ms="ERR"
+            local tsgo_error
+            tsgo_error="$(diagnostic_lines_from_file "tsgo" "$tsgo_check_log")"
+            diagnostic_delta="$(append_diagnostic_delta "$diagnostic_delta" "$tsgo_error")"
+            echo -e "  ${CYAN}tsgo error:${NC} $(printf '%s' "$tsgo_error" | head -1)" >&2
+        fi
+
+        if [ "$name" != "nextjs" ]; then
+            status="${status:+${status}; }tsc ok"
+        fi
+
+        local exit_class
+        exit_class="$(project_failure_class "$status" "$tsz_check" "$tsgo_check")"
+        record_project_compatibility "$name" "$exit_class" "check" "$(project_failure_status "$exit_class")" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
+        RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
+        return
+    fi
+
+    echo -e "${GREEN}$name${NC} ($info)"
+
+    # Run benchmark with -p (project mode).
+    # Use longer per-run timeout for project benchmarks; very large fixtures
+    # (6000+ files) need more headroom because tsz/tsgo cold runs can exceed
+    # the default 120s on lower-spec CI runners.
+    local run_timeout
+    local proj_warmup
+    local proj_min
+    local proj_max
+    if [ "$name" = "large-ts-repo" ]; then
+        # tsz cold-checks 6000+ files in ~12min on a workstation; tsgo is much
+        # faster (~2.5s) but kept the 10min ceiling for headroom on slow CI
+        # runners. Bump to 25min so tsz can record a real number instead of
+        # being treated as "unavailable", which previously hard-skipped the
+        # tsz arm of this benchmark via a bench-script bypass.
+        # BENCH_COLD=1 clears build-info before each run; a warmup would just
+        # duplicate the same cold check and roughly double large fixture cost.
+        run_timeout=1500
+        proj_warmup=0
+        proj_min=1
+        proj_max=2
+    else
+        run_timeout=120
+        proj_warmup="$WARMUP"
+        proj_min="$MIN_RUNS"
+        proj_max="$MAX_RUNS"
+    fi
+    local json_file=$(mktemp)
+    local tsz_cmd_prefix=""
+    local tsgo_cmd_prefix=""
+    if [ "$name" = "large-ts-repo" ] && [ -n "$LARGE_TS_NODE_OPTIONS" ]; then
+        tsz_cmd_prefix="env NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS "
+        tsgo_cmd_prefix="env NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS "
+    fi
+    if [ -n "${TSZ_LIB_DIR:-}" ]; then
+        tsz_cmd_prefix="${tsz_cmd_prefix}env TSZ_LIB_DIR=$TSZ_LIB_DIR "
+    fi
+    if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
+        tsz_cmd_prefix="${tsz_cmd_prefix}env RUST_MIN_STACK=$TSZ_RUST_MIN_STACK "
+    fi
+    local -a hyperfine_prepare_args=()
+    if [[ "${BENCH_COLD:-0}" == "1" ]]; then
+        local tsconfig_dir
+        tsconfig_dir="$(dirname "$tsconfig")"
+        hyperfine_prepare_args=(--prepare "find '${tsconfig_dir}' -name '*.tsbuildinfo' -delete 2>/dev/null; true")
+    fi
+
+    # When tsz is expected to fail (e.g. large-ts-repo OOMs), run tsgo-only.
+    if [ "$tsz_failed_expected" = true ]; then
+        echo -e "${YELLOW}$name${NC} ($info) — tsz unavailable, benchmarking tsgo only"
+        local hyperfine_tsz_unavailable_status=0
+        if [ "${#hyperfine_prepare_args[@]}" -gt 0 ]; then
+            hyperfine \
+                --warmup "$proj_warmup" \
+                --min-runs "$proj_min" \
+                --max-runs "$proj_max" \
+                --style full \
+                --ignore-failure \
+                --export-json "$json_file" \
+                "${hyperfine_prepare_args[@]}" \
+                -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
+        else
+            hyperfine \
+                --warmup "$proj_warmup" \
+                --min-runs "$proj_min" \
+                --max-runs "$proj_max" \
+                --style full \
+                --ignore-failure \
+                --export-json "$json_file" \
+                -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
+        fi
+        if [ "$hyperfine_tsz_unavailable_status" -ne 0 ]; then
+            record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing tsgo-only project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes"
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,tsgo,0,tsz unavailable; tsgo error\n"
+            rm -f "$json_file"
+            return
+        fi
+        if [ -f "$json_file" ] && command -v jq &>/dev/null; then
+            local tsgo_exit_status
+            tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
+            if [ "$tsgo_exit_status" != "ok" ]; then
+                record_project_compatibility "$name" "nonzero exit" "timing" "tsgo exit mismatch" "tsgo ${tsgo_exit_status}" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "$tsgo_exit_status"
+                RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,error,0,tsz unavailable; tsgo ${tsgo_exit_status}\n"
+                rm -f "$json_file"
+                return
+            fi
+            local tsgo_mean
+            tsgo_mean=$(hyperfine_mean_for "$json_file" "tsgo")
+            if [ -n "$tsgo_mean" ] && [ "$tsgo_mean" != "0" ]; then
+                local tsgo_lps
+                tsgo_lps=$(printf "%.0f" "$(echo "$lines / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+                local tsgo_ms
+                tsgo_ms=$(printf "%.2f" "$(echo "$tsgo_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+                record_project_compatibility "$name" "tsz unavailable" "timing" "tsz skipped by runner" "tsz unavailable" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "0"
+                RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,${tsgo_ms},N/A,${tsgo_lps},tsgo,0,tsz unavailable\n"
+            fi
+        fi
+        rm -f "$json_file"
+        return
+    fi
+
+    local hyperfine_status=0
+    if [ "${#hyperfine_prepare_args[@]}" -gt 0 ]; then
+        hyperfine \
+            --warmup "$proj_warmup" \
+            --min-runs "$proj_min" \
+            --max-runs "$proj_max" \
+            --style full \
+            --ignore-failure \
+            --export-json "$json_file" \
+            "${hyperfine_prepare_args[@]}" \
+            -n "tsz" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
+            -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+    else
+        hyperfine \
+            --warmup "$proj_warmup" \
+            --min-runs "$proj_min" \
+            --max-runs "$proj_max" \
+            --style full \
+            --ignore-failure \
+            --export-json "$json_file" \
+            -n "tsz" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
+            -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+    fi
+    if [ "$hyperfine_status" -ne 0 ]; then
+        local status="hyperfine error"
+        record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes"
+        RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
+        rm -f "$json_file"
+        return
+    fi
+
+    # Extract times and calculate throughput
+    if [ -f "$json_file" ] && command -v jq &>/dev/null; then
+        local tsz_exit_status
+        local tsgo_exit_status
+        tsz_exit_status="$(hyperfine_exit_status_for "$json_file" "tsz" || true)"
+        tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
+        if [ "$tsz_exit_status" != "ok" ] || [ "$tsgo_exit_status" != "ok" ]; then
+            local status=""
+            [ "$tsz_exit_status" != "ok" ] && status="tsz ${tsz_exit_status}"
+            [ "$tsgo_exit_status" != "ok" ] && status="${status:+${status}; }tsgo ${tsgo_exit_status}"
+            echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
+            local exit_class
+            exit_class="$(project_failure_class "$status" $(exit_codes_from_status "$status"))"
+            record_project_compatibility "$name" "$exit_class" "timing" "$(project_failure_status "$exit_class")" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
+            rm -f "$json_file"
+            return
+        fi
+
+        local tsz_mean=$(hyperfine_mean_for "$json_file" "tsz")
+        local tsgo_mean=$(hyperfine_mean_for "$json_file" "tsgo")
+
+        if [ -n "$tsz_mean" ] && [ -n "$tsgo_mean" ] && [ "$tsz_mean" != "0" ] && [ "$tsgo_mean" != "0" ]; then
+            local tsz_lps=$(printf "%.0f" "$(echo "$lines / $tsz_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            local tsgo_lps=$(printf "%.0f" "$(echo "$lines / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            local tsz_ms=$(printf "%.2f" "$(echo "$tsz_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            local tsgo_ms=$(printf "%.2f" "$(echo "$tsgo_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+
+            local winner="tsgo"
+            local ratio
+            if (( $(echo "$tsz_mean < $tsgo_mean" | bc -l) )); then
+                winner="tsz"
+                ratio=$(printf "%.2f" "$(echo "$tsgo_mean / $tsz_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            else
+                ratio=$(printf "%.2f" "$(echo "$tsz_mean / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+            fi
+
+            local success_exit_class="exit success"
+            local success_phase="check"
+            local success_diagnostic_status="none"
+            local success_diagnostic_delta=""
+            if [ -z "$tsc_exit_codes" ]; then
+                success_exit_class="oracle unavailable"
+                success_phase="oracle"
+                success_diagnostic_status="tsc oracle unavailable"
+                success_diagnostic_delta="tsc oracle was not collected for this project row"
+            fi
+            record_project_compatibility "$name" "$success_exit_class" "$success_phase" "$success_diagnostic_status" "$success_diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0"
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
+        fi
+    fi
+    rm -f "$json_file"
+}
+
+JSON_EXPORTED=false
+export_results_json() {
+    [ "$JSON_OUTPUT" != true ] && return
+    [ -z "$RESULTS_CSV" ] && return
+    # Idempotent: the EXIT trap may also call this after the in-band
+    # invocation; only one write is needed (and the second would just
+    # produce a duplicate timestamped file under artifacts/).
+    [ "$JSON_EXPORTED" = true ] && return
+    JSON_EXPORTED=true
+
+    local default_file="$PROJECT_ROOT/artifacts/bench-vs-tsgo-$(date +%Y%m%d-%H%M%S).json"
+    local out_file="${JSON_FILE:-$default_file}"
+    mkdir -p "$(dirname "$out_file")"
+
+    local expanded_csv
+    local project_readme_candidates_json="{}"
+    local project_owner_families_json
+
+    expanded_csv="$(echo -e "$RESULTS_CSV")"
+    project_owner_families_json="$(tsz_project_owner_families_json)"
+    if command -v node >/dev/null 2>&1; then
+      project_readme_candidates_json="$(tsz_project_readme_candidates_json)"
+    fi
+
+    RESULTS_CSV_EXPANDED="$expanded_csv" \
+    QUICK_MODE_VALUE="$QUICK_MODE" \
+    FILTER_VALUE="$FILTER" \
+    TSZ_BIN_VALUE="$TSZ" \
+    TSZ_IS_OVERRIDE_VALUE="$TSZ_IS_OVERRIDE" \
+    TSGO_BIN_VALUE="$TSGO" \
+    TSC_BIN_VALUE="$TSC" \
+    BENCH_PGO_MARKER_VALUE="$BENCH_PGO_MARKER" \
+    BENCH_PGO_VALUE="${BENCH_PGO:-1}" \
+    BENCH_REQUIRE_PGO_VALUE="${BENCH_REQUIRE_PGO:-0}" \
+    BENCH_PGO_CACHE_VALUE="${BENCH_PGO_CACHE:-1}" \
+    BENCH_PGO_SYNTHETIC_VALUE="${BENCH_PGO_SYNTHETIC:-1}" \
+    BENCH_PGO_FETCH_UTILITY_TYPES_VALUE="${BENCH_PGO_FETCH_UTILITY_TYPES:-1}" \
+    BENCH_PGO_FETCH_CORE_PROJECTS_VALUE="${BENCH_PGO_FETCH_CORE_PROJECTS:-0}" \
+    BENCH_PGO_PANIC_UNWIND_VALUE="${BENCH_PGO_PANIC_UNWIND:-0}" \
+    BENCH_PGO_EXTRA_INPUTS_VALUE="${BENCH_PGO_EXTRA_INPUTS:-}" \
+    BENCH_PGO_TSZ_TIMEOUT_VALUE="$BENCH_PGO_TSZ_TIMEOUT" \
+    LARGE_TS_DIR_VALUE="$LARGE_TS_DIR" \
+    NEXTJS_DIR_VALUE="$NEXTJS_DIR" \
+    NEXT_APP_BENCH_DIR_VALUE="$NEXT_APP_BENCH_DIR" \
+    VITE_APP_BENCH_DIR_VALUE="$VITE_APP_BENCH_DIR" \
+    RXJS_DIR_VALUE="$RXJS_DIR" \
+    TYPE_FEST_DIR_VALUE="$TYPE_FEST_DIR" \
+    ZOD_DIR_VALUE="$ZOD_DIR" \
+    UTILITY_TYPES_DIR_VALUE="$UTILITY_TYPES_DIR" \
+    TS_TOOLBELT_DIR_VALUE="$TS_TOOLBELT_DIR" \
+    TS_ESSENTIALS_DIR_VALUE="$TS_ESSENTIALS_DIR" \
+    BENCHMARKS_RUN_VALUE="$BENCHMARKS_RUN" \
+    BENCH_SHARD_LABEL_VALUE="${TSZ_BENCH_SHARD_LABEL:-}" \
+    BENCH_SHARD_FILTER_VALUE="${TSZ_BENCH_SHARD_FILTER:-$FILTER}" \
+    COMPATIBILITY_JSONL_VALUE="$PROJECT_COMPATIBILITY_JSONL" \
+    BENCHMARK_SOURCES_JSONL_VALUE="${BENCHMARK_SOURCES_JSONL:-}" \
+    PROJECT_OWNER_FAMILIES_JSON_VALUE="$project_owner_families_json" \
+    PROJECT_README_CANDIDATES_JSON_VALUE="$project_readme_candidates_json" \
+    node - "$out_file" <<'NODE'
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const outFile = process.argv[2];
+const PROJECT_OWNER_FAMILIES = JSON.parse(process.env.PROJECT_OWNER_FAMILIES_JSON_VALUE || "{}");
+const projectOwnerFamilies = PROJECT_OWNER_FAMILIES;
+const PROJECT_README_CANDIDATES = JSON.parse(process.env.PROJECT_README_CANDIDATES_JSON_VALUE || "{}");
+const projectReadmeCandidates = PROJECT_README_CANDIDATES;
+
+function readProjectReadmes() {
+  const readmes = new Map();
+
+  const directories = {
+    "large-ts-repo": process.env.LARGE_TS_DIR_VALUE,
+    nextjs: process.env.NEXTJS_DIR_VALUE,
+    "nextjs-fresh-app": process.env.NEXT_APP_BENCH_DIR_VALUE,
+    "vite-vanilla-ts-app": process.env.VITE_APP_BENCH_DIR_VALUE,
+    "rxjs-project": process.env.RXJS_DIR_VALUE,
+    "type-fest-project": process.env.TYPE_FEST_DIR_VALUE,
+    "zod-project": process.env.ZOD_DIR_VALUE,
+    "utility-types-project": process.env.UTILITY_TYPES_DIR_VALUE,
+    "ts-toolbelt-project": process.env.TS_TOOLBELT_DIR_VALUE,
+    "ts-essentials-project": process.env.TS_ESSENTIALS_DIR_VALUE,
+  };
+
+  for (const [name, directory] of Object.entries(directories)) {
+    const candidates = Array.isArray(projectReadmeCandidates[name]) ? projectReadmeCandidates[name] : [];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      if (!directory) continue;
+      try {
+        const text = fs.readFileSync(path.join(directory, candidate), "utf8").trim();
+        if (text) {
+          readmes.set(name, text.length > 18000 ? `${text.slice(0, 18000).trimEnd()}\n\n...` : text);
+          break;
+        }
+      } catch {
+        // README is optional for fixtures that were not prepared in this run.
+      }
+    }
+  }
+  return readmes;
+}
+
+function readCompatibilityRows() {
+  const file = process.env.COMPATIBILITY_JSONL_VALUE || "";
+  if (!file) return new Map();
+  try {
+    const rows = fs.readFileSync(file, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    return new Map(rows.map((row) => [row.name, row]));
+  } catch {
+    return new Map();
+  }
+}
+
+function readSourceRows() {
+  const file = process.env.BENCHMARK_SOURCES_JSONL_VALUE || "";
+  if (!file) return new Map();
+  try {
+    const rows = fs.readFileSync(file, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((row) => row?.name && row?.source?.content);
+    return new Map(rows.map((row) => [row.name, row.source]));
+  } catch {
+    return new Map();
+  }
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function githubRunUrl(runId) {
+  if (!runId || runId === "local") return null;
+  const serverUrl = firstNonEmpty(process.env.GITHUB_SERVER_URL, "https://github.com");
+  const repository = firstNonEmpty(process.env.GITHUB_REPOSITORY);
+  if (!repository) return null;
+  return `${serverUrl}/${repository}/actions/runs/${runId}`;
+}
+
+function compatibilityArtifactMetadata(recorded = {}, generatedAt = new Date().toISOString()) {
+  const runId = firstNonEmpty(recorded.workflow_run_id, process.env.GITHUB_RUN_ID, "local");
+  return {
+    generated_at: firstNonEmpty(recorded.generated_at, generatedAt),
+    source_commit: firstNonEmpty(recorded.source_commit, process.env.BENCH_TARGET_SHA, process.env.GITHUB_SHA, "local"),
+    workflow_name: firstNonEmpty(recorded.workflow_name, process.env.GITHUB_WORKFLOW, "local"),
+    workflow_run_id: runId,
+    workflow_run_url: firstNonEmpty(recorded.workflow_run_url, githubRunUrl(runId)),
+    workflow_run_attempt: firstNonEmpty(recorded.workflow_run_attempt, process.env.GITHUB_RUN_ATTEMPT),
+    run_status: firstNonEmpty(
+      recorded.run_status,
+      process.env.GITHUB_ACTIONS === "true" ? "completed" : "local",
+    ),
+  };
+}
+
+// Factory (not constant) so each fallback row owns its own nested arrays/
+// objects — downstream consumers must be free to mutate without aliasing.
+function fallbackCompatibilityDefaults() {
+  return {
+    diagnostic_deltas: [],
+    exit_codes: { tsc: [], tsz: [], tsgo: [] },
+    files_reached: null,
+    files_reached_reason: "runner did not count",
+    peak_memory_bytes: null,
+    peak_memory_bytes_reason: "not measured on platform",
+  };
+}
+
+function fallbackCompatibility(row) {
+  if (!projectOwnerFamilies[row.name]) return null;
+  const status = String(row.status || "").toLowerCase();
+  if (!status) {
+    return {
+      ...fallbackCompatibilityDefaults(),
+      exit_class: "exit success",
+      phase: "check",
+      last_successful_phase: "check",
+      diagnostic_status: "none",
+    };
+  }
+  if (status.includes("fixture")) {
+    return {
+      ...fallbackCompatibilityDefaults(),
+      exit_class: "fixture invalid",
+      phase: "fixture setup",
+      last_successful_phase: null,
+      diagnostic_status: "tsc fixture failed",
+    };
+  }
+  return {
+    ...fallbackCompatibilityDefaults(),
+    exit_class: status.includes("timeout") ? "timeout" : "nonzero exit",
+    phase: "check",
+    last_successful_phase: null,
+    diagnostic_status: status.includes("tsz") ? "diagnostic mismatch or compiler error" : "compiler error",
+  };
+}
+
+function normalizedDiagnosticDeltas(recorded) {
+  if (!Array.isArray(recorded.diagnostic_deltas)) return [];
+  return recorded.diagnostic_deltas
+    .map((line) => String(line || "").trim())
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function diagnosticCodesFrom(deltas) {
+  const codes = [];
+  const seen = new Set();
+  for (const line of deltas) {
+    for (const match of line.matchAll(/\bTS\d{4,5}\b/g)) {
+      const code = match[0];
+      if (seen.has(code)) continue;
+      seen.add(code);
+      codes.push(code);
+      if (codes.length >= 8) return codes;
+    }
+  }
+  return codes;
+}
+
+function reductionCandidatesFrom(deltas) {
+  const coded = deltas.filter((line) => /\bTS\d{4,5}\b/.test(line));
+  const source = coded.length ? coded : deltas;
+  return source.slice(0, 5);
+}
+
+function knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas) {
+  const existing = Array.isArray(recorded.known_blockers) ? recorded.known_blockers : [];
+  if (existing.length) {
+    return existing.map(String).filter(Boolean).slice(0, 8);
+  }
+
+  const blockers = [];
+  const add = (blocker) => {
+    if (blocker && !blockers.includes(blocker) && blockers.length < 8) blockers.push(blocker);
+  };
+  const exitClass = String(recorded.exit_class || "");
+  const phase = String(recorded.phase || "");
+
+  if (exitClass === "timeout") add("timeout during project check");
+  if (exitClass === "oom") add("OOM or killed during project check");
+  if (exitClass === "crash") add("compiler crash during project check");
+  if (exitClass === "fixture invalid") add("reference fixture invalid");
+  if (exitClass === "runner error") add("benchmark runner error");
+  if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
+  if (exitClass === "oracle unavailable") add("tsc oracle unavailable");
+  if (phase && phase !== "check") add(`${phase} phase blocker`);
+
+  for (const group of diagnosticSubsystems) {
+    add(String(group?.subsystem || ""));
+  }
+
+  if (!blockers.length && diagnosticCodesFrom(diagnosticDeltas).length) {
+    add("unclassified diagnostic mismatch");
+  }
+
+  return blockers;
+}
+
+const DIAGNOSTIC_SUBSYSTEM_RULES = [
+  ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
+  ["syntax-parser-jsdoc", new Set(["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"])],
+  ["module-symbol-resolution", new Set(["TS2304", "TS2305", "TS2306", "TS2307", "TS2451", "TS2503", "TS2580", "TS2583", "TS2664", "TS2665", "TS2666", "TS2694"])],
+  ["relations-assignability", new Set(["TS2322", "TS2345", "TS2352", "TS2394", "TS2416", "TS2420", "TS2430", "TS2559", "TS2740", "TS2741", "TS2769"])],
+  ["evaluation-inference-instantiation", new Set(["TS2313", "TS2314", "TS2315", "TS2344", "TS2558", "TS2589", "TS2590", "TS2615", "TS7022"])],
+  ["keyspace-property-indexed", new Set(["TS2339", "TS2353", "TS2536", "TS2537", "TS2538", "TS2540", "TS4111", "TS7053"])],
+  ["flow-narrowing", new Set(["TS2367", "TS2677", "TS2774", "TS18047", "TS18048"])],
+  ["class-this-accessor", new Set(["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"])],
+  ["emit-dts-nameability", new Set(["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"])],
+];
+
+function subsystemForCode(code) {
+  for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
+    if (codes.has(code)) return subsystem;
+  }
+  return "unclassified diagnostic";
+}
+
+function diagnosticSubsystemsFrom(deltas) {
+  const groups = new Map();
+  for (const line of deltas) {
+    const codes = [...line.matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
+    const lineCodes = codes.length ? codes : ["uncoded"];
+    for (const code of lineCodes) {
+      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
+      if (!groups.has(subsystem)) {
+        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
+      }
+      const group = groups.get(subsystem);
+      group.count += 1;
+      if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
+        group.codes.push(code);
+      }
+      if (group.examples.length < 3) {
+        group.examples.push(line);
+      }
+    }
+  }
+  return [...groups.values()];
+}
+
+function normalizedDiagnosticSubsystems(recorded, deltas) {
+  const existing = Array.isArray(recorded.diagnostic_subsystems) ? recorded.diagnostic_subsystems : [];
+  if (existing.length) {
+    return existing
+      .map((group) => ({
+        subsystem: String(group?.subsystem || "unclassified diagnostic"),
+        codes: Array.isArray(group?.codes) ? group.codes.map(String).filter(Boolean).slice(0, 8) : [],
+        count: Number.isFinite(Number(group?.count)) ? Number(group.count) : 0,
+        examples: Array.isArray(group?.examples) ? group.examples.map(String).filter(Boolean).slice(0, 3) : [],
+      }))
+      .filter((group) => group.count > 0 || group.codes.length || group.examples.length)
+      .slice(0, 8);
+  }
+  return diagnosticSubsystemsFrom(deltas).slice(0, 8);
+}
+
+function lastSuccessfulPhaseFrom(recorded) {
+  if (recorded.last_successful_phase !== undefined && recorded.last_successful_phase !== "") {
+    return recorded.last_successful_phase;
+  }
+  if (recorded.exit_class === "exit success" && recorded.diagnostic_status === "none") return "check";
+  return null;
+}
+
+function rowStateFrom(recorded) {
+  if (recorded.state) return recorded.state;
+  if (recorded.exit_class === "exit success" && recorded.diagnostic_status === "none") return "green";
+  if (
+    recorded.exit_class === "fixture invalid" ||
+    recorded.exit_class === "tsz unavailable" ||
+    recorded.exit_class === "oracle unavailable"
+  ) return "gray";
+  if (String(recorded.diagnostic_status || "").toLowerCase().includes("diagnostic mismatch")) return "yellow";
+  return "red";
+}
+
+function reproFromRecorded(recorded) {
+  if (recorded.repro && typeof recorded.repro === "object") return recorded.repro;
+  return {
+    tsconfig_path: null,
+    source_root: null,
+    first_failure_path: null,
+    first_failure_line: null,
+    first_failure_column: null,
+    first_failure_code: null,
+    reduced_repro_path: recorded.reduced_repro_path || null,
+    command: null,
+  };
+}
+
+// Mirror of residencyReason() in scripts/ci/project-compatibility.mjs but
+// post-processor-side: the recorded row already passed the closed-vocabulary
+// gate so unknown strings are propagated rather than rejected here.
+function residencyReasonFor(value, recordedReason, fallback) {
+  if (value !== null && value !== undefined && Number.isFinite(Number(value))) {
+    return null;
+  }
+  const reason = String(recordedReason || "").trim();
+  return reason || fallback;
+}
+
+function compatibilityFor(row, compatibilityRows) {
+  const recorded = compatibilityRows.get(row.name) || fallbackCompatibility(row);
+  if (!recorded) return {};
+  const diagnosticDeltas = normalizedDiagnosticDeltas(recorded);
+  const diagnosticSubsystems = normalizedDiagnosticSubsystems(recorded, diagnosticDeltas);
+  const knownBlockers = knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas);
+  const state = rowStateFrom(recorded);
+  return {
+    compatibility: {
+      ...compatibilityArtifactMetadata(recorded),
+      state,
+      exit_class: recorded.exit_class || "unknown",
+      first_failure_class: recorded.first_failure_class ?? (state === "green" ? null : knownBlockers[0] || recorded.exit_class || null),
+      owner_track: recorded.owner_track ?? null,
+      phase: recorded.phase || "unknown",
+      last_successful_phase: lastSuccessfulPhaseFrom(recorded),
+      diagnostic_status: recorded.diagnostic_status || "unknown",
+      diagnostic_deltas: diagnosticDeltas,
+      diagnostic_codes: diagnosticCodesFrom(diagnosticDeltas),
+      diagnostic_subsystems: diagnosticSubsystems,
+      primary_subsystem: recorded.primary_subsystem || diagnosticSubsystems[0]?.subsystem || null,
+      reduction_candidates: reductionCandidatesFrom(diagnosticDeltas),
+      emit_status: recorded.emit_status || "not in scope (noEmit project check)",
+      dts_status: recorded.dts_status || "not in scope (noEmit project check)",
+      known_blockers: knownBlockers,
+      reduced_repro_path: recorded.reduced_repro_path || null,
+      repro: reproFromRecorded(recorded),
+      exit_codes: recorded.exit_codes && typeof recorded.exit_codes === "object"
+        ? {
+            tsc: Array.isArray(recorded.exit_codes.tsc) ? recorded.exit_codes.tsc : [],
+            tsz: Array.isArray(recorded.exit_codes.tsz) ? recorded.exit_codes.tsz : [],
+            tsgo: Array.isArray(recorded.exit_codes.tsgo) ? recorded.exit_codes.tsgo : [],
+          }
+        : { tsc: [], tsz: [], tsgo: [] },
+      semantic_owner_family: projectOwnerFamilies[row.name] || "not classified",
+      files_reached: recorded.files_reached ?? null,
+      files_reached_reason: residencyReasonFor(
+        recorded.files_reached,
+        recorded.files_reached_reason,
+        "runner did not count",
+      ),
+      peak_memory_bytes: recorded.peak_memory_bytes ?? null,
+      peak_memory_bytes_reason: residencyReasonFor(
+        recorded.peak_memory_bytes,
+        recorded.peak_memory_bytes_reason,
+        "not measured on platform",
+      ),
+      fixture_sources: Array.isArray(recorded.fixture_sources) ? recorded.fixture_sources : [],
+    },
+  };
+}
+
+const csv = process.env.RESULTS_CSV_EXPANDED || "";
+const projectReadmes = readProjectReadmes();
+const compatibilityRows = readCompatibilityRows();
+const sourceRows = readSourceRows();
+const rows = csv
+  .split(/\r?\n/)
+  .map((line) => line.trim())
+  .filter(Boolean)
+  .map((line) => {
+    const parts = line.split(",");
+    while (parts.length < 10) parts.push("");
+    const [name, lines, kb, tszMs, tsgoMs, tszLps, tsgoLps, winner, factor, status] = parts;
+    const toNumber = (value) => {
+      if (!value || value === "N/A" || value === "ERR") return null;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    return {
+      name,
+      lines: toNumber(lines),
+      kb: toNumber(kb),
+      ...(projectOwnerFamilies[name] ? { project_files: compatibilityRows.get(name)?.files_reached ?? null } : {}),
+      tsz_ms: toNumber(tszMs),
+      tsgo_ms: toNumber(tsgoMs),
+      tsz_lps: toNumber(tszLps),
+      tsgo_lps: toNumber(tsgoLps),
+      winner: winner || null,
+      factor: toNumber(factor),
+      status: status || null,
+      ...(sourceRows.has(name) ? { source: sourceRows.get(name) } : {}),
+      ...(projectReadmes.has(name) ? { readme: projectReadmes.get(name) } : {}),
+      ...compatibilityFor({ name, lines: toNumber(lines), status: status || null }, compatibilityRows),
+    };
+  });
+
+const tszWins = rows.filter((row) => row.winner === "tsz").length;
+const tsgoWins = rows.filter((row) => row.winner === "tsgo").length;
+const errorCases = rows.filter((row) => row.status).length;
+
+function hasCompletePhaseMetadata(compatibility) {
+  return [
+    "state",
+    "phase",
+    "last_successful_phase",
+    "exit_class",
+    "diagnostic_status",
+  ].every((field) => Object.hasOwn(compatibility, field));
+}
+
+function isGreenRow(row) {
+  if (row.status) return false;
+  if (row.artifact_missing === true) return false;
+  if (!row.compatibility) return true;
+  return hasCompletePhaseMetadata(row.compatibility) &&
+    row.compatibility.state === "green" &&
+    row.compatibility.exit_class === "exit success" &&
+    row.compatibility.diagnostic_status === "none";
+}
+
+const greenTszWins = rows.filter((row) => row.winner === "tsz" && isGreenRow(row)).length;
+const greenTsgoWins = rows.filter((row) => row.winner === "tsgo" && isGreenRow(row)).length;
+
+function runnerEnvironment() {
+  const cpus = os.cpus();
+  const firstCpu = cpus[0] || {};
+  const cpuModels = [...new Set(cpus.map((cpu) => cpu.model).filter(Boolean))];
+  const totalMemoryBytes = os.totalmem();
+  const githubActions = process.env.GITHUB_ACTIONS === "true"
+    ? {
+        run_id: process.env.GITHUB_RUN_ID || null,
+        run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
+        runner_os: process.env.RUNNER_OS || null,
+        runner_arch: process.env.RUNNER_ARCH || null,
+        workflow: process.env.GITHUB_WORKFLOW || null,
+        job: process.env.GITHUB_JOB || null,
+        ref: process.env.GITHUB_REF || null,
+        sha: process.env.GITHUB_SHA || null,
+      }
+    : null;
+  const cloudBuild = process.env.BUILD_ID ||
+    process.env.PROJECT_ID ||
+    process.env.TSZ_BENCH_MACHINE_TYPE
+    ? {
+        build_id: process.env.BUILD_ID || null,
+        project_id: process.env.PROJECT_ID || null,
+        region: process.env.LOCATION || process.env.CLOUDSDK_COMPUTE_REGION || null,
+        machine_type: process.env.TSZ_BENCH_MACHINE_TYPE || null,
+      }
+    : null;
+
+  return {
+    platform: os.platform(),
+    arch: os.arch(),
+    release: os.release(),
+    cpu_count: cpus.length || null,
+    cpu_model: cpuModels[0] || null,
+    cpu_models: cpuModels.length > 1 ? cpuModels.slice(0, 4) : undefined,
+    cpu_speed_mhz: Number.isFinite(firstCpu.speed) ? firstCpu.speed : null,
+    total_memory_bytes: Number.isFinite(totalMemoryBytes) ? totalMemoryBytes : null,
+    ci: process.env.CI === "true",
+    github_actions: githubActions,
+    cloud_build: cloudBuild,
+  };
+}
+
+function boolValue(value, defaultValue = false) {
+  if (value === undefined || value === null || value === "") return defaultValue;
+  return value === true || value === "1" || String(value).toLowerCase() === "true";
+}
+
+function numberValue(value, fallback = null) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function readPgoMarker(markerPath) {
+  const fields = {};
+  const trainingInputs = [];
+  const trainingFailedInputs = [];
+  if (!markerPath || !fs.existsSync(markerPath)) {
+    return { found: false, fields, training_inputs: trainingInputs, training_failed_inputs: trainingFailedInputs };
+  }
+
+  const lines = fs.readFileSync(markerPath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const separator = line.indexOf("=");
+    if (separator === -1) continue;
+    const key = line.slice(0, separator);
+    const value = line.slice(separator + 1);
+    if (key === "training_input") {
+      trainingInputs.push(value);
+    } else if (key === "training_failed") {
+      trainingFailedInputs.push(value);
+    } else {
+      fields[key] = value;
+    }
+  }
+
+  return { found: true, fields, training_inputs: trainingInputs, training_failed_inputs: trainingFailedInputs };
+}
+
+function pgoConfig(fields) {
+  return {
+    synthetic: boolValue(fields.BENCH_PGO_SYNTHETIC ?? process.env.BENCH_PGO_SYNTHETIC_VALUE, true),
+    fetch_utility_types: boolValue(
+      fields.BENCH_PGO_FETCH_UTILITY_TYPES ?? process.env.BENCH_PGO_FETCH_UTILITY_TYPES_VALUE,
+      true,
+    ),
+    fetch_core_projects: boolValue(
+      fields.BENCH_PGO_FETCH_CORE_PROJECTS ?? process.env.BENCH_PGO_FETCH_CORE_PROJECTS_VALUE,
+      false,
+    ),
+    panic_unwind: boolValue(fields.BENCH_PGO_PANIC_UNWIND ?? process.env.BENCH_PGO_PANIC_UNWIND_VALUE, false),
+    extra_inputs: (fields.BENCH_PGO_EXTRA_INPUTS ?? process.env.BENCH_PGO_EXTRA_INPUTS_VALUE) || null,
+    training_timeout_seconds: numberValue(
+      fields.BENCH_PGO_TSZ_TIMEOUT ?? process.env.BENCH_PGO_TSZ_TIMEOUT_VALUE,
+      null,
+    ),
+    cache_enabled: boolValue(process.env.BENCH_PGO_CACHE_VALUE, true),
+  };
+}
+
+function measurementProfile() {
+  const quickMode = process.env.QUICK_MODE_VALUE === "true";
+  const tszOverride = process.env.TSZ_IS_OVERRIDE_VALUE === "true";
+  const pgoRequested = !quickMode && !tszOverride && boolValue(process.env.BENCH_PGO_VALUE, true);
+  const markerPath = process.env.BENCH_PGO_MARKER_VALUE || null;
+  const marker = tszOverride ? readPgoMarker(null) : readPgoMarker(markerPath);
+  const fields = marker.fields;
+  const pgoOptimized = marker.found && (
+    fields.optimized === "1" ||
+    fields.binary_profile === "release-pgo" ||
+    Boolean(fields["profile-use"])
+  );
+  const mode = tszOverride
+    ? "tsz-override"
+    : quickMode
+      ? "quick-untrained"
+      : pgoOptimized
+        ? "release-pgo"
+        : "release-untrained";
+  const trainingInputCount = numberValue(fields.training_input_count, marker.training_inputs.length);
+  const trainingFailureCount = numberValue(fields.training_failure_count, marker.training_failed_inputs.length);
+
+  return {
+    mode,
+    tsz_binary_source: tszOverride ? "override" : "bench-dist",
+    profile_guided_optimization: {
+      requested: pgoRequested,
+      required: boolValue(process.env.BENCH_REQUIRE_PGO_VALUE, false),
+      optimized: pgoOptimized,
+      marker_path: markerPath,
+      marker_found: marker.found,
+      profile_use: fields["profile-use"] || null,
+      profile_fingerprint: fields.profile_fingerprint || null,
+      training_fingerprint: fields.training_fingerprint || null,
+      profile_data_source: fields.profile_data_source || null,
+      built_at: fields.built_at || null,
+      llvm_profdata: fields.llvm_profdata || null,
+      training_metadata_available: boolValue(fields.training_metadata_available, false),
+      training_input_count: trainingInputCount,
+      training_failure_count: trainingFailureCount,
+      training_inputs: marker.training_inputs,
+      training_failed_inputs: marker.training_failed_inputs,
+      config: pgoConfig(fields),
+    },
+  };
+}
+
+const generatedAt = new Date().toISOString();
+const currentMeasurementProfile = measurementProfile();
+const payload = {
+  ...compatibilityArtifactMetadata({}, generatedAt),
+  benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+  runner_environment: runnerEnvironment(),
+  measurement_profile: currentMeasurementProfile,
+  validation: {
+    hyperfine_exit_codes_required: true,
+  },
+  shard: {
+    label: firstNonEmpty(process.env.BENCH_SHARD_LABEL_VALUE, process.env.FILTER_VALUE),
+    filter: firstNonEmpty(process.env.BENCH_SHARD_FILTER_VALUE, process.env.FILTER_VALUE),
+  },
+  quick_mode: process.env.QUICK_MODE_VALUE === "true",
+  filter: process.env.FILTER_VALUE || null,
+  binaries: {
+    tsz: process.env.TSZ_BIN_VALUE || null,
+    tsgo: process.env.TSGO_BIN_VALUE || null,
+    tsc: process.env.TSC_BIN_VALUE || null,
+    tsz_profile: currentMeasurementProfile.mode,
+  },
+  totals: {
+    benchmarks_run: Number(process.env.BENCHMARKS_RUN_VALUE || rows.length),
+    rows: rows.length,
+    tsz_wins: tszWins,
+    tsgo_wins: tsgoWins,
+    green_tsz_wins: greenTszWins,
+    green_tsgo_wins: greenTsgoWins,
+    error_cases: errorCases,
+  },
+  results: rows,
+};
+
+fs.writeFileSync(outFile, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+NODE
+
+    echo -e "${GREEN}JSON results written:${NC} $out_file"
+}
+
+is_benchmark_selected() {
+    local name="$1"
+    if [ -z "$FILTER" ]; then
+        return 0
+    fi
+    echo "$name" | grep -qE "$FILTER"
+}
+
+filter_matches_any() {
+    if [ -z "$FILTER" ]; then
+        return 0
+    fi
+
+    local name
+    for name in "$@"; do
+        if echo "$name" | grep -qE "$FILTER"; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+use_quick_subset_for() {
+    if [ "$QUICK_MODE" != true ]; then
+        return 1
+    fi
+
+    # If an explicit filter does not match the quick representative, keep the
+    # quick run counts but scan the full candidate list so exact filters work.
+    filter_matches_any "$@"
+}
+
+should_run_compile_canary_project() {
+    if [ -n "$FILTER" ]; then
+        return 0
+    fi
+    [ "$TSZ_BENCH_INCLUDE_COMPILE_CANARIES" = "1" ]
+}
+
+ensure_nextjs_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if [ ! -d "$NEXTJS_DIR/.git" ]; then
+        echo -e "${CYAN}Cloning next.js with sparse checkout (packages/next only)...${NC}"
+        git init --quiet "$NEXTJS_DIR"
+        git -C "$NEXTJS_DIR" remote add origin "$NEXTJS_REPO"
+        # --no-cone allows mixing individual root files with directory patterns
+        # packages/next/tsconfig.json extends ../../tsconfig-tsec.json
+        git -C "$NEXTJS_DIR" sparse-checkout init --no-cone
+        git -C "$NEXTJS_DIR" sparse-checkout set \
+            '/tsconfig-tsec.json' \
+            '/packages/next/package.json' \
+            '/packages/next/tsconfig.json' \
+            '/packages/next/src/'
+        git -C "$NEXTJS_DIR" fetch --quiet --depth 1 origin "$NEXTJS_REF"
+        git -C "$NEXTJS_DIR" checkout --quiet FETCH_HEAD
+    fi
+
+    local current_ref
+    current_ref="$(git -C "$NEXTJS_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+    if [ "$current_ref" != "$NEXTJS_REF" ]; then
+        echo -e "${CYAN}Pinning next.js to ${NEXTJS_REF:0:12}...${NC}"
+        git -C "$NEXTJS_DIR" fetch --quiet --depth 1 origin "$NEXTJS_REF"
+        git -C "$NEXTJS_DIR" checkout --quiet FETCH_HEAD
+    fi
+
+    tsz_write_nextjs_bench_globals "$NEXTJS_DIR/packages/next/tsz-bench-globals.d.ts"
+    tsz_write_nextjs_external_module "$NEXTJS_DIR/packages/next/tsz-bench-external-module.d.ts"
+    tsz_write_nextjs_config "$NEXTJS_DIR/packages/next/tsconfig.tsz-bench.json"
+}
+
+ensure_next_app_benchmark_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if ! command -v npm &>/dev/null; then
+        echo -e "${RED}✗ npm not found. Install npm to generate the fresh Next.js benchmark app.${NC}"
+        return 1
+    fi
+
+    echo -e "${CYAN}Generating fresh Next.js benchmark app...${NC}"
+    node "$SCRIPT_DIR/generate-next-app-fixture.mjs" "$NEXT_APP_BENCH_DIR"
+}
+
+ensure_vite_app_benchmark_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if ! command -v npm &>/dev/null; then
+        echo -e "${RED}✗ npm not found. Install npm to generate the fresh Vite benchmark app.${NC}"
+        return 1
+    fi
+
+    echo -e "${CYAN}Generating fresh Vite vanilla TypeScript benchmark app...${NC}"
+    node "$SCRIPT_DIR/generate-vite-app-fixture.mjs" "$VITE_APP_BENCH_DIR"
+}
+
+ensure_utility_types_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$UTILITY_TYPES_DIR" 1
+
+    # Rewrite the generated flat tsconfig every run. External fixture clones
+    # are cached across benchmark jobs, and stale generated configs can keep
+    # obsolete include/exclude rules after this script changes.
+    # Create flat tsconfig for project-mode benchmarking:
+    # - excludes spec/snap test files (need @types/jest)
+    # - uses skipLibCheck + types:[] to avoid needing external type deps
+    # - uses ES2015 target (ES5 is deprecated in TS 6+)
+    local flat_tsconfig="$UTILITY_TYPES_DIR/tsconfig.flat.json"
+    tsz_write_utility_types_config "$flat_tsconfig"
+}
+
+ensure_ts_toolbelt_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$TS_TOOLBELT_DIR" 1
+
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
+    # Create flat tsconfig for project-mode benchmarking:
+    # - sources only (excludes tests/scripts which need external deps)
+    # - removes deprecated/unsupported options (suppressImplicitAnyIndexErrors, watch)
+    # - uses skipLibCheck + types:[] to avoid needing external type deps
+    local flat_tsconfig="$TS_TOOLBELT_DIR/tsconfig.flat.json"
+    tsz_write_ts_toolbelt_config "$flat_tsconfig"
+}
+
+ensure_ts_essentials_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$TS_ESSENTIALS_DIR" 1
+
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
+    # Create flat tsconfig for project-mode benchmarking:
+    # - lib sources only (excludes test dir which needs conditional-type-checks)
+    # - uses es2018 lib (covers esnext.asynciterable from original config)
+    # - uses skipLibCheck to avoid needing external type deps
+    local flat_tsconfig="$TS_ESSENTIALS_DIR/tsconfig.flat.json"
+    tsz_write_ts_essentials_config "$flat_tsconfig"
+}
+
+# ─── Real-world fixture: rxjs ───────────────────────────────────────────────
+ensure_rxjs_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$RXJS_DIR" 1
+    # rxjs has been a monorepo since the v8 work — `src/internal` moved to
+    # `packages/rxjs/src/internal`. Detect both layouts.
+    local rxjs_src_root
+    rxjs_src_root="$(tsz_rxjs_src_root "$RXJS_DIR")"
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
+    local flat_tsconfig="$RXJS_DIR/tsconfig.flat.json"
+    tsz_write_rxjs_config "$flat_tsconfig" "$rxjs_src_root"
+}
+
+# ─── Real-world fixture: type-fest ──────────────────────────────────────────
+ensure_type_fest_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$TYPE_FEST_DIR" 1
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
+    local flat_tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
+    tsz_write_type_fest_config "$flat_tsconfig"
+}
+
+# ─── Real-world fixture: zod ────────────────────────────────────────────────
+ensure_zod_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$ZOD_DIR" 1
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
+    local flat_tsconfig="$ZOD_DIR/tsconfig.flat.json"
+    tsz_write_zod_config "$flat_tsconfig"
+}
+
+# ─── Real-world fixture: kysely (extreme type-level SQL inference) ─────────
+ensure_kysely_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    tsz_ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$KYSELY_DIR" 1
+    local flat_tsconfig="$KYSELY_DIR/tsconfig.flat.json"
+    local bench_globals="$KYSELY_DIR/tsz-bench-globals.d.ts"
+    tsz_write_kysely_globals "$bench_globals"
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
+    tsz_write_kysely_config "$flat_tsconfig"
+}
+
+run_utility_types_benchmarks() {
+    local benchmark_names=(
+        "utility-types/index.ts"
+        "utility-types/utility-types.ts"
+        "utility-types/mapped-types.ts"
+        "utility-types/aliases-and-guards.ts"
+    )
+
+    local should_run=false
+    local name
+    for name in "${benchmark_names[@]}"; do
+        if is_benchmark_selected "$name"; then
+            should_run=true
+            break
+        fi
+    done
+
+    if [ "$should_run" != true ]; then
+        return
+    fi
+
+    print_header "Real-world External Library - utility-types"
+    ensure_utility_types_fixture
+    echo -e "${GREEN}✓${NC} utility-types pinned at $(git -C "$UTILITY_TYPES_DIR" rev-parse --short HEAD)"
+
+    # Use project's tsconfig lib settings (dom, es2017) for fair comparison
+    # Without this, tsz loads all default libs which is slower and doesn't match tsgo's behavior
+    local lib_args="--lib dom,es2017"
+
+    local files
+    if use_quick_subset_for "utility-types/index.ts"; then
+        files=("src/index.ts")
+    else
+        files=(
+            "src/index.ts"
+            "src/utility-types.ts"
+            "src/mapped-types.ts"
+            "src/aliases-and-guards.ts"
+        )
+    fi
+
+    local rel
+    for rel in "${files[@]}"; do
+        local full_path="$UTILITY_TYPES_DIR/$rel"
+        if [ -f "$full_path" ]; then
+            run_benchmark "utility-types/${rel#src/}" "$full_path" "$lib_args"
+            echo
+        fi
+    done
+}
+
+run_ts_toolbelt_benchmarks() {
+    local benchmark_names=(
+        "ts-toolbelt/Iteration/Iteration.ts"
+        "ts-toolbelt/Misc/BuiltIn.ts"
+        "ts-toolbelt/Object/Invert.ts"
+        "ts-toolbelt/Any/Compute.ts"
+    )
+
+    local should_run=false
+    local name
+    for name in "${benchmark_names[@]}"; do
+        if is_benchmark_selected "$name"; then
+            should_run=true
+            break
+        fi
+    done
+
+    if [ "$should_run" != true ]; then
+        return
+    fi
+
+    print_header "Real-world External Library - ts-toolbelt"
+    ensure_ts_toolbelt_fixture
+    echo -e "${GREEN}✓${NC} ts-toolbelt pinned at $(git -C "$TS_TOOLBELT_DIR" rev-parse --short HEAD)"
+
+    # ts-toolbelt needs esnext+dom libs (per its tsconfig), otherwise tsc can't
+    # resolve Symbol/Map/Promise etc.
+    local lib_args="--lib esnext,dom"
+
+    local files
+    if use_quick_subset_for "ts-toolbelt/Iteration/Iteration.ts"; then
+        files=("sources/Iteration/Iteration.ts")
+    else
+        files=(
+            "sources/Iteration/Iteration.ts"
+            "sources/Misc/BuiltIn.ts"
+            "sources/Object/Invert.ts"
+            "sources/Any/Compute.ts"
+        )
+    fi
+
+    local rel
+    for rel in "${files[@]}"; do
+        local full_path="$TS_TOOLBELT_DIR/$rel"
+        if [ -f "$full_path" ]; then
+            run_benchmark "ts-toolbelt/${rel#sources/}" "$full_path" "$lib_args"
+            echo
+        fi
+    done
+}
+
+run_ts_essentials_benchmarks() {
+    local benchmark_names=(
+        "ts-essentials/xor.ts"
+        "ts-essentials/paths.ts"
+        "ts-essentials/deep-pick.ts"
+        "ts-essentials/deep-readonly.ts"
+    )
+
+    local should_run=false
+    local name
+    for name in "${benchmark_names[@]}"; do
+        if is_benchmark_selected "$name"; then
+            should_run=true
+            break
+        fi
+    done
+
+    if [ "$should_run" != true ]; then
+        return
+    fi
+
+    print_header "Real-world External Library - ts-essentials"
+    ensure_ts_essentials_fixture
+    echo -e "${GREEN}✓${NC} ts-essentials pinned at $(git -C "$TS_ESSENTIALS_DIR" rev-parse --short HEAD)"
+
+    # ts-essentials needs es2018 libs (per its tsconfig) for Map, Symbol, etc.
+    local lib_args="--lib es2018"
+
+    local files
+    if use_quick_subset_for "ts-essentials/paths.ts"; then
+        files=("lib/paths/index.ts")
+    else
+        files=(
+            "lib/xor/index.ts"
+            "lib/paths/index.ts"
+            "lib/deep-pick/index.ts"
+            "lib/deep-readonly/index.ts"
+        )
+    fi
+
+    local rel
+    for rel in "${files[@]}"; do
+        local full_path="$TS_ESSENTIALS_DIR/$rel"
+        if [ -f "$full_path" ]; then
+            local label
+            label="$(echo "${rel#lib/}" | sed 's#/index.ts$#.ts#')"
+            run_benchmark "ts-essentials/$label" "$full_path" "$lib_args"
+            echo
+        fi
+    done
+}
+
+run_utility_types_project_benchmarks() {
+    if ! is_benchmark_selected "utility-types-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - utility-types (whole project)"
+    ensure_utility_types_fixture
+    echo -e "${GREEN}✓${NC} utility-types pinned at $(git -C "$UTILITY_TYPES_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$UTILITY_TYPES_DIR/tsconfig.flat.json"
+    local src_dir="$UTILITY_TYPES_DIR/src"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "utility-types-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_ts_toolbelt_project_benchmarks() {
+    if ! is_benchmark_selected "ts-toolbelt-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ts-toolbelt (whole project, 242 type-level files)"
+    ensure_ts_toolbelt_fixture
+    echo -e "${GREEN}✓${NC} ts-toolbelt pinned at $(git -C "$TS_TOOLBELT_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$TS_TOOLBELT_DIR/tsconfig.flat.json"
+    local src_dir="$TS_TOOLBELT_DIR/sources"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "ts-toolbelt-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_ts_essentials_project_benchmarks() {
+    if ! is_benchmark_selected "ts-essentials-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - ts-essentials (whole project, 95 type utility files)"
+    ensure_ts_essentials_fixture
+    echo -e "${GREEN}✓${NC} ts-essentials pinned at $(git -C "$TS_ESSENTIALS_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$TS_ESSENTIALS_DIR/tsconfig.flat.json"
+    local src_dir="$TS_ESSENTIALS_DIR/lib"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "ts-essentials-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_rxjs_project_benchmarks() {
+    if ! is_benchmark_selected "rxjs-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - rxjs (source parse with noCheck)"
+    ensure_rxjs_fixture
+    echo -e "${GREEN}✓${NC} rxjs pinned at $(git -C "$RXJS_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$RXJS_DIR/tsconfig.flat.json"
+    local src_dir
+    if [ -d "$RXJS_DIR/packages/rxjs/src/internal" ]; then
+        src_dir="$RXJS_DIR/packages/rxjs/src/internal"
+    else
+        src_dir="$RXJS_DIR/src/internal"
+    fi
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "rxjs-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_type_fest_project_benchmarks() {
+    if ! is_benchmark_selected "type-fest-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - type-fest (broad utility-type surface)"
+    ensure_type_fest_fixture
+    echo -e "${GREEN}✓${NC} type-fest pinned at $(git -C "$TYPE_FEST_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
+    local src_dir="$TYPE_FEST_DIR/source"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "type-fest-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_zod_project_benchmarks() {
+    if ! is_benchmark_selected "zod-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - zod (deep z.infer<typeof> schema inference)"
+    ensure_zod_fixture
+    echo -e "${GREEN}✓${NC} zod pinned at $(git -C "$ZOD_DIR" rev-parse --short HEAD)"
+
+    # zod v3 lives in src/, zod v4 monorepo lives in packages/zod/src/.
+    # Pick whichever exists so the bench works on either layout.
+    local tsconfig="$ZOD_DIR/tsconfig.flat.json"
+    local src_dir
+    if [ -d "$ZOD_DIR/packages/zod/src" ]; then
+        src_dir="$ZOD_DIR/packages/zod/src"
+    else
+        src_dir="$ZOD_DIR/src"
+    fi
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "zod-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_kysely_project_benchmarks() {
+    if ! is_benchmark_selected "kysely-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - kysely (extreme type-level SQL inference)"
+    ensure_kysely_fixture
+    echo -e "${GREEN}✓${NC} kysely pinned at $(git -C "$KYSELY_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$KYSELY_DIR/tsconfig.flat.json"
+    local src_dir="$KYSELY_DIR/src"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "kysely-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_nextjs_benchmarks() {
+    if [ "$NEXTJS_BENCHMARK_ENABLED" != "1" ]; then
+        return
+    fi
+
+    if ! is_benchmark_selected "nextjs"; then
+        return
+    fi
+
+    print_header "Real-world External Project - next.js (full project)"
+    ensure_nextjs_fixture
+    echo -e "${GREEN}✓${NC} next.js pinned at $(git -C "$NEXTJS_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$NEXTJS_DIR/packages/next/tsconfig.tsz-bench.json"
+    local src_dir="$NEXTJS_DIR/packages/next/src"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "nextjs" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_next_app_project_benchmarks() {
+    if ! is_benchmark_selected "nextjs-fresh-app"; then
+        return
+    fi
+
+    print_header "Generated Project - fresh Next.js app"
+    ensure_next_app_benchmark_fixture
+
+    local tsconfig="$NEXT_APP_BENCH_DIR/tsconfig.json"
+    local src_dir="$NEXT_APP_BENCH_DIR"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "nextjs-fresh-app" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_vite_app_project_benchmarks() {
+    if ! is_benchmark_selected "vite-vanilla-ts-app"; then
+        return
+    fi
+
+    print_header "Generated Project - fresh Vite vanilla TypeScript app"
+    ensure_vite_app_benchmark_fixture
+
+    local tsconfig="$VITE_APP_BENCH_DIR/tsconfig.json"
+    local src_dir="$VITE_APP_BENCH_DIR"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "vite-vanilla-ts-app" "$tsconfig" "$src_dir"
+    echo
+}
+
+ensure_large_ts_repo_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if [ ! -d "$LARGE_TS_DIR/.git" ]; then
+        echo -e "${CYAN}Cloning large-ts-repo fixture...${NC}"
+        git clone --quiet --no-tags --depth 1 "$LARGE_TS_REPO" "$LARGE_TS_DIR"
+    fi
+
+    if [ -n "$LARGE_TS_REF" ]; then
+        local current_ref
+        current_ref="$(git -C "$LARGE_TS_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+        if [ "$current_ref" != "$LARGE_TS_REF" ]; then
+            echo -e "${CYAN}Pinning large-ts-repo to ${LARGE_TS_REF:0:12}...${NC}"
+            git -C "$LARGE_TS_DIR" fetch --quiet --depth 1 origin "$LARGE_TS_REF"
+            git -C "$LARGE_TS_DIR" checkout --quiet --detach FETCH_HEAD
+        fi
+    fi
+
+    if ! command -v pnpm &>/dev/null; then
+        echo -e "${RED}✗ pnpm not found. Install pnpm to prepare large-ts-repo dependencies.${NC}"
+        return
+    fi
+
+    local deps_stamp="$LARGE_TS_DIR/.deps-installed"
+    if [ ! -f "$deps_stamp" ] || [ "$LARGE_TS_DIR/pnpm-lock.yaml" -nt "$deps_stamp" ] || [ "$LARGE_TS_DIR/package.json" -nt "$deps_stamp" ] || [ "$LARGE_TS_DIR/pnpm-workspace.yaml" -nt "$deps_stamp" ]; then
+        echo -e "${CYAN}Installing large-ts-repo dependencies...${NC}"
+        pnpm --dir "$LARGE_TS_DIR" install --frozen-lockfile --silent
+        touch "$deps_stamp"
+    fi
+    # The root tsconfig.json in large-ts-repo uses project references, so
+    # `tsc/tsgo/tsz --noEmit -p tsconfig.json` exits almost immediately
+    # without type-checking anything. Use a flat tsconfig that directly
+    # includes all source files for an apples-to-apples measurement.
+    #
+    # Prefer tsconfig.flat.bench.json if the repo ships it: it already
+    # extends tsconfig.base.json which contains the 200+ `paths` mappings
+    # for cross-package @scope/pkg imports. Without those paths, tsc itself
+    # emits resolution errors and the benchmark is skipped.
+    if [ -f "$LARGE_TS_DIR/tsconfig.flat.bench.json" ]; then
+        return
+    fi
+    local flat_tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
+    if [ ! -f "$flat_tsconfig" ]; then
+        local extends_base=""
+        if [ -f "$LARGE_TS_DIR/tsconfig.base.json" ]; then
+            extends_base='"extends": "./tsconfig.base.json",'
+        fi
+        cat > "$flat_tsconfig" << FLATEOF
+{
+  ${extends_base}
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2024", "esnext.disposable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["packages/**/src/**/*.ts"]
+}
+FLATEOF
+    fi
+}
+
+run_large_ts_repo_benchmarks() {
+    if ! is_benchmark_selected "large-ts-repo"; then
+        return
+    fi
+
+    print_header "Real-world External Project - large-ts-repo (6000+ files, parallel stress test)"
+    ensure_large_ts_repo_fixture
+    echo -e "${GREEN}✓${NC} large-ts-repo pinned at $(git -C "$LARGE_TS_DIR" rev-parse --short HEAD)"
+
+    # Use the flat tsconfig so all source files are included in a single
+    # compilation pass. The root tsconfig.json uses project references and
+    # completes in milliseconds without actually checking any files.
+    # Prefer tsconfig.flat.bench.json (ships with the repo, extends base
+    # with full path mappings) over our generated tsconfig.flat.json.
+    local tsconfig
+    if [ -f "$LARGE_TS_DIR/tsconfig.flat.bench.json" ]; then
+        tsconfig="$LARGE_TS_DIR/tsconfig.flat.bench.json"
+    elif [ -f "$LARGE_TS_DIR/tsconfig.flat.json" ]; then
+        tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
+    else
+        echo -e "${RED}✗ No flat tsconfig found (ensure_large_ts_repo_fixture should have created one)${NC}"
+        return
+    fi
+    local src_dir="$LARGE_TS_DIR/packages"
+
+    run_project_benchmark "large-ts-repo" "$tsconfig" "$src_dir"
+    echo
+}
+
+main() {
+    check_prerequisites
+    if [ "$PREPARE_ONLY" = true ]; then
+        echo -e "${GREEN}Benchmark prerequisites ready.${NC}"
+        return
+    fi
+
+    # Create temp directory for synthetic files
+    TEMP_DIR=$(mktemp -d)
+    PROJECT_COMPATIBILITY_JSONL="$TEMP_DIR/project-compatibility.jsonl"
+    BENCHMARK_SOURCES_JSONL="$TEMP_DIR/benchmark-sources.jsonl"
+    : > "$PROJECT_COMPATIBILITY_JSONL"
+    : > "$BENCHMARK_SOURCES_JSONL"
+    # Always export the partial JSON on exit (including SIGTERM/SIGINT/OOM
+    # kills) so a long bench that gets cut off — e.g. by the GitHub Actions
+    # job timeout or the runner OOM killer on `large-ts-repo` — still
+    # surfaces the rows that DID complete. Without this, an exit at any
+    # point past the first benchmark would lose the entire dataset, leaving
+    # the gh-pages deploy with no fresh artifact.
+    trap "export_results_json; rm -rf $TEMP_DIR" EXIT
+    trap "exit 130" INT
+    trap "exit 143" TERM
+
+    print_header "TypeScript Compiler Test Files"
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # EXTRA LARGE FILES (5000+ lines) - Stress tests
+    # ═══════════════════════════════════════════════════════════════════════════
+    print_subheader "Extra Large Files (5000+ lines) - Stress Tests"
+    
+    local xl_files
+    if [ "$QUICK_MODE" = true ]; then
+        xl_files=(
+            "TypeScript/tests/cases/compiler/manyConstExports.ts"
+        )
+    else
+        xl_files=(
+            "TypeScript/tests/cases/compiler/conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts"
+            "TypeScript/tests/cases/compiler/manyConstExports.ts"
+            "TypeScript/tests/cases/compiler/binderBinaryExpressionStress.ts"
+            "TypeScript/tests/cases/compiler/binderBinaryExpressionStressJs.ts"
+        )
+    fi
+    
+    for file in "${xl_files[@]}"; do
+        local full_path="$PROJECT_ROOT/$file"
+        if [ -f "$full_path" ]; then
+            run_benchmark "$(basename "$file")" "$full_path"
+            echo
+        fi
+    done
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # LARGE FILES (1000-5000 lines) - Real-world complexity
+    # ═══════════════════════════════════════════════════════════════════════════
+    print_subheader "Large Files (1000-5000 lines) - Real-world Complexity"
+    
+    local large_files
+    if [ "$QUICK_MODE" = true ]; then
+        large_files=(
+            "TypeScript/tests/cases/compiler/enumLiteralsSubtypeReduction.ts"
+        )
+    else
+        large_files=(
+            "TypeScript/tests/cases/compiler/enumLiteralsSubtypeReduction.ts"
+            "TypeScript/tests/cases/compiler/binaryArithmeticControlFlowGraphNotTooLarge.ts"
+        )
+    fi
+    
+    for file in "${large_files[@]}"; do
+        local full_path="$PROJECT_ROOT/$file"
+        if [ -f "$full_path" ]; then
+            run_benchmark "$(basename "$file")" "$full_path"
+            echo
+        fi
+    done
+    
+    # Skip medium/small files in quick mode
+    if [ "$QUICK_MODE" = true ]; then
+        print_subheader "Skipping medium/small files in quick mode"
+    else
+        # ═══════════════════════════════════════════════════════════════════════════
+        # MEDIUM FILES (200-1000 lines) - Typical modules
+        # ═══════════════════════════════════════════════════════════════════════════
+        print_subheader "Medium Files (200-1000 lines) - Typical Modules"
+        
+        local medium_files=(
+            "TypeScript/tests/cases/compiler/privacyFunctionParameterDeclFile.ts"
+            "TypeScript/tests/cases/compiler/privacyGloFunc.ts"
+            "TypeScript/tests/cases/compiler/privacyTypeParameterOfFunctionDeclFile.ts"
+        )
+    
+        for file in "${medium_files[@]}"; do
+            local full_path="$PROJECT_ROOT/$file"
+            if [ -f "$full_path" ]; then
+                run_benchmark "$(basename "$file")" "$full_path"
+                echo
+            fi
+        done
+        
+        # ═══════════════════════════════════════════════════════════════════════════
+        # SMALL FILES (50-200 lines) - Quick iteration
+        # ═══════════════════════════════════════════════════════════════════════════
+        print_subheader "Small Files (50-200 lines) - Startup Overhead Test"
+
+        local typed_arrays_file="$TEMP_DIR/typedArrays.bench.ts"
+        generate_typed_arrays_file "$typed_arrays_file"
+        run_benchmark "typedArrays.ts" "$typed_arrays_file"
+        echo
+        
+        local small_files=(
+            "TypeScript/tests/cases/compiler/controlFlowArrays.ts"
+        )
+        
+        for file in "${small_files[@]}"; do
+            local full_path="$PROJECT_ROOT/$file"
+            if [ -f "$full_path" ]; then
+                run_benchmark "$(basename "$file")" "$full_path"
+                echo
+            fi
+        done
+    fi  # End of medium/small files skip
+
+    run_isolated "utility-types"          run_utility_types_benchmarks
+    run_isolated "ts-toolbelt"            run_ts_toolbelt_benchmarks
+    run_isolated "ts-essentials"          run_ts_essentials_benchmarks
+    run_isolated "utility-types-project"  run_utility_types_project_benchmarks
+    run_isolated "ts-toolbelt-project"    run_ts_toolbelt_project_benchmarks
+    run_isolated "ts-essentials-project"  run_ts_essentials_project_benchmarks
+    run_isolated "rxjs-project"           run_rxjs_project_benchmarks
+    run_isolated "type-fest-project"      run_type_fest_project_benchmarks
+    run_isolated "zod-project"            run_zod_project_benchmarks
+    run_isolated "kysely-project"         run_kysely_project_benchmarks
+    run_isolated "vite-vanilla-ts-app"    run_vite_app_project_benchmarks
+    run_isolated "nextjs-fresh-app"       run_next_app_project_benchmarks
+    run_isolated "nextjs"                 run_nextjs_benchmarks
+    run_isolated "large-ts-repo"          run_large_ts_repo_benchmarks
+
+    print_header "Synthetic Benchmarks - Scaling Test"
+    
+    if [ "$QUICK_MODE" = true ]; then
+        print_subheader "Quick mode: reduced synthetic tests"
+        
+        # Just one of each type in quick mode
+        local file="$TEMP_DIR/synthetic_100_classes.ts"
+        generate_synthetic_file 100 "$file"
+        run_benchmark "100 classes" "$file"
+        echo
+        
+        file="$TEMP_DIR/complex_50_funcs.ts"
+        generate_complex_file 50 "$file"
+        run_benchmark "50 generic functions" "$file"
+        echo
+
+        file="$TEMP_DIR/deeppartial_optional_50.ts"
+        generate_deeppartial_optional_chain_file 50 "$file"
+        run_benchmark "DeepPartial optional-chain N=50" "$file"
+        echo
+
+        file="$TEMP_DIR/shallow_optional_50.ts"
+        generate_shallow_optional_chain_file 50 "$file"
+        run_benchmark "Shallow optional-chain N=50" "$file"
+        echo
+
+        file="$TEMP_DIR/indexed_access_hotspot_25.ts"
+        generate_indexed_access_hotspot_file 25 "$file"
+        run_benchmark "Indexed access hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/remapped_accessor_hotspot_25.ts"
+        generate_remapped_accessor_hotspot_file 25 "$file"
+        run_benchmark "Remapped accessor hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/conditional_infer_hotspot_25.ts"
+        generate_conditional_infer_hotspot_file 25 "$file"
+        run_benchmark "Conditional infer hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/object_spread_hotspot_25.ts"
+        generate_object_spread_hotspot_file 25 "$file"
+        run_benchmark "Object spread hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/contextual_callback_hotspot_25.ts"
+        generate_contextual_callback_hotspot_file 25 "$file"
+        run_benchmark "Contextual callback hotspot N=25" "$file"
+        echo
+    else
+        # Generate synthetic files of increasing size
+        print_subheader "Class-heavy files (interfaces + classes)"
+        
+        for count in 10 50 100 200; do
+            local file="$TEMP_DIR/synthetic_${count}_classes.ts"
+            generate_synthetic_file "$count" "$file"
+            run_benchmark "${count} classes" "$file"
+            echo
+        done
+        
+        print_subheader "Generic-heavy files (async + conditional types)"
+        
+        for count in 20 50 100 200; do
+            local file="$TEMP_DIR/complex_${count}_funcs.ts"
+            generate_complex_file "$count" "$file"
+            run_benchmark "${count} generic functions" "$file"
+            echo
+        done
+
+        print_subheader "DeepPartial mapped access hotspot (bottleneck probe)"
+
+        local file="$TEMP_DIR/deeppartial_optional_400.ts"
+        generate_deeppartial_optional_chain_file 400 "$file"
+        run_benchmark "DeepPartial optional-chain N=400" "$file"
+        echo
+
+        file="$TEMP_DIR/shallow_optional_400.ts"
+        generate_shallow_optional_chain_file 400 "$file"
+        run_benchmark "Shallow optional-chain N=400" "$file"
+        echo
+
+        print_subheader "Project hotspot microbenchmarks"
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/indexed_access_hotspot_${count}.ts"
+            generate_indexed_access_hotspot_file "$count" "$file"
+            run_benchmark "Indexed access hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/remapped_accessor_hotspot_${count}.ts"
+            generate_remapped_accessor_hotspot_file "$count" "$file"
+            run_benchmark "Remapped accessor hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/conditional_infer_hotspot_${count}.ts"
+            generate_conditional_infer_hotspot_file "$count" "$file"
+            run_benchmark "Conditional infer hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/object_spread_hotspot_${count}.ts"
+            generate_object_spread_hotspot_file "$count" "$file"
+            run_benchmark "Object spread hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/contextual_callback_hotspot_${count}.ts"
+            generate_contextual_callback_hotspot_file "$count" "$file"
+            run_benchmark "Contextual callback hotspot N=$count" "$file"
+            echo
+        done
+        
+        print_subheader "Union type stress test"
+        
+        for count in 50 100 200; do
+            local file="$TEMP_DIR/union_${count}.ts"
+            generate_union_file "$count" "$file"
+            run_benchmark "${count} union members" "$file"
+            echo
+        done
+    fi
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SOLVER STRESS TESTS - Type system limit testing
+    # ═══════════════════════════════════════════════════════════════════════════
+    print_header "Solver Stress Tests - Type System Limits"
+    
+    if [ "$QUICK_MODE" = true ]; then
+        print_subheader "Quick mode: reduced solver stress tests"
+        
+        # One test per category in quick mode
+        local file="$TEMP_DIR/recursive_generic_25.ts"
+        generate_recursive_generic_file 25 "$file"
+        run_benchmark "Recursive generic depth=25" "$file"
+        echo
+        
+        file="$TEMP_DIR/conditional_dist_50.ts"
+        generate_conditional_distribution_file 50 "$file"
+        run_benchmark "Conditional dist N=50" "$file"
+        echo
+        
+        file="$TEMP_DIR/mapped_100.ts"
+        generate_mapped_type_file 100 "$file"
+        run_benchmark "Mapped type keys=100" "$file"
+        echo
+    else
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Recursive generic instantiation (MAX_INSTANTIATION_DEPTH=50)"
+        
+        for depth in 20 35 45; do
+            local file="$TEMP_DIR/recursive_generic_${depth}.ts"
+            generate_recursive_generic_file "$depth" "$file"
+            run_benchmark "Recursive generic depth=$depth" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Conditional type distribution (MAX_DISTRIBUTION_SIZE=100)"
+        
+        for count in 50 80 95; do
+            local file="$TEMP_DIR/conditional_dist_${count}.ts"
+            generate_conditional_distribution_file "$count" "$file"
+            run_benchmark "Conditional dist N=$count" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Mapped type expansion (MAX_MAPPED_KEYS=500)"
+        
+        for count in 100 300 450; do
+            local file="$TEMP_DIR/mapped_${count}.ts"
+            generate_mapped_type_file "$count" "$file"
+            run_benchmark "Mapped type keys=$count" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Template literal types (TEMPLATE_LITERAL_EXPANSION_LIMIT)"
+        
+        for count in 20 35 45; do
+            local file="$TEMP_DIR/template_${count}.ts"
+            generate_template_literal_file "$count" "$file"
+            run_benchmark "Template literal N=$count" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Deep subtype checking (MAX_SUBTYPE_DEPTH=100)"
+        
+        for depth in 30 60 90; do
+            local file="$TEMP_DIR/deep_subtype_${depth}.ts"
+            generate_deep_subtype_file "$depth" "$file"
+            run_benchmark "Deep subtype depth=$depth" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Intersection types (property merging)"
+        
+        for count in 20 35 45; do
+            local file="$TEMP_DIR/intersection_${count}.ts"
+            generate_intersection_file "$count" "$file"
+            run_benchmark "Intersection N=$count" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Infer keyword stress (type inference)"
+        
+        for count in 15 25 30; do
+            local file="$TEMP_DIR/infer_${count}.ts"
+            generate_infer_stress_file "$count" "$file"
+            run_benchmark "Infer stress N=$count" "$file"
+            echo
+        done
+        
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Control flow analysis (CFA with many branches)"
+        
+        for count in 50 100 150; do
+            local file="$TEMP_DIR/cfa_${count}.ts"
+            generate_cfa_stress_file "$count" "$file"
+            run_benchmark "CFA branches=$count" "$file"
+            echo
+        done
+    fi
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # O(N²) ALGORITHMIC PATTERN TESTS
+    # ═══════════════════════════════════════════════════════════════════════════
+    # These benchmarks target three specific O(N²) patterns in the solver that
+    # Salsa memoization alone cannot fix. They serve as regression/progress
+    # tracking for the algorithmic fixes described in docs/todo/05_algorithmic_fixes.md
+    #
+    # Pattern 1: Best Common Type (BCT) — infer.rs:1060
+    #   N candidates × N subtype checks per candidate
+    # Pattern 2: Constraint Conflict Detection — infer.rs:135
+    #   N² upper bound pairs + M×N lower×upper cross-checks
+    # Pattern 3: Mapped Type Complex Templates — evaluate_rules/mapped.rs:157
+    #   N properties × expensive per-property template evaluation
+
+    print_header "O(N²) Algorithmic Pattern Tests"
+
+    if [ "$QUICK_MODE" = true ]; then
+        print_subheader "Quick mode: reduced O(N²) pattern tests"
+
+        local file="$TEMP_DIR/bct_50.ts"
+        generate_bct_stress_file 50 "$file"
+        run_benchmark "BCT candidates=50" "$file"
+        echo
+
+        file="$TEMP_DIR/constraint_conflict_30.ts"
+        generate_constraint_conflict_file 30 "$file"
+        run_benchmark "Constraint conflicts N=30" "$file"
+        echo
+
+        file="$TEMP_DIR/mapped_complex_50.ts"
+        generate_mapped_complex_template_file 50 "$file"
+        run_benchmark "Mapped complex template keys=50" "$file"
+        echo
+    else
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Best Common Type — O(N²) candidate checking"
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/bct_${count}.ts"
+            generate_bct_stress_file "$count" "$file"
+            run_benchmark "BCT candidates=$count" "$file"
+            echo
+        done
+
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Constraint Conflict Detection — O(N²) bound pairs"
+
+        for count in 20 50 100 200; do
+            local file="$TEMP_DIR/constraint_conflict_${count}.ts"
+            generate_constraint_conflict_file "$count" "$file"
+            run_benchmark "Constraint conflicts N=$count" "$file"
+            echo
+        done
+
+        # ─────────────────────────────────────────────────────────────────────────
+        print_subheader "Mapped Type Complex Templates — O(N × template_cost)"
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/mapped_complex_${count}.ts"
+            generate_mapped_complex_template_file "$count" "$file"
+            run_benchmark "Mapped complex template keys=$count" "$file"
+            echo
+        done
+    fi
+
+    if [ "$BENCHMARKS_RUN" -eq 0 ]; then
+        echo -e "${RED}No benchmarks matched filter /$FILTER/.${NC}"
+        echo "Try one of:"
+        echo "  ./scripts/bench/bench-vs-tsgo.sh --quick --filter 'utility-types'"
+        echo "  ./scripts/bench/bench-vs-tsgo.sh --quick --filter 'BCT|CFA'"
+        return
+    fi
+
+    print_header "Results Summary"
+    
+    if command -v jq &>/dev/null && [ -n "$RESULTS_CSV" ]; then
+        echo
+        # Table header
+        printf "${BOLD}%-45s %7s %6s %10s %10s %8s %8s %12s${NC}\n" \
+            "Test" "Lines" "KB" "tsz(ms)" "tsgo(ms)" "Winner" "Factor" "Status"
+        printf "${CYAN}%s${NC}\n" "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+        
+        # Table rows (sorted best-to-worst for tsz: tsz wins by descending factor, then tsgo wins by ascending factor)
+        echo -e "$RESULTS_CSV" | awk -F',' '
+            $1 != "" {
+                # Create a sort key: tsz wins get +ratio, tsgo wins get -ratio, errors sink
+                if ($10 != "") sort_key = -999999;
+                else if ($8 == "tsz") sort_key = $9 + 0;
+                else sort_key = -($9 + 0);
+                print sort_key "," $0
+            }
+        ' | sort -t',' -k1 -rn | cut -d',' -f2- | while IFS=',' read -r name lines kb tsz_ms tsgo_ms tsz_lps tsgo_lps winner ratio status; do
+            [ -z "$name" ] && continue
+
+            # Truncate long test names
+            local display_name="$name"
+            if [ ${#name} -gt 44 ]; then
+                display_name="${name:0:41}..."
+            fi
+
+            local status_display="${status:--}"
+            local ratio_display="$ratio"
+            if [ -n "$status" ]; then
+                ratio_display="N/A"
+                printf "%-45s %7s %6s %10s %10s ${RED}%8s${NC} ${RED}%7s${NC} ${RED}%12s${NC}\n" \
+                    "$display_name" "$lines" "$kb" "$tsz_ms" "$tsgo_ms" "error" "$ratio_display" "$status_display"
+            elif [ "$winner" = "tsz" ]; then
+                printf "%-45s %7s %6s %10s %10s ${GREEN}%8s${NC} ${GREEN}%7sx${NC} %12s\n" \
+                    "$display_name" "$lines" "$kb" "$tsz_ms" "$tsgo_ms" "$winner" "$ratio" "$status_display"
+            else
+                printf "%-45s %7s %6s %10s %10s ${YELLOW}%8s${NC} ${YELLOW}%7sx${NC} %12s\n" \
+                    "$display_name" "$lines" "$kb" "$tsz_ms" "$tsgo_ms" "$winner" "$ratio" "$status_display"
+            fi
+        done
+        
+        # Summary line
+        printf "${CYAN}%s${NC}\n" "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+        
+        # Count wins
+        local tsz_wins=$(echo -e "$RESULTS_CSV" | awk -F',' '$8 == "tsz" { c++ } END { print c+0 }')
+        local tsgo_wins=$(echo -e "$RESULTS_CSV" | awk -F',' '$8 == "tsgo" { c++ } END { print c+0 }')
+        echo
+        echo -e "${BOLD}Score:${NC} ${GREEN}tsz ${tsz_wins}${NC} vs ${YELLOW}tsgo ${tsgo_wins}${NC}"
+        echo
+    else
+        echo
+        echo -e "${YELLOW}No benchmark results recorded.${NC}"
+    fi
+
+    export_results_json
+}
+
+main "$@"

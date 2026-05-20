@@ -1,0 +1,1893 @@
+use crate::context::TypingRequest;
+use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
+use tsz_binder::symbol_flags;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
+
+pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    match node.kind {
+        k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+        {
+            if let Some(access) = arena.get_access_expr(node) {
+                access.question_dot_token
+            } else {
+                false
+            }
+        }
+        k if k == syntax_kind_ext::CALL_EXPRESSION => {
+            if node.is_optional_chain() {
+                return true;
+            }
+            if let Some(call) = arena.get_call_expr(node) {
+                is_optional_chain(arena, call.expression)
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn optional_chain_root(arena: &NodeArena, idx: NodeIndex) -> NodeIndex {
+    let Some(node) = arena.get(idx) else {
+        return idx;
+    };
+    match node.kind {
+        k if k == syntax_kind_ext::CALL_EXPRESSION => {
+            if let Some(call) = arena.get_call_expr(node) {
+                return optional_chain_root(arena, call.expression);
+            }
+            idx
+        }
+        k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+        {
+            if let Some(access) = arena.get_access_expr(node) {
+                return optional_chain_root(arena, access.expression);
+            }
+            idx
+        }
+        _ => idx,
+    }
+}
+
+impl<'a> CheckerState<'a> {
+    /// Get the type of an element access expression (e.g., arr[0], obj["prop"]).
+    ///
+    /// Handles element access with optional chaining, index signatures,
+    /// and nullish coalescing.
+    #[allow(dead_code)]
+    pub(crate) fn get_type_of_element_access(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_element_access_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_element_access_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
+        use crate::query_boundaries::common::PropertyAccessResult;
+        let skip_flow_narrowing = request.flow.skip_flow_narrowing();
+        let read_request = request.read().normal_origin().contextual_opt(None);
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return TypeId::ERROR;
+        };
+        let is_value_element_access = node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+
+        // In parse-recovery cases like `number[]`, the bracket argument is
+        // missing and the parser already reports TS1011. Don't additionally
+        // emit TS2693 here — the parse error is sufficient and tsc doesn't
+        // emit TS2693 in this case. Just return ERROR to prevent cascading.
+        if access.name_or_argument.is_none() {
+            return TypeId::ERROR;
+        }
+
+        let literal_string = self.get_literal_string_from_node(access.name_or_argument);
+        let numeric_string_index = literal_string
+            .as_deref()
+            .and_then(|name| self.get_numeric_index_from_string(name));
+        let literal_index = self
+            .get_literal_index_from_node(access.name_or_argument)
+            .or(numeric_string_index);
+
+        // Visit the index expression up front so identifier diagnostics
+        // (TS2304 etc.) fire even when the object type short-circuits through
+        // the any/error/never/nullish paths below. tsc always resolves the
+        // bracket argument regardless of the receiver's type.
+        let prev_preserve = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+        let index_type = self.get_type_of_node_with_request(access.name_or_argument, &read_request);
+        self.ctx.preserve_literal_types = prev_preserve;
+        let index_type_for_access = literal_string
+            .as_deref()
+            .filter(|_| numeric_string_index.is_none())
+            .map(|name| self.ctx.types.literal_string(name))
+            .unwrap_or(index_type);
+
+        // When the index is a `symbol`-typed identifier, convert to a
+        // `UniqueSymbol(SymbolRef)` so the solver can match binding-identity
+        // properties stored as `__unique_<sym_id>`.  This mirrors how TypeScript
+        // resolves `ws[sym]` when `sym: symbol` was used as a computed property
+        // name in the object's type declaration.
+        let index_type_for_access = if index_type == TypeId::SYMBOL {
+            self.nonunique_symbol_index_type(access.name_or_argument)
+                .unwrap_or(index_type_for_access)
+        } else {
+            index_type_for_access
+        };
+
+        // Get the type of the object. In write context, prefer the receiver's
+        // declared type when it already has the indexed member, otherwise fall
+        // back to the flow-narrowed receiver so subtype-based writes still work.
+        let expando_write_property_name =
+            if skip_flow_narrowing && self.is_js_file() && self.ctx.compiler_options.check_js {
+                self.expando_element_key_name(access.name_or_argument)
+            } else {
+                None
+            };
+
+        let (object_type, raw_object_type, write_presence_only) = if skip_flow_narrowing {
+            let object_type_no_flow =
+                self.get_type_of_write_target_base_expression(access.expression);
+            let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
+            let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
+            let preserve_js_expando_write_base = self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && self
+                    .ctx
+                    .arena
+                    .get(access.name_or_argument)
+                    .is_some_and(|_| {
+                        let Some(member_name) = expando_write_property_name.as_deref() else {
+                            return false;
+                        };
+                        property_access_chain_text_in_arena(self.ctx.arena, access.expression)
+                            .is_some_and(|object_key| {
+                                self.collect_expando_properties_for_root(&object_key)
+                                    .contains(member_name)
+                                    || object_key.rsplit_once('.').is_some_and(
+                                        |(_, last_segment)| {
+                                            self.collect_expando_properties_for_root(last_segment)
+                                                .contains(member_name)
+                                        },
+                                    )
+                            })
+                    });
+            let can_use_no_flow = if let Some(name) = literal_string.as_deref() {
+                !matches!(
+                    self.resolve_property_access_with_env(resolved_no_flow, name),
+                    PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+                )
+            } else if literal_index.is_some() {
+                self.get_element_access_type(resolved_no_flow, TypeId::NUMBER, literal_index)
+                    != TypeId::ERROR
+            } else {
+                false
+            };
+            let chosen = if can_use_no_flow || preserve_js_expando_write_base {
+                let read_object_type =
+                    self.get_type_of_node_with_request(access.expression, &read_request);
+                if let Some(name) = literal_string.as_deref() {
+                    let evaluated_read = self.evaluate_application_type(read_object_type);
+                    let resolved_read = self.resolve_type_for_property_access(evaluated_read);
+                    if self.union_write_requires_existing_named_member(resolved_read, name) {
+                        (read_object_type, false)
+                    } else {
+                        let read_has_property = !matches!(
+                            self.resolve_property_access_with_env(resolved_read, name),
+                            PropertyAccessResult::PropertyNotFound { .. }
+                                | PropertyAccessResult::IsUnknown
+                        );
+                        (object_type_no_flow, !read_has_property)
+                    }
+                } else if literal_index.is_some() {
+                    let evaluated_read = self.evaluate_application_type(read_object_type);
+                    let resolved_read = self.resolve_type_for_property_access(evaluated_read);
+                    let read_has_property =
+                        self.get_element_access_type(resolved_read, TypeId::NUMBER, literal_index)
+                            != TypeId::ERROR;
+                    (object_type_no_flow, !read_has_property)
+                } else {
+                    (object_type_no_flow, false)
+                }
+            } else {
+                (
+                    self.get_type_of_node_with_request(access.expression, &read_request),
+                    false,
+                )
+            };
+            (self.evaluate_application_type(chosen.0), chosen.0, chosen.1)
+        } else {
+            let object_type = self.get_type_of_node_with_request(access.expression, &read_request);
+            (
+                self.evaluate_application_type(object_type),
+                object_type,
+                false,
+            )
+        };
+
+        // Handle optional chain continuations: for `o?.b["c"]`, when processing `["c"]`,
+        // the object type from `o?.b` includes `undefined`. Strip nullish types when this
+        // element access is a continuation of an optional chain.
+        let object_type =
+            if !access.question_dot_token && is_optional_chain(self.ctx.arena, access.expression) {
+                let (non_nullish, _) = self.split_nullish_type(object_type);
+                non_nullish.unwrap_or(object_type)
+            } else {
+                object_type
+            };
+        let object_type = if !skip_flow_narrowing
+            && self
+                .resolve_identifier_symbol(access.expression)
+                .is_some_and(|sym| self.ctx.destructured_bindings.contains_key(&sym))
+            && let Some(flow_node) = self.flow_node_for_reference_usage(idx)
+        {
+            self.flow_analyzer_for_property_reads().get_flow_type(
+                access.expression,
+                object_type,
+                flow_node,
+            )
+        } else {
+            object_type
+        };
+
+        if access.question_dot_token
+            && let Some(property_name) = literal_string.as_deref()
+            && self.split_nullish_type(object_type).0.is_none()
+        {
+            self.error_property_not_exist_at(property_name, TypeId::NEVER, access.name_or_argument);
+            return TypeId::UNDEFINED;
+        }
+
+        let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
+            if skip_flow_narrowing {
+                if write_presence_only {
+                    TypeId::ANY
+                } else {
+                    write_type.unwrap_or(type_id)
+                }
+            } else {
+                type_id
+            }
+        };
+
+        // Save the pre-resolution object type. When the object is a type parameter,
+        // resolve_type_for_property_access replaces it with its constraint. But for
+        // generic indexed access (e.g., U[keyof T] where U extends T), we need to
+        // keep the original type parameter to produce the correct deferred type.
+        //
+        // Instance `this[K]` writes in class members need the same preservation:
+        // the expression `this` evaluates to the concrete class instance type, but
+        // generic writes like `this[key] = value` should still target deferred
+        // `this[K]` so the polymorphic `this` relationship survives assignability.
+        let pre_resolution_object_type = if self.is_this_expression(access.expression)
+            && self.ctx.enclosing_class.is_some()
+            && !self.is_this_in_nested_function_inside_class(idx)
+            && !self.is_this_in_static_class_member(idx)
+        {
+            self.ctx.types.this_type()
+        } else {
+            object_type
+        };
+
+        let static_member_name = literal_string
+            .clone()
+            .or_else(|| self.current_file_commonjs_static_member_name(access.name_or_argument));
+        if self.is_js_file()
+            && self.is_this_expression(access.expression)
+            && !self.property_access_is_direct_write_target(idx)
+            && let Some(member_name) = static_member_name.as_deref()
+            && let Some(prior_type) = self.prior_js_this_property_assignment_type(idx, member_name)
+        {
+            return if skip_flow_narrowing {
+                prior_type
+            } else {
+                self.apply_flow_narrowing(idx, prior_type)
+            };
+        }
+
+        let is_this_global = self.is_this_resolving_to_global(access.expression);
+        let is_declared_window_global_this =
+            self.is_window_and_global_this_declared_expression(access.expression);
+        if let Some(name) = literal_string.as_deref()
+            && (self.is_global_this_like_expression(access.expression)
+                || is_this_global
+                || is_declared_window_global_this)
+        {
+            let base_display =
+                if self.is_global_this_expression(access.expression) || is_this_global {
+                    "typeof globalThis"
+                } else {
+                    "Window & typeof globalThis"
+                };
+            let allow_unknown_property_fallback =
+                (self.is_global_this_expression(access.expression) || is_this_global)
+                    && !is_declared_window_global_this;
+            if is_declared_window_global_this
+                && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                if let Some(window_type) = self.resolve_lib_type_by_name("Window") {
+                    let prop_result =
+                        crate::query_boundaries::property_access::resolve_property_access(
+                            self.ctx.types,
+                            window_type,
+                            name,
+                        );
+                    if let Some(type_id) = prop_result.success_type() {
+                        return if skip_flow_narrowing {
+                            type_id
+                        } else {
+                            self.apply_flow_narrowing(idx, type_id)
+                        };
+                    }
+                }
+                if self.ctx.no_implicit_any() && !self.is_js_file() {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        access.name_or_argument,
+                        "Element implicitly has an 'any' type because index expression is not of type 'number'.",
+                        diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE,
+                    );
+                }
+                return TypeId::ANY;
+            }
+            // For element access (globalThis['y']), tsc reports TS2339 at the full
+            // expression span. For property access (globalThis.y), at the property name.
+            let error_node = if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                idx
+            } else {
+                access.name_or_argument
+            };
+            let property_type = self.resolve_global_this_property_type(
+                name,
+                error_node,
+                allow_unknown_property_fallback,
+                base_display,
+            );
+            if property_type == TypeId::ERROR {
+                return TypeId::ERROR;
+            }
+            // TS7053: When noImplicitAny is enabled and the access target is
+            // `typeof globalThis` (via `this` resolving to global, or a direct
+            // `globalThis['x']`), and the property is not found, emit the
+            // can't-index diagnostic.
+            let access_targets_global_this =
+                is_this_global || self.is_global_this_expression(access.expression);
+            if access_targets_global_this
+                && property_type == TypeId::ANY
+                && self.ctx.no_implicit_any()
+                && !self.is_js_file()
+                && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let index_str = format!("\"{name}\"");
+                self.error_at_node(
+                    idx,
+                    &format_message(
+                        diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+                        &[&index_str, "typeof globalThis"],
+                    ),
+                    diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+                );
+            }
+            return if skip_flow_narrowing {
+                property_type
+            } else {
+                self.apply_flow_narrowing(idx, property_type)
+            };
+        }
+
+        // Handle `window[k]` where `k` is a typed identifier whose type is a
+        // single string literal or a union of string literals, e.g.
+        // `const k: 'resizeTo' | 'resizeBy'`. The literal-string branch above
+        // only fires when the AST argument is a string literal node, so
+        // variable indices fall through to the general union-keys path. That
+        // path resolves the property on the full `Window & typeof globalThis`
+        // intersection, where the structural callable shape contributed by
+        // `Window`'s methods is lost during evaluation and the contextual
+        // arrow-function callback collapses to implicit-any. Resolving each
+        // key directly against the `Window` lib type — mirroring the literal
+        // branch above — yields a usable callable shape for the assignment
+        // target so callbacks like `(x, y) => {}` are contextually typed.
+        if literal_string.is_none()
+            && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && (self.is_global_this_like_expression(access.expression)
+                || is_this_global
+                || is_declared_window_global_this)
+            && let Some((string_keys, number_keys)) =
+                self.get_literal_key_union_from_type(index_type)
+            && !string_keys.is_empty()
+            && number_keys.is_empty()
+            && let Some(window_type) = self.resolve_lib_type_by_name("Window")
+        {
+            let mut resolved_types: Vec<TypeId> = Vec::with_capacity(string_keys.len());
+            let mut all_resolved = true;
+            for key_atom in &string_keys {
+                let key_name = self.ctx.types.resolve_atom(*key_atom).to_string();
+                let prop_result = crate::query_boundaries::property_access::resolve_property_access(
+                    self.ctx.types,
+                    window_type,
+                    &key_name,
+                );
+                if let Some(type_id) = prop_result.success_type() {
+                    resolved_types.push(type_id);
+                } else {
+                    all_resolved = false;
+                    break;
+                }
+            }
+            if all_resolved && !resolved_types.is_empty() {
+                // Write context: value must satisfy every possible key →
+                // intersection. Read context: result is one of the keyed
+                // properties → union.
+                let combined = if skip_flow_narrowing {
+                    tsz_solver::utils::intersection_or_single(self.ctx.types, resolved_types)
+                } else {
+                    tsz_solver::utils::union_or_single(self.ctx.types, resolved_types)
+                };
+                return if skip_flow_narrowing {
+                    combined
+                } else {
+                    self.apply_flow_narrowing(idx, combined)
+                };
+            }
+        }
+
+        if self.report_namespace_value_access_for_type_only_import_equals_expr(access.expression) {
+            return TypeId::ERROR;
+        }
+
+        // Defensively visit the index expression for diagnostics (TS2304 on
+        // unresolved identifiers, etc.) BEFORE short-circuiting on an
+        // ANY/ERROR receiver. tsc still flags `a[b]` — both unresolved — as
+        // two separate errors; if we return on the receiver being ERROR we'd
+        // miss diagnostics on the index. Skip for string/numeric literal
+        // indices — those don't contain identifiers to resolve.
+        if (object_type == TypeId::ANY || object_type == TypeId::ERROR)
+            && literal_string.is_none()
+            && literal_index.is_none()
+        {
+            let prev_preserve = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
+            let _ = self.get_type_of_node_with_request(access.name_or_argument, &read_request);
+            self.ctx.preserve_literal_types = prev_preserve;
+        }
+
+        // Don't report errors for any/error types - check BEFORE accessibility
+        // to prevent cascading errors when the object type is already invalid.
+        if object_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+        if object_type == TypeId::ERROR {
+            return TypeId::ERROR;
+        }
+
+        let object_type = self.resolve_type_for_property_access(object_type);
+        if object_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+        if object_type == TypeId::ERROR {
+            return TypeId::ERROR;
+        }
+        // Element access on `never` returns `never` (bottom type propagation).
+        if object_type == TypeId::NEVER {
+            return TypeId::NEVER;
+        }
+
+        let (object_type_for_access, nullish_cause) = self.split_nullish_type(object_type);
+        let Some(object_type_for_access) = object_type_for_access else {
+            if access.question_dot_token {
+                return TypeId::UNDEFINED;
+            }
+            if let Some(cause) = nullish_cause {
+                // Type is entirely nullish - emit TS18050 "The value X cannot be used here"
+                self.report_nullish_object(access.expression, cause, true);
+            }
+            return TypeId::ERROR;
+        };
+
+        // Type is possibly nullish (e.g., Foo | undefined) - emit TS18048/TS2532
+        // unless optional chaining is used
+        if let Some(cause) = nullish_cause
+            && !access.question_dot_token
+        {
+            self.report_nullish_object(access.expression, cause, false);
+        }
+
+        // Preserve the write target when the index expression already errored.
+        if index_type == TypeId::ERROR {
+            if skip_flow_narrowing
+                && let Some(recovered_type) = self
+                    .recover_assignment_target_type_for_errored_element_index(
+                        object_type_for_access,
+                        access.name_or_argument,
+                    )
+            {
+                return recovered_type;
+            }
+            // In read context, try to resolve through index signatures even
+            // when the index expression is error-typed. tsc resolves element
+            // access through index signatures regardless of the index
+            // expression's validity, returning the index signature's value
+            // type. This is important for downstream checks (e.g., TS2356
+            // arithmetic operand type check on `ENUM1[undeclared]--`).
+            if !skip_flow_narrowing
+                && let Some(index_sig_type) =
+                    self.resolve_index_signature_for_error_index(object_type_for_access)
+            {
+                return index_sig_type;
+            }
+            return TypeId::ERROR;
+        }
+
+        // TS2538: Type cannot be used as an index type
+        // Resolve Lazy types (interfaces, classes, type aliases) before checking
+        // indexability. Lazy types remain as TypeData::Lazy(DefId) in the solver's
+        // type interner, but they may resolve to object types which are invalid
+        // index types. Without resolution, `obj[x]` where `x: SomeInterface`
+        // would silently skip the TS2538 check.
+        let resolved_index = self.resolve_lazy_type(index_type);
+        if let Some(invalid_member) = self.type_get_invalid_index_type_member(resolved_index) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let index_type_str = self.format_type(invalid_member);
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                &[&index_type_str],
+            );
+            self.error_at_node(
+                access.name_or_argument,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+            );
+            return TypeId::ERROR;
+        }
+
+        let is_top_level_this_element_access = self.is_js_file()
+            && literal_string.is_none()
+            && self
+                .ctx
+                .arena
+                .get(access.expression)
+                .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+            && self.ctx.enclosing_class.is_none()
+            && self
+                .find_enclosing_non_arrow_function(access.expression)
+                .is_none();
+
+        if (is_this_global || is_top_level_this_element_access)
+            && literal_string.is_none()
+            && object_type == TypeId::ANY
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let index_str = self.format_type_diagnostic(index_type);
+            self.error_at_node(
+                idx,
+                &format_message(
+                    diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+                    &[&index_str, "typeof globalThis"],
+                ),
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+            );
+            return TypeId::ANY;
+        }
+
+        // In write context, preserve `T[keyof T]` / `T[K]` on generic receivers
+        // before resolving through the receiver's constraint. Otherwise the
+        // write target collapses to the constraint's index-signature value type
+        // (e.g. `number`) and incorrectly accepts writes that should produce
+        // generic TS2322 errors.
+        let is_generic_receiver = crate::query_boundaries::common::is_type_parameter(
+            self.ctx.types,
+            pre_resolution_object_type,
+        ) || crate::query_boundaries::common::is_this_type(
+            self.ctx.types,
+            pre_resolution_object_type,
+        );
+        if skip_flow_narrowing
+            && is_generic_receiver
+            && self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
+        {
+            return self
+                .ctx
+                .types
+                .factory()
+                .index_access(pre_resolution_object_type, index_type);
+        }
+        if skip_flow_narrowing
+            && is_generic_receiver
+            && let Some(write_target) = self.constraint_keyof_write_target_for_type_param(
+                index_type,
+                pre_resolution_object_type,
+            )
+        {
+            return write_target;
+        }
+
+        // For non-receiver generic composites, keep the canonical indexed-access
+        // shell in write position as well. Alias/application/intersection targets
+        // like `Errors<T>[keyof T]` otherwise decompose into structural artifacts
+        // before diagnostics render them.
+        if skip_flow_narrowing
+            && !is_generic_receiver
+            && self.should_preserve_generic_indexed_write_target(
+                pre_resolution_object_type,
+                index_type,
+            )
+        {
+            let display_receiver = self.display_receiver_for_generic_indexed_write(
+                pre_resolution_object_type,
+                raw_object_type,
+            );
+            return self
+                .ctx
+                .types
+                .factory()
+                .index_access(display_receiver, index_type);
+        }
+
+        // Concrete receiver indexed by a generic key (`K extends keyof Receiver`):
+        // tsc preserves the deferred `Receiver[K]` form for the WRITE target so
+        // the assignability check rejects sources that aren't valid for every
+        // possible instantiation of the index parameter and the diagnostic
+        // surfaces `Receiver[K]` rather than the resolved (NUIA-widened) value
+        // type. Without this, `obj[k] = undefined` (where `k: K extends keyof
+        // typeof obj`) silently typechecks because the read-side widening
+        // makes the LHS `T | undefined` and `undefined` is assignable to it.
+        if skip_flow_narrowing
+            && !is_generic_receiver
+            && self.concrete_receiver_write_target_should_preserve_indexed_access(
+                pre_resolution_object_type,
+                index_type,
+            )
+        {
+            return self
+                .ctx
+                .types
+                .factory()
+                .index_access(pre_resolution_object_type, index_type);
+        }
+
+        // TS2476: A const enum member can only be accessed using a string literal.
+        let const_enum_sym = self
+            .resolve_identifier_symbol(access.expression)
+            .map(|sym_id| {
+                self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
+                    .unwrap_or(sym_id)
+            })
+            .or_else(|| {
+                self.resolve_qualified_symbol(access.expression)
+                    .map(|sym_id| {
+                        self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
+                            .unwrap_or(sym_id)
+                    })
+            })
+            .filter(|&sym_id| self.is_const_enum_symbol(sym_id))
+            .or_else(|| {
+                self.enum_symbol_from_type(object_type_for_access)
+                    .filter(|&sym_id| self.is_const_enum_symbol(sym_id))
+            });
+
+        if const_enum_sym.is_some() {
+            let arg_is_string_literal =
+                self.ctx
+                    .arena
+                    .get(access.name_or_argument)
+                    .is_some_and(|arg_node| {
+                        arg_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                            || arg_node.kind
+                                == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    });
+            if !arg_is_string_literal {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    access.name_or_argument,
+                    diagnostic_messages::A_CONST_ENUM_MEMBER_CAN_ONLY_BE_ACCESSED_USING_A_STRING_LITERAL,
+                    diagnostic_codes::A_CONST_ENUM_MEMBER_CAN_ONLY_BE_ACCESSED_USING_A_STRING_LITERAL,
+                );
+                return TypeId::ERROR;
+            }
+        }
+
+        if let Some(index_value) = self
+            .get_number_value_from_element_index(access.name_or_argument)
+            .or_else(|| {
+                crate::query_boundaries::common::number_literal_value(self.ctx.types, index_type)
+            })
+            && index_value.is_finite()
+            && index_value.fract() == 0.0
+            && index_value < 0.0
+        {
+            let object_for_tuple_check = {
+                let unwrapped = crate::query_boundaries::common::unwrap_readonly(
+                    self.ctx.types,
+                    object_type_for_access,
+                );
+                self.resolve_lazy_type(unwrapped)
+            };
+            let object_for_tuple_check = crate::query_boundaries::common::unwrap_readonly(
+                self.ctx.types,
+                object_for_tuple_check,
+            );
+            if crate::query_boundaries::common::is_tuple_type(
+                self.ctx.types,
+                object_for_tuple_check,
+            ) {
+                self.error_at_node(
+                    access.name_or_argument,
+                    crate::diagnostics::diagnostic_messages::A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE,
+                    crate::diagnostics::diagnostic_codes::A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE,
+                );
+                return TypeId::ERROR;
+            }
+        }
+
+        let literal_string_is_none = literal_string.is_none();
+
+        let mut result_type = None;
+        let mut report_no_index = false;
+        let mut use_index_signature_check = true;
+
+        if crate::query_boundaries::common::is_type_parameter(
+            self.ctx.types,
+            pre_resolution_object_type,
+        ) && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
+            && crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                index_type,
+            )
+            .is_some_and(|constraint| {
+                crate::query_boundaries::key_constraints::is_symbol_only_key_constraint(
+                    self.ctx.types,
+                    constraint,
+                )
+            })
+            && !self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let index_type_str = self.format_type(index_type);
+            let object_type_str = self.format_type(pre_resolution_object_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &object_type_str],
+            );
+            self.error_at_node(
+                access.expression,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            result_type = Some(TypeId::ERROR);
+            use_index_signature_check = false;
+        }
+
+        if result_type.is_none() {
+            let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
+            let mapped_access =
+                crate::query_boundaries::common::remapped_mapped_index_access_result(
+                    self.ctx.types,
+                    raw_object_type,
+                    index_type,
+                )
+                .or_else(|| {
+                    crate::query_boundaries::common::remapped_mapped_index_access_result(
+                        self.ctx.types,
+                        resolved_pre,
+                        index_type,
+                    )
+                });
+            if let Some(mapped_access) = mapped_access {
+                use crate::query_boundaries::common::RemappedMappedIndexAccessResult::{
+                    Deferred, Known,
+                };
+                let value_type = match mapped_access {
+                    Known(value_type) | Deferred(value_type) => value_type,
+                };
+                result_type = Some(value_type);
+                use_index_signature_check = false;
+            }
+        }
+
+        if let Some(name) = literal_string.as_deref() {
+            if self
+                .report_namespace_value_access_for_type_only_import_equals_expr(access.expression)
+            {
+                return TypeId::ERROR;
+            }
+
+            // For merged class/function/enum + namespace symbols, literal element
+            // access should see exported namespace members just like property access.
+            // In write context (skip_flow_narrowing), skip these shortcuts:
+            // they return the symbol's read type, which doesn't account for
+            // divergent getter/setter types. The full property access path
+            // below correctly uses write_type for setter parameters.
+            if !skip_flow_narrowing {
+                if let Some(expr_node) = self.ctx.arena.get(access.expression)
+                    && let Some(expr_ident) = self.ctx.arena.get_identifier(expr_node)
+                {
+                    let expr_name = &expr_ident.escaped_text;
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(expr_name)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    {
+                        let is_merged = symbol.has_any_flags(symbol_flags::MODULE)
+                            && symbol.has_any_flags(
+                                symbol_flags::CLASS
+                                    | symbol_flags::FUNCTION
+                                    | symbol_flags::REGULAR_ENUM,
+                            );
+
+                        if is_merged
+                            && let Some(exports) = symbol.exports.as_ref()
+                            && let Some(member_id) = exports.get(name)
+                        {
+                            result_type = Some(self.get_type_of_symbol(member_id));
+                            use_index_signature_check = false;
+                        }
+                    }
+                }
+
+                if let Some(member_type) =
+                    self.resolve_namespace_value_member(object_type_for_access, name)
+                {
+                    result_type = Some(member_type);
+                    use_index_signature_check = false;
+                    // Mark class member symbols as referenced for unused-variable tracking.
+                    // `resolve_namespace_value_member` handles class static members via the
+                    // Callable path (constructor type property lookup). Mark the corresponding
+                    // binder symbol so noUnusedLocals does not falsely report it as unused.
+                    // Skip write context: `Foo["key"] = expr` is not a read.
+                    let is_write_target = self.property_access_is_direct_write_target(idx);
+                    if !is_write_target
+                        && let Some((class_idx, _)) =
+                            self.resolve_class_for_access(access.expression, object_type_for_access)
+                        && let Some(&class_sym_id) = self.ctx.binder.node_symbols.get(&class_idx.0)
+                        && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
+                        && let Some(ref members) = class_symbol.members
+                        && let Some(member_sym_id) = members.get(name)
+                    {
+                        self.ctx
+                            .referenced_symbols
+                            .borrow_mut()
+                            .insert(member_sym_id);
+                        self.ctx
+                            .referenced_as_property
+                            .borrow_mut()
+                            .insert(member_sym_id);
+                    }
+                }
+            }
+
+            if result_type.is_none()
+                && self.namespace_has_type_only_member(object_type_for_access, name)
+                && self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && let Some(ns_name) = self.entity_name_text(access.expression)
+                && let Some(member_sym_id) =
+                    self.resolve_namespace_member_from_all_binders(&ns_name, name)
+            {
+                let recovered_type = if !self.symbol_member_is_type_only(member_sym_id, Some(name))
+                {
+                    let value_type = self.get_type_of_symbol(member_sym_id);
+                    (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR)
+                        .then_some(value_type)
+                } else {
+                    let checked_js_decl = self
+                        .ctx
+                        .binder
+                        .get_symbol(member_sym_id)
+                        .or_else(|| self.get_cross_file_symbol(member_sym_id))
+                        .map(|member_symbol| {
+                            (
+                                member_symbol.value_declaration,
+                                member_symbol.declarations.clone(),
+                            )
+                        })
+                        .and_then(|(value_declaration, declarations)| {
+                            if value_declaration.is_some() {
+                                self.checked_js_constructor_value_declaration(
+                                    member_sym_id,
+                                    value_declaration,
+                                    &declarations,
+                                )
+                            } else {
+                                declarations.into_iter().find(|&decl_idx| {
+                                    self.declaration_is_checked_js_constructor_value_declaration(
+                                        member_sym_id,
+                                        decl_idx,
+                                    )
+                                })
+                            }
+                        });
+                    checked_js_decl.and_then(|checked_js_decl| {
+                        let value_type = self
+                            .type_of_value_declaration_for_symbol(member_sym_id, checked_js_decl);
+                        (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR)
+                            .then_some(value_type)
+                    })
+                };
+                if let Some(recovered_type) = recovered_type {
+                    result_type = Some(recovered_type);
+                    use_index_signature_check = false;
+                }
+            }
+
+            if result_type.is_none()
+                && self.namespace_has_type_only_member(object_type_for_access, name)
+            {
+                if self.is_unresolved_import_symbol(access.expression) {
+                    return TypeId::ERROR;
+                }
+                // Don't emit TS2693 in heritage clause context — the heritage
+                // checker will emit the appropriate error (e.g., TS2689).
+                if self
+                    .find_enclosing_heritage_clause(access.name_or_argument)
+                    .is_none()
+                {
+                    // Emit TS2708 for namespace member access (e.g., ns.Interface())
+                    // This is "Cannot use namespace as a value"
+                    if let Some(ns_name) = self.entity_name_text(access.expression) {
+                        self.report_wrong_meaning_diagnostic(
+                            &ns_name,
+                            access.expression,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                        );
+                    }
+                    // Also emit TS2693 for the type-only member itself
+                    self.report_wrong_meaning_diagnostic(
+                        name,
+                        access.name_or_argument,
+                        crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                    );
+                }
+                return TypeId::ERROR;
+            }
+        }
+
+        if !skip_flow_narrowing
+            && self.is_expando_element_access_read(access.expression, access.name_or_argument)
+        {
+            if let Some(prop_name) = self.expando_element_key_name(access.name_or_argument)
+                && let Some(expando_type) =
+                    self.expando_property_read_type(idx, access.expression, &prop_name)
+            {
+                return expando_type;
+            }
+            return TypeId::ANY;
+        }
+        if self.is_jsdoc_annotated_this_member_declaration(idx) {
+            return TypeId::ANY;
+        }
+        let union_keys = self.get_literal_key_union_from_type(index_type);
+        if result_type.is_none()
+            && literal_index.is_none()
+            && let Some((string_keys, number_keys)) = union_keys
+        {
+            let total_keys = string_keys.len() + number_keys.len();
+            // Non-integer numeric literals (e.g., 1.1, -1) should be resolved as
+            // property names, not via index signatures. Skip this block when all
+            // keys are non-indexable numbers so the property name handler below
+            // can process them (e.g., c[1.1] where C has property `1.1: string`).
+            let all_non_indexable_numbers = string_keys.is_empty()
+                && !number_keys.is_empty()
+                && number_keys
+                    .iter()
+                    .all(|&n| self.get_numeric_index_from_number(n).is_none());
+            if (total_keys > 1 || literal_string_is_none) && !all_non_indexable_numbers {
+                let mut types = Vec::new();
+                let mut string_keys_ok = true;
+                let mut number_keys_ok = true;
+
+                if !string_keys.is_empty() {
+                    let keys_result = self.get_element_access_type_for_literal_keys(
+                        object_type_for_access,
+                        &string_keys,
+                        skip_flow_narrowing,
+                    );
+                    if let Some(result) = keys_result.result_type {
+                        types.push(result);
+                    }
+                    if !keys_result.missing_keys.is_empty() {
+                        string_keys_ok = false;
+                        if keys_result.result_type.is_none() {
+                            // ALL keys missing — fall through to normal TS7053 /
+                            // expando suppression path (don't emit per-key TS2339).
+                            report_no_index = true;
+                        } else {
+                            // SOME keys found, some missing — tsc keeps the
+                            // aggregate TS7053 on the full expression rather
+                            // than switching to per-key TS2339.
+                            report_no_index = true;
+                        }
+                    }
+                }
+
+                if !number_keys.is_empty() {
+                    match self.get_element_access_type_for_literal_number_keys(
+                        object_type_for_access,
+                        &number_keys,
+                        skip_flow_narrowing,
+                    ) {
+                        Some(result) => types.push(result),
+                        None => {
+                            number_keys_ok = false;
+                            report_no_index = true;
+                        }
+                    }
+                }
+
+                // Suppress index signature checks when literal keys were
+                // resolved (fully or partially). When all keys resolve, there
+                // is no error. Mixed found/missing string-key unions should
+                // still fall through to the aggregate TS7053 path.
+                if string_keys_ok && number_keys_ok {
+                    use_index_signature_check = false;
+                }
+
+                if report_no_index {
+                    result_type = Some(TypeId::ANY);
+                } else if !types.is_empty() {
+                    // In write context, intersect the results from string and number
+                    // keys — the assigned value must satisfy all possible key types.
+                    result_type = Some(if skip_flow_narrowing {
+                        let intersection =
+                            tsz_solver::utils::intersection_or_single(self.ctx.types, types);
+                        self.evaluate_type_with_env(intersection)
+                    } else {
+                        tsz_solver::utils::union_or_single(self.ctx.types, types)
+                    });
+
+                    // Mark class member symbols as referenced for unused-variable tracking.
+                    // Element access like `this[key]` where `key: "a" | "b"` reads
+                    // private properties `a` and `b`. Without this, those members would
+                    // be falsely reported as unused (TS6133) because the solver's property
+                    // resolution pipeline never marks binder symbols.
+                    //
+                    // Skip when the access is the direct LHS of an assignment
+                    // (`this[key] = expr`) or ++/-- — writes don't count as reads
+                    // for noUnusedLocals; mirrors the property_checker.rs guard
+                    // for dot-access.
+                    let is_write_target = self.property_access_is_direct_write_target(idx);
+                    if !is_write_target
+                        && self.is_this_expression(access.expression)
+                        && !string_keys.is_empty()
+                        && let Some(class_idx) = self.nearest_enclosing_class(access.expression)
+                        && let Some(&class_sym_id) = self.ctx.binder.node_symbols.get(&class_idx.0)
+                        && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
+                        && let Some(ref members) = class_symbol.members
+                    {
+                        for &key_atom in &string_keys {
+                            let key_name = self.ctx.types.resolve_atom(key_atom);
+                            if let Some(member_sym_id) = members.get(&key_name) {
+                                self.ctx
+                                    .referenced_symbols
+                                    .borrow_mut()
+                                    .insert(member_sym_id);
+                                self.ctx
+                                    .referenced_as_property
+                                    .borrow_mut()
+                                    .insert(member_sym_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if result_type.is_none()
+            && let Some(property_name) = self.get_literal_string_from_node(access.name_or_argument)
+            && numeric_string_index.is_none()
+        {
+            // Resolve type references (Ref, TypeQuery, etc.) before property access lookup
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+            result_type = match result {
+                PropertyAccessResult::Success {
+                    type_id,
+                    write_type,
+                    ..
+                } => {
+                    if skip_flow_narrowing
+                        && self.union_write_requires_existing_named_member(
+                            resolved_type,
+                            &property_name,
+                        )
+                    {
+                        None
+                    } else {
+                        use_index_signature_check = false;
+                        // Mark class member symbols as referenced for unused-variable tracking.
+                        // Element access like `Foo["key"]` reads member `key` on class `Foo`.
+                        // Without this, private members accessed via bracket notation are falsely
+                        // reported as unused (TS6133) because the solver's property resolution
+                        // pipeline never marks binder symbols.
+                        //
+                        // Skip when the access is the direct LHS of an assignment
+                        // (`Foo["key"] = expr`) — writes don't count as reads for noUnusedLocals.
+                        // The `this[key]` case is handled separately above for union types;
+                        // this branch handles the single-property-name case for class identifiers.
+                        let is_write_target = self.property_access_is_direct_write_target(idx);
+                        if !is_write_target {
+                            let class_result = self.resolve_class_for_access(
+                                access.expression,
+                                object_type_for_access,
+                            );
+                            if let Some((class_idx, _is_static)) = class_result
+                                && let Some(&class_sym_id) =
+                                    self.ctx.binder.node_symbols.get(&class_idx.0)
+                                && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
+                                && let Some(ref members) = class_symbol.members
+                                && let Some(member_sym_id) = members.get(&property_name)
+                            {
+                                self.ctx
+                                    .referenced_symbols
+                                    .borrow_mut()
+                                    .insert(member_sym_id);
+                                self.ctx
+                                    .referenced_as_property
+                                    .borrow_mut()
+                                    .insert(member_sym_id);
+                            }
+                        }
+                        // In write context (assignment target), prefer the setter type.
+                        Some(effective_write_result(type_id, write_type))
+                    }
+                }
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    use_index_signature_check = false;
+                    // Use ERROR instead of UNKNOWN to prevent TS2571 errors
+                    Some(property_type.unwrap_or(TypeId::ERROR))
+                }
+                PropertyAccessResult::IsUnknown => {
+                    if self.ctx.compiler_options.strict_null_checks {
+                        use_index_signature_check = false;
+                        // TS18046: 'x' is of type 'unknown'.
+                        // Without strictNullChecks, unknown is treated like any.
+                        if self.error_is_of_type_unknown(access.expression) {
+                            Some(TypeId::ERROR)
+                        } else {
+                            Some(TypeId::ANY)
+                        }
+                    } else {
+                        None
+                    }
+                }
+                PropertyAccessResult::PropertyNotFound { .. } => {
+                    // TS2576 parity for element access on instance/super with a static member name.
+                    // Use the shared class summary so inherited static fields/accessors
+                    // don't rewalk the base chain at each access.
+                    if self.is_super_expression(access.expression)
+                        && let Some(ref class_info) = self.ctx.enclosing_class
+                        && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
+                        && self
+                            .class_chain_member_kind_name_only(base_idx, &property_name, true, true)
+                            .is_some()
+                    {
+                        use crate::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+
+                        let base_name = self.get_class_name_from_decl(base_idx);
+                        let static_member_name = format!("{base_name}.{property_name}");
+                        let object_type_str = self.format_type(object_type);
+                        let message = format_message(
+                            diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
+                            &[&property_name, &object_type_str, &static_member_name],
+                        );
+                        self.error_at_node(
+                            access.name_or_argument,
+                            &message,
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
+                        );
+                        use_index_signature_check = false;
+                        Some(TypeId::ERROR)
+                    } else if !self.is_super_expression(access.expression)
+                        && let Some((class_idx, is_static_access)) =
+                            self.resolve_class_for_access(access.expression, object_type_for_access)
+                        && !is_static_access
+                        && self
+                            .class_chain_member_kind_name_only(
+                                class_idx,
+                                &property_name,
+                                true,
+                                true,
+                            )
+                            .is_some()
+                    {
+                        use crate::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+
+                        let object_type_str =
+                            self.format_type_for_assignability_message(object_type);
+                        let static_member_name = format!("{object_type_str}.{property_name}");
+                        let message = format_message(
+                            diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
+                            &[&property_name, &object_type_str, &static_member_name],
+                        );
+                        self.error_at_node(
+                            access.name_or_argument,
+                            &message,
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
+                        );
+                        use_index_signature_check = false;
+                        Some(TypeId::ERROR)
+                    } else if !self.is_super_expression(access.expression)
+                        && self.property_access_is_current_class_construction_recovery(
+                            access.expression,
+                            object_type_for_access,
+                        )
+                        && let Some((class_idx, is_static_access)) =
+                            self.resolve_class_for_access(access.expression, object_type_for_access)
+                        && let Some(member_type) = self
+                            .summarize_class_chain(class_idx)
+                            .lookup(&property_name, is_static_access, true)
+                            .map(|member| member.type_id)
+                    {
+                        use_index_signature_check = false;
+                        Some(member_type)
+                    } else {
+                        // TS2339 parity for element access on `typeof const enum` with a missing
+                        // string-literal member. Const enums do not have reverse mappings, so they
+                        // should not fall back to TS7053 string-index diagnostics.
+                        if const_enum_sym.is_some() {
+                            self.error_property_not_exist_at(
+                                &property_name,
+                                object_type_for_access,
+                                access.name_or_argument,
+                            );
+                            use_index_signature_check = false;
+                            Some(TypeId::ERROR)
+                        } else {
+                            // CRITICAL FIX: Don't immediately return ANY when property is not found.
+                            // Let it fall through to check for index signatures below.
+                            // This allows map["foo"] to work when map has [key: string]: boolean
+                            None
+                        }
+                    }
+                }
+            };
+        }
+
+        if result_type.is_none()
+            && let Some(index) = literal_index
+            && !self.is_array_like_type(object_type_for_access)
+        {
+            let property_name = index.to_string();
+            let keep_index_signature_check = is_value_element_access
+                && self
+                    .union_has_no_common_numeric_index_surface(object_type_for_access, Some(index));
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+            result_type = match result {
+                PropertyAccessResult::Success {
+                    type_id,
+                    write_type,
+                    ..
+                } => {
+                    if !keep_index_signature_check {
+                        use_index_signature_check = false;
+                    }
+                    // In write context (assignment target), prefer the setter type.
+                    Some(effective_write_result(type_id, write_type))
+                }
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    if !keep_index_signature_check {
+                        use_index_signature_check = false;
+                    }
+                    Some(property_type.unwrap_or(TypeId::ERROR))
+                }
+                PropertyAccessResult::IsUnknown => {
+                    if self.ctx.compiler_options.strict_null_checks {
+                        if !keep_index_signature_check {
+                            use_index_signature_check = false;
+                        }
+                        // TS18046: 'x' is of type 'unknown'.
+                        // Without strictNullChecks, unknown is treated like any.
+                        if self.error_is_of_type_unknown(access.expression) {
+                            Some(TypeId::ERROR)
+                        } else {
+                            Some(TypeId::ANY)
+                        }
+                    } else {
+                        None
+                    }
+                }
+                PropertyAccessResult::PropertyNotFound { .. } => None,
+            };
+        }
+
+        // Handle non-integer numeric literals (e.g., c[1.1], c[-1]) as property name access.
+        // Integer literals are handled above via literal_index. Non-integer numeric literals
+        // aren't covered by get_literal_string_from_node or get_literal_index_from_node,
+        // so we need to try property access using their text representation.
+        if result_type.is_none()
+            && literal_index.is_none()
+            && literal_string_is_none
+            && let Some(node) = self.ctx.arena.get(access.name_or_argument)
+            && node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.ctx.arena.get_literal(node)
+        {
+            let property_name = &lit.text;
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, property_name);
+            if let PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } = result
+            {
+                use_index_signature_check = false;
+                result_type = Some(effective_write_result(type_id, write_type));
+            }
+        }
+
+        // Handle unique symbol index access on concrete (non-type-parameter) objects.
+        // Unique symbols resolve to internal property names like "__unique_N" and need
+        // write_type propagation for getter/setter divergence (e.g., `foo[k] = value`
+        // where `k` is a unique symbol with a setter type different from the getter).
+        if result_type.is_none()
+            && let Some(sym_ref) =
+                crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+            && !crate::query_boundaries::common::is_type_parameter(
+                self.ctx.types,
+                pre_resolution_object_type,
+            )
+        {
+            let property_name = format!("__unique_{}", sym_ref.0);
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+            if let PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } = result
+            {
+                use_index_signature_check = false;
+                result_type = Some(effective_write_result(type_id, write_type));
+            }
+
+            // Fallback: well-known symbols (Symbol.hasInstance, Symbol.iterator, etc.)
+            // are stored as "[Symbol.xxx]" in class/interface types, not "__unique_N".
+            // When the __unique_N lookup fails, try the [Symbol.xxx] format.
+            if result_type.is_none() {
+                let sym_id = tsz_binder::SymbolId(sym_ref.0);
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    let sym_name = &symbol.escaped_name;
+                    // Check if the parent is the Symbol global constructor
+                    if symbol.parent.is_some()
+                        && let Some(parent_sym) = self.ctx.binder.get_symbol(symbol.parent)
+                        && parent_sym.escaped_name == "Symbol"
+                    {
+                        let well_known_name = format!("[Symbol.{sym_name}]");
+                        let result =
+                            self.resolve_property_access_with_env(resolved_type, &well_known_name);
+                        if let PropertyAccessResult::Success {
+                            type_id,
+                            write_type,
+                            ..
+                        } = result
+                        {
+                            use_index_signature_check = false;
+                            result_type = Some(effective_write_result(type_id, write_type));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Match const `symbol` computed members stored under stable binding keys.
+        if result_type.is_none()
+            && index_type == TypeId::SYMBOL
+            && !crate::query_boundaries::common::is_type_parameter(
+                self.ctx.types,
+                pre_resolution_object_type,
+            )
+            && let Some(property_name) =
+                self.symbol_valued_binding_property_name(access.name_or_argument, index_type)
+        {
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+            if let PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } = result
+            {
+                use_index_signature_check = false;
+                result_type = Some(effective_write_result(type_id, write_type));
+            }
+        }
+
+        // Late-bound symbol members are not stored as named properties.
+        if result_type.is_none()
+            && index_type == TypeId::SYMBOL
+            && crate::query_boundaries::common::has_late_bound_members(
+                self.ctx.types,
+                object_type_for_access,
+            )
+        {
+            result_type = Some(TypeId::ANY);
+            use_index_signature_check = false;
+        }
+
+        // Under NUIA, value-level `any` indexes use the receiver index signature.
+        if result_type.is_none()
+            && index_type == TypeId::ANY
+            && self.ctx.compiler_options.no_unchecked_indexed_access
+            && let Some(any_result) = self.ctx.types.resolve_any_index_access(
+                object_type_for_access,
+                self.ctx.compiler_options.no_unchecked_indexed_access,
+            )
+            && let PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } = any_result
+        {
+            result_type = Some(effective_write_result(type_id, write_type));
+            use_index_signature_check = false;
+        }
+
+        // Preserve mapped-type/generic-index relationships for solver evaluation.
+        if result_type.is_none()
+            && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
+        {
+            let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
+            if crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved_pre)
+                .is_some()
+            {
+                let index_access = self
+                    .ctx
+                    .types
+                    .factory()
+                    .index_access(resolved_pre, index_type);
+                let evaluated = self.evaluate_type_with_env(index_access);
+                if evaluated != index_access && evaluated != TypeId::ERROR {
+                    result_type = Some(evaluated);
+                    use_index_signature_check = false;
+                }
+            }
+        }
+
+        let mut result_type = result_type.unwrap_or_else(|| {
+            if crate::query_boundaries::common::is_type_parameter(
+                self.ctx.types,
+                pre_resolution_object_type,
+            ) && self.is_generic_index_type(index_type)
+            {
+                if request.flow.skip_flow_narrowing()
+                    && self.is_generic_indexed_write(pre_resolution_object_type, index_type)
+                {
+                    return self
+                        .ctx
+                        .types
+                        .factory()
+                        .index_access(pre_resolution_object_type, index_type);
+                }
+
+                // When indexing a type parameter T with keys from a different type
+                // parameter (e.g., `keyof U` where `U extends T`), tsc emits TS2536.
+                // We should not defer this case to IndexAccess(T, ...).
+                if let Some(key_source) =
+                    self.keyof_source_type_param(index_type, pre_resolution_object_type)
+                    && !self.is_assignable_to(pre_resolution_object_type, key_source)
+                    && !self.object_constraint_covers_keyof_source(
+                        pre_resolution_object_type,
+                        key_source,
+                    )
+                {
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let index_type_str = self.format_type(index_type);
+                    let object_type_str = self.format_type(pre_resolution_object_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                        &[&index_type_str, &object_type_str],
+                    );
+                    self.error_at_node(
+                        access.expression,
+                        &message,
+                        diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                    );
+                    return TypeId::ERROR;
+                }
+
+                if self.generic_index_mentions_transformed_current_type_param(
+                    index_type,
+                    pre_resolution_object_type,
+                ) {
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let index_type_str = self.format_type(index_type);
+                    let object_type_str = self.format_type(pre_resolution_object_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                        &[&index_type_str, &object_type_str],
+                    );
+                    self.error_at_node(
+                        access.expression,
+                        &message,
+                        diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                    );
+                    return TypeId::ERROR;
+                }
+
+                // Case 1: U resolved to a DIFFERENT type parameter T (its constraint).
+                // Produce a deferred IndexAccess(U, index) to preserve the distinction
+                // between U[K] and T[K] for assignability.
+                // Exception: when constraint is concrete (e.g., Record<K, number>),
+                // let normal resolution proceed so T[K] resolves to number.
+                if pre_resolution_object_type != object_type_for_access
+                    && crate::query_boundaries::common::is_type_parameter(
+                        self.ctx.types,
+                        object_type_for_access,
+                    )
+                {
+                    return self
+                        .ctx
+                        .types
+                        .factory()
+                        .index_access(pre_resolution_object_type, index_type);
+                }
+                // Case 2: T resolved to itself (unconstrained type param) and the
+                // index is known to be a valid key for T. Produce deferred IndexAccess
+                // since the solver's is_indexable rejects bare type parameters.
+                // Valid indices for T: keyof T (directly), or K extends keyof T.
+                if pre_resolution_object_type == object_type_for_access
+                    && self.is_valid_index_for_type_param(index_type, pre_resolution_object_type)
+                {
+                    return self
+                        .ctx
+                        .types
+                        .factory()
+                        .index_access(pre_resolution_object_type, index_type);
+                }
+                // Case 3: Type param resolved to a concrete constraint (e.g.,
+                // T extends object → object). The index is generic (e.g.,
+                // keyof Boxified<T> & string from a for-in). Produce deferred
+                // IndexAccess(T, index) to preserve the generic relationship
+                // and prevent false TS7053 on the constraint type.
+                if pre_resolution_object_type != object_type_for_access {
+                    return self
+                        .ctx
+                        .types
+                        .factory()
+                        .index_access(pre_resolution_object_type, index_type);
+                }
+            }
+            // Case 4: Type param with unique symbol index. Unique symbols are concrete
+            // (not generic), but when the object is a type parameter, the result type
+            // depends on the specific T at instantiation time. Produce a deferred
+            // IndexAccess(T, UniqueSymbol) to match tsc behavior (e.g., T[typeof fooProp]).
+            if crate::query_boundaries::common::is_type_parameter(
+                self.ctx.types,
+                pre_resolution_object_type,
+            ) && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                .is_some()
+                && pre_resolution_object_type != object_type_for_access
+            {
+                return self
+                    .ctx
+                    .types
+                    .factory()
+                    .index_access(pre_resolution_object_type, index_type);
+            }
+            if skip_flow_narrowing
+                && self.ctx.exact_optional_property_types()
+                && let Some(index) = literal_index
+                && let Some(elements) = crate::query_boundaries::common::tuple_elements(
+                    self.ctx.types,
+                    object_type_for_access,
+                )
+                && let Some(element) = elements.get(index)
+                && element.optional
+                && !element.rest
+            {
+                return element.type_id;
+            }
+            self.get_element_access_type(
+                object_type_for_access,
+                index_type_for_access,
+                literal_index,
+            )
+        });
+
+        // NOTE: noUncheckedIndexedAccess `| undefined` addition is handled by
+        // the solver's evaluate_index_access_with_options (called via
+        // resolve_element_access_type). The solver adds `| undefined` exactly
+        // when the access goes through an index signature (string/number), and
+        // omits it for known-property-only access (e.g., T[K] where K extends
+        // "a" | "b" — known keys). The split_nullish_type guard in the solver
+        // prevents double-counting. We do NOT add `| undefined` here because
+        // doing so would incorrectly penalize accesses through known properties.
+        if result_type == TypeId::ERROR
+            && let Some(index) = literal_index
+        {
+            if let Some(tuple_elements) =
+                crate::query_boundaries::type_computation::access::tuple_elements(
+                    self.ctx.types,
+                    object_type_for_access,
+                )
+            {
+                // Single tuple: emit TS2493
+                let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
+                if !has_rest_tail && index >= tuple_elements.len() {
+                    let tuple_type_str = self.format_type(object_type_for_access);
+                    self.error_at_node(
+                        access.name_or_argument,
+                        &format!(
+                            "Tuple type '{}' of length '{}' has no element at index '{}'.",
+                            tuple_type_str,
+                            tuple_elements.len(),
+                            index
+                        ),
+                        crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+                    );
+                    // tsc treats the type of an out-of-bounds tuple access as `undefined`,
+                    // not an error type. This prevents cascading errors (e.g., TS2403 for
+                    // subsequent variable declarations should still fire against `undefined`).
+                    result_type = TypeId::UNDEFINED;
+                }
+            } else if self.is_union_of_tuples_all_out_of_bounds(object_type_for_access, index) {
+                // Union of tuples where ALL members are out of bounds: emit TS2339
+                let type_str = self.format_type(object_type);
+                self.error_at_node(
+                    access.name_or_argument,
+                    &format!("Property '{index}' does not exist on type '{type_str}'.",),
+                    crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                );
+            }
+        }
+
+        // Fresh object literal implicit index signature: tsc allows indexing a
+        // directly-written object literal with `string` (or `number`) even when
+        // the type has no explicit index signature. The solver already computes
+        // the union of all property types as the result, so we only need to
+        // suppress the checker's independent TS7053 check.
+        //
+        // IMPORTANT: Only suppress when the object literal has at least one
+        // property. An empty `{}` has no properties to form an implicit index
+        // signature, so `{}["hi"]` and `{}[10]` should still report diagnostics
+        // (TS2339 for literal keys, TS7053 for non-literal keys).
+        let is_fresh_object_literal = self.ctx.arena.get(access.expression).is_some_and(|n| {
+            n.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                && self
+                    .ctx
+                    .arena
+                    .get_literal_expr(n)
+                    .is_some_and(|lit| !lit.elements.nodes.is_empty())
+        });
+
+        if use_index_signature_check
+            && self
+                .should_report_union_generic_key_mismatch_ts2536(object_type_for_access, index_type)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let index_type_str = self.format_type(index_type);
+            let object_type_str = self.format_type(object_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &object_type_str],
+            );
+            self.error_at_node(
+                access.expression,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return TypeId::ERROR;
+        }
+
+        if use_index_signature_check
+            && !is_fresh_object_literal
+            && self.should_report_no_index_signature(
+                object_type_for_access,
+                index_type_for_access,
+                literal_index,
+            )
+        {
+            report_no_index = true;
+        }
+
+        // For unique symbol indices on union types, check that ALL members
+        // support the symbol property. The solver's index access evaluator
+        // silently drops UNDEFINED results from union members, which is correct
+        // for string/number indices (covered by index signatures) but wrong for
+        // unique symbols that can't fall through to index signatures.
+        if !report_no_index
+            && use_index_signature_check
+            && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                .is_some()
+            && crate::query_boundaries::common::union_members(
+                self.ctx.types,
+                object_type_for_access,
+            )
+            .is_none()
+        {
+            let member_result = self.ctx.types.resolve_element_access_type(
+                object_type_for_access,
+                index_type,
+                None,
+            );
+            if member_result == TypeId::ERROR || member_result == TypeId::UNDEFINED {
+                report_no_index = true;
+            }
+        }
+
+        if !report_no_index
+            && use_index_signature_check
+            && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                .is_some()
+            && let Some(members) = crate::query_boundaries::common::union_members(
+                self.ctx.types,
+                object_type_for_access,
+            )
+        {
+            for member in &members {
+                let member_result = self
+                    .ctx
+                    .types
+                    .resolve_element_access_type(*member, index_type, None);
+                if member_result == TypeId::ERROR || member_result == TypeId::UNDEFINED {
+                    report_no_index = true;
+                    break;
+                }
+            }
+        }
+
+        if !report_no_index
+            && use_index_signature_check
+            && crate::query_boundaries::common::intersection_members(
+                self.ctx.types,
+                pre_resolution_object_type,
+            )
+            .is_none()
+            && self.narrow_string_index_signature_rejects_index(
+                object_type_for_access,
+                index_type_for_access,
+            )
+        {
+            report_no_index = true;
+        }
+
+        if !report_no_index
+            && use_index_signature_check
+            && self.union_has_missing_concrete_element_access(
+                object_type_for_access,
+                index_type_for_access,
+                literal_index,
+            )
+        {
+            report_no_index = true;
+        }
+
+        if !report_no_index
+            && use_index_signature_check
+            && is_value_element_access
+            && self.union_has_no_common_numeric_index_surface(object_type_for_access, literal_index)
+        {
+            report_no_index = true;
+        }
+
+        if report_no_index {
+            let is_write_target_or_base = self.property_access_is_write_target_or_base(idx);
+            // Suppress TS7053 for expando bracket assignments on function types.
+            // When `func["prop"] = value` and the object is callable, tsc does not emit
+            // TS7053 — it treats this as a valid JS-style property expansion.
+            // We prefer the AST write-target signal here because not all assignment
+            // checking paths reach this code through `get_type_of_assignment_target`.
+            let is_namespace_object = self
+                .ctx
+                .namespace_module_names
+                .contains_key(&object_type_for_access);
+            let is_js_expando_object_write = self.ctx.is_js_file()
+                && (crate::query_boundaries::common::is_object_like_type(
+                    self.ctx.types,
+                    object_type_for_access,
+                ) || crate::query_boundaries::common::is_empty_object_type(
+                    self.ctx.types,
+                    object_type_for_access,
+                ))
+                && self.is_direct_expando_element_write_base(access.expression)
+                // JS expando-style element writes only suppress TS7053 when the key is a
+                // simple literal/identifier shape the binder/checker can track. Arbitrary
+                // computed expressions like `this["a" + "b"] = 0` should still report.
+                && self.expando_element_key_name(access.name_or_argument).is_some();
+            let is_expando_write = (skip_flow_narrowing || is_write_target_or_base)
+                && !is_namespace_object
+                && (crate::query_boundaries::common::is_function_type(
+                    self.ctx.types,
+                    object_type_for_access,
+                ) || is_js_expando_object_write);
+            if is_expando_write {
+                result_type = TypeId::ANY;
+            }
+            // Suppress TS7053 for expando reads with unique symbol keys on function
+            // types. When `func[symKey]` where symKey is a const Symbol() variable
+            // and `func[symKey] = value` was assigned as an expando property, tsc
+            // does not emit TS7053 on the read side either.
+            // We check: (a) read context, (b) function type, (c) unique symbol index,
+            // (d) the object has ANY unique-symbol expando properties recorded by the
+            // binder. This avoids depending on exact SymbolId matching (which can
+            // fail due to lib-merge rewriting the binder's symbol arena).
+            let is_expando_symbol_read = !skip_flow_narrowing
+                && !is_namespace_object
+                && crate::query_boundaries::common::is_function_type(
+                    self.ctx.types,
+                    object_type_for_access,
+                )
+                && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                    .is_some()
+                && self.object_has_unique_symbol_expandos(access.expression);
+            let is_js_constructor_instance_symbol_read = !skip_flow_narrowing
+                && !is_namespace_object
+                && self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                    .is_some()
+                && self.object_expr_is_new_constructor_instance(access.expression)
+                && self.object_has_unique_symbol_expandos(access.expression);
+            if !is_expando_write
+                && !is_expando_symbol_read
+                && !is_js_constructor_instance_symbol_read
+            {
+                self.error_no_index_signature_at(
+                    index_type,
+                    object_type_for_access,
+                    idx,
+                    access.name_or_argument,
+                    skip_flow_narrowing,
+                );
+                if skip_flow_narrowing {
+                    return TypeId::ERROR;
+                }
+            }
+        }
+
+        if self.ctx.types.take_union_too_complex() {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                idx,
+                diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+                diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
+            );
+        }
+
+        if let Some(cause) = nullish_cause {
+            if access.question_dot_token {
+                result_type = self
+                    .ctx
+                    .types
+                    .factory()
+                    .union2(result_type, TypeId::UNDEFINED);
+            } else if !report_no_index {
+                self.report_possibly_nullish_object(access.expression, cause);
+            }
+        }
+
+        let result_type = if skip_flow_narrowing {
+            result_type
+        } else {
+            self.apply_flow_narrowing(idx, result_type)
+        };
+        self.instantiate_callable_result_from_request(idx, result_type, request)
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/access.rs"]
+mod tests;

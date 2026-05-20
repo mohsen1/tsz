@@ -1,0 +1,713 @@
+//! Unified relation query entrypoints.
+//!
+//! This module centralizes common relation checks (assignability, subtype,
+//! overlap) behind one API so checker code can call Solver queries instead
+//! of wiring checker internals directly to concrete checker engines.
+
+use crate::TypeDatabase;
+use crate::caches::db::QueryDatabase;
+use crate::classes::inheritance::InheritanceGraph;
+use crate::operations::AssignabilityChecker;
+use crate::relations::compat::{
+    AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider,
+};
+use crate::relations::subtype::{AnyPropagationMode, NoopResolver, SubtypeChecker, TypeResolver};
+use crate::types::{
+    CachedAnyMode, RelationCacheConfig, RelationCacheKey, RelationFlags, SymbolRef, TypeId,
+};
+
+/// Relation categories supported by the unified query API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelationKind {
+    /// TypeScript assignability (Lawyer layer).
+    Assignable,
+    /// Assignability with bivariant callback parameters.
+    AssignableBivariantCallbacks,
+    /// Structural subtyping (Judge layer).
+    Subtype,
+    /// Type overlap check used by TS2367-style diagnostics.
+    Overlap,
+    /// Type identity used for variable redeclaration compatibility.
+    RedeclarationIdentical,
+}
+
+/// Policy knobs for relation checks.
+///
+/// A `RelationPolicy` is the checker-visible bundle that describes a relation
+/// query. Every field that affects whether the relation holds must also be
+/// encoded in the [`RelationCacheConfig`] produced by
+/// [`RelationPolicy::cache_config`]. Fields that are strictly diagnostic (they
+/// only affect error messages, not the boolean outcome) must be kept out of
+/// the cache config and documented as such here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RelationPolicy {
+    /// Packed behavior-affecting boolean options (bits 0..=8).
+    ///
+    /// This mirrors the legacy `RelationCacheKey.flags` layout so that older
+    /// callers that still pass `u16` bitmasks interoperate without change.
+    pub flags: u16,
+    /// Enables additional strictness in the compatibility layer.
+    pub strict_subtype_checking: bool,
+    /// When true, `any` does NOT silence structural mismatches in the
+    /// Lawyer layer. This is an independent Sound-Mode toggle; it is NOT
+    /// derived from `strict_function_types`.
+    pub strict_any_propagation: bool,
+    /// Controls how `SubtypeChecker` treats `any`.
+    pub any_propagation_mode: AnyPropagationMode,
+    /// Whether recursive relation cycles should be treated as assumed-related.
+    pub assume_related_on_cycle: bool,
+    /// Skip weak type checks (TS2559) during assignability.
+    ///
+    /// In tsc, `isTypeAssignableTo` does NOT include the weak type check.
+    /// The weak type check is only applied at specific diagnostic sites
+    /// (variable declarations, argument passing, return statements).
+    /// Flow narrowing guards need pure assignability without weak type
+    /// rejection, matching tsc's `isTypeAssignableTo` behavior.
+    pub skip_weak_type_checks: bool,
+    /// Erase generic type parameters in function subtype checks.
+    ///
+    /// When true, non-generic functions can match generic targets by erasing
+    /// target type parameters to their constraints. Matches tsc's
+    /// `eraseGenerics` flag used in the comparable relation.
+    pub erase_generics: bool,
+}
+
+impl Default for RelationPolicy {
+    fn default() -> Self {
+        Self {
+            flags: RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+            strict_subtype_checking: false,
+            strict_any_propagation: false,
+            any_propagation_mode: AnyPropagationMode::All,
+            assume_related_on_cycle: true,
+            skip_weak_type_checks: false,
+            erase_generics: true,
+        }
+    }
+}
+
+impl RelationPolicy {
+    /// Construct the historical no-flags compatibility policy.
+    ///
+    /// This is equivalent to `RelationPolicy::from_flags(0)`, but keeps
+    /// default relation wrappers on a typed policy constructor instead of
+    /// spelling the legacy packed flag protocol at every no-flags call site.
+    pub const fn unflagged_compatibility() -> Self {
+        Self {
+            flags: 0,
+            strict_subtype_checking: false,
+            strict_any_propagation: false,
+            any_propagation_mode: AnyPropagationMode::All,
+            assume_related_on_cycle: true,
+            skip_weak_type_checks: false,
+            erase_generics: true,
+        }
+    }
+
+    /// Construct a policy from the legacy packed `u16` bitmask.
+    ///
+    /// Only explicit bits in `flags` are applied. In particular,
+    /// `strict_any_propagation` and `any_propagation_mode` are NOT derived
+    /// from any other bit — callers that want strict-any semantics must opt
+    /// in explicitly via [`RelationPolicy::with_strict_any_propagation`] or
+    /// [`RelationPolicy::with_any_propagation_mode`].
+    ///
+    /// > Regression note: an earlier version mistakenly inferred
+    /// > `strict_any_propagation` from `FLAG_STRICT_FUNCTION_TYPES`, which
+    /// > silently coupled two independent compiler options. See the
+    /// > `strict_function_types_does_not_imply_strict_any` regression test.
+    pub const fn from_flags(flags: u16) -> Self {
+        // erase_generics defaults to true unless the NO_ERASE_GENERICS flag is set.
+        // This preserves backward compatibility while allowing specific paths
+        // (implements/extends checking) to disable erasure.
+        let erase_generics = (flags & RelationCacheKey::FLAG_NO_ERASE_GENERICS) == 0;
+        Self {
+            flags,
+            strict_subtype_checking: false,
+            strict_any_propagation: false,
+            any_propagation_mode: AnyPropagationMode::All,
+            assume_related_on_cycle: true,
+            skip_weak_type_checks: false,
+            erase_generics,
+        }
+    }
+
+    pub const fn with_erase_generics(mut self, erase: bool) -> Self {
+        self.erase_generics = erase;
+        self
+    }
+
+    pub const fn with_strict_subtype_checking(mut self, strict: bool) -> Self {
+        self.strict_subtype_checking = strict;
+        self
+    }
+
+    pub const fn with_strict_any_propagation(mut self, strict: bool) -> Self {
+        self.strict_any_propagation = strict;
+        self
+    }
+
+    pub const fn with_any_propagation_mode(mut self, mode: AnyPropagationMode) -> Self {
+        self.any_propagation_mode = mode;
+        self
+    }
+
+    pub const fn with_assume_related_on_cycle(mut self, assume: bool) -> Self {
+        self.assume_related_on_cycle = assume;
+        self
+    }
+
+    pub const fn with_skip_weak_type_checks(mut self, skip: bool) -> Self {
+        self.skip_weak_type_checks = skip;
+        self
+    }
+
+    /// Project this policy to the canonical cache-partitioning configuration.
+    ///
+    /// This is the single conversion point from the high-level `RelationPolicy`
+    /// bundle to the behavior-complete [`RelationCacheConfig`] used as the
+    /// `config` field of a [`RelationCacheKey`]. Every behavior-affecting field
+    /// on `RelationPolicy` must be reflected here.
+    pub const fn cache_config(self) -> RelationCacheConfig {
+        let mut bits = Self::cache_flags_from_packed(self.flags);
+        if self.strict_subtype_checking {
+            bits = bits.union(RelationFlags::STRICT_SUBTYPE_CHECKING);
+        }
+        if self.strict_any_propagation {
+            bits = bits.union(RelationFlags::STRICT_ANY_PROPAGATION);
+        }
+        if self.skip_weak_type_checks {
+            bits = bits.union(RelationFlags::SKIP_WEAK_TYPE_CHECKS);
+        }
+        if self.assume_related_on_cycle {
+            bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
+        }
+        // `erase_generics=false` maps to NO_ERASE_GENERICS bit. The legacy
+        // `flags` field may already carry this bit; merging here keeps the
+        // two representations coherent even if a caller sets only the typed
+        // field.
+        if !self.erase_generics {
+            bits = bits.union(RelationFlags::NO_ERASE_GENERICS);
+        }
+        let any_mode = match self.any_propagation_mode {
+            AnyPropagationMode::All => CachedAnyMode::All,
+            // A policy does not know the current recursion depth, so it
+            // encodes the configured mode as "top-level" from the policy's
+            // perspective. The `SubtypeChecker` refines this to
+            // `TopLevelOnlyNested` at depth > 0 when it builds its own key.
+            AnyPropagationMode::TopLevelOnly => CachedAnyMode::TopLevelOnlyAtTop,
+        };
+        RelationCacheConfig::new(bits, any_mode)
+    }
+
+    const fn cache_flags_from_packed(flags: u16) -> RelationFlags {
+        let mut bits = RelationFlags::empty();
+        if flags & RelationCacheKey::FLAG_STRICT_NULL_CHECKS != 0 {
+            bits = bits.union(RelationFlags::STRICT_NULL_CHECKS);
+        }
+        if flags & RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES != 0 {
+            bits = bits.union(RelationFlags::STRICT_FUNCTION_TYPES);
+        }
+        if flags & RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES != 0 {
+            bits = bits.union(RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES);
+        }
+        if flags & RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS != 0 {
+            bits = bits.union(RelationFlags::NO_UNCHECKED_INDEXED_ACCESS);
+        }
+        if flags & RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE != 0 {
+            bits = bits.union(RelationFlags::DISABLE_METHOD_BIVARIANCE);
+        }
+        if flags & RelationCacheKey::FLAG_ALLOW_VOID_RETURN != 0 {
+            bits = bits.union(RelationFlags::ALLOW_VOID_RETURN);
+        }
+        if flags & RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST != 0 {
+            bits = bits.union(RelationFlags::ALLOW_BIVARIANT_REST);
+        }
+        if flags & RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT != 0 {
+            bits = bits.union(RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT);
+        }
+        if flags & RelationCacheKey::FLAG_NO_ERASE_GENERICS != 0 {
+            bits = bits.union(RelationFlags::NO_ERASE_GENERICS);
+        }
+        if flags & RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY != 0 {
+            bits = bits.union(RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY);
+        }
+        if flags & RelationFlags::STRICT_SUBTYPE_CHECKING.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::STRICT_SUBTYPE_CHECKING);
+        }
+        if flags & RelationFlags::STRICT_ANY_PROPAGATION.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::STRICT_ANY_PROPAGATION);
+        }
+        if flags & RelationFlags::SKIP_WEAK_TYPE_CHECKS.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::SKIP_WEAK_TYPE_CHECKS);
+        }
+        if flags & RelationFlags::ASSUME_RELATED_ON_CYCLE.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
+        }
+        if flags & RelationFlags::IN_CALLBACK_PARAM_CHECK.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::IN_CALLBACK_PARAM_CHECK);
+        }
+        if flags & RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::STRICT_READONLY_IDENTITY);
+        }
+        bits
+    }
+}
+
+/// Optional shared context needed by relation engines.
+#[derive(Clone, Copy, Default)]
+pub struct RelationContext<'a> {
+    pub query_db: Option<&'a dyn QueryDatabase>,
+    pub inheritance_graph: Option<&'a InheritanceGraph>,
+    pub class_check: Option<&'a dyn Fn(SymbolRef) -> bool>,
+}
+
+/// Result of a relation check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RelationResult {
+    pub kind: RelationKind,
+    pub related: bool,
+    /// Stack-depth limit (nesting) was exceeded → TS2321 "Excessive stack depth".
+    pub depth_exceeded: bool,
+    /// Iteration-count budget was exhausted → TS2859 "Excessive complexity".
+    pub iteration_exceeded: bool,
+}
+
+impl RelationResult {
+    #[inline]
+    pub const fn is_related(self) -> bool {
+        self.related
+    }
+}
+
+/// Structured failure details for assignability diagnostics.
+#[derive(Debug, Clone)]
+pub struct AssignabilityFailureAnalysis {
+    pub weak_union_violation: bool,
+    pub failure_reason: Option<crate::SubtypeFailureReason>,
+}
+
+/// Analyze assignability failure details using a configured compat checker.
+pub fn analyze_assignability_failure_with_resolver<'a, R: TypeResolver, F>(
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    source: TypeId,
+    target: TypeId,
+    configure: F,
+) -> AssignabilityFailureAnalysis
+where
+    F: FnOnce(&mut CompatChecker<'a, R>),
+{
+    let mut checker = CompatChecker::with_resolver(interner, resolver);
+    configure(&mut checker);
+    AssignabilityFailureAnalysis {
+        weak_union_violation: checker.is_weak_union_violation(source, target),
+        failure_reason: checker.explain_failure(source, target),
+    }
+}
+
+/// Query a relation using a no-op resolver and no overrides.
+pub fn query_relation(
+    interner: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+    kind: RelationKind,
+    policy: RelationPolicy,
+    context: RelationContext<'_>,
+) -> RelationResult {
+    let resolver = NoopResolver;
+    query_relation_with_resolver(interner, &resolver, source, target, kind, policy, context)
+}
+
+/// Query a relation using a custom resolver and no checker overrides.
+pub fn query_relation_with_resolver<'a, R: TypeResolver>(
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    source: TypeId,
+    target: TypeId,
+    kind: RelationKind,
+    policy: RelationPolicy,
+    context: RelationContext<'a>,
+) -> RelationResult {
+    let overrides = NoopOverrideProvider;
+    query_relation_with_overrides(RelationQueryInputs {
+        interner,
+        resolver,
+        source,
+        target,
+        kind,
+        policy,
+        context,
+        overrides: &overrides,
+    })
+}
+
+/// Query a relation using a custom resolver and checker-provided overrides.
+pub fn query_relation_with_overrides<
+    'a,
+    R: TypeResolver,
+    P: AssignabilityOverrideProvider + ?Sized,
+>(
+    RelationQueryInputs {
+        interner,
+        resolver,
+        source,
+        target,
+        kind,
+        policy,
+        context,
+        overrides,
+    }: RelationQueryInputs<'a, R, P>,
+) -> RelationResult {
+    let _span = tracing::debug_span!(
+        "query_relation",
+        src = source.0,
+        tgt = target.0,
+        kind = ?kind,
+    )
+    .entered();
+
+    let (related, depth_exceeded, iteration_exceeded) = match kind {
+        RelationKind::Assignable => {
+            let mut checker = configured_compat_checker(interner, resolver, policy, context);
+            let related = checker.is_assignable_with_overrides(source, target, overrides);
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
+        }
+        RelationKind::AssignableBivariantCallbacks => {
+            let mut checker = configured_compat_checker(interner, resolver, policy, context);
+            let _ = overrides;
+            let related = checker.is_assignable_to_bivariant_callback(source, target);
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
+        }
+        RelationKind::Subtype => {
+            let mut checker = configured_subtype_checker(interner, resolver, policy, context);
+            let related = checker.is_subtype_of(source, target);
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
+        }
+        RelationKind::Overlap => {
+            let checker = configured_subtype_checker(interner, resolver, policy, context);
+            let related = checker.are_types_overlapping(source, target);
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
+        }
+        RelationKind::RedeclarationIdentical => {
+            let mut checker = configured_compat_checker(interner, resolver, policy, context);
+            let related = checker.are_types_identical_for_redeclaration(source, target);
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
+        }
+    };
+
+    tracing::debug!(
+        related,
+        depth_exceeded,
+        iteration_exceeded,
+        "query_relation result"
+    );
+
+    RelationResult {
+        kind,
+        related,
+        depth_exceeded,
+        iteration_exceeded,
+    }
+}
+
+/// Bundled inputs for relation queries.
+pub struct RelationQueryInputs<'a, R: TypeResolver, P: AssignabilityOverrideProvider + ?Sized> {
+    pub interner: &'a dyn TypeDatabase,
+    pub resolver: &'a R,
+    pub source: TypeId,
+    pub target: TypeId,
+    pub kind: RelationKind,
+    pub policy: RelationPolicy,
+    pub context: RelationContext<'a>,
+    pub overrides: &'a P,
+}
+
+pub(crate) fn configured_compat_checker<'a, R: TypeResolver>(
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    policy: RelationPolicy,
+    context: RelationContext<'a>,
+) -> CompatChecker<'a, R> {
+    let mut checker = CompatChecker::with_resolver(interner, resolver);
+    checker.apply_flags(policy.flags);
+    checker.set_inheritance_graph(context.inheritance_graph);
+    checker.set_strict_subtype_checking(policy.strict_subtype_checking);
+    checker.set_strict_any_propagation(policy.strict_any_propagation);
+    checker.set_assume_related_on_cycle(policy.assume_related_on_cycle);
+    checker.set_skip_weak_type_checks(policy.skip_weak_type_checks);
+    checker.set_erase_generics(policy.erase_generics);
+    if let Some(query_db) = context.query_db {
+        checker.set_query_db(query_db);
+    }
+    checker
+}
+
+pub(crate) fn configured_subtype_checker<'a, R: TypeResolver>(
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    policy: RelationPolicy,
+    context: RelationContext<'a>,
+) -> SubtypeChecker<'a, R> {
+    let mut checker = SubtypeChecker::with_resolver(interner, resolver)
+        .apply_flags(policy.flags)
+        .with_any_propagation_mode(policy.any_propagation_mode)
+        .with_assume_related_on_cycle(policy.assume_related_on_cycle);
+    if let Some(query_db) = context.query_db {
+        checker = checker.with_query_db(query_db);
+    }
+    if let Some(inheritance_graph) = context.inheritance_graph {
+        checker = checker.with_inheritance_graph(inheritance_graph);
+    }
+    if let Some(class_check) = context.class_check {
+        checker = checker.with_class_check(class_check);
+    }
+    checker
+}
+
+/// Variance-aware Application-to-Application assignability check.
+///
+/// When both source and target are type applications with the same base
+/// (e.g., `Covariant<A>` vs `Covariant<B>`), computes variance for each
+/// type parameter and checks arguments accordingly. This avoids structural
+/// expansion which would lose variance information.
+///
+/// Returns `Some(true/false)` if variance check is conclusive,
+/// `None` if the types are not suitable for variance-based checking
+/// (different bases, non-Application types, unknown variance).
+pub fn check_application_variance<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    query_db: Option<&dyn QueryDatabase>,
+    source: TypeId,
+    target: TypeId,
+    policy: RelationPolicy,
+    context: RelationContext<'_>,
+) -> Option<bool> {
+    use crate::types::TypeData;
+    use crate::visitor::lazy_def_id;
+
+    if source.is_intrinsic() || target.is_intrinsic() {
+        return None;
+    }
+    let (s_app_id, t_app_id) = match (db.lookup(source), db.lookup(target)) {
+        (Some(TypeData::Application(s)), Some(TypeData::Application(t))) => (s, t),
+        _ => return None,
+    };
+
+    let s_app = db.type_application(s_app_id);
+    let t_app = db.type_application(t_app_id);
+
+    // Only for same-base applications with matching arg counts
+    if s_app.base != t_app.base || s_app.args.len() != t_app.args.len() {
+        return None;
+    }
+
+    let def_id = lazy_def_id(db, s_app.base)?;
+
+    let variances = resolver
+        .get_type_param_variance(def_id)
+        .or_else(|| query_db.and_then(|qdb| QueryDatabase::get_type_param_variance(qdb, def_id)))
+        .or_else(|| {
+            let computed = crate::relations::variance::compute_type_param_variances_with_resolver(
+                db, resolver, def_id,
+            );
+            if let (Some(qdb), Some(variances)) = (query_db, computed.as_ref()) {
+                qdb.insert_type_param_variance(def_id, variances.clone());
+            }
+            computed
+        });
+
+    let variances = variances?;
+    if variances.len() != s_app.args.len() {
+        return None;
+    }
+
+    // If all parameters are independent (no variance info), we can't make any
+    // conclusion from variance alone — fall through to structural checking,
+    // EXCEPT when at least one target arg is `any`. `any` is the universal
+    // sink in any-propagation mode, so even with unknown variance, source
+    // -> target is trivially satisfied at that position. Returning True
+    // here prevents structural expansion of recursive aliases like
+    // `FlatArray<Arr, any>` from spuriously rejecting valid assignments.
+    if variances.iter().all(|v| v.is_empty()) {
+        if !policy.strict_any_propagation
+            && t_app.args.iter().any(|a| a.is_any())
+            && s_app
+                .args
+                .iter()
+                .zip(t_app.args.iter())
+                .all(|(s_arg, t_arg)| t_arg.is_any() || *s_arg == *t_arg)
+        {
+            return Some(true);
+        }
+        return None;
+    }
+
+    // Set up a compat checker for the argument checks
+    let mut checker = configured_compat_checker(db, resolver, policy, context);
+    if let Some(qdb) = query_db {
+        checker.set_query_db(qdb);
+    }
+
+    // When variance is empty/unknown for some parameters, we still need to check
+    // type argument assignability to catch cases where different type parameters
+    // (like T vs U) are not assignable to each other.
+    let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
+    let mut all_ok = true;
+    let mut any_checked = false;
+    for (i, variance) in variances.iter().enumerate() {
+        let s_arg = s_app.args[i];
+        let t_arg = t_app.args[i];
+
+        if variance.is_invariant() {
+            any_checked = true;
+            if !checker.is_assignable(s_arg, t_arg) || !checker.is_assignable(t_arg, s_arg) {
+                all_ok = false;
+                break;
+            }
+        } else if variance.is_covariant() {
+            any_checked = true;
+            if !checker.is_assignable(s_arg, t_arg) {
+                all_ok = false;
+                break;
+            }
+        } else if variance.is_contravariant() {
+            any_checked = true;
+            if !checker.is_assignable(t_arg, s_arg) {
+                all_ok = false;
+                break;
+            }
+        }
+        // Independent: no check needed
+    }
+
+    // If we didn't actually check any parameter (all independent), fall through
+    if !any_checked {
+        return None;
+    }
+
+    if all_ok {
+        // When any type parameter's variance is marked as needing structural fallback
+        // (due to mapped type modifiers like -?/+?), don't trust the variance shortcut.
+        // Fall through to structural comparison. This handles cases like
+        // Required<{a?}> vs Required<{b?}> where args are mutually assignable
+        // but the mapped type results are structurally incompatible.
+        if needs_structural_fallback {
+            return None;
+        }
+        return Some(true);
+    }
+
+    // When variance check fails AND rejection is unreliable (indexed access
+    // types can normalize away differences between type arguments), don't
+    // conclusively reject. Fall through to structural comparison.
+    if variances.iter().any(|v| v.rejection_unreliable()) {
+        return None;
+    }
+
+    // When structural fallback is needed (mapped types with modifiers like
+    // +?/-?/+readonly/-readonly), variance failures are NOT definitive —
+    // UNLESS the type parameter also has direct usage in non-mapped-type
+    // positions (function params, properties). Direct usage provides a
+    // reliable variance signal, so the rejection can be trusted. This matches
+    // tsc's probe-based variance where interfaces with both call signatures
+    // and mapped-type members get plain Invariant (no Unmeasurable flag).
+    if needs_structural_fallback {
+        let has_reliable_rejection = variances.iter().any(|v| v.has_direct_usage());
+        if !has_reliable_rejection {
+            return None;
+        }
+    }
+    if alias_body_application_uses_type_parameters(db, resolver, def_id) {
+        return None;
+    }
+    Some(false)
+}
+
+fn alias_body_application_uses_type_parameters<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    def_id: crate::def::DefId,
+) -> bool {
+    let Some(body) = resolver.resolve_lazy(def_id, db) else {
+        return false;
+    };
+    let Some(app_id) = crate::visitor::application_id(db, body) else {
+        return false;
+    };
+    let app = db.type_application(app_id);
+    app.args
+        .iter()
+        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
+}
+
+/// Check if two type parameters are assignable to each other.
+///
+/// This is a helper function for checking type parameter assignability in contexts
+/// where we need to ensure that different unconstrained type parameters (e.g., T vs U)
+/// are not considered assignable to each other.
+///
+/// Returns true if source is assignable to target, false otherwise.
+pub fn are_type_params_assignable(
+    interner: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    // If both are type parameters, check their relationship
+    if let Some(s_info) = crate::visitor::type_param_info(interner, source)
+        && let Some(t_info) = crate::visitor::type_param_info(interner, target)
+    {
+        // Same name means same type parameter (or shadowed, treat as same for assignability)
+        if s_info.name == t_info.name {
+            return true;
+        }
+
+        // Different names - check if there's a constraint relationship
+        // If source has constraint that's assignable to target, they're related
+        if let Some(s_constraint) = s_info.constraint
+            && s_constraint == target
+        {
+            return true;
+        }
+
+        // If target has constraint that source is assignable to, they're related
+        if let Some(t_constraint) = t_info.constraint
+            && t_constraint == source
+        {
+            return true;
+        }
+
+        // Different unconstrained type parameters are NOT assignable
+        return false;
+    }
+
+    // If only one is a type parameter, or neither, fall back to general assignability
+    // This shouldn't happen when this function is called correctly, but handle it gracefully
+    let mut checker = CompatChecker::new(interner);
+    checker.is_assignable(source, target)
+}
+
+#[cfg(test)]
+#[path = "../../tests/relation_queries_tests.rs"]
+mod tests;

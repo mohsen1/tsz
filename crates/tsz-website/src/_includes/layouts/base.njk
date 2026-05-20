@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  {% set page_title = browser_title or ((title or "tsz") + " - tsz") %}
+  {% set meta_title = og_title or page_title %}
+  {% if title == "tsz" %}
+    {% set meta_title = "tsz - A TypeScript compiler in Rust." %}
+  {% endif %}
+  {% set meta_description = description or "A TypeScript compiler in Rust." %}
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ page_title }}</title>
+  <meta name="description" content="{{ meta_description }}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="tsz">
+  <meta property="og:title" content="{{ meta_title }}">
+  <meta property="og:description" content="{{ meta_description }}">
+  <meta property="og:image" content="https://tsz.dev/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="tsz - A TypeScript compiler in Rust.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ meta_title }}">
+  <meta name="twitter:description" content="{{ meta_description }}">
+  <meta name="twitter:image" content="https://tsz.dev/og-image.png">
+  <meta name="twitter:image:alt" content="tsz - A TypeScript compiler in Rust.">
+  {% if build.sha %}<meta name="tsz-build-sha" content="{{ build.sha }}">{% endif %}
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  {{ extra_head | safe }}
+</head>
+<body>
+  <nav class="site-nav">
+    <a href="/" class="nav-logo" aria-label="tsz home"><span class="tsz-logo tsz-logo-nav" aria-hidden="true"></span></a>
+    <button class="nav-hamburger" aria-label="Menu" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M3 5h14v1.5H3zm0 4.25h14v1.5H3zm0 4.25h14v1.5H3z"/></svg>
+    </button>
+    <div class="nav-links">
+      <div class="nav-links-inner">
+        <a href="/playground/" class="{% if page.url and page.url.startsWith('/playground') %}active{% endif %}">Playground</a>
+        <a href="/install.html" class="{% if page.url and page.url.startsWith('/install') %}active{% endif %}">Install</a>
+        <a href="/benchmarks/" class="{% if page.url and page.url.startsWith('/benchmarks') %}active{% endif %}">Benchmarks</a>
+        <a href="/architecture/" class="{% if page.url and page.url.startsWith('/architecture') %}active{% endif %}">Deep Dive</a>
+        <a href="/sound-mode/" class="{% if page.url and page.url.startsWith('/sound-mode') %}active{% endif %}">Sound Mode</a>
+      </div>
+    </div>
+    <div class="nav-actions">
+      <iframe
+        class="github-star-button"
+        src="https://ghbtns.com/github-btn.html?user=mohsen1&amp;repo=tsz&amp;type=star&amp;count=true"
+        title="Star mohsen1/tsz on GitHub"
+        width="110"
+        height="20"
+        frameborder="0"
+        scrolling="0"
+      ></iframe>
+      <a href="https://github.com/mohsen1/tsz" class="nav-github" aria-label="GitHub repository">
+        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+    </div>
+  </nav>
+  <main class="page-content {{ page_class }}">
+    {{ content | safe }}
+  </main>
+  <footer class="site-footer">
+    <p><a href="https://github.com/mohsen1/tsz">tsz</a> - a TypeScript compiler in Rust. Apache-2.0 License.{% if build.sha %} Built at <a href="https://github.com/mohsen1/tsz/commit/{{ build.sha }}">{{ build.sha7 }}</a>.{% endif %}</p>
+  </footer>
+  {{ extra_scripts | safe }}
+</body>
+</html>

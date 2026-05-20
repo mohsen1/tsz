@@ -1,0 +1,2007 @@
+//! ES5 Namespace Transform (IR-based)
+//!
+//! Transforms TypeScript namespaces to ES5 IIFE patterns, producing IR nodes.
+//!
+//! # Architecture
+//!
+//! This module provides `NamespaceES5Transformer`, the main transformer struct
+//! that produces IR nodes for namespace IIFE emission.
+//!
+//! # Examples
+//!
+//! Simple namespace:
+//! ```typescript
+//! namespace foo {
+//!     export class Provide { }
+//! }
+//! ```
+//!
+//! Becomes IR that prints as:
+//! ```javascript
+//! var foo;
+//! (function (foo) {
+//!     var Provide = /** @class */ (function () {
+//!         function Provide() { }
+//!         return Provide;
+//!     }());
+//!     foo.Provide = Provide;
+//! })(foo || (foo = {}));
+//! ```
+//!
+//! Qualified namespace name (A.B.C) produces nested IIFEs:
+//! ```typescript
+//! namespace A.B.C {
+//!     export const x = 1;
+//! }
+//! ```
+//!
+//! Becomes:
+//! ```javascript
+//! var A;
+//! (function (A) {
+//!     var B;
+//!     (function (B) {
+//!         var C;
+//!         (function (C) {
+//!             var x = 1;
+//!             C.x = x;
+//!         })(C = B.C || (B.C = {}));
+//!     })(B = A.B || (A.B = {}));
+//! })(A || (A = {}));
+//! ```
+
+#[path = "namespace_es5_ir_helpers.rs"]
+mod namespace_es5_ir_helpers;
+use namespace_es5_ir_helpers::*;
+
+use std::cell::RefCell;
+
+use crate::emitter::ScopedConstEnum;
+use crate::enums::evaluator::EnumValue;
+use crate::transforms::async_es5_ir::AsyncES5Transformer;
+use crate::transforms::class_es5_ir::{AstToIr, ES5ClassTransformer};
+use crate::transforms::enum_es5_ir::transform_enum_to_ir;
+use crate::transforms::ir::{EnumMemberValue, IRNode, IRParam, IRPropertyKey};
+use crate::transforms::ir_printer::IRPrinter;
+use rustc_hash::FxHashMap;
+use tsz_parser::parser::node::{Node, NodeArena};
+use tsz_parser::parser::node_flags;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
+use tsz_scanner::SyntaxKind;
+
+// =============================================================================
+// NamespaceES5Transformer - Main transformer struct
+// =============================================================================
+
+/// ES5 Namespace Transformer
+///
+/// Transforms TypeScript namespace declarations into ES5-compatible IIFE patterns.
+/// This is the primary entry point for namespace IR transformations.
+///
+/// # Example
+///
+/// ```ignore
+/// use crate::transforms::namespace_es5_ir::NamespaceES5Transformer;
+/// use crate::transforms::ir_printer::IRPrinter;
+///
+/// let transformer = NamespaceES5Transformer::new(&arena);
+/// if let Some(ir) = transformer.transform_namespace(ns_idx) {
+///     let output = IRPrinter::emit_to_string(&ir);
+/// }
+/// ```
+pub struct NamespaceES5Transformer<'a> {
+    arena: &'a NodeArena,
+    is_commonjs: bool,
+    source_text: Option<&'a str>,
+    comment_ranges: Vec<tsz_common::comments::CommentRange>,
+    /// Exported variable names from prior blocks of the same namespace.
+    /// Used for cross-block export substitution (e.g., `x` → `M.x` in block 2
+    /// when `export var x` was declared in block 1).
+    prior_exported_vars: std::collections::HashSet<String>,
+    /// Whether legacy decorators are enabled (experimentalDecorators)
+    legacy_decorators: bool,
+    /// Whether `__metadata` calls should be emitted in `__decorate` arrays.
+    /// Mirrors `--emitDecoratorMetadata`. Forwarded to nested
+    /// `ES5ClassTransformer` so metadata is emitted for classes that live
+    /// inside a namespace IIFE.
+    emit_decorator_metadata: bool,
+    /// Hoisted temp variable names collected from expression conversions
+    /// (e.g., from computed property lowering inside object literals)
+    hoisted_temps: RefCell<Vec<String>>,
+    default_exported_func_names: std::collections::HashSet<String>,
+    commonjs_export_name: Option<String>,
+    const_enum_values: FxHashMap<String, Vec<ScopedConstEnum>>,
+    const_enum_import_aliases: FxHashMap<String, String>,
+    remove_comments: bool,
+}
+
+impl<'a> NamespaceES5Transformer<'a> {
+    /// Create a new namespace transformer
+    pub fn new(arena: &'a NodeArena) -> Self {
+        Self {
+            arena,
+            is_commonjs: false,
+            source_text: None,
+            comment_ranges: Vec::new(),
+            prior_exported_vars: std::collections::HashSet::new(),
+            legacy_decorators: false,
+            emit_decorator_metadata: false,
+            hoisted_temps: RefCell::new(Vec::new()),
+            default_exported_func_names: std::collections::HashSet::new(),
+            commonjs_export_name: None,
+            const_enum_values: FxHashMap::default(),
+            const_enum_import_aliases: FxHashMap::default(),
+            remove_comments: false,
+        }
+    }
+
+    /// Create a namespace transformer with `CommonJS` mode enabled
+    pub fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
+        Self {
+            arena,
+            is_commonjs,
+            source_text: None,
+            comment_ranges: Vec::new(),
+            prior_exported_vars: std::collections::HashSet::new(),
+            legacy_decorators: false,
+            emit_decorator_metadata: false,
+            hoisted_temps: RefCell::new(Vec::new()),
+            default_exported_func_names: std::collections::HashSet::new(),
+            commonjs_export_name: None,
+            const_enum_values: FxHashMap::default(),
+            const_enum_import_aliases: FxHashMap::default(),
+            remove_comments: false,
+        }
+    }
+
+    /// Set whether legacy decorators are enabled
+    pub const fn set_legacy_decorators(&mut self, enabled: bool) {
+        self.legacy_decorators = enabled;
+    }
+
+    /// Set whether `__metadata` calls should be emitted in `__decorate`
+    /// arrays for classes inside this namespace.
+    pub const fn set_emit_decorator_metadata(&mut self, enabled: bool) {
+        self.emit_decorator_metadata = enabled;
+    }
+
+    /// Set source text for comment extraction
+    pub fn set_source_text(&mut self, text: &'a str) {
+        self.comment_ranges = tsz_common::comments::get_comment_ranges(text);
+        self.source_text = Some(text);
+    }
+
+    /// Set `CommonJS` mode
+    pub const fn set_commonjs(&mut self, is_commonjs: bool) {
+        self.is_commonjs = is_commonjs;
+    }
+
+    pub fn set_default_exported_func_names(&mut self, names: std::collections::HashSet<String>) {
+        self.default_exported_func_names = names;
+    }
+
+    pub fn set_commonjs_export_name(&mut self, name: Option<String>) {
+        self.commonjs_export_name = name;
+    }
+
+    pub(crate) fn set_const_enum_facts(
+        &mut self,
+        values: FxHashMap<String, Vec<ScopedConstEnum>>,
+        import_aliases: FxHashMap<String, String>,
+    ) {
+        self.const_enum_values = values;
+        self.const_enum_import_aliases = import_aliases;
+    }
+
+    pub const fn set_remove_comments(&mut self, remove_comments: bool) {
+        self.remove_comments = remove_comments;
+    }
+
+    /// Set exported variable names from prior blocks of the same namespace.
+    /// These will be merged with locally-collected exports for rewriting references.
+    pub fn set_prior_exported_vars(&mut self, vars: std::collections::HashSet<String>) {
+        self.prior_exported_vars = vars;
+    }
+
+    /// Collect exported variable names from a namespace declaration without emitting.
+    /// Used by the Printer to accumulate cross-block exports.
+    pub fn collect_exported_var_names(
+        &self,
+        ns_idx: NodeIndex,
+    ) -> std::collections::HashSet<String> {
+        let Some((_parts, innermost_body)) = self.collect_all_namespace_parts(ns_idx) else {
+            return std::collections::HashSet::new();
+        };
+        collect_runtime_exported_var_names(self.arena, innermost_body)
+    }
+
+    pub fn collect_namespace_rewrite_var_names(
+        &self,
+        ns_idx: NodeIndex,
+    ) -> Option<(String, std::collections::HashSet<String>)> {
+        let (parts, innermost_body) = self.collect_all_namespace_parts(ns_idx)?;
+        let ns_name = parts.last()?.clone();
+        let mut names = collect_runtime_exported_var_names(self.arena, innermost_body);
+        if !self.prior_exported_vars.is_empty() {
+            names.extend(self.prior_exported_vars.iter().cloned());
+            let local_names = collect_local_var_names(self.arena, innermost_body);
+            for name in &local_names {
+                names.remove(name);
+            }
+        }
+        Some((ns_name, names))
+    }
+
+    /// Extract leading comments from source text that fall within [`from_pos`, `to_pos`) range.
+    /// Returns `IRNode::Raw` nodes since the text already includes comment delimiters.
+    fn extract_comments_in_range(&self, from_pos: u32, to_pos: u32) -> Vec<IRNode> {
+        let source_text = match self.source_text {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+        let mut result = Vec::new();
+        for c in &self.comment_ranges {
+            if c.pos >= from_pos && c.end <= to_pos {
+                let text = c.get_text(source_text);
+                if !text.is_empty() {
+                    result.push(IRNode::Raw(text.to_string().into()));
+                }
+            }
+            if c.pos >= to_pos {
+                break; // Comments are sorted by position
+            }
+        }
+        result
+    }
+
+    /// Skip whitespace and comments forward from `pos` to find the actual token start.
+    /// Returns the position of the first non-trivia character.
+    fn skip_trivia_forward(&self, pos: u32, end: u32) -> u32 {
+        super::emit_utils::skip_trivia_forward(self.source_text, pos, end)
+    }
+
+    /// Find the position after the code content of an erased statement (interface/type alias).
+    /// Scans forward with brace-depth tracking to find the closing `}` or `;`.
+    /// This is needed because `node.end` includes trailing trivia that may contain
+    /// comments belonging to the next statement.
+    fn find_code_end_of_erased_stmt(&self, node_pos: u32, node_end: u32) -> u32 {
+        let source_text = match self.source_text {
+            Some(t) => t,
+            None => return node_end,
+        };
+        let bytes = source_text.as_bytes();
+        let end = (node_end as usize).min(bytes.len());
+        let mut i = node_pos as usize;
+        let mut brace_depth: i32 = 0;
+        let mut found_brace = false;
+
+        while i < end {
+            // Skip over comment ranges
+            let pos = i as u32;
+            let mut skipped_comment = false;
+            for c in &self.comment_ranges {
+                if c.pos <= pos && pos < c.end {
+                    i = c.end as usize;
+                    skipped_comment = true;
+                    break;
+                }
+                if c.pos > pos {
+                    break; // comments sorted by position
+                }
+            }
+            if skipped_comment {
+                continue;
+            }
+
+            match bytes[i] {
+                b'{' => {
+                    brace_depth += 1;
+                    found_brace = true;
+                }
+                b'}' => {
+                    brace_depth -= 1;
+                    if found_brace && brace_depth == 0 {
+                        return (i + 1) as u32;
+                    }
+                }
+                b';' if brace_depth == 0 && !found_brace => {
+                    // Type alias without braces: type Foo = number;
+                    return (i + 1) as u32;
+                }
+                b'\'' | b'"' => {
+                    // Skip string literal
+                    let quote = bytes[i];
+                    i += 1;
+                    while i < end && bytes[i] != quote {
+                        if bytes[i] == b'\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                    if i < end {
+                        i += 1;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        node_end
+    }
+
+    /// Extract standalone comments (on their own line) within [`from_pos`, `to_pos`).
+    /// Unlike `extract_comments_in_range`, this filters out trailing comments
+    /// that share a line with code — only comments on their own line are returned.
+    fn extract_standalone_comments_in_range(&self, from_pos: u32, to_pos: u32) -> Vec<IRNode> {
+        let source_text = match self.source_text {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+        let bytes = source_text.as_bytes();
+        let mut result = Vec::new();
+        for c in &self.comment_ranges {
+            if c.pos >= from_pos && c.end <= to_pos {
+                // Check if standalone: only whitespace before it on the line
+                let mut line_start = c.pos as usize;
+                while line_start > 0
+                    && bytes[line_start - 1] != b'\n'
+                    && bytes[line_start - 1] != b'\r'
+                {
+                    line_start -= 1;
+                }
+                let before = &source_text[line_start..c.pos as usize];
+                if before.trim().is_empty() {
+                    let text = c.get_text(source_text);
+                    if !text.is_empty() {
+                        result.push(IRNode::Raw(text.to_string().into()));
+                    }
+                }
+            }
+            if c.pos >= to_pos {
+                break;
+            }
+        }
+        result
+    }
+
+    /// Extract a trailing comment within a statement's span.
+    ///
+    /// In our parser, `node.end` includes trailing trivia, so comments appear
+    /// WITHIN `[stmt_pos, stmt_end)` rather than after `stmt_end`. This method
+    /// finds comments within the span that have code on the same line before them
+    /// (i.e., they're trailing comments, not standalone leading comments).
+    fn extract_trailing_comment_in_stmt(&self, stmt_pos: u32, stmt_end: u32) -> Option<String> {
+        let source_text = self.source_text?;
+        let bytes = source_text.as_bytes();
+
+        for c in &self.comment_ranges {
+            if c.pos >= stmt_pos && c.end <= stmt_end {
+                // Check if there's non-whitespace code before this comment on the same line
+                let mut line_start = c.pos as usize;
+                while line_start > 0
+                    && bytes[line_start - 1] != b'\n'
+                    && bytes[line_start - 1] != b'\r'
+                {
+                    line_start -= 1;
+                }
+                let before_comment = &source_text[line_start..c.pos as usize];
+                if !before_comment.trim().is_empty() {
+                    let text = c.get_text(source_text);
+                    if !text.is_empty() {
+                        return Some(text.to_string());
+                    }
+                }
+            }
+            if c.pos >= stmt_end {
+                break;
+            }
+        }
+        None
+    }
+
+    fn extract_namespace_trailing_comment(&self, body_idx: NodeIndex) -> Option<String> {
+        let source_text = self.source_text?;
+        let body_node = self.arena.get(body_idx)?;
+        let pos = self.find_module_block_close_pos(body_node)? as usize;
+
+        let comments = crate::emitter::get_trailing_comment_ranges(source_text, pos + 1);
+        if comments.is_empty() {
+            return None;
+        }
+
+        Some(
+            comments
+                .iter()
+                .map(|comment| source_text[comment.pos as usize..comment.end as usize].to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    }
+
+    fn find_module_block_close_pos(&self, body_node: &Node) -> Option<u32> {
+        let source_text = self.source_text?;
+        let bytes = source_text.as_bytes();
+        let limit = std::cmp::min(body_node.end as usize, bytes.len());
+        let mut pos = body_node.pos as usize;
+        while pos < limit && bytes.get(pos) != Some(&b'{') {
+            pos += 1;
+        }
+        if pos >= limit {
+            return None;
+        }
+
+        let mut depth = 0u32;
+        while pos < limit {
+            match bytes[pos] {
+                b'{' => {
+                    depth += 1;
+                    pos += 1;
+                }
+                b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some(pos as u32);
+                    }
+                    pos += 1;
+                }
+                b'/' if pos + 1 < limit && bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < limit && !matches!(bytes[pos], b'\n' | b'\r') {
+                        pos += 1;
+                    }
+                }
+                b'/' if pos + 1 < limit && bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < limit && !(bytes[pos] == b'*' && bytes[pos + 1] == b'/') {
+                        pos += 1;
+                    }
+                    pos = std::cmp::min(pos + 2, limit);
+                }
+                b'\'' | b'"' | b'`' => {
+                    let quote = bytes[pos];
+                    pos += 1;
+                    while pos < limit {
+                        if bytes[pos] == b'\\' {
+                            pos = std::cmp::min(pos + 2, limit);
+                        } else if bytes[pos] == quote {
+                            pos += 1;
+                            break;
+                        } else {
+                            pos += 1;
+                        }
+                    }
+                }
+                _ => pos += 1,
+            }
+        }
+        None
+    }
+
+    fn trailing_same_line_comment_end_after(&self, pos: u32) -> Option<u32> {
+        let source_text = self.source_text?;
+        crate::emitter::get_trailing_comment_ranges(source_text, pos as usize)
+            .last()
+            .map(|comment| comment.end)
+    }
+
+    /// Transform a namespace declaration to IR
+    ///
+    /// Returns `Some(IRNode::NamespaceIIFE { ... })` for valid namespaces,
+    /// or `None` for ambient namespaces (declare namespace) or invalid nodes.
+    ///
+    /// # Arguments
+    ///
+    /// * `ns_idx` - `NodeIndex` of the namespace declaration
+    ///
+    /// # Returns
+    ///
+    /// `Option<IRNode>` - The transformed namespace as an IR node, or None if skipped
+    pub fn transform_namespace(&self, ns_idx: NodeIndex) -> Option<IRNode> {
+        self.transform_namespace_with_flags(ns_idx, false, true)
+    }
+
+    /// Transform a namespace declaration with explicit control over var declaration
+    pub fn transform_namespace_with_var_flag(
+        &self,
+        ns_idx: NodeIndex,
+        should_declare_var: bool,
+    ) -> Option<IRNode> {
+        self.transform_namespace_with_flags(ns_idx, false, should_declare_var)
+    }
+
+    /// Transform a namespace declaration that is known to be exported
+    ///
+    /// Use this when the namespace is wrapped in an `EXPORT_DECLARATION`.
+    pub fn transform_exported_namespace(&self, ns_idx: NodeIndex) -> Option<IRNode> {
+        self.transform_namespace_with_flags(ns_idx, true, true)
+    }
+
+    /// Transform an exported namespace declaration with explicit control over
+    /// whether the namespace binding declaration should be emitted.
+    pub fn transform_exported_namespace_with_var_flag(
+        &self,
+        ns_idx: NodeIndex,
+        should_declare_var: bool,
+    ) -> Option<IRNode> {
+        self.transform_namespace_with_flags(ns_idx, true, should_declare_var)
+    }
+
+    /// Transform a namespace declaration with explicit export and var flags
+    fn transform_namespace_with_flags(
+        &self,
+        ns_idx: NodeIndex,
+        force_exported: bool,
+        should_declare_var: bool,
+    ) -> Option<IRNode> {
+        let ns_data = self.arena.get_module_at(ns_idx)?;
+
+        // Skip ambient namespaces (declare namespace)
+        if self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            return None;
+        }
+
+        // Collect all namespace parts for qualified names (A.B.C)
+        // The parser creates nested MODULE_DECLARATION nodes for qualified names:
+        // MODULE_DECLARATION "A" -> body: MODULE_DECLARATION "B" -> body: MODULE_DECLARATION "C" -> body: MODULE_BLOCK
+        let (name_parts, innermost_body) = self.collect_all_namespace_parts(ns_idx)?;
+        if name_parts.is_empty() {
+            return None;
+        }
+
+        // Check if exported from modifiers OR if forced (when wrapped in EXPORT_DECLARATION)
+        let is_exported = force_exported
+            || self
+                .arena
+                .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
+
+        // Transform the innermost body - use the last name part for member exports
+        let mut body = self.transform_namespace_body(innermost_body, &name_parts);
+        self.rewrite_const_enum_accesses(&mut body, &name_parts);
+
+        // Skip non-instantiated namespaces (only contain types).
+        // A namespace is instantiated if it has any value declarations
+        // (variables, functions, classes, enums, sub-namespaces),
+        // even if the body produces no IR output (e.g., uninitialized exports).
+        // Comments alone don't make a namespace instantiated.
+        let has_code = body.iter().any(|n| !is_comment_node(n));
+        if !has_code && !self.has_value_declarations(innermost_body) {
+            return None;
+        }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map_or("", |s| s.as_str());
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
+
+        // Root name is the first part
+        let name = name_parts.first().cloned().unwrap_or_default();
+
+        let merges_with_default_func = self.is_commonjs
+            && (self.default_exported_func_names.contains(&name)
+                || self.source_file_has_default_exported_function(ns_idx, &name));
+        let default_export_merge = !is_exported && merges_with_default_func;
+
+        Some(IRNode::NamespaceIIFE {
+            name: name.into(),
+            name_parts: name_parts.into_iter().map(Into::into).collect(),
+            body,
+            is_exported,
+            attach_to_exports: is_exported && self.is_commonjs && !merges_with_default_func,
+            commonjs_export_name: self.commonjs_export_name.clone().map(Into::into),
+            system_export_names: Vec::new(),
+            should_declare_var,
+            default_export_merge,
+            parent_name: None,
+            param_name: param_name.map(Into::into),
+            skip_sequence_indent: false,
+            trailing_comment: self
+                .extract_namespace_trailing_comment(innermost_body)
+                .map(Into::into),
+        })
+    }
+
+    fn source_file_has_default_exported_function(&self, ns_idx: NodeIndex, name: &str) -> bool {
+        let mut current = ns_idx;
+        while current != NodeIndex::NONE {
+            let Some(node) = self.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::SOURCE_FILE {
+                let Some(source_file) = self.arena.get_source_file(node) else {
+                    return false;
+                };
+                return source_file.statements.nodes.iter().any(|&stmt_idx| {
+                    self.default_exported_function_name(stmt_idx)
+                        .as_deref()
+                        .is_some_and(|func_name| func_name == name)
+                });
+            }
+            current = self.arena.parent_of(current).unwrap_or(NodeIndex::NONE);
+        }
+        false
+    }
+
+    fn default_exported_function_name(&self, stmt_idx: NodeIndex) -> Option<String> {
+        let stmt = self.arena.get(stmt_idx)?;
+        if stmt.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let export = self.arena.get_export_decl(stmt)?;
+            if export.is_type_only || !export.is_default_export || export.module_specifier.is_some()
+            {
+                return None;
+            }
+            let clause = self.arena.get(export.export_clause)?;
+            if clause.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                return None;
+            }
+            let func = self.arena.get_function(clause)?;
+            if self.arena.is_declare(&func.modifiers) || func.body.is_none() {
+                return None;
+            }
+            return get_identifier_text(self.arena, func.name);
+        }
+
+        if stmt.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            let func = self.arena.get_function(stmt)?;
+            if !self
+                .arena
+                .has_modifier(&func.modifiers, SyntaxKind::DefaultKeyword)
+                || self.arena.is_declare(&func.modifiers)
+                || func.body.is_none()
+            {
+                return None;
+            }
+            return get_identifier_text(self.arena, func.name);
+        }
+
+        None
+    }
+
+    /// Check if a namespace body contains any value declarations
+    fn has_value_declarations(&self, body_idx: NodeIndex) -> bool {
+        body_has_value_declarations(self.arena, body_idx)
+    }
+
+    fn declaration_keyword_from_var_declarations(&self, declarations: &NodeList) -> &'static str {
+        declaration_keyword_from_var_declarations(self.arena, declarations)
+    }
+
+    fn namespace_member_ast_ref_if_non_empty(&self, member_idx: NodeIndex) -> Option<IRNode> {
+        if let Some(source_text) = self.source_text
+            && let Some(member_node) = self.arena.get(member_idx)
+        {
+            let start = member_node.pos as usize;
+            let end = (member_node.end as usize).min(source_text.len());
+            if start < end {
+                let raw = &source_text[start..end];
+                if raw.trim().is_empty() {
+                    return None;
+                }
+            }
+        }
+
+        Some(IRNode::ASTRef(member_idx))
+    }
+
+    fn is_uninitialized_exported_var_member(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let var_idx = if member_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_data) = self.arena.get_export_decl(member_node)
+        {
+            export_data.export_clause
+        } else {
+            member_idx
+        };
+
+        let Some(var_node) = self.arena.get(var_idx) else {
+            return false;
+        };
+        if var_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        let Some(var_data) = self.arena.get_variable(var_node) else {
+            return false;
+        };
+        let is_exported = member_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            || self
+                .arena
+                .has_modifier(&var_data.modifiers, SyntaxKind::ExportKeyword);
+        if !is_exported {
+            return false;
+        }
+
+        var_data.declarations.nodes.iter().all(|&decl_list_idx| {
+            self.arena
+                .get_variable_at(decl_list_idx)
+                .is_none_or(|decl_list| {
+                    decl_list.declarations.nodes.iter().all(|&decl_idx| {
+                        self.arena
+                            .get_variable_declaration_at(decl_idx)
+                            .is_none_or(|decl| decl.initializer.is_none())
+                    })
+                })
+        })
+    }
+
+    fn is_stray_export_keyword_member(&self, member_idx: NodeIndex) -> bool {
+        self.arena
+            .get(member_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::ExportKeyword as u16)
+    }
+
+    fn is_class_like_member(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        let inner_idx = if member_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_data) = self.arena.get_export_decl(member_node)
+        {
+            export_data.export_clause
+        } else {
+            member_idx
+        };
+
+        self.arena
+            .get(inner_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_DECLARATION)
+    }
+
+    /// Flatten a module name into parts (handles both identifiers and qualified names)
+    ///
+    /// For qualified names like `A.B.C` (parsed as nested `MODULE_DECLARATIONs`), returns `["A", "B", "C"]`.
+    /// For simple identifiers like `foo`, returns `["foo"]`.
+    ///
+    /// Note: The parser creates nested `MODULE_DECLARATION` nodes for qualified namespace names,
+    /// where each level has a single identifier name and the body points to the next level.
+    pub fn flatten_module_name(&self, name_idx: NodeIndex) -> Option<Vec<String>> {
+        let mut parts = Vec::new();
+        self.collect_name_parts(name_idx, &mut parts);
+        if parts.is_empty() { None } else { Some(parts) }
+    }
+
+    /// Recursively collect name parts from qualified names
+    ///
+    /// Handles both:
+    /// 1. `QUALIFIED_NAME` nodes (left.right structure)
+    /// 2. Simple identifier nodes
+    fn collect_name_parts(&self, idx: NodeIndex, parts: &mut Vec<String>) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            // QualifiedName has left and right - recurse into both
+            if let Some(qn_data) = self.arena.qualified_names.get(node.data_index as usize) {
+                self.collect_name_parts(qn_data.left, parts);
+                self.collect_name_parts(qn_data.right, parts);
+            }
+        } else if node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.arena.get_identifier(node)
+        {
+            parts.push(ident.escaped_text.clone());
+        }
+    }
+
+    /// Collect all name parts by walking through nested `MODULE_DECLARATION` chain
+    ///
+    /// For `namespace A.B.C {}`, the parser creates:
+    /// `MODULE_DECLARATION` "A" -> body: `MODULE_DECLARATION` "B" -> body: `MODULE_DECLARATION` "C" -> body: `MODULE_BLOCK`
+    ///
+    /// This method walks through all levels and returns (["A", "B", "C"], `innermost_body_idx`)
+    fn collect_all_namespace_parts(&self, ns_idx: NodeIndex) -> Option<(Vec<String>, NodeIndex)> {
+        let mut parts = Vec::new();
+        let mut current_idx = ns_idx;
+
+        loop {
+            let node = self.arena.get(current_idx)?;
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                // We've reached a non-namespace node (likely MODULE_BLOCK)
+                break;
+            }
+
+            let ns_data = self.arena.get_module(node)?;
+
+            // Get the name of this level
+            let name_node = self.arena.get(ns_data.name)?;
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                parts.push(ident.escaped_text.clone());
+            }
+
+            // Check if body is another MODULE_DECLARATION (nested namespace) or MODULE_BLOCK
+            let body_node = self.arena.get(ns_data.body)?;
+            if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                // Continue walking nested declarations
+                current_idx = ns_data.body;
+            } else {
+                // We've reached the innermost body (MODULE_BLOCK)
+                return Some((parts, ns_data.body));
+            }
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some((parts, current_idx))
+        }
+    }
+
+    /// Transform namespace body into IR nodes
+    fn transform_namespace_body(&self, body_idx: NodeIndex, name_parts: &[String]) -> Vec<IRNode> {
+        let mut result = Vec::new();
+        let mut runtime_exported_vars = collect_runtime_exported_var_names(self.arena, body_idx);
+        // Merge in exported vars from prior blocks of the same namespace.
+        // This enables cross-block substitution: `x` → `M.x` when `export var x`
+        // was declared in a prior block.
+        if !self.prior_exported_vars.is_empty() {
+            runtime_exported_vars.extend(self.prior_exported_vars.iter().cloned());
+            // Remove locally-declared non-exported names — they shadow prior exports
+            let local_names = collect_local_var_names(self.arena, body_idx);
+            for name in &local_names {
+                runtime_exported_vars.remove(name);
+            }
+        }
+
+        // The innermost namespace name (last part) is used for member exports
+        let ns_name = name_parts.last().map_or("", |s| s.as_str());
+
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return result;
+        };
+
+        // Track names declared by classes, functions, enums so that subsequent
+        // namespace declarations merging with them don't re-emit `var`.
+        let mut declared_names = std::collections::HashSet::new();
+
+        // First pass: collect declared names from classes, functions, enums
+        if let Some(block_data) = self.arena.get_module_block(body_node)
+            && let Some(stmts) = block_data.statements.as_ref()
+        {
+            for &stmt_idx in &stmts.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    match stmt_node.kind {
+                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                            if let Some(class_data) = self.arena.get_class(stmt_node)
+                                && let Some(name) = get_identifier_text(self.arena, class_data.name)
+                            {
+                                declared_names.insert(name);
+                            }
+                        }
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                            if let Some(func_data) = self.arena.get_function(stmt_node)
+                                && let Some(name) = get_identifier_text(self.arena, func_data.name)
+                            {
+                                declared_names.insert(name);
+                            }
+                        }
+                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                            if let Some(enum_data) = self.arena.get_enum(stmt_node)
+                                && let Some(name) = get_identifier_text(self.arena, enum_data.name)
+                            {
+                                declared_names.insert(name);
+                            }
+                        }
+                        k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                            if let Some(export_data) = self.arena.get_export_decl(stmt_node)
+                                && let Some(inner) = self.arena.get(export_data.export_clause)
+                            {
+                                match inner.kind {
+                                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                                        if let Some(class_data) = self.arena.get_class(inner)
+                                            && let Some(name) =
+                                                get_identifier_text(self.arena, class_data.name)
+                                        {
+                                            declared_names.insert(name);
+                                        }
+                                    }
+                                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                                        if let Some(func_data) = self.arena.get_function(inner)
+                                            && let Some(name) =
+                                                get_identifier_text(self.arena, func_data.name)
+                                        {
+                                            declared_names.insert(name);
+                                        }
+                                    }
+                                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                                        if let Some(enum_data) = self.arena.get_enum(inner)
+                                            && let Some(name) =
+                                                get_identifier_text(self.arena, enum_data.name)
+                                        {
+                                            declared_names.insert(name);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Find the position of the closing '}' of the module block.
+        // The last statement's node.end may extend into this brace, so we
+        // constrain ASTRef nodes to not include it.
+        let body_close_pos = self
+            .find_module_block_close_pos(body_node)
+            .unwrap_or_else(|| body_node.end.saturating_sub(1));
+
+        // Check if it's a module block
+        if let Some(block_data) = self.arena.get_module_block(body_node)
+            && let Some(stmts) = block_data.statements.as_ref()
+        {
+            // Track cursor for comment extraction between statements.
+            // Start after the opening brace of the module block.
+            let mut prev_end = body_node.pos + 1; // skip past '{'
+            let mut prev_stmt_pos = body_node.pos + 1;
+
+            for &stmt_idx in &stmts.nodes {
+                let stmt_node = match self.arena.get(stmt_idx) {
+                    Some(n) => n,
+                    None => continue,
+                };
+
+                // Some statements have trailing trivia that includes standalone comments
+                // before the next declaration. Capture those comments here so they can
+                // be emitted immediately after the current statement.
+                let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
+                let is_class_like = self.is_class_like_member(stmt_idx);
+                let is_namespace_like_stmt = is_namespace_like(self.arena, stmt_node);
+                let trailing_standalone = if is_class_like || is_namespace_like_stmt {
+                    Vec::new()
+                } else {
+                    self.extract_standalone_comments_in_range(code_end, stmt_node.end)
+                };
+
+                // Extract leading comments between previous end and this statement.
+                // We compute them up-front but defer pushing until we know whether
+                // this statement actually produces IR. If the statement is erased
+                // (e.g., a non-instantiated namespace, interface, type alias), its
+                // leading comments belong to the erasure too and must be dropped.
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                let leading_comments = if !self.is_uninitialized_exported_var_member(stmt_idx)
+                    && !self.is_stray_export_keyword_member(stmt_idx)
+                {
+                    if prev_end <= actual_start {
+                        self.extract_comments_in_range(prev_end, actual_start)
+                    } else if prev_end == stmt_node.pos && prev_stmt_pos <= actual_start {
+                        // Parser trivia-skipping can move `stmt_node.end` to the next statement token,
+                        // which can skip standalone comments on blank lines. Recover those comments
+                        // by probing from the previous statement start as a fallback.
+                        self.extract_comments_in_range(prev_stmt_pos, actual_start)
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                let ir = self.transform_namespace_member_with_declared(
+                    ns_name,
+                    stmt_idx,
+                    &declared_names,
+                );
+                if ir.is_some() {
+                    for c in leading_comments {
+                        result.push(c);
+                    }
+                }
+
+                if let Some(ir) = ir {
+                    // Constrain ASTRef nodes so their source text doesn't extend
+                    // into the module block's closing brace.
+                    let ir = if let IRNode::ASTRef(idx) = ir {
+                        IRNode::ASTRefRange(idx, body_close_pos)
+                    } else {
+                        ir
+                    };
+
+                    // Check for trailing comment on the same line as this statement.
+                    // Skip namespace/class declarations since their sub-emitters handle
+                    // internal comments.
+                    let export_clause_kind =
+                        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                            self.arena
+                                .get_export_decl(stmt_node)
+                                .and_then(|d| self.arena.get(d.export_clause))
+                                .map(|n| n.kind)
+                        } else {
+                            None
+                        };
+                    let skip = is_namespace_like_stmt
+                        || stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || matches!(export_clause_kind, Some(k) if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::MODULE_DECLARATION);
+                    let trailing =
+                        self.extract_trailing_comment_in_stmt(stmt_node.pos, stmt_node.end);
+                    let mut ir = ir;
+                    let mut trailing_attached_in_sequence = false;
+                    // For exported function declarations inside namespaces, attach trailing
+                    // comments to the function declaration, not the namespace export assignment.
+                    if let IRNode::Sequence(items) = &mut ir
+                        && let Some(comment_text) = trailing.clone()
+                        && items.len() > 1
+                        && matches!(items.first(), Some(IRNode::FunctionDecl { .. }))
+                    {
+                        items.insert(1, IRNode::TrailingComment(comment_text.into()));
+                        trailing_attached_in_sequence = true;
+                    }
+                    result.push(ir);
+                    if !skip
+                        && !trailing_attached_in_sequence
+                        && let Some(comment_text) = trailing
+                    {
+                        result.push(IRNode::TrailingComment(comment_text.into()));
+                    }
+                } else {
+                    // Erased statement (interface/type alias).
+                    // (Standalone trailing comments are now emitted above for all
+                    // statement kinds.)
+                }
+
+                for c in trailing_standalone {
+                    result.push(c);
+                }
+
+                // For class-like members the class sub-emitter handles its own
+                // internal comments and we don't extract `trailing_standalone`
+                // for them — but we still need to surface standalone comments
+                // sitting between the class's `}` and the next statement.
+                // Stop the cursor at `code_end` (after `}`, before any trailing
+                // trivia / inter-statement comments) so the next statement's
+                // leading-comment extraction picks them up. For other members
+                // `trailing_standalone` already drained that gap, so advancing
+                // to `stmt_node.end` is safe and keeps current behavior.
+                prev_end = if is_class_like || is_namespace_like_stmt {
+                    if is_namespace_like_stmt {
+                        self.trailing_same_line_comment_end_after(code_end)
+                            .unwrap_or(code_end)
+                    } else {
+                        code_end
+                    }
+                } else {
+                    stmt_node.end
+                };
+                prev_stmt_pos = stmt_node.pos;
+            }
+
+            // Extract standalone comments after the last statement but before the closing brace.
+            // Since node.end includes trailing trivia, these are comments NOT part of any
+            // statement's trivia — they appear on their own lines before `}`.
+            if let Some(last_stmt) = stmts.nodes.last()
+                && let Some(last_node) = self.arena.get(*last_stmt)
+            {
+                let code_end = self.find_code_end_of_erased_stmt(last_node.pos, last_node.end);
+                let standalone_comments =
+                    self.extract_standalone_comments_in_range(code_end, body_close_pos);
+                for c in standalone_comments {
+                    result.push(c);
+                }
+            }
+        }
+
+        if !runtime_exported_vars.is_empty() {
+            for node in &mut result {
+                rewrite_exported_var_refs(node, ns_name, &runtime_exported_vars);
+            }
+        }
+
+        // Insert `var _a;` declarations at the top for hoisted temp variables
+        // collected during expression conversion (e.g., computed property lowering
+        // in object literals: `{ [expr]: val }` → `(_a = {}, _a[expr] = val, _a)`).
+        let extra_temps: Vec<String> = std::mem::take(&mut *self.hoisted_temps.borrow_mut());
+        if !extra_temps.is_empty() {
+            let var_decls: Vec<IRNode> = extra_temps
+                .into_iter()
+                .map(|name| IRNode::VarDecl {
+                    name: name.into(),
+                    initializer: None,
+                })
+                .collect();
+            result.insert(0, IRNode::VarDeclList(var_decls));
+        }
+
+        result
+    }
+
+    /// Transform a namespace member, considering already-declared names for `should_declare_var`
+    fn transform_namespace_member_with_declared(
+        &self,
+        ns_name: &str,
+        member_idx: NodeIndex,
+        declared_names: &std::collections::HashSet<String>,
+    ) -> Option<IRNode> {
+        let member_node = self.arena.get(member_idx)?;
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                // Check if a class/function/enum already declared this name
+                let ns_data = self.arena.get_module(member_node)?;
+                let name = get_identifier_text(self.arena, ns_data.name)?;
+                let should_declare_var = !declared_names.contains(&name);
+                self.transform_nested_namespace_core(ns_name, member_idx, should_declare_var, false)
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_data) = self.arena.get_export_decl(member_node) {
+                    if let Some(inner) = self.arena.get(export_data.export_clause)
+                        && inner.kind == syntax_kind_ext::MODULE_DECLARATION
+                    {
+                        let ns_data = self.arena.get_module(inner)?;
+                        let name = get_identifier_text(self.arena, ns_data.name)?;
+                        let should_declare_var = !declared_names.contains(&name);
+                        return self.transform_nested_namespace_core(
+                            ns_name,
+                            export_data.export_clause,
+                            should_declare_var,
+                            true,
+                        );
+                    }
+                    self.transform_namespace_member(ns_name, export_data.export_clause, true)
+                } else {
+                    None
+                }
+            }
+            _ => self.transform_namespace_member(ns_name, member_idx, false),
+        }
+    }
+
+    /// Transform a namespace member to IR. When `force_export` is true, the member
+    /// is always treated as exported (used for `export { decl }` wrappers).
+    fn transform_namespace_member(
+        &self,
+        ns_name: &str,
+        member_idx: NodeIndex,
+        force_export: bool,
+    ) -> Option<IRNode> {
+        let member_node = self.arena.get(member_idx)?;
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::EXPORT_DECLARATION && !force_export => {
+                // Handle export declarations by extracting the inner declaration
+                if let Some(export_data) = self.arena.get_export_decl(member_node) {
+                    self.transform_namespace_member(ns_name, export_data.export_clause, true)
+                } else {
+                    None
+                }
+            }
+            k if k == SyntaxKind::ExportKeyword as u16 => None,
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.transform_function_in_namespace(ns_name, member_idx, force_export)
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.transform_class_in_namespace(ns_name, member_idx, force_export)
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                self.transform_variable_in_namespace(ns_name, member_idx, force_export)
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.transform_nested_namespace_core(ns_name, member_idx, true, force_export)
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.transform_enum_in_namespace(ns_name, member_idx, force_export)
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                if force_export {
+                    self.transform_import_equals_exported(ns_name, member_idx)
+                } else {
+                    self.transform_import_equals_in_namespace(ns_name, member_idx)
+                }
+            }
+            k if !force_export
+                && (k == syntax_kind_ext::INTERFACE_DECLARATION
+                    || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION) =>
+            {
+                None
+            }
+            _ if !force_export => self.namespace_member_ast_ref_if_non_empty(member_idx),
+            _ => None,
+        }
+    }
+
+    fn transform_import_equals_in_namespace(
+        &self,
+        ns_name: &str,
+        import_idx: NodeIndex,
+    ) -> Option<IRNode> {
+        let import = self.arena.get_import_decl_at(import_idx)?;
+        if !self.import_equals_target_has_runtime_value(import_idx, import.module_specifier) {
+            return None;
+        }
+
+        let alias = get_identifier_text(self.arena, import.import_clause)?;
+        let target_expr = AstToIr::new(self.arena).convert_expression(import.module_specifier);
+        let is_exported = self
+            .arena
+            .has_modifier(&import.modifiers, SyntaxKind::ExportKeyword);
+
+        if is_exported {
+            Some(IRNode::NamespaceExport {
+                namespace: ns_name.to_string().into(),
+                name: alias.into(),
+                value: Box::new(target_expr),
+            })
+        } else {
+            Some(IRNode::VarDecl {
+                name: alias.into(),
+                initializer: Some(Box::new(target_expr)),
+            })
+        }
+    }
+
+    fn transform_import_equals_exported(
+        &self,
+        ns_name: &str,
+        import_idx: NodeIndex,
+    ) -> Option<IRNode> {
+        let import = self.arena.get_import_decl_at(import_idx)?;
+        let alias = get_identifier_text(self.arena, import.import_clause)?;
+
+        if !self.import_equals_target_has_runtime_value(import_idx, import.module_specifier) {
+            return None;
+        }
+
+        let target_expr = AstToIr::new(self.arena).convert_expression(import.module_specifier);
+
+        Some(IRNode::NamespaceExport {
+            namespace: ns_name.to_string().into(),
+            name: alias.into(),
+            value: Box::new(target_expr),
+        })
+    }
+
+    fn import_equals_target_has_runtime_value(
+        &self,
+        import_idx: NodeIndex,
+        target_idx: NodeIndex,
+    ) -> bool {
+        let Some(target_parts) = collect_qualified_name_parts(self.arena, target_idx) else {
+            return true;
+        };
+
+        let namespace_parts = self.containing_namespace_parts(import_idx);
+        if !namespace_parts.is_empty() {
+            let mut relative_parts = namespace_parts;
+            relative_parts.extend(target_parts.iter().cloned());
+            if let Some(has_runtime) = entity_path_has_runtime_value(self.arena, &relative_parts) {
+                return has_runtime;
+            }
+        }
+
+        entity_path_has_runtime_value(self.arena, &target_parts).unwrap_or(true)
+    }
+
+    fn containing_namespace_parts(&self, node_idx: NodeIndex) -> Vec<String> {
+        let mut groups = Vec::new();
+        let mut current = self.arena.parent_of(node_idx).unwrap_or(NodeIndex::NONE);
+
+        while current != NodeIndex::NONE {
+            let Some(node) = self.arena.get(current) else {
+                break;
+            };
+            if node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.arena.get_module(node)
+                && let Some(parts) = self.flatten_module_name(module.name)
+            {
+                groups.push(parts);
+            }
+            current = self.arena.parent_of(current).unwrap_or(NodeIndex::NONE);
+        }
+
+        groups.reverse();
+        groups.into_iter().flatten().collect()
+    }
+
+    fn rewrite_const_enum_accesses(&self, nodes: &mut [IRNode], namespace_path: &[String]) {
+        if self.const_enum_values.is_empty() {
+            return;
+        }
+
+        for node in nodes {
+            self.rewrite_const_enum_accesses_in_node(node, namespace_path);
+        }
+    }
+
+    fn rewrite_const_enum_accesses_in_node(&self, node: &mut IRNode, namespace_path: &[String]) {
+        if let Some(replacement) = self.const_enum_replacement(node, namespace_path) {
+            *node = replacement;
+            return;
+        }
+
+        match node {
+            IRNode::BinaryExpr { left, right, .. }
+            | IRNode::LogicalOr { left, right }
+            | IRNode::LogicalAnd { left, right } => {
+                self.rewrite_const_enum_accesses_in_node(left, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(right, namespace_path);
+            }
+            IRNode::PrefixUnaryExpr { operand, .. }
+            | IRNode::PostfixUnaryExpr { operand, .. }
+            | IRNode::Parenthesized(operand)
+            | IRNode::SpreadElement(operand)
+            | IRNode::ExpressionStatement(operand)
+            | IRNode::ThrowStatement(operand)
+            | IRNode::PrivateFieldGet {
+                receiver: operand, ..
+            }
+            | IRNode::PrivateStaticFieldGet {
+                receiver: operand, ..
+            }
+            | IRNode::PrivateFieldIn { obj: operand, .. } => {
+                self.rewrite_const_enum_accesses_in_node(operand, namespace_path);
+            }
+            IRNode::CallExpr { callee, arguments }
+            | IRNode::NewExpr {
+                callee, arguments, ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(callee, namespace_path);
+                for arg in arguments {
+                    self.rewrite_const_enum_accesses_in_node(arg, namespace_path);
+                }
+            }
+            IRNode::PropertyAccess { object, .. } => {
+                self.rewrite_const_enum_accesses_in_node(object, namespace_path);
+            }
+            IRNode::ElementAccess { object, index } => {
+                self.rewrite_const_enum_accesses_in_node(object, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(index, namespace_path);
+            }
+            IRNode::ConditionalExpr {
+                condition,
+                when_true,
+                when_false,
+            } => {
+                self.rewrite_const_enum_accesses_in_node(condition, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(when_true, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(when_false, namespace_path);
+            }
+            IRNode::CommaExpr(items)
+            | IRNode::CommaExprMultiline(items)
+            | IRNode::ArrayLiteral(items)
+            | IRNode::VarDeclList(items)
+            | IRNode::Block(items)
+            | IRNode::Sequence(items)
+            | IRNode::StaticBlockIIFE { statements: items } => {
+                for item in items {
+                    self.rewrite_const_enum_accesses_in_node(item, namespace_path);
+                }
+            }
+            IRNode::ObjectLiteral { properties, .. } => {
+                for property in properties {
+                    if let IRPropertyKey::Computed(key) = &mut property.key {
+                        self.rewrite_const_enum_accesses_in_node(key, namespace_path);
+                    }
+                    self.rewrite_const_enum_accesses_in_node(&mut property.value, namespace_path);
+                }
+            }
+            IRNode::FunctionExpr {
+                parameters, body, ..
+            }
+            | IRNode::FunctionDecl {
+                parameters, body, ..
+            } => {
+                for param in parameters {
+                    if let Some(default_value) = &mut param.default_value {
+                        self.rewrite_const_enum_accesses_in_node(default_value, namespace_path);
+                    }
+                }
+                for item in body {
+                    self.rewrite_const_enum_accesses_in_node(item, namespace_path);
+                }
+            }
+            IRNode::VarDecl { initializer, .. } => {
+                if let Some(initializer) = initializer {
+                    self.rewrite_const_enum_accesses_in_node(initializer, namespace_path);
+                }
+            }
+            IRNode::ReturnStatement(expr) => {
+                if let Some(expr) = expr {
+                    self.rewrite_const_enum_accesses_in_node(expr, namespace_path);
+                }
+            }
+            IRNode::IfStatement {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.rewrite_const_enum_accesses_in_node(condition, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(then_branch, namespace_path);
+                if let Some(else_branch) = else_branch {
+                    self.rewrite_const_enum_accesses_in_node(else_branch, namespace_path);
+                }
+            }
+            IRNode::SwitchStatement { expression, cases } => {
+                self.rewrite_const_enum_accesses_in_node(expression, namespace_path);
+                for case in cases {
+                    if let Some(test) = &mut case.test {
+                        self.rewrite_const_enum_accesses_in_node(test, namespace_path);
+                    }
+                    for statement in &mut case.statements {
+                        self.rewrite_const_enum_accesses_in_node(statement, namespace_path);
+                    }
+                }
+            }
+            IRNode::ForStatement {
+                initializer,
+                condition,
+                incrementor,
+                body,
+            } => {
+                if let Some(initializer) = initializer {
+                    self.rewrite_const_enum_accesses_in_node(initializer, namespace_path);
+                }
+                if let Some(condition) = condition {
+                    self.rewrite_const_enum_accesses_in_node(condition, namespace_path);
+                }
+                if let Some(incrementor) = incrementor {
+                    self.rewrite_const_enum_accesses_in_node(incrementor, namespace_path);
+                }
+                self.rewrite_const_enum_accesses_in_node(body, namespace_path);
+            }
+            IRNode::ForInOfStatement {
+                initializer,
+                expression,
+                body,
+                ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(initializer, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(expression, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(body, namespace_path);
+            }
+            IRNode::WhileStatement { condition, body }
+            | IRNode::DoWhileStatement { body, condition } => {
+                self.rewrite_const_enum_accesses_in_node(condition, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(body, namespace_path);
+            }
+            IRNode::TryStatement {
+                try_block,
+                catch_clause,
+                finally_block,
+            } => {
+                self.rewrite_const_enum_accesses_in_node(try_block, namespace_path);
+                if let Some(catch_clause) = catch_clause {
+                    for statement in &mut catch_clause.body {
+                        self.rewrite_const_enum_accesses_in_node(statement, namespace_path);
+                    }
+                }
+                if let Some(finally_block) = finally_block {
+                    self.rewrite_const_enum_accesses_in_node(finally_block, namespace_path);
+                }
+            }
+            IRNode::LabeledStatement { statement, .. } => {
+                self.rewrite_const_enum_accesses_in_node(statement, namespace_path);
+            }
+            IRNode::ES5ClassIIFE {
+                base_class,
+                body,
+                computed_prop_temp_inits,
+                deferred_static_blocks,
+                ..
+            }
+            | IRNode::ES5ClassAssignment {
+                base_class,
+                body,
+                computed_prop_temp_inits,
+                deferred_static_blocks,
+                ..
+            } => {
+                if let Some(base_class) = base_class {
+                    self.rewrite_const_enum_accesses_in_node(base_class, namespace_path);
+                }
+                for item in body {
+                    self.rewrite_const_enum_accesses_in_node(item, namespace_path);
+                }
+                for item in computed_prop_temp_inits {
+                    self.rewrite_const_enum_accesses_in_node(item, namespace_path);
+                }
+                for item in deferred_static_blocks {
+                    self.rewrite_const_enum_accesses_in_node(item, namespace_path);
+                }
+            }
+            IRNode::ES5ClassApply {
+                factory,
+                base_class,
+            } => {
+                self.rewrite_const_enum_accesses_in_node(factory, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(base_class, namespace_path);
+            }
+            IRNode::PrototypeMethod {
+                method_name,
+                function,
+                ..
+            }
+            | IRNode::StaticMethod {
+                method_name,
+                function,
+                ..
+            } => {
+                if let crate::transforms::ir::IRMethodName::Computed(name) = method_name {
+                    self.rewrite_const_enum_accesses_in_node(name, namespace_path);
+                }
+                self.rewrite_const_enum_accesses_in_node(function, namespace_path);
+            }
+            IRNode::DefineProperty {
+                target,
+                property_name,
+                descriptor,
+                ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(target, namespace_path);
+                if let crate::transforms::ir::IRMethodName::Computed(name) = property_name {
+                    self.rewrite_const_enum_accesses_in_node(name, namespace_path);
+                }
+                if let Some(get) = &mut descriptor.get {
+                    self.rewrite_const_enum_accesses_in_node(get, namespace_path);
+                }
+                if let Some(set) = &mut descriptor.set {
+                    self.rewrite_const_enum_accesses_in_node(set, namespace_path);
+                }
+                if let Some(value) = &mut descriptor.value {
+                    self.rewrite_const_enum_accesses_in_node(value, namespace_path);
+                }
+            }
+            IRNode::AwaiterCall {
+                this_arg,
+                generator_body,
+                ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(this_arg, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(generator_body, namespace_path);
+            }
+            IRNode::GeneratorBody { cases, .. } => {
+                for case in cases {
+                    for statement in &mut case.statements {
+                        self.rewrite_const_enum_accesses_in_node(statement, namespace_path);
+                    }
+                }
+            }
+            IRNode::GeneratorOp { value, .. } => {
+                if let Some(value) = value {
+                    self.rewrite_const_enum_accesses_in_node(value, namespace_path);
+                }
+            }
+            IRNode::IfBreak { condition, .. } => {
+                self.rewrite_const_enum_accesses_in_node(condition, namespace_path);
+            }
+            IRNode::PrivateFieldSet {
+                receiver, value, ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(receiver, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(value, namespace_path);
+            }
+            IRNode::PrivateStaticFieldSet {
+                receiver,
+                state,
+                value,
+                ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(receiver, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(state, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(value, namespace_path);
+            }
+            IRNode::WeakMapSet { key, value, .. } => {
+                self.rewrite_const_enum_accesses_in_node(key, namespace_path);
+                self.rewrite_const_enum_accesses_in_node(value, namespace_path);
+            }
+            IRNode::EnumIIFE { members, .. } => {
+                for member in members {
+                    if let EnumMemberValue::Computed(expr) = &mut member.value {
+                        self.rewrite_const_enum_accesses_in_node(expr, namespace_path);
+                    }
+                }
+            }
+            IRNode::NamespaceIIFE {
+                body, name_parts, ..
+            } => {
+                let nested_namespace_path = name_parts
+                    .iter()
+                    .map(|part| part.as_ref().to_string())
+                    .collect::<Vec<_>>();
+                for item in body {
+                    self.rewrite_const_enum_accesses_in_node(item, &nested_namespace_path);
+                }
+            }
+            IRNode::NamespaceExport { value, .. } => {
+                self.rewrite_const_enum_accesses_in_node(value, namespace_path);
+            }
+            _ => {}
+        }
+    }
+
+    fn const_enum_replacement(&self, node: &IRNode, namespace_path: &[String]) -> Option<IRNode> {
+        let IRNode::PropertyAccess { object, property } = node else {
+            return None;
+        };
+        let enum_path = ir_access_path(object)?;
+        let values = self.lookup_const_enum_values_for_ir(&enum_path, namespace_path)?;
+        let value = values.get(property.as_ref())?;
+        let literal = value.to_js_literal();
+        if self.remove_comments {
+            return Some(IRNode::Raw(literal.into()));
+        }
+        Some(IRNode::Raw(
+            format!("{literal} /* {enum_path}.{property} */").into(),
+        ))
+    }
+
+    fn lookup_const_enum_values_for_ir(
+        &self,
+        enum_path: &str,
+        namespace_path: &[String],
+    ) -> Option<&FxHashMap<String, EnumValue>> {
+        if let Some(values) = self.lookup_const_enum_values_direct(enum_path) {
+            return Some(values);
+        }
+        let namespace_prefix = namespace_path.join(".");
+        if !namespace_prefix.is_empty() {
+            let scoped_path = format!("{namespace_prefix}.{enum_path}");
+            if let Some(values) = self.lookup_const_enum_values_direct(&scoped_path) {
+                return Some(values);
+            }
+        }
+
+        if let Some(dot_pos) = enum_path.find('.') {
+            let first = &enum_path[..dot_pos];
+            let rest = &enum_path[dot_pos + 1..];
+            if !namespace_prefix.is_empty() {
+                let scoped_alias = format!("{namespace_prefix}.{first}");
+                if let Some(target) = self.const_enum_import_aliases.get(&scoped_alias) {
+                    let resolved = format!("{target}.{rest}");
+                    if let Some(values) = self.lookup_const_enum_values_direct(&resolved) {
+                        return Some(values);
+                    }
+                }
+            }
+            if let Some(target) = self.const_enum_import_aliases.get(first) {
+                let resolved = format!("{target}.{rest}");
+                return self.lookup_const_enum_values_direct(&resolved);
+            }
+        } else {
+            if !namespace_prefix.is_empty() {
+                let scoped_alias = format!("{namespace_prefix}.{enum_path}");
+                if let Some(target) = self.const_enum_import_aliases.get(&scoped_alias)
+                    && let Some(values) = self.lookup_const_enum_values_direct(target)
+                {
+                    return Some(values);
+                }
+            }
+            if let Some(target) = self.const_enum_import_aliases.get(enum_path) {
+                return self.lookup_const_enum_values_direct(target);
+            }
+        }
+
+        None
+    }
+
+    fn lookup_const_enum_values_direct(
+        &self,
+        enum_path: &str,
+    ) -> Option<&FxHashMap<String, EnumValue>> {
+        let entries = self.const_enum_values.get(enum_path)?;
+        entries
+            .iter()
+            .find(|entry| entry.scope_start == 0 && entry.scope_end == u32::MAX)
+            .or_else(|| entries.first())
+            .map(|entry| &entry.values)
+    }
+
+    /// Transform a function in namespace. When `force_export` is true, the function
+    /// is always treated as exported (used for `export { function }` wrappers).
+    fn transform_function_in_namespace(
+        &self,
+        ns_name: &str,
+        func_idx: NodeIndex,
+        force_export: bool,
+    ) -> Option<IRNode> {
+        let func_data = self.arena.get_function_at(func_idx)?;
+
+        if let Some(body_node) = self.arena.get(func_data.body)
+            && body_node.kind != syntax_kind_ext::BLOCK
+        {
+            // Malformed `function f() => expr` declarations keep `expr` as the
+            // recovery body. TypeScript emits that expression as a statement,
+            // not as a function declaration or namespace export.
+            return Some(IRNode::ExpressionStatement(Box::new(
+                AstToIr::new(self.arena).convert_expression(func_data.body),
+            )));
+        }
+
+        // Skip declaration-only functions (no body)
+        if func_data.body.is_none() {
+            return None;
+        }
+
+        let func_name = get_identifier_text(self.arena, func_data.name)?;
+        let is_exported = force_export
+            || self
+                .arena
+                .has_modifier(&func_data.modifiers, SyntaxKind::ExportKeyword);
+
+        let func_decl = if func_data.is_async && !func_data.asterisk_token {
+            AsyncES5Transformer::new(self.arena).transform_async_function(func_idx)
+        } else {
+            let body_source_range = self.arena.pos_end_at(func_data.body);
+
+            // Convert function to IR (stripping type annotations)
+            let mut parameters =
+                convert_function_parameters(self.arena, &func_data.parameters, self.source_text);
+            if parameters.is_empty()
+                && let Some(recovered) = recover_empty_function_parameters_from_header(
+                    self.arena,
+                    self.source_text,
+                    func_idx,
+                    func_data.body,
+                )
+            {
+                parameters = recovered;
+            }
+
+            IRNode::FunctionDecl {
+                name: func_name.clone().into(),
+                parameters,
+                body: convert_function_body(self.arena, func_data.body),
+                body_source_range,
+                leading_comment: None,
+            }
+        };
+
+        if is_exported {
+            Some(IRNode::Sequence(vec![
+                func_decl,
+                IRNode::NamespaceExport {
+                    namespace: ns_name.to_string().into(),
+                    name: func_name.clone().into(),
+                    value: Box::new(IRNode::Identifier(func_name.into())),
+                },
+            ]))
+        } else {
+            Some(func_decl)
+        }
+    }
+
+    /// Transform a class in namespace. When `force_export` is true, the class
+    /// is always treated as exported (used for `export { class }` wrappers).
+    fn transform_class_in_namespace(
+        &self,
+        ns_name: &str,
+        class_idx: NodeIndex,
+        force_export: bool,
+    ) -> Option<IRNode> {
+        let class_data = self.arena.get_class_at(class_idx)?;
+
+        let class_name = get_identifier_text(self.arena, class_data.name)?;
+        let is_exported = force_export
+            || self
+                .arena
+                .has_modifier(&class_data.modifiers, SyntaxKind::ExportKeyword);
+
+        // Transform the class to ES5 using the class transformer
+        let mut class_transformer = ES5ClassTransformer::new(self.arena);
+        // Classes in namespace are nested one level deeper than top-level
+        class_transformer.set_indent_base(1);
+        // Forward `--emitDecoratorMetadata` so namespace-scoped decorated
+        // classes still emit `__metadata("design:type", T)` etc.
+        class_transformer.set_emit_decorator_metadata(self.emit_decorator_metadata);
+
+        // Pass legacy decorator info so __decorate calls are emitted inside the IIFE
+        if self.legacy_decorators {
+            let has_member_decorators = class_data.members.nodes.iter().any(|&m_idx| {
+                let Some(m_node) = self.arena.get(m_idx) else {
+                    return false;
+                };
+                let mods = match m_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(m_node)
+                        .and_then(|m| m.modifiers.as_ref()),
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .arena
+                        .get_property_decl(m_node)
+                        .and_then(|p| p.modifiers.as_ref()),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(m_node)
+                            .and_then(|a| a.modifiers.as_ref())
+                    }
+                    _ => None,
+                };
+                mods.is_some_and(|m| {
+                    m.nodes.iter().any(|&mod_idx| {
+                        self.arena
+                            .get(mod_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                    })
+                })
+            });
+            if has_member_decorators {
+                class_transformer.set_legacy_decorators(true);
+            }
+            // Collect class-level decorators
+            let class_decorators: Vec<NodeIndex> = class_data
+                .modifiers
+                .as_ref()
+                .map(|mods| {
+                    mods.nodes
+                        .iter()
+                        .copied()
+                        .filter(|&mod_idx| {
+                            self.arena
+                                .get(mod_idx)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !class_decorators.is_empty() {
+                class_transformer.set_class_decorators(class_decorators);
+            }
+        }
+
+        if let Some(text) = self.source_text {
+            class_transformer.set_source_text(text);
+        }
+
+        let class_ir = class_transformer.transform_class_to_ir(class_idx)?;
+
+        if is_exported {
+            Some(IRNode::Sequence(vec![
+                class_ir,
+                IRNode::NamespaceExport {
+                    namespace: ns_name.to_string().into(),
+                    name: class_name.clone().into(),
+                    value: Box::new(IRNode::Identifier(class_name.into())),
+                },
+            ]))
+        } else {
+            Some(class_ir)
+        }
+    }
+
+    /// Transform a variable statement in namespace. When `force_export` is true, the variable
+    /// is always treated as exported (used for `export { variable }` wrappers).
+    fn transform_variable_in_namespace(
+        &self,
+        ns_name: &str,
+        var_idx: NodeIndex,
+        force_export: bool,
+    ) -> Option<IRNode> {
+        let var_data = self.arena.get_variable_at(var_idx)?;
+
+        let is_exported = force_export
+            || self
+                .arena
+                .has_modifier(&var_data.modifiers, SyntaxKind::ExportKeyword);
+
+        if is_exported {
+            // For exported variables, emit directly as namespace property assignments:
+            // `Namespace.X = initializer;` instead of `var X = initializer; Namespace.X = X;`
+            let (decls, temps) =
+                convert_exported_variable_declarations(self.arena, &var_data.declarations, ns_name);
+            self.hoisted_temps.borrow_mut().extend(temps);
+            if decls.is_empty() {
+                None
+            } else {
+                Some(IRNode::Sequence(decls))
+            }
+        } else {
+            let empty_decl_keyword =
+                self.declaration_keyword_from_var_declarations(&var_data.declarations);
+            let (decls, temps) = convert_variable_declarations(
+                self.arena,
+                &var_data.declarations,
+                empty_decl_keyword,
+            );
+            self.hoisted_temps.borrow_mut().extend(temps);
+            Some(IRNode::Sequence(decls))
+        }
+    }
+
+    /// Transform an enum in namespace. When `force_export` is true, the enum
+    /// is always treated as exported (used for `export { enum }` wrappers).
+    fn transform_enum_in_namespace(
+        &self,
+        ns_name: &str,
+        enum_idx: NodeIndex,
+        force_export: bool,
+    ) -> Option<IRNode> {
+        let is_exported = force_export || {
+            let enum_node = self.arena.get(enum_idx)?;
+            let enum_data = self.arena.get_enum(enum_node)?;
+            self.arena
+                .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword)
+        };
+
+        let mut enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
+
+        // For exported enums, fold the namespace export into the IIFE closing:
+        // `(Color = A.Color || (A.Color = {}))` instead of separate `A.Color = Color;`
+        if is_exported
+            && let IRNode::EnumIIFE {
+                namespace_export, ..
+            } = &mut enum_ir
+        {
+            *namespace_export = Some(ns_name.to_string().into());
+        }
+
+        Some(enum_ir)
+    }
+
+    /// Core implementation for nested namespace transforms. When `force_export` is true,
+    /// the namespace is always treated as exported (used for `export { namespace }` wrappers).
+    fn transform_nested_namespace_core(
+        &self,
+        parent_ns: &str,
+        ns_idx: NodeIndex,
+        should_declare_var: bool,
+        force_export: bool,
+    ) -> Option<IRNode> {
+        let ns_data = self.arena.get_module_at(ns_idx)?;
+
+        // Skip ambient nested namespaces
+        if self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            return None;
+        }
+
+        let name_parts = self.flatten_module_name(ns_data.name)?;
+        if name_parts.is_empty() {
+            return None;
+        }
+
+        let is_exported = force_export
+            || self
+                .arena
+                .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
+
+        // Transform body
+        let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
+        self.rewrite_const_enum_accesses(&mut body, &name_parts);
+
+        // Skip non-instantiated namespaces (only contain types).
+        if !body.iter().any(|n| !is_comment_node(n)) && !self.has_value_declarations(ns_data.body) {
+            return None;
+        }
+
+        // Detect collision: if a member name matches the innermost namespace name,
+        // rename the IIFE parameter (e.g., A -> A_1)
+        let innermost_name = name_parts.last().map_or("", |s| s.as_str());
+        let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
+
+        let name = name_parts.first().cloned().unwrap_or_default();
+
+        Some(IRNode::NamespaceIIFE {
+            name: name.into(),
+            name_parts: name_parts.into_iter().map(Into::into).collect(),
+            body,
+            is_exported,
+            attach_to_exports: is_exported && self.is_commonjs,
+            commonjs_export_name: self.commonjs_export_name.clone().map(Into::into),
+            system_export_names: Vec::new(),
+            should_declare_var,
+            default_export_merge: false,
+            parent_name: is_exported.then(|| parent_ns.to_string().into()),
+            param_name: param_name.map(Into::into),
+            skip_sequence_indent: true, // Nested namespace IIFEs need to skip indent when in sequence
+            trailing_comment: self
+                .extract_namespace_trailing_comment(ns_data.body)
+                .map(Into::into),
+        })
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+#[path = "../../tests/namespace_es5_ir.rs"]
+mod tests;

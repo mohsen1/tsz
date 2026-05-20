@@ -1,0 +1,1531 @@
+//! Interface type resolution (heritage merging, structural merge).
+//! - `merge_properties` - Merge derived and base interface properties
+//!
+//! # Responsibilities
+//!
+//! - Interface type construction (call signatures, construct signatures, properties)
+//! - Heritage clause processing (extends)
+//! - Base interface/class/alias type merging
+//! - Index signature handling
+//! - Type parameter instantiation for generic bases
+
+use crate::query_boundaries::common::is_template_literal_type;
+use crate::state::CheckerState;
+use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_common::interner::Atom;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::IndexSignature;
+use tsz_solver::TypeId;
+use tsz_solver::Visibility;
+
+// =============================================================================
+// Interface Type Resolution
+// =============================================================================
+
+/// Deduplicate call signatures keeping the LAST occurrence of each unique
+/// signature. Two signatures are considered duplicates when they have identical
+/// parameter type lists and return types. This handles diamond inheritance:
+/// when `C extends C1, C2` and both C1/C2 inherit from B, shared signatures
+/// from B appear twice. By keeping the last occurrence, shared base signatures
+/// (like a catch-all `(x: string): void`) sort after all derived-specific
+/// overloads, ensuring correct overload resolution order.
+fn dedup_call_signatures_keep_last(sigs: &mut Vec<tsz_solver::CallSignature>) {
+    if sigs.len() <= 1 {
+        return;
+    }
+    // Build a signature key from param types + return type for identity.
+    // Walk from the end and record the last index for each unique key.
+    // Then retain only those positions.
+    let key_of =
+        |sig: &tsz_solver::CallSignature| -> (Vec<tsz_solver::TypeId>, tsz_solver::TypeId) {
+            let param_types: Vec<_> = sig.params.iter().map(|p| p.type_id).collect();
+            (param_types, sig.return_type)
+        };
+
+    let mut seen: FxHashMap<(Vec<tsz_solver::TypeId>, tsz_solver::TypeId), usize> =
+        FxHashMap::default();
+    // Record the LAST index for each key
+    for (i, sig) in sigs.iter().enumerate() {
+        seen.insert(key_of(sig), i);
+    }
+    // Retain only signatures whose index matches their last occurrence
+    let mut i = 0;
+    sigs.retain(|sig| {
+        let idx = i;
+        i += 1;
+        seen.get(&key_of(sig)).copied() == Some(idx)
+    });
+}
+
+/// Merges an additional string-keyed index signature into an existing one by
+/// unioning their key patterns, enabling excess-property checking to accept any
+/// key that matches ANY of the declared template-literal patterns.
+pub(crate) fn merge_string_index_by_union(
+    existing: &mut IndexSignature,
+    extra: IndexSignature,
+    factory: tsz_solver::TypeFactory<'_>,
+) {
+    if existing.key_type != extra.key_type {
+        existing.key_type = factory.union2(existing.key_type, extra.key_type);
+    }
+    if existing.value_type != extra.value_type {
+        existing.value_type = factory.union2(existing.value_type, extra.value_type);
+    }
+    existing.readonly &= extra.readonly;
+}
+
+impl<'a> CheckerState<'a> {
+    fn resolve_interface_heritage_symbol_by_name(
+        &self,
+        name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let normalized = name.strip_prefix("globalThis.").unwrap_or(name);
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .file_locals
+            .get(normalized)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_global_type_with_libs(normalized, &lib_binders)
+            })
+            .or_else(|| {
+                normalized
+                    .rsplit('.')
+                    .next()
+                    .filter(|tail| *tail != normalized)
+                    .and_then(|tail| {
+                        self.ctx.binder.file_locals.get(tail).or_else(|| {
+                            self.ctx
+                                .binder
+                                .get_global_type_with_libs(tail, &lib_binders)
+                        })
+                    })
+            })
+    }
+
+    /// Get the type of an interface declaration.
+    ///
+    /// This function builds the interface type by:
+    /// 1. Collecting all interface members (call signatures, construct signatures, properties, index signatures)
+    /// 2. Processing heritage clauses (extends)
+    /// 3. Merging base interface types
+    ///
+    /// # Arguments
+    /// * `idx` - The `NodeIndex` of the interface declaration
+    ///
+    /// # Returns
+    /// The `TypeId` representing the interface type
+    ///
+    /// # Example
+    /// ```typescript
+    /// interface Window {
+    ///     title: string;
+    /// }
+    ///
+    /// interface Window {
+    ///     alert(message: string): void;
+    /// }
+    ///
+    /// // Window type has both title and alert
+    /// ```
+    pub(crate) fn get_type_of_interface(&mut self, idx: NodeIndex) -> TypeId {
+        use tsz_parser::parser::syntax_kind_ext::{
+            CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
+        };
+        use tsz_solver::{
+            CallSignature as SolverCallSignature, CallableShape, IndexSignature, ObjectShape,
+            PropertyInfo,
+        };
+        let factory = self.ctx.types.factory();
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+
+        let Some(interface) = self.ctx.arena.get_interface(node) else {
+            return TypeId::ERROR; // Missing interface data - propagate error
+        };
+        let interface_symbol = self.ctx.binder.get_node_symbol(idx);
+
+        let own_type_param_names: FxHashSet<String> = interface
+            .type_parameters
+            .as_ref()
+            .map(|params| {
+                params
+                    .nodes
+                    .iter()
+                    .filter_map(|&param_idx| {
+                        self.ctx
+                            .arena
+                            .get(param_idx)
+                            .and_then(|param_node| self.ctx.arena.get_type_parameter(param_node))
+                            .and_then(|param| {
+                                self.ctx
+                                    .arena
+                                    .get(param.name)
+                                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                                    .map(|ident| ident.escaped_text.clone())
+                            })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut hidden_merged_type_params = Vec::new();
+        if let Some(sym_id) = interface_symbol {
+            for param in self.get_type_params_for_symbol(sym_id) {
+                let name = self.ctx.types.resolve_atom_ref(param.name).to_string();
+                if !own_type_param_names.contains(&name)
+                    && let Some(previous) = self.ctx.type_parameter_scope.remove(&name)
+                {
+                    hidden_merged_type_params.push((name, previous));
+                }
+            }
+        }
+
+        let (_interface_type_params, interface_type_param_updates) =
+            self.push_type_parameters(&interface.type_parameters);
+
+        struct AccessorAggregate {
+            getter: Option<TypeId>,
+            setter: Option<TypeId>,
+            declaration_order: u32,
+            is_symbol_named: bool,
+            is_string_named: bool,
+            single_quoted_name: bool,
+        }
+
+        let mut call_signatures: Vec<SolverCallSignature> = Vec::new();
+        let mut construct_signatures: Vec<SolverCallSignature> = Vec::new();
+        let mut properties: Vec<PropertyInfo> = Vec::new();
+        let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
+        let mut string_index: Option<IndexSignature> = None;
+        let mut number_index: Option<IndexSignature> = None;
+        let mut member_order: u32 = 0;
+
+        // Track method overloads: group call signatures by method name.
+        // When an interface has multiple method signatures with the same name
+        // (overloads), we need to combine them into a single Callable type
+        // so that overload resolution works correctly.
+        struct MethodOverloadEntry {
+            signatures: Vec<SolverCallSignature>,
+            optional: bool,
+            readonly: bool,
+            declaration_order: u32,
+            is_symbol_named: bool,
+            is_string_named: bool,
+            single_quoted_name: bool,
+        }
+        let mut method_overloads: Vec<(Atom, MethodOverloadEntry)> = Vec::new();
+
+        // Iterate over this interface's own members
+        for &member_idx in &interface.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            if member_node.kind == CALL_SIGNATURE {
+                // Extract call signature
+                if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                    if let Some(ref _params) = sig.parameters {}
+                    let (type_params, type_param_updates) =
+                        self.push_type_parameters(&sig.type_parameters);
+                    let (params, this_type) =
+                        self.extract_params_from_signature_in_type_literal(sig);
+                    self.push_typeof_param_scope(&params);
+                    let (return_type, type_predicate) = if sig.type_annotation.is_some() {
+                        let is_predicate = self
+                            .ctx
+                            .arena
+                            .get(sig.type_annotation)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_PREDICATE);
+                        if is_predicate {
+                            self.return_type_and_predicate_in_type_literal(
+                                sig.type_annotation,
+                                &params,
+                            )
+                        } else {
+                            (
+                                self.get_type_from_type_node_in_type_literal(sig.type_annotation),
+                                None,
+                            )
+                        }
+                    } else {
+                        // Return ANY to match TypeScript's implicit 'any' return type
+                        (TypeId::ANY, None)
+                    };
+                    self.pop_typeof_param_scope(&params);
+
+                    call_signatures.push(SolverCallSignature {
+                        type_params,
+                        params,
+                        this_type,
+                        return_type,
+                        type_predicate,
+                        is_method: false,
+                    });
+                    self.pop_type_parameters(type_param_updates);
+                }
+            } else if member_node.kind == CONSTRUCT_SIGNATURE {
+                // Extract construct signature
+                if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                    if let Some(ref _params) = sig.parameters {}
+                    let (type_params, type_param_updates) =
+                        self.push_type_parameters(&sig.type_parameters);
+                    let (params, this_type) =
+                        self.extract_params_from_signature_in_type_literal(sig);
+                    self.push_typeof_param_scope(&params);
+                    let (return_type, type_predicate) = if sig.type_annotation.is_some() {
+                        let is_predicate = self
+                            .ctx
+                            .arena
+                            .get(sig.type_annotation)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_PREDICATE);
+                        if is_predicate {
+                            self.return_type_and_predicate_in_type_literal(
+                                sig.type_annotation,
+                                &params,
+                            )
+                        } else {
+                            (
+                                self.get_type_from_type_node_in_type_literal(sig.type_annotation),
+                                None,
+                            )
+                        }
+                    } else {
+                        // Return ANY to match TypeScript's implicit 'any' return type
+                        (TypeId::ANY, None)
+                    };
+                    self.pop_typeof_param_scope(&params);
+
+                    construct_signatures.push(SolverCallSignature {
+                        type_params,
+                        params,
+                        this_type,
+                        return_type,
+                        type_predicate,
+                        is_method: false,
+                    });
+                    self.pop_type_parameters(type_param_updates);
+                }
+            } else if member_node.kind == PROPERTY_SIGNATURE {
+                // Extract property signature
+                if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                    let name_atom = self.get_member_name_atom(sig.name).or_else(|| {
+                        self.get_property_name_resolved(sig.name)
+                            .map(|name| self.ctx.types.intern_string(&name))
+                    });
+                    if let Some(name_atom) = name_atom {
+                        let is_symbol_named = self.is_symbol_property_name(sig.name);
+                        let (is_string_named, single_quoted_name) =
+                            self.ctx.arena.string_property_name_flags(sig.name);
+                        let type_id = if sig.type_annotation.is_some() {
+                            self.get_type_from_type_node_in_type_literal(sig.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
+                        let write_type = if self.ctx.compiler_options.exact_optional_property_types
+                            && sig.question_token
+                            && sig.type_annotation.is_some()
+                            && !type_node_includes_explicit_undefined(
+                                self.ctx.arena,
+                                sig.type_annotation,
+                            ) {
+                            crate::query_boundaries::common::remove_undefined(
+                                self.ctx.types.as_type_database(),
+                                type_id,
+                            )
+                        } else {
+                            type_id
+                        };
+
+                        member_order += 1;
+                        properties.push(PropertyInfo {
+                            name: name_atom,
+                            type_id,
+                            write_type,
+                            optional: sig.question_token,
+                            readonly: self.has_readonly_modifier(&sig.modifiers),
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                            declaration_order: member_order,
+                            is_string_named,
+                            is_symbol_named,
+                            single_quoted_name,
+                        });
+                    }
+                }
+            } else if member_node.kind == METHOD_SIGNATURE {
+                // Extract method signature as a full call signature.
+                // Method overloads (multiple signatures with the same name) are
+                // collected and later combined into a single Callable type so
+                // that overload resolution works correctly (e.g., Object.freeze).
+                if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                    let name_atom = self.get_member_name_atom(sig.name).or_else(|| {
+                        self.get_property_name_resolved(sig.name)
+                            .map(|name| self.ctx.types.intern_string(&name))
+                    });
+                    if let Some(name_atom) = name_atom {
+                        let is_symbol_named = self.is_symbol_property_name(sig.name);
+                        let (is_string_named, single_quoted_name) =
+                            self.ctx.arena.string_property_name_flags(sig.name);
+                        let (type_params, type_param_updates) =
+                            self.push_type_parameters(&sig.type_parameters);
+                        let (params, this_type) =
+                            self.extract_params_from_signature_in_type_literal(sig);
+                        self.push_typeof_param_scope(&params);
+                        let (return_type, type_predicate) = if sig.type_annotation.is_some() {
+                            let is_predicate =
+                                self.ctx.arena.get(sig.type_annotation).is_some_and(|node| {
+                                    node.kind == syntax_kind_ext::TYPE_PREDICATE
+                                });
+                            if is_predicate {
+                                self.return_type_and_predicate_in_type_literal(
+                                    sig.type_annotation,
+                                    &params,
+                                )
+                            } else {
+                                (
+                                    self.get_type_from_type_node_in_type_literal(
+                                        sig.type_annotation,
+                                    ),
+                                    None,
+                                )
+                            }
+                        } else {
+                            (TypeId::ANY, None)
+                        };
+                        self.pop_typeof_param_scope(&params);
+                        self.pop_type_parameters(type_param_updates);
+
+                        let call_sig = SolverCallSignature {
+                            type_params,
+                            params,
+                            this_type,
+                            return_type,
+                            type_predicate,
+                            is_method: true,
+                        };
+
+                        member_order += 1;
+                        let optional = sig.question_token;
+                        let readonly = self.has_readonly_modifier(&sig.modifiers);
+
+                        // Add to overload group or create new group
+                        if let Some(entry) = method_overloads
+                            .iter_mut()
+                            .find(|(name, _)| *name == name_atom)
+                        {
+                            entry.1.signatures.push(call_sig);
+                        } else {
+                            method_overloads.push((
+                                name_atom,
+                                MethodOverloadEntry {
+                                    signatures: vec![call_sig],
+                                    optional,
+                                    readonly,
+                                    declaration_order: member_order,
+                                    is_symbol_named,
+                                    is_string_named,
+                                    single_quoted_name,
+                                },
+                            ));
+                        }
+                    }
+                }
+            } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                    let name_atom = self.get_member_name_atom(accessor.name).or_else(|| {
+                        self.get_property_name_resolved(accessor.name)
+                            .map(|name| self.ctx.types.intern_string(&name))
+                    });
+                    if let Some(name_atom) = name_atom {
+                        let is_symbol_named = self.is_symbol_property_name(accessor.name);
+                        let (is_string_named, single_quoted_name) =
+                            self.ctx.arena.string_property_name_flags(accessor.name);
+                        member_order += 1;
+                        let current_order = member_order;
+                        let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
+                            getter: None,
+                            setter: None,
+                            declaration_order: current_order,
+                            is_symbol_named,
+                            is_string_named,
+                            single_quoted_name,
+                        });
+
+                        if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                            let getter_type = if accessor.type_annotation.is_some() {
+                                self.get_type_from_type_node_in_type_literal(
+                                    accessor.type_annotation,
+                                )
+                            } else {
+                                TypeId::ANY
+                            };
+                            entry.getter = Some(getter_type);
+                        } else {
+                            let setter_type = accessor
+                                .parameters
+                                .nodes
+                                .first()
+                                .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                                .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                                .and_then(|param| {
+                                    (param.type_annotation.is_some()).then(|| {
+                                        self.get_type_from_type_node_in_type_literal(
+                                            param.type_annotation,
+                                        )
+                                    })
+                                })
+                                .unwrap_or(TypeId::UNKNOWN);
+                            entry.setter = Some(setter_type);
+                        }
+                    }
+                }
+            } else if let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) {
+                let param_idx = index_sig
+                    .parameters
+                    .nodes
+                    .first()
+                    .copied()
+                    .unwrap_or(NodeIndex::NONE);
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param_data) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                let key_type = if param_data.type_annotation.is_some() {
+                    self.get_type_from_type_node_in_type_literal(param_data.type_annotation)
+                } else {
+                    TypeId::ANY
+                };
+
+                // TS1268/TS1337: Check index signature parameter type validity.
+                // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
+                let has_param_grammar_error =
+                    param_data.dot_dot_dot_token || param_data.question_token;
+                let is_valid_index_type = key_type == TypeId::STRING
+                    || key_type == TypeId::NUMBER
+                    || key_type == TypeId::SYMBOL
+                    || is_template_literal_type(self.ctx.types, key_type);
+
+                // Also check syntactically for type aliases that resolve to valid types
+                let is_valid_via_alias = if let Some(type_node) =
+                    self.ctx.arena.get(param_data.type_annotation)
+                {
+                    self.is_valid_index_sig_param_type(type_node.kind, param_data.type_annotation)
+                } else {
+                    false
+                };
+
+                if !is_valid_index_type && !is_valid_via_alias && !has_param_grammar_error {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    // Check if this is a literal type or generic type (TS1337 vs TS1268)
+                    let type_node = self.ctx.arena.get(param_data.type_annotation);
+                    let type_node_kind = type_node.map(|n| n.kind).unwrap_or(0);
+                    let is_generic_or_literal = self.is_type_param_or_literal_in_index_sig(
+                        type_node_kind,
+                        param_data.type_annotation,
+                    );
+                    if is_generic_or_literal {
+                        self.error_at_node(
+                            param_idx,
+                            diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
+                            diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_CANNOT_BE_A_LITERAL_TYPE_OR_GENERIC_TYPE_CONSI,
+                        );
+                    } else {
+                        self.error_at_node(
+                            param_idx,
+                            diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                            diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                        );
+                    }
+                }
+
+                let value_type = if index_sig.type_annotation.is_some() {
+                    self.get_type_from_type_node_in_type_literal(index_sig.type_annotation)
+                } else {
+                    TypeId::ANY
+                };
+                let readonly = self.has_readonly_modifier(&index_sig.modifiers);
+                let param_name = self
+                    .ctx
+                    .arena
+                    .get(param_data.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
+                let info = IndexSignature {
+                    key_type,
+                    value_type,
+                    readonly,
+                    param_name,
+                };
+                if is_valid_index_type || is_valid_via_alias {
+                    if key_type == TypeId::NUMBER {
+                        Self::merge_index_signature(&mut number_index, info);
+                    } else {
+                        match string_index.as_mut() {
+                            None => string_index = Some(info),
+                            Some(existing) => {
+                                merge_string_index_by_union(existing, info, factory);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Convert method overloads to properly-typed properties.
+        // Single-method entries become Function types; multiple-signature entries
+        // become Callable types with explicit overloads so the solver can perform
+        // overload resolution (e.g., Object.freeze's specific literal-preserving
+        // overload is tried before the generic fallback).
+        for (name, entry) in method_overloads {
+            let type_id = if entry.signatures.len() == 1 {
+                // Single method: create a Function type
+                let sig = entry
+                    .signatures
+                    .into_iter()
+                    .next()
+                    .expect("single signature confirmed by len check");
+                factory.function(tsz_solver::FunctionShape {
+                    type_params: sig.type_params,
+                    params: sig.params,
+                    this_type: sig.this_type,
+                    return_type: sig.return_type,
+                    type_predicate: sig.type_predicate,
+                    is_constructor: false,
+                    is_method: true,
+                })
+            } else {
+                // Multiple overloads: create a Callable type with all signatures
+                let shape = CallableShape {
+                    call_signatures: entry.signatures,
+                    construct_signatures: Vec::new(),
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                    is_abstract: false,
+                };
+                factory.callable(shape)
+            };
+            properties.push(PropertyInfo {
+                name,
+                type_id,
+                write_type: type_id,
+                optional: entry.optional,
+                readonly: entry.readonly,
+                is_method: true,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: entry.declaration_order,
+                is_string_named: entry.is_string_named,
+                is_symbol_named: entry.is_symbol_named,
+                single_quoted_name: entry.single_quoted_name,
+            });
+        }
+
+        // Convert accessors to properties
+        for (name, accessor) in accessors {
+            let read_type = accessor
+                .getter
+                .or(accessor.setter)
+                .unwrap_or(TypeId::UNKNOWN);
+            // When a setter parameter has no type annotation, its type is UNKNOWN
+            // (sentinel). Filter out so we fall back to getter type, matching tsc.
+            let write_type = accessor
+                .setter
+                .filter(|&t| t != TypeId::UNKNOWN)
+                .or(accessor.getter)
+                .unwrap_or(read_type);
+            let readonly = accessor.getter.is_some() && accessor.setter.is_none();
+            properties.push(PropertyInfo {
+                name,
+                type_id: read_type,
+                write_type,
+                optional: false,
+                readonly,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: accessor.declaration_order,
+                is_string_named: accessor.is_string_named,
+                is_symbol_named: accessor.is_symbol_named,
+                single_quoted_name: accessor.single_quoted_name,
+            });
+        }
+
+        let result = if !call_signatures.is_empty() || !construct_signatures.is_empty() {
+            let shape = CallableShape {
+                call_signatures,
+                construct_signatures,
+                properties,
+                string_index,
+                number_index,
+                symbol: interface_symbol,
+                is_abstract: false,
+            };
+            factory.callable(shape)
+        } else if string_index.is_some() || number_index.is_some() {
+            factory.object_with_index(ObjectShape {
+                properties,
+                string_index,
+                number_index,
+                symbol: interface_symbol,
+                ..ObjectShape::default()
+            })
+        } else if !properties.is_empty() {
+            factory.object_with_symbol(properties, interface_symbol)
+        } else {
+            TypeId::ANY
+        };
+
+        self.pop_type_parameters(interface_type_param_updates);
+        for (name, type_id) in hidden_merged_type_params {
+            self.ctx.type_parameter_scope.insert(name, type_id);
+        }
+        self.merge_interface_heritage_types(std::slice::from_ref(&idx), result)
+    }
+
+    /// Merge interface heritage types (extends clauses).
+    ///
+    /// This function processes the heritage clauses of interface declarations
+    /// and merges the base interface/class/alias types into the derived type.
+    ///
+    /// # Arguments
+    /// * `declarations` - The interface declarations to process
+    /// * `derived_type` - The initial derived type
+    ///
+    /// # Returns
+    /// The merged `TypeId` including all base interface members
+    pub(crate) fn merge_interface_heritage_types(
+        &mut self,
+        declarations: &[NodeIndex],
+        mut derived_type: TypeId,
+    ) -> TypeId {
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+        use tracing::trace;
+
+        trace!(decls = declarations.len(), derived_type_id = %derived_type.0, "merge_interface_heritage_types called");
+
+        // Depth guard: heritage merging can trigger get_type_of_symbol on base
+        // interfaces, which in turn calls compute_type_of_symbol →
+        // merge_interface_heritage_types again for cross-referencing interfaces.
+        // Use a dedicated counter with a tight limit (10) because each heritage
+        // merge cycle is expensive (it resolves full interface types).
+        let heritage_depth = self.ctx.heritage_merge_depth.get();
+        if heritage_depth >= 5 {
+            return derived_type;
+        }
+        // Bail out early if type resolution fuel is exhausted.
+        if !self.ctx.consume_fuel() {
+            return derived_type;
+        }
+        self.ctx.heritage_merge_depth.set(heritage_depth + 1);
+
+        let mut pushed_derived = false;
+        let mut derived_param_updates = Vec::new();
+        let current_sym = declarations
+            .first()
+            .and_then(|&decl_idx| self.ctx.binder.get_node_symbol(decl_idx));
+
+        for &decl_idx in declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = self.ctx.arena.get_interface(node) else {
+                continue;
+            };
+
+            if !pushed_derived {
+                let (_params, updates) = self.push_type_parameters(&interface.type_parameters);
+                derived_param_updates = updates;
+                pushed_derived = true;
+            }
+
+            let Some(ref heritage_clauses) = interface.heritage_clauses else {
+                continue;
+            };
+
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                for &type_idx in &heritage.types.nodes {
+                    let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                        continue;
+                    };
+
+                    let (expr_idx, type_arguments) = if let Some(expr_type_args) =
+                        self.ctx.arena.get_expr_type_args(type_node)
+                    {
+                        (
+                            expr_type_args.expression,
+                            expr_type_args.type_arguments.as_ref(),
+                        )
+                    } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                        if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
+                            (type_ref.type_name, type_ref.type_arguments.as_ref())
+                        } else {
+                            (type_idx, None)
+                        }
+                    } else {
+                        (type_idx, None)
+                    };
+
+                    let base_name = self
+                        .entity_name_text(expr_idx)
+                        .or_else(|| self.expression_text(expr_idx));
+                    let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx).or_else(|| {
+                        base_name
+                            .as_deref()
+                            .and_then(|name| self.resolve_interface_heritage_symbol_by_name(name))
+                    }) else {
+                        continue;
+                    };
+                    let Some((
+                        base_symbol_declarations,
+                        base_symbol_value_declaration,
+                        base_symbol_name,
+                    )) = self
+                        .get_cross_file_symbol(base_sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(base_sym_id))
+                        .map(|symbol| {
+                            (
+                                symbol.declarations.clone(),
+                                symbol.value_declaration,
+                                symbol.escaped_name.clone(),
+                            )
+                        })
+                    else {
+                        continue;
+                    };
+
+                    let mut type_args = Vec::new();
+                    if let Some(args) = type_arguments {
+                        for &arg_idx in &args.nodes {
+                            type_args.push(self.get_type_from_type_node(arg_idx));
+                        }
+                    }
+
+                    // Resolve the base type and its type params.  We use
+                    // get_type_of_symbol (which caches) for the type, and
+                    // get_type_params_for_symbol (which also caches) for params.
+                    // This ensures the TypeParam TypeIds in base_type_params match
+                    // the TypeIds embedded in the base type's member signatures,
+                    // which is critical for substitution to work correctly.
+                    let mut base_type = None;
+
+                    // Try class instance type first (needs special handling)
+                    for &base_decl_idx in &base_symbol_declarations {
+                        let Some(base_node) = self.ctx.arena.get(base_decl_idx) else {
+                            continue;
+                        };
+                        if let Some(base_class) = self.ctx.arena.get_class(base_node) {
+                            base_type =
+                                Some(self.get_class_instance_type(base_decl_idx, base_class));
+                            break;
+                        }
+                    }
+                    if base_type.is_none() && base_symbol_value_declaration.is_some() {
+                        let base_decl_idx = base_symbol_value_declaration;
+                        if let Some(base_node) = self.ctx.arena.get(base_decl_idx)
+                            && let Some(base_class) = self.ctx.arena.get_class(base_node)
+                        {
+                            base_type =
+                                Some(self.get_class_instance_type(base_decl_idx, base_class));
+                        }
+                    }
+
+                    // For interfaces/type aliases, resolve through symbol type
+                    if base_type.is_none() {
+                        let resolved = self.get_type_of_symbol(base_sym_id);
+                        if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                            base_type = Some(resolved);
+                        } else if !self.ctx.lib_contexts.is_empty() {
+                            // Fallback: if get_type_of_symbol returned UNKNOWN/ERROR
+                            // (e.g., due to circular heritage chains like
+                            // IteratorObject <-> Iterator in esnext.iterator.d.ts),
+                            // try resolving via lib type resolution which has
+                            // dedicated cycle-breaking logic.
+                            if let Some(lib_type) = self.resolve_lib_type_by_name(&base_symbol_name)
+                                && lib_type != TypeId::ERROR
+                                && lib_type != TypeId::UNKNOWN
+                            {
+                                base_type = Some(lib_type);
+                            }
+                        }
+                    }
+
+                    let Some(mut base_type) = base_type else {
+                        continue;
+                    };
+
+                    // Use get_type_params_for_symbol to get the ORIGINAL TypeParam
+                    // TypeIds that match the ones in base_type's member signatures.
+                    // Previously we used push_type_parameters which creates NEW
+                    // TypeIds that don't match, causing substitution to be a no-op.
+                    let base_type_params = self.get_type_params_for_symbol(base_sym_id);
+
+                    if type_args.len() < base_type_params.len() {
+                        for (param_index, param) in
+                            base_type_params.iter().enumerate().skip(type_args.len())
+                        {
+                            let fallback = param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN);
+                            let substitution = TypeSubstitution::from_args(
+                                self.ctx.types,
+                                &base_type_params[..param_index],
+                                &type_args,
+                            );
+                            type_args.push(
+                                crate::query_boundaries::common::instantiate_type_preserving_meta(
+                                    self.ctx.types,
+                                    fallback,
+                                    &substitution,
+                                ),
+                            );
+                        }
+                    }
+                    if type_args.len() > base_type_params.len() {
+                        type_args.truncate(base_type_params.len());
+                    }
+
+                    let has_structural_self_arg = current_sym.is_some_and(|current_sym| {
+                        type_args.iter().copied().any(|arg| {
+                            self.type_requires_structure_of_symbol_for_base_type(arg, current_sym)
+                        })
+                    });
+
+                    let substitution =
+                        TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
+                    base_type = instantiate_type(self.ctx.types, base_type, &substitution);
+                    let is_builtin_array_heritage =
+                        matches!(base_symbol_name.as_str(), "Array" | "ReadonlyArray");
+                    let requires_self = !is_builtin_array_heritage
+                        && current_sym.is_some_and(|current_sym| {
+                            has_structural_self_arg
+                                || self.type_requires_structure_of_symbol_for_base_type(
+                                    base_type,
+                                    current_sym,
+                                )
+                        });
+
+                    if let Some(current_sym) = current_sym
+                        && requires_self
+                    {
+                        self.report_recursive_base_type_for_symbol(current_sym);
+                        self.report_instantiated_type_alias_mapped_constraint_cycles(
+                            base_sym_id,
+                            &base_type_params,
+                            &type_args,
+                            current_sym,
+                        );
+                        derived_type = self.merge_interface_types(derived_type, base_type);
+                        continue;
+                    }
+
+                    derived_type = self.merge_interface_types(derived_type, base_type);
+                }
+            }
+        }
+
+        if pushed_derived {
+            self.pop_type_parameters(derived_param_updates);
+        }
+
+        self.ctx.heritage_merge_depth.set(heritage_depth);
+        derived_type
+    }
+
+    /// Merge two interface types structurally.
+    ///
+    /// This function merges a derived interface type with a base interface type,
+    /// combining their call signatures, construct signatures, properties, and index signatures.
+    /// Derived members take precedence over base members.
+    ///
+    /// # Arguments
+    /// * `derived` - The derived interface type
+    /// * `base` - The base interface type
+    ///
+    /// # Returns
+    /// The merged `TypeId`
+    pub(crate) fn merge_interface_types(&mut self, derived: TypeId, base: TypeId) -> TypeId {
+        if derived == base {
+            return derived;
+        }
+        // Depth guard: merge_interface_types can recurse through merge_properties
+        // and resolve_type_for_interface_merge, creating an unbounded cycle.
+        if !self.ctx.enter_recursion() {
+            return derived;
+        }
+        let result = self.merge_interface_types_impl(derived, base);
+        self.ctx.leave_recursion();
+        result
+    }
+
+    fn merge_interface_types_impl(&mut self, derived: TypeId, base: TypeId) -> TypeId {
+        use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
+        use tracing::trace;
+        use tsz_solver::{CallableShape, ObjectShape};
+
+        // Bail out if type resolution fuel is exhausted to prevent
+        // expensive merges from hanging on augmented module interfaces
+        // (e.g., react + create-emotion-styled cross-referencing).
+        if !self.ctx.consume_fuel() {
+            return derived;
+        }
+
+        trace!(derived_id = %derived.0, base_id = %base.0, "merge_interface_types called");
+        let factory = self.ctx.types.factory();
+
+        // Resolve Application/Lazy types before classification.
+        // When an interface extends a type alias (e.g., `interface TaggedPair<T> extends Pair<T>`
+        // where `type Pair<T> = AB<T, T>`), the instantiated base type may be an Application
+        // (e.g., `AB<number, number>`) which classify_for_interface_merge cannot structurally
+        // merge. Evaluating it first resolves it to an Object type with the actual properties.
+        let derived_resolved = self.resolve_type_for_interface_merge(derived);
+        let base_resolved = self.resolve_type_for_interface_merge(base);
+
+        let derived_kind = classify_for_interface_merge(self.ctx.types, derived_resolved);
+        let base_kind = classify_for_interface_merge(self.ctx.types, base_resolved);
+        trace!(derived_kind = ?derived_kind, base_kind = ?base_kind, "Classified types for merge");
+
+        match (derived_kind, base_kind) {
+            (
+                InterfaceMergeKind::Callable(derived_shape_id),
+                InterfaceMergeKind::Callable(base_shape_id),
+            ) => {
+                let derived_shape = self.ctx.types.callable_shape(derived_shape_id);
+                let base_shape = self.ctx.types.callable_shape(base_shape_id);
+                trace!(
+                    derived_call_sigs = derived_shape.call_signatures.len(),
+                    derived_construct_sigs = derived_shape.construct_signatures.len(),
+                    base_call_sigs = base_shape.call_signatures.len(),
+                    base_construct_sigs = base_shape.construct_signatures.len(),
+                    "Callable+Callable merge signature counts"
+                );
+                let mut call_signatures = derived_shape.call_signatures.clone();
+                call_signatures.extend(base_shape.call_signatures.iter().cloned());
+                // Deduplicate inherited call signatures from diamond inheritance.
+                // When C extends C1 and C2, and both inherit from B (which has a
+                // catch-all like `(x: string): void`), that catch-all appears in
+                // both C1's and C2's chains. Without deduplication, it appears
+                // before C2's specific overloads, causing wrong overload resolution.
+                // Keep the LAST occurrence so shared base signatures sort after
+                // all derived-specific overloads.
+                dedup_call_signatures_keep_last(&mut call_signatures);
+                let mut construct_signatures = derived_shape.construct_signatures.clone();
+                construct_signatures.extend(base_shape.construct_signatures.iter().cloned());
+                dedup_call_signatures_keep_last(&mut construct_signatures);
+                let properties =
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                factory.callable(CallableShape {
+                    call_signatures,
+                    construct_signatures,
+                    properties,
+                    string_index: derived_shape
+                        .string_index
+                        .or_else(|| base_shape.string_index),
+                    number_index: derived_shape
+                        .number_index
+                        .or_else(|| base_shape.number_index),
+                    symbol: derived_shape.symbol,
+                    is_abstract: derived_shape.is_abstract || base_shape.is_abstract,
+                })
+            }
+            (
+                InterfaceMergeKind::Callable(derived_shape_id),
+                InterfaceMergeKind::Object(base_shape_id),
+            ) => {
+                let derived_shape = self.ctx.types.callable_shape(derived_shape_id);
+                let base_shape = self.ctx.types.object_shape(base_shape_id);
+                let properties =
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                factory.callable(CallableShape {
+                    call_signatures: derived_shape.call_signatures.clone(),
+                    construct_signatures: derived_shape.construct_signatures.clone(),
+                    properties,
+                    string_index: derived_shape.string_index,
+                    number_index: derived_shape.number_index,
+                    symbol: derived_shape.symbol,
+                    is_abstract: derived_shape.is_abstract,
+                })
+            }
+            (
+                InterfaceMergeKind::Callable(derived_shape_id),
+                InterfaceMergeKind::ObjectWithIndex(base_shape_id),
+            ) => {
+                let derived_shape = self.ctx.types.callable_shape(derived_shape_id);
+                let base_shape = self.ctx.types.object_shape(base_shape_id);
+                let properties =
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                factory.callable(CallableShape {
+                    call_signatures: derived_shape.call_signatures.clone(),
+                    construct_signatures: derived_shape.construct_signatures.clone(),
+                    properties,
+                    string_index: derived_shape
+                        .string_index
+                        .or_else(|| base_shape.string_index),
+                    number_index: derived_shape
+                        .number_index
+                        .or_else(|| base_shape.number_index),
+                    symbol: derived_shape.symbol,
+                    is_abstract: derived_shape.is_abstract,
+                })
+            }
+            (
+                InterfaceMergeKind::Object(derived_shape_id),
+                InterfaceMergeKind::Callable(base_shape_id),
+            ) => {
+                let derived_shape = self.ctx.types.object_shape(derived_shape_id);
+                let base_shape = self.ctx.types.callable_shape(base_shape_id);
+                let properties =
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                factory.callable(CallableShape {
+                    call_signatures: base_shape.call_signatures.clone(),
+                    construct_signatures: base_shape.construct_signatures.clone(),
+                    properties,
+                    string_index: base_shape.string_index,
+                    number_index: base_shape.number_index,
+                    symbol: derived_shape.symbol,
+                    is_abstract: base_shape.is_abstract,
+                })
+            }
+            (
+                InterfaceMergeKind::ObjectWithIndex(derived_shape_id),
+                InterfaceMergeKind::Callable(base_shape_id),
+            ) => {
+                let derived_shape = self.ctx.types.object_shape(derived_shape_id);
+                let base_shape = self.ctx.types.callable_shape(base_shape_id);
+                let properties =
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                factory.callable(CallableShape {
+                    call_signatures: base_shape.call_signatures.clone(),
+                    construct_signatures: base_shape.construct_signatures.clone(),
+                    properties,
+                    string_index: derived_shape
+                        .string_index
+                        .or_else(|| base_shape.string_index),
+                    number_index: derived_shape
+                        .number_index
+                        .or_else(|| base_shape.number_index),
+                    symbol: derived_shape.symbol,
+                    is_abstract: base_shape.is_abstract,
+                })
+            }
+            (
+                InterfaceMergeKind::Object(derived_shape_id),
+                InterfaceMergeKind::Object(base_shape_id),
+            ) => {
+                let derived_shape = self.ctx.types.object_shape(derived_shape_id);
+                let base_shape = self.ctx.types.object_shape(base_shape_id);
+                let properties =
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                factory.object_with_symbol(properties, derived_shape.symbol)
+            }
+            (
+                InterfaceMergeKind::Object(derived_shape_id),
+                InterfaceMergeKind::ObjectWithIndex(base_shape_id),
+            ) => {
+                let derived_shape = self.ctx.types.object_shape(derived_shape_id);
+                let base_shape = self.ctx.types.object_shape(base_shape_id);
+                tracing::trace!(
+                    ?derived_shape_id,
+                    ?base_shape_id,
+                    has_base_string_index = base_shape.string_index.is_some(),
+                    has_base_number_index = base_shape.number_index.is_some(),
+                    "merge_interface_types: Object + ObjectWithIndex"
+                );
+                let properties =
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                let result = factory.object_with_index(ObjectShape {
+                    properties,
+                    string_index: base_shape.string_index,
+                    number_index: base_shape.number_index,
+                    symbol: derived_shape.symbol,
+                    ..ObjectShape::default()
+                });
+                tracing::trace!(result_type = %result.0, "merge_interface_types: created merged type");
+                result
+            }
+            (
+                InterfaceMergeKind::ObjectWithIndex(derived_shape_id),
+                InterfaceMergeKind::Object(base_shape_id),
+            ) => {
+                let derived_shape = self.ctx.types.object_shape(derived_shape_id);
+                let base_shape = self.ctx.types.object_shape(base_shape_id);
+                let properties =
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                factory.object_with_index(ObjectShape {
+                    properties,
+                    string_index: derived_shape.string_index,
+                    number_index: derived_shape.number_index,
+                    symbol: derived_shape.symbol,
+                    ..ObjectShape::default()
+                })
+            }
+            (
+                InterfaceMergeKind::ObjectWithIndex(derived_shape_id),
+                InterfaceMergeKind::ObjectWithIndex(base_shape_id),
+            ) => {
+                let derived_shape = self.ctx.types.object_shape(derived_shape_id);
+                let base_shape = self.ctx.types.object_shape(base_shape_id);
+                let properties =
+                    self.merge_properties(&derived_shape.properties, &base_shape.properties);
+                factory.object_with_index(ObjectShape {
+                    properties,
+                    string_index: derived_shape
+                        .string_index
+                        .or_else(|| base_shape.string_index),
+                    number_index: derived_shape
+                        .number_index
+                        .or_else(|| base_shape.number_index),
+                    symbol: derived_shape.symbol,
+                    ..ObjectShape::default()
+                })
+            }
+            // When one side is an intersection (e.g., from global augmentation merging
+            // an interface with additional properties), decompose it and merge the
+            // callable/object parts properly so that construct signatures are preserved.
+            // Use resolved types so that Lazy wrappers (e.g., type aliases) are
+            // expanded to their structural intersection form before decomposition.
+            (_, InterfaceMergeKind::Intersection) | (InterfaceMergeKind::Intersection, _) => self
+                .merge_with_intersection(derived_resolved, derived_kind, base_resolved, base_kind),
+            // When the derived interface has no own members (TypeId::ANY), just use the base.
+            (InterfaceMergeKind::Other, _) if derived == TypeId::ANY => base,
+            // When the base is an Array or Tuple type (e.g., `interface MyTuple extends [] { ... }`),
+            // create an intersection of derived & base. This preserves the array/tuple nature
+            // of the base in the resulting type, which is critical for:
+            // - Weak type detection (TS2559): the intersection prevents false weak-type violations
+            //   because the target is not a standalone object.
+            // - Assignability: array/tuple sources can be checked against the tuple base.
+            // Track the result so the checker can also suppress false NoCommonProperties failures.
+            (_, InterfaceMergeKind::Other)
+                if crate::query_boundaries::common::is_array_or_tuple_type(
+                    self.ctx.types,
+                    base_resolved,
+                ) && derived != TypeId::ANY =>
+            {
+                let result = factory.intersection(vec![derived, base]);
+                self.ctx.types_extending_array.insert(result);
+                result
+            }
+            (_, InterfaceMergeKind::Other)
+                if crate::query_boundaries::common::mapped_type_id(
+                    self.ctx.types,
+                    base_resolved,
+                )
+                .is_some()
+                    && derived != TypeId::ANY =>
+            {
+                factory.intersection2(derived, base_resolved)
+            }
+            (_, InterfaceMergeKind::Other)
+                if crate::query_boundaries::common::is_generic_application(
+                    self.ctx.types,
+                    base_resolved,
+                ) && derived != TypeId::ANY =>
+            {
+                factory.intersection2(derived, base_resolved)
+            }
+            _ => derived,
+        }
+    }
+
+    fn resolve_type_for_interface_merge(&mut self, type_id: TypeId) -> TypeId {
+        if crate::query_boundaries::common::needs_evaluation_for_merge(self.ctx.types, type_id) {
+            // Use the solver evaluator without ensure_relation_input_ready.
+            // evaluate_type_with_env triggers lazy ref resolution which can cause
+            // explosive type creation on augmented module interfaces (react + emotion).
+            //
+            // Suppress `this` binding so that ThisType references inside resolved
+            // Lazy types are preserved. During heritage merging, `this` must remain
+            // unbound until the final derived interface is constructed; binding it
+            // here would incorrectly lock it to the base interface identity (e.g.,
+            // `A` instead of the derived `D`).
+            use crate::query_boundaries::state::type_environment::evaluate_type_suppressing_this;
+            let env = self.ctx.type_env.borrow();
+            let evaluated = evaluate_type_suppressing_this(self.ctx.types, &*env, type_id);
+            if evaluated != type_id {
+                return evaluated;
+            }
+        }
+        type_id
+    }
+
+    /// Merge an interface type with an intersection base/derived.
+    ///
+    /// When a lib interface is augmented (e.g., `ErrorConstructor` gets `captureStackTrace`
+    /// from user code), the resolved type is an intersection like
+    /// `Callable(call_sigs, construct_sigs, props) & Object(captureStackTrace)`.
+    ///
+    /// When a derived interface (e.g., `RangeErrorConstructor extends ErrorConstructor`)
+    /// needs to merge with this intersection base, we must decompose the intersection,
+    /// find the callable member, merge it properly with the derived callable (preserving
+    /// construct signatures), and then re-wrap with the remaining intersection members.
+    fn merge_with_intersection(
+        &mut self,
+        derived: TypeId,
+        _derived_kind: crate::query_boundaries::common::InterfaceMergeKind,
+        base: TypeId,
+        base_kind: crate::query_boundaries::common::InterfaceMergeKind,
+    ) -> TypeId {
+        use crate::query_boundaries::common::intersection_members;
+        use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
+
+        let factory = self.ctx.types.factory();
+
+        // Determine which side is the intersection and which is the "other" type
+        let (intersection_id, other_id, other_is_derived) =
+            if matches!(base_kind, InterfaceMergeKind::Intersection) {
+                (base, derived, true)
+            } else {
+                (derived, base, false)
+            };
+
+        // Get the intersection members
+        let Some(members) = intersection_members(self.ctx.types, intersection_id) else {
+            return factory.intersection2(derived, base);
+        };
+
+        // Find the best structurally mergeable member in the intersection.
+        // Prefer callable members over plain object members so interfaces like
+        // `RangeErrorConstructor extends ErrorConstructor` merge against the
+        // callable core first, then re-apply object augmentations such as
+        // `captureStackTrace`.
+        let rank_member = |kind: InterfaceMergeKind| match kind {
+            InterfaceMergeKind::Callable(_) => Some(0_u8),
+            InterfaceMergeKind::ObjectWithIndex(_) => Some(1_u8),
+            InterfaceMergeKind::Object(_) => Some(2_u8),
+            _ => None,
+        };
+
+        let mut best_mergeable: Option<(usize, TypeId, u8)> = None;
+        let mut resolved_members = Vec::with_capacity(members.len());
+        for (idx, &member) in members.iter().enumerate() {
+            let resolved_member = self.resolve_type_for_interface_merge(member);
+            let kind = classify_for_interface_merge(self.ctx.types, resolved_member);
+            if let Some(rank) = rank_member(kind)
+                && best_mergeable
+                    .as_ref()
+                    .is_none_or(|(_, _, best_rank)| rank < *best_rank)
+            {
+                best_mergeable = Some((idx, resolved_member, rank));
+            }
+            resolved_members.push((member, resolved_member));
+        }
+
+        let mergeable_member = best_mergeable.map(|(_, resolved_member, _)| resolved_member);
+        let other_members: Vec<_> = resolved_members
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, (member, _))| {
+                (best_mergeable
+                    .as_ref()
+                    .is_none_or(|(best_idx, _, _)| idx != *best_idx))
+                .then_some(member)
+            })
+            .collect();
+
+        // If we found a mergeable member, structurally merge it with the other side
+        if let Some(mergeable_id) = mergeable_member {
+            let (merge_derived, merge_base) = if other_is_derived {
+                (other_id, mergeable_id)
+            } else {
+                (mergeable_id, other_id)
+            };
+
+            // Recursively merge the parts (hits Callable+Callable, Object+Object,
+            // Callable+Object, etc. paths instead of the Intersection path)
+            let merged = self.merge_interface_types(merge_derived, merge_base);
+
+            // Re-wrap with the remaining intersection members (e.g., string[])
+            if other_members.is_empty() {
+                merged
+            } else {
+                let mut all = vec![merged];
+                all.extend(other_members);
+                factory.intersection(all)
+            }
+        } else {
+            // No mergeable member found - fall back to plain intersection
+            factory.intersection2(derived, base)
+        }
+    }
+
+    /// Merge derived and base interface properties.
+    ///
+    /// Derived properties override base properties when names match.
+    /// Property order matches tsc: derived (own) members are listed first in
+    /// declaration order, followed by base members not overridden by derived.
+    /// `declaration_order` is offset for base-only members so a stable sort by
+    /// `declaration_order` reproduces this own-first / base-last layout — for
+    /// both diagnostic display and downstream `keyof T` iteration.
+    ///
+    /// # Arguments
+    /// * `derived` - Properties from the derived interface
+    /// * `base` - Properties from the base interface
+    ///
+    /// # Returns
+    /// The merged properties vector
+    pub(crate) fn merge_properties(
+        &mut self,
+        derived: &[tsz_solver::PropertyInfo],
+        base: &[tsz_solver::PropertyInfo],
+    ) -> Vec<tsz_solver::PropertyInfo> {
+        use rustc_hash::FxHashMap;
+        use tsz_common::interner::Atom;
+
+        // Find the max declaration_order from derived so base-only properties
+        // can be offset to come after all derived properties (tsc parity).
+        let derived_max_order = derived
+            .iter()
+            .map(|p| p.declaration_order)
+            .max()
+            .unwrap_or(0);
+
+        let total_len = derived.len() + base.len();
+        if total_len <= 32 {
+            let mut merged: Vec<tsz_solver::PropertyInfo> = Vec::with_capacity(total_len);
+            // Walk derived first so own members keep their (low) declaration_order
+            // and appear before inherited members in the final ordering.
+            for prop in derived {
+                let merged_prop = if let Some(base_prop) = base.iter().find(|p| p.name == prop.name)
+                {
+                    let merged_type = if crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        base_prop.type_id,
+                    )
+                    .is_some()
+                        && crate::query_boundaries::common::callable_shape_for_type(
+                            self.ctx.types,
+                            prop.type_id,
+                        )
+                        .is_some()
+                    {
+                        self.merge_interface_types(prop.type_id, base_prop.type_id)
+                    } else {
+                        prop.type_id
+                    };
+
+                    let mut merged_prop = prop.clone();
+                    // When the merge produces a new callable type (from concatenating
+                    // derived + base call signatures), update BOTH type_id and write_type.
+                    // Leaving write_type pointing to the derived-only callable creates a
+                    // false "split accessor" (type_id != write_type) that triggers the
+                    // contravariant write-type check in check_property_compatibility,
+                    // causing false TS2322 errors for interface-extends assignments.
+                    if merged_type != prop.type_id && merged_prop.write_type == prop.type_id {
+                        merged_prop.write_type = merged_type;
+                    }
+                    merged_prop.type_id = merged_type;
+                    merged_prop
+                } else {
+                    prop.clone()
+                };
+                merged.push(merged_prop);
+            }
+            // Append base-only members with offset declaration_order so a sort by
+            // declaration_order keeps them after all derived members.
+            for base_prop in base {
+                if !derived.iter().any(|p| p.name == base_prop.name) {
+                    let mut new_prop = base_prop.clone();
+                    new_prop.declaration_order = derived_max_order + base_prop.declaration_order;
+                    merged.push(new_prop);
+                }
+            }
+            return merged;
+        }
+
+        let mut derived_map: FxHashMap<Atom, &tsz_solver::PropertyInfo> =
+            FxHashMap::with_capacity_and_hasher(derived.len(), Default::default());
+        for prop in derived {
+            derived_map.insert(prop.name, prop);
+        }
+
+        let mut merged = Vec::with_capacity(total_len);
+
+        // Walk derived first so own members keep their (low) declaration_order.
+        // For names that also appear in base, merge callable signatures.
+        let mut base_by_name: FxHashMap<Atom, &tsz_solver::PropertyInfo> =
+            FxHashMap::with_capacity_and_hasher(base.len(), Default::default());
+        for base_prop in base {
+            base_by_name.insert(base_prop.name, base_prop);
+        }
+
+        for derived_prop in derived {
+            let merged_prop = if let Some(base_prop) = base_by_name.get(&derived_prop.name) {
+                let merged_type = if crate::query_boundaries::common::callable_shape_for_type(
+                    self.ctx.types,
+                    base_prop.type_id,
+                )
+                .is_some()
+                    && crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        derived_prop.type_id,
+                    )
+                    .is_some()
+                {
+                    self.merge_interface_types(derived_prop.type_id, base_prop.type_id)
+                } else {
+                    derived_prop.type_id
+                };
+
+                let mut prop = derived_prop.clone();
+                if merged_type != derived_prop.type_id && prop.write_type == derived_prop.type_id {
+                    prop.write_type = merged_type;
+                }
+                prop.type_id = merged_type;
+                prop
+            } else {
+                derived_prop.clone()
+            };
+            merged.push(merged_prop);
+        }
+
+        // Append base-only members with offset declaration_order so they sort
+        // after the derived members.
+        for base_prop in base {
+            if !derived_map.contains_key(&base_prop.name) {
+                let mut new_prop = base_prop.clone();
+                new_prop.declaration_order = derived_max_order + base_prop.declaration_order;
+                merged.push(new_prop);
+            }
+        }
+
+        merged
+    }
+
+    /// Get the interned Atom for a member name node, handling identifiers,
+    /// string literals, and numeric literals (with canonical normalization).
+    fn get_member_name_atom(&self, name_idx: NodeIndex) -> Option<Atom> {
+        let name = crate::types_domain::queries::core::get_literal_property_name(
+            self.ctx.arena,
+            name_idx,
+        )?;
+        Some(self.ctx.types.intern_string(&name))
+    }
+}

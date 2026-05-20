@@ -1,0 +1,1502 @@
+//! Type database abstraction for the solver.
+//!
+//! This trait isolates solver logic from concrete storage so we can
+//! swap in a query system (e.g., Salsa) without touching core logic.
+
+use crate::ObjectLiteralBuilder;
+use crate::caches::instantiation_cache::InstantiationCacheKey;
+use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
+use crate::def::DefId;
+use crate::intern::TypeInterner;
+use crate::intern::type_factory::TypeFactory;
+use crate::narrowing;
+use crate::objects::element_access::{ElementAccessEvaluator, ElementAccessResult};
+use crate::relations::relation_queries::{
+    RelationContext, RelationKind, RelationPolicy, query_relation,
+};
+use crate::relations::subtype::TypeResolver;
+use crate::types::{
+    CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
+    FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
+    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, StringIntrinsicKind, SymbolRef,
+    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId,
+    TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
+};
+use std::sync::Arc;
+use tsz_binder::SymbolId;
+use tsz_common::interner::Atom;
+
+/// Read-only access to interned type storage.
+///
+/// This is the narrow capability for helpers that only inspect existing
+/// type data and do not need construction, provenance, cache, or policy hooks.
+pub trait TypeStore {
+    fn lookup(&self, id: TypeId) -> Option<TypeData>;
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]>;
+}
+
+impl<T: TypeDatabase + ?Sized> TypeStore for T {
+    fn lookup(&self, id: TypeId) -> Option<TypeData> {
+        TypeDatabase::lookup(self, id)
+    }
+
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
+        TypeDatabase::type_list(self, id)
+    }
+}
+
+/// Cache hooks for solver type-content traversal predicates.
+///
+/// The answers are stable for a `TypeId` within one interner because interned
+/// type data is immutable. Keeping these hooks out of [`TypeDatabase`] makes
+/// traversal-cache capability visible as a narrower contract.
+pub trait TypePredicateCache {
+    /// Look up a cached `contains_this_type(type_id)` result if available.
+    ///
+    /// Default impl returns `None` (no caching). The primary implementation
+    /// on `TypeInterner` consults a project-wide `DashMap`; the `QueryCache`
+    /// delegate forwards through to the interner so all sharing callers hit
+    /// the same cache.
+    fn contains_this_type_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_this_type(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_this_type_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `contains_infer_types_db(type_id)` result if available.
+    fn contains_infer_types_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_infer_types_db(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_infer_types_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `contains_type_query_db(type_id)` result if available.
+    fn contains_type_query_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_type_query_db(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
+}
+
+/// Narrow signal for tuple-size overflow discovered during solver evaluation.
+///
+/// Keeping this out of [`TypeDatabase`] avoids growing the general storage
+/// interface for a diagnostic side channel used by large tuple synthesis.
+pub trait TypeTupleLimitSignal {
+    /// Atomically read and clear the "tuple too large" flag.
+    ///
+    /// Returns `true` if a tuple spread was aborted because the synthesized
+    /// element count would exceed `MAX_REPRESENTABLE_TUPLE_LENGTH`. The checker
+    /// uses this to emit `TS2799` instead of `TS2589`.
+    fn take_tuple_too_large(&self) -> bool {
+        false
+    }
+
+    /// Mark that a tuple spread synthesis was aborted due to the element-count limit.
+    fn mark_tuple_too_large(&self) {}
+}
+
+/// Diagnostic display and provenance hooks for interned types.
+///
+/// These methods preserve source-facing type identities and display-only object
+/// facts after solver normalization. Keeping them separate from [`TypeDatabase`]
+/// makes display provenance a visible, narrower capability.
+pub trait TypeDisplayProvenance {
+    /// Store display-only properties for a fresh object literal.
+    ///
+    /// These are the pre-widened property types shown in error messages.
+    /// The `shape_id` is the widened (interned) shape; `props` contains
+    /// the original literal types from the source code.
+    fn store_display_properties(&self, _type_id: TypeId, _props: Vec<PropertyInfo>) {}
+
+    /// Retrieve display-only properties for a fresh object literal.
+    ///
+    /// Returns `None` if no display properties were stored.
+    fn get_display_properties(&self, _type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        None
+    }
+
+    /// Store a reverse mapping from an evaluated Application result back to
+    /// its original Application TypeId for diagnostic display.
+    fn store_display_alias(&self, _evaluated: TypeId, _application: TypeId) {}
+
+    /// Store an Application display alias even when structural provenance was
+    /// recorded earlier for the same evaluated type.
+    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
+        self.store_display_alias(evaluated, application);
+    }
+
+    /// Look up the original Application TypeId for a type produced by
+    /// evaluating an Application. Returns `None` if no mapping exists.
+    fn get_display_alias(&self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
+    /// Mark an application base whose type-alias body is a conditional type.
+    fn mark_conditional_alias_base(&self, _base: TypeId) {}
+
+    /// Return whether an application base was marked as a conditional alias.
+    fn is_conditional_alias_base(&self, _base: TypeId) -> bool {
+        false
+    }
+
+    /// Record the as-written origin members for a flattened Union TypeId.
+    ///
+    /// The checker calls this from `get_type_from_union_type` so that the
+    /// printer can recover top-level alias names lost during flattening.
+    /// See `TypeInterner::store_union_origin` for the full contract.
+    fn store_union_origin(&self, _union_type_id: TypeId, _origin_members: Vec<TypeId>) {}
+
+    /// Replace display-origin members for a union in a diagnostic-specific context.
+    fn replace_union_origin_for_display(
+        &self,
+        _union_type_id: TypeId,
+        _origin_members: Vec<TypeId>,
+    ) {
+    }
+
+    /// Look up the as-written origin members for a flattened Union TypeId.
+    fn get_union_origin(&self, _type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
+        None
+    }
+
+    /// Atomically read and clear the "union too complex" flag.
+    ///
+    /// Returns `true` if a union construction was aborted due to complexity
+    /// since the last call. The checker uses this to emit TS2590.
+    fn take_union_too_complex(&self) -> bool {
+        false
+    }
+
+    /// Mark the current operation as having produced a too-complex union.
+    ///
+    /// This mirrors `take_union_too_complex` for solver paths that discover the
+    /// complexity limit during evaluation rather than initial construction.
+    fn mark_union_too_complex(&self) {}
+}
+
+/// Query interface for the solver.
+///
+/// This keeps solver components generic and prevents them from reaching
+/// into concrete storage structures directly.
+pub trait TypeDatabase: TypePredicateCache + TypeTupleLimitSignal + TypeDisplayProvenance {
+    fn intern(&self, key: TypeData) -> TypeId;
+    fn lookup(&self, id: TypeId) -> Option<TypeData>;
+    fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {
+        None
+    }
+    fn intern_string(&self, s: &str) -> Atom;
+    fn resolve_atom(&self, atom: Atom) -> String;
+    fn resolve_atom_ref(&self, atom: Atom) -> Arc<str>;
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]>;
+    fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]>;
+    fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]>;
+    fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape>;
+    fn object_property_index(&self, shape_id: ObjectShapeId, name: Atom) -> PropertyLookup;
+    fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape>;
+    fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape>;
+    fn conditional_type(&self, id: ConditionalTypeId) -> Arc<ConditionalType>;
+    fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType>;
+
+    /// Get conditional type by value (Copy, no Arc overhead).
+    fn get_conditional(&self, id: ConditionalTypeId) -> ConditionalType {
+        *self.conditional_type(id)
+    }
+    /// Get mapped type by value (Copy, no Arc overhead).
+    fn get_mapped(&self, id: MappedTypeId) -> MappedType {
+        *self.mapped_type(id)
+    }
+    fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication>;
+
+    fn literal_string(&self, value: &str) -> TypeId;
+    fn literal_number(&self, value: f64) -> TypeId;
+    fn literal_boolean(&self, value: bool) -> TypeId;
+    fn literal_bigint(&self, value: &str) -> TypeId;
+    fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId;
+
+    fn union(&self, members: Vec<TypeId>) -> TypeId;
+    /// Create a union from a borrowed slice, avoiding allocation when callers
+    /// already have an `Arc<[TypeId]>` or `&[TypeId]`.
+    fn union_from_slice(&self, members: &[TypeId]) -> TypeId;
+    /// Create a union with literal-only reduction (no subtype reduction).
+    /// Matches tsc's `UnionReduction.Literal` behavior for type annotations.
+    fn union_literal_reduce(&self, members: Vec<TypeId>) -> TypeId;
+    fn union_from_sorted_vec(&self, flat: Vec<TypeId>) -> TypeId;
+    fn union2(&self, left: TypeId, right: TypeId) -> TypeId;
+    fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId;
+    fn intersection(&self, members: Vec<TypeId>) -> TypeId;
+    fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId;
+    /// Raw intersection without normalization (used to avoid infinite recursion)
+    fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId;
+    fn array(&self, element: TypeId) -> TypeId;
+    fn tuple(&self, elements: Vec<TupleElement>) -> TypeId;
+    fn object(&self, properties: Vec<PropertyInfo>) -> TypeId;
+    fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId;
+    fn object_with_flags_and_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+        symbol: Option<SymbolId>,
+    ) -> TypeId;
+    fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.object_with_flags(properties, ObjectFlags::FRESH_LITERAL)
+    }
+    /// Get the TypeId for an already-interned Object shape (O(1) cache hit).
+    fn object_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId;
+    /// Get the TypeId for an already-interned `ObjectWithIndex` shape.
+    fn object_with_index_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId;
+    /// Create a fresh object type with both widened properties (for type checking)
+    /// and display properties (for error messages, implementing tsc's freshness model).
+    fn object_fresh_with_display(
+        &self,
+        widened_properties: Vec<PropertyInfo>,
+        display_properties: Vec<PropertyInfo>,
+    ) -> TypeId {
+        // Default: just create a fresh object (implementations can store display props)
+        let _ = display_properties;
+        self.object_fresh(widened_properties)
+    }
+    fn object_with_index(&self, shape: ObjectShape) -> TypeId;
+    fn function(&self, shape: FunctionShape) -> TypeId;
+    fn callable(&self, shape: CallableShape) -> TypeId;
+    fn template_literal(&self, spans: Vec<TemplateSpan>) -> TypeId;
+    fn conditional(&self, conditional: ConditionalType) -> TypeId;
+    fn mapped(&self, mapped: MappedType) -> TypeId;
+    fn reference(&self, symbol: SymbolRef) -> TypeId;
+    fn lazy(&self, def_id: DefId) -> TypeId;
+    fn bound_parameter(&self, index: u32) -> TypeId;
+    fn recursive(&self, depth: u32) -> TypeId;
+    fn type_param(&self, info: TypeParamInfo) -> TypeId;
+    fn unresolved_type_name(&self, name: Atom) -> TypeId;
+    fn type_query(&self, symbol: SymbolRef) -> TypeId;
+    fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId;
+    fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId;
+
+    fn literal_string_atom(&self, atom: Atom) -> TypeId;
+    fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId;
+    fn readonly_type(&self, inner: TypeId) -> TypeId;
+    fn keyof(&self, inner: TypeId) -> TypeId;
+    fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId;
+    fn this_type(&self) -> TypeId;
+    fn no_infer(&self, inner: TypeId) -> TypeId;
+    fn unique_symbol(&self, symbol: SymbolRef) -> TypeId;
+    fn infer(&self, info: TypeParamInfo) -> TypeId;
+    fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId;
+
+    /// Get the base class type for a symbol (class/interface).
+    /// Returns the `TypeId` of the extends clause, or None if the symbol doesn't extend anything.
+    /// This is used by the BCT algorithm to find common base classes.
+    fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId>;
+
+    /// Check if a type can be compared by `TypeId` identity alone (O(1) equality).
+    /// Identity-comparable types include literals, enum members, unique symbols, null, undefined,
+    /// void, never, and tuples composed entirely of identity-comparable types.
+    /// Results are cached for O(1) lookup after first computation.
+    fn is_identity_comparable_type(&self, type_id: TypeId) -> bool;
+
+    /// Get the canonical `Array<T>` base type registered from lib.d.ts.
+    ///
+    /// This is used by solver-only paths that need array member metadata
+    /// (for example mapped-type display ordering) even when no richer
+    /// `TypeResolver` is available.
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        None
+    }
+
+    /// Get the registered `Array<T>` base type parameters.
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        &[]
+    }
+
+    /// Get the `Array<T>` base type used for display-order-sensitive queries.
+    fn get_array_display_base_type(&self) -> Option<TypeId> {
+        None
+    }
+
+    /// Get the `ReadonlyArray<T>` base type registered from lib.d.ts.
+    ///
+    /// Used by property access to resolve only non-mutating members when the
+    /// receiver is `readonly T[]` or a readonly tuple.
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        None
+    }
+
+    /// Get the boxed interface type for a primitive intrinsic kind.
+    ///
+    /// For example, `IntrinsicKind::Function` returns the `TypeId` of the `Function` interface
+    /// from lib.d.ts. This bypasses `TypeResolver` (which may fail due to `RefCell` borrow
+    /// conflicts) by reading directly from the interner's `DashMap`.
+    fn get_boxed_type(&self, _kind: IntrinsicKind) -> Option<TypeId> {
+        None
+    }
+
+    /// Check if a `DefId` corresponds to a boxed type of the given kind.
+    ///
+    /// For example, checking if a `DefId` represents the `Function` interface.
+    /// This bypasses `TypeResolver` by reading directly from the interner's storage.
+    fn is_boxed_def_id(&self, _def_id: DefId, _kind: IntrinsicKind) -> bool {
+        false
+    }
+
+    /// Check if a `DefId` corresponds to the `ThisType` marker interface.
+    fn is_this_type_marker_def_id(&self, _def_id: DefId) -> bool {
+        false
+    }
+
+    /// Increment the global evaluation fuel counter and return whether fuel is exhausted.
+    ///
+    /// This counter tracks cumulative evaluation work across ALL `TypeEvaluator` instances.
+    /// Unlike per-evaluator iteration limits, this enforces a system-wide budget that prevents
+    /// deeply recursive type libraries (like ts-toolbelt) from consuming unbounded memory
+    /// through type instantiation.
+    ///
+    /// Returns `true` if fuel is exhausted (evaluation should stop).
+    ///
+    /// Mirrors TypeScript's global `instantiationCount` which limits total type
+    /// instantiation work across the entire program check.
+    fn consume_evaluation_fuel(&self, _amount: u32) -> bool {
+        false
+    }
+
+    /// Check whether global evaluation fuel is exhausted without consuming any.
+    fn is_evaluation_fuel_exhausted(&self) -> bool {
+        false
+    }
+
+    /// Whether `exactOptionalPropertyTypes` is enabled.
+    ///
+    /// Exposed on `TypeDatabase` (in addition to `QueryDatabase`) so that
+    /// inference matching can distinguish synthetic `| undefined` from
+    /// optional markers vs. explicit `| undefined` in user-written types.
+    /// The default returns `false`; canonical implementations live on
+    /// `TypeInterner` and `QueryCache`.
+    fn exact_optional_property_types(&self) -> bool {
+        false
+    }
+}
+
+impl TypePredicateCache for TypeInterner {
+    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_this_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_this_cache.insert(type_id, result);
+    }
+
+    fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_infer_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_infer_cache.insert(type_id, result);
+    }
+
+    fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_type_query_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_type_query_cache.insert(type_id, result);
+    }
+}
+
+impl TypeTupleLimitSignal for TypeInterner {
+    fn take_tuple_too_large(&self) -> bool {
+        Self::take_tuple_too_large(self)
+    }
+
+    fn mark_tuple_too_large(&self) {
+        self.set_tuple_too_large();
+    }
+}
+
+impl TypeDisplayProvenance for TypeInterner {
+    fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
+        Self::store_display_properties(self, type_id, props);
+    }
+
+    fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        Self::get_display_properties(self, type_id)
+    }
+
+    fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        Self::store_display_alias(self, evaluated, application);
+    }
+
+    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
+        Self::store_display_alias_preferring_application(self, evaluated, application);
+    }
+
+    fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
+        Self::get_display_alias(self, type_id)
+    }
+
+    fn mark_conditional_alias_base(&self, base: TypeId) {
+        Self::mark_conditional_alias_base(self, base);
+    }
+
+    fn is_conditional_alias_base(&self, base: TypeId) -> bool {
+        Self::is_conditional_alias_base(self, base)
+    }
+
+    fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        Self::store_union_origin(self, union_type_id, origin_members);
+    }
+
+    fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        Self::replace_union_origin_for_display(self, union_type_id, origin_members);
+    }
+
+    fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
+        Self::get_union_origin(self, type_id)
+    }
+
+    fn take_union_too_complex(&self) -> bool {
+        Self::take_union_too_complex(self)
+    }
+
+    fn mark_union_too_complex(&self) {
+        self.set_union_too_complex();
+    }
+}
+
+impl TypeDatabase for TypeInterner {
+    fn intern(&self, key: TypeData) -> TypeId {
+        Self::intern(self, key)
+    }
+
+    fn lookup(&self, id: TypeId) -> Option<TypeData> {
+        Self::lookup(self, id)
+    }
+
+    fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
+        Self::lookup_alloc_order(self, id)
+    }
+
+    fn intern_string(&self, s: &str) -> Atom {
+        Self::intern_string(self, s)
+    }
+
+    fn resolve_atom(&self, atom: Atom) -> String {
+        Self::resolve_atom(self, atom)
+    }
+
+    fn resolve_atom_ref(&self, atom: Atom) -> Arc<str> {
+        Self::resolve_atom_ref(self, atom)
+    }
+
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
+        Self::type_list(self, id)
+    }
+
+    fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]> {
+        Self::tuple_list(self, id)
+    }
+
+    fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]> {
+        Self::template_list(self, id)
+    }
+
+    fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
+        Self::object_shape(self, id)
+    }
+
+    fn object_property_index(&self, shape_id: ObjectShapeId, name: Atom) -> PropertyLookup {
+        Self::object_property_index(self, shape_id, name)
+    }
+
+    fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {
+        Self::function_shape(self, id)
+    }
+
+    fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape> {
+        Self::callable_shape(self, id)
+    }
+
+    fn conditional_type(&self, id: ConditionalTypeId) -> Arc<ConditionalType> {
+        Self::conditional_type(self, id)
+    }
+
+    fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType> {
+        Self::mapped_type(self, id)
+    }
+
+    fn get_conditional(&self, id: ConditionalTypeId) -> ConditionalType {
+        TypeInterner::get_conditional(self, id)
+    }
+
+    fn get_mapped(&self, id: MappedTypeId) -> MappedType {
+        TypeInterner::get_mapped(self, id)
+    }
+
+    fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
+        Self::type_application(self, id)
+    }
+
+    fn literal_string(&self, value: &str) -> TypeId {
+        Self::literal_string(self, value)
+    }
+
+    fn literal_number(&self, value: f64) -> TypeId {
+        Self::literal_number(self, value)
+    }
+
+    fn literal_boolean(&self, value: bool) -> TypeId {
+        Self::literal_boolean(self, value)
+    }
+
+    fn literal_bigint(&self, value: &str) -> TypeId {
+        Self::literal_bigint(self, value)
+    }
+
+    fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId {
+        Self::literal_bigint_with_sign(self, negative, digits)
+    }
+
+    fn union(&self, members: Vec<TypeId>) -> TypeId {
+        Self::union(self, members)
+    }
+
+    fn union_from_slice(&self, members: &[TypeId]) -> TypeId {
+        Self::union_from_slice(self, members)
+    }
+
+    fn union_literal_reduce(&self, members: Vec<TypeId>) -> TypeId {
+        Self::union_literal_reduce(self, members)
+    }
+
+    fn union_from_sorted_vec(&self, flat: Vec<TypeId>) -> TypeId {
+        Self::union_from_sorted_vec(self, flat)
+    }
+
+    fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
+        Self::union2(self, left, right)
+    }
+
+    fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId {
+        Self::union3(self, first, second, third)
+    }
+
+    fn intersection(&self, members: Vec<TypeId>) -> TypeId {
+        Self::intersection(self, members)
+    }
+
+    fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
+        Self::intersection2(self, left, right)
+    }
+
+    fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId {
+        Self::intersect_types_raw2(self, left, right)
+    }
+
+    fn array(&self, element: TypeId) -> TypeId {
+        Self::array(self, element)
+    }
+
+    fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
+        Self::tuple(self, elements)
+    }
+
+    fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        Self::object(self, properties)
+    }
+
+    fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId {
+        Self::object_with_flags(self, properties, flags)
+    }
+
+    fn object_with_flags_and_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        Self::object_with_flags_and_symbol(self, properties, flags, symbol)
+    }
+
+    fn object_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId {
+        Self::object_type_from_shape(self, shape_id)
+    }
+
+    fn object_with_index_type_from_shape(&self, shape_id: ObjectShapeId) -> TypeId {
+        Self::object_with_index_type_from_shape(self, shape_id)
+    }
+
+    fn object_with_index(&self, shape: ObjectShape) -> TypeId {
+        Self::object_with_index(self, shape)
+    }
+
+    fn object_fresh_with_display(
+        &self,
+        widened_properties: Vec<PropertyInfo>,
+        display_properties: Vec<PropertyInfo>,
+    ) -> TypeId {
+        Self::object_fresh_with_display(self, widened_properties, display_properties)
+    }
+
+    fn function(&self, shape: FunctionShape) -> TypeId {
+        Self::function(self, shape)
+    }
+
+    fn callable(&self, shape: CallableShape) -> TypeId {
+        Self::callable(self, shape)
+    }
+
+    fn template_literal(&self, spans: Vec<TemplateSpan>) -> TypeId {
+        Self::template_literal(self, spans)
+    }
+
+    fn conditional(&self, conditional: ConditionalType) -> TypeId {
+        Self::conditional(self, conditional)
+    }
+
+    fn mapped(&self, mapped: MappedType) -> TypeId {
+        Self::mapped(self, mapped)
+    }
+
+    fn reference(&self, symbol: SymbolRef) -> TypeId {
+        Self::reference(self, symbol)
+    }
+
+    fn lazy(&self, def_id: DefId) -> TypeId {
+        Self::lazy(self, def_id)
+    }
+
+    fn bound_parameter(&self, index: u32) -> TypeId {
+        Self::bound_parameter(self, index)
+    }
+
+    fn recursive(&self, depth: u32) -> TypeId {
+        Self::recursive(self, depth)
+    }
+
+    fn type_param(&self, info: TypeParamInfo) -> TypeId {
+        Self::type_param(self, info)
+    }
+
+    fn unresolved_type_name(&self, name: Atom) -> TypeId {
+        Self::unresolved_type_name(self, name)
+    }
+
+    fn type_query(&self, symbol: SymbolRef) -> TypeId {
+        Self::type_query(self, symbol)
+    }
+
+    fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId {
+        Self::enum_type(self, def_id, structural_type)
+    }
+
+    fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
+        Self::application(self, base, args)
+    }
+
+    fn literal_string_atom(&self, atom: Atom) -> TypeId {
+        Self::literal_string_atom(self, atom)
+    }
+
+    fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId {
+        Self::union_preserve_members(self, members)
+    }
+
+    fn readonly_type(&self, inner: TypeId) -> TypeId {
+        Self::readonly_type(self, inner)
+    }
+
+    fn keyof(&self, inner: TypeId) -> TypeId {
+        Self::keyof(self, inner)
+    }
+
+    fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        Self::index_access(self, object_type, index_type)
+    }
+
+    fn this_type(&self) -> TypeId {
+        Self::this_type(self)
+    }
+
+    fn no_infer(&self, inner: TypeId) -> TypeId {
+        Self::no_infer(self, inner)
+    }
+
+    fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {
+        Self::unique_symbol(self, symbol)
+    }
+
+    fn infer(&self, info: TypeParamInfo) -> TypeId {
+        Self::infer(self, info)
+    }
+
+    fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId {
+        Self::string_intrinsic(self, kind, type_arg)
+    }
+
+    fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
+        // TypeInterner doesn't have access to the Binder, so it can't resolve base classes.
+        // The Checker will override this to provide the actual implementation.
+        None
+    }
+
+    fn is_identity_comparable_type(&self, type_id: TypeId) -> bool {
+        Self::is_identity_comparable_type(self, type_id)
+    }
+
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        Self::get_array_base_type(self)
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        Self::get_array_base_type_params(self)
+    }
+
+    fn get_array_display_base_type(&self) -> Option<TypeId> {
+        Self::get_array_display_base_type(self)
+    }
+
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        TypeInterner::get_readonly_array_base_type(self)
+    }
+
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        Self::get_boxed_type(self, kind)
+    }
+
+    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
+        Self::is_boxed_def_id(self, def_id, kind)
+    }
+
+    fn is_this_type_marker_def_id(&self, def_id: DefId) -> bool {
+        Self::is_this_type_marker_def_id(self, def_id)
+    }
+
+    fn consume_evaluation_fuel(&self, amount: u32) -> bool {
+        Self::consume_evaluation_fuel(self, amount)
+    }
+
+    fn is_evaluation_fuel_exhausted(&self) -> bool {
+        Self::is_evaluation_fuel_exhausted(self)
+    }
+
+    fn exact_optional_property_types(&self) -> bool {
+        TypeInterner::exact_optional_property_types(self)
+    }
+}
+
+/// Implement `TypeResolver` for `TypeInterner` with noop resolution.
+///
+/// `TypeInterner` doesn't have access to the Binder or type environment,
+/// so it cannot resolve symbol references or `DefIds`. Only `resolve_ref`
+/// (required) is explicitly implemented; all other resolution methods
+/// inherit the trait's default `None`/`false` behavior. The three boxed/array
+/// methods delegate to `TypeInterner`'s own inherent methods.
+impl TypeResolver for TypeInterner {
+    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        TypeInterner::get_boxed_type(self, kind)
+    }
+
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        self.get_array_base_type()
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        self.get_array_base_type_params()
+    }
+
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        TypeInterner::get_readonly_array_base_type(self)
+    }
+}
+
+/// Query layer for higher-level solver operations.
+///
+/// This is the incremental boundary where caching and (future) salsa hooks live.
+/// Inherits from `TypeResolver` to enable Lazy/Ref type resolution through `evaluate_type()`.
+pub trait QueryDatabase: TypeDatabase + TypeResolver {
+    /// Expose the underlying `TypeDatabase` view for legacy entry points.
+    fn as_type_database(&self) -> &dyn TypeDatabase;
+
+    /// Expose the `TypeResolver` view for inference contexts that need
+    /// to expand type alias Applications (variance-aware inference).
+    fn as_type_resolver(&self) -> &dyn TypeResolver;
+
+    /// Allocate a declaration-scoped type parameter whose identity must not be
+    /// collapsed with another same-shaped declaration.
+    fn fresh_type_param(&self, info: TypeParamInfo) -> TypeId {
+        self.as_type_database().type_param(info)
+    }
+
+    /// Expose the checked construction surface for type constructors.
+    #[inline]
+    fn factory(&self) -> TypeFactory<'_> {
+        TypeFactory::new(self.as_type_database())
+    }
+
+    /// Register the canonical `Array<T>` base type used by property access resolution.
+    ///
+    /// Some call paths resolve properties through a `TypeInterner`-backed database,
+    /// while others use a `TypeEnvironment`-backed resolver. Implementations should
+    /// store this in whichever backing stores they use so `T[]` methods/properties
+    /// (e.g. `push`, `length`) resolve consistently.
+    fn register_array_base_type(&self, _type_id: TypeId, _type_params: Vec<TypeParamInfo>) {}
+
+    /// Register the `Array<T>` base type used for display-order-sensitive queries.
+    fn register_array_display_base_type(&self, _type_id: TypeId) {}
+
+    /// Register the `ReadonlyArray<T>` base type used by property access resolution.
+    ///
+    /// Enables property access on `readonly T[]` to resolve against the
+    /// `ReadonlyArray<T>` interface (which lacks mutating methods) rather than
+    /// the mutable `Array<T>` interface.
+    fn register_readonly_array_base_type(&self, _type_id: TypeId) {}
+
+    /// Register a boxed interface type for a primitive intrinsic kind.
+    ///
+    /// Similar to `register_array_base_type`, this ensures that property access
+    /// resolution can find the correct interface type (e.g., String, Number) for
+    /// primitive types, regardless of which database backend is used.
+    fn register_boxed_type(&self, _kind: IntrinsicKind, _type_id: TypeId) {}
+
+    /// Register a `DefId` as belonging to a boxed type.
+    fn register_boxed_def_id(&self, _kind: IntrinsicKind, _def_id: DefId) {}
+
+    /// Register a `DefId` as belonging to the `ThisType` marker interface.
+    fn register_this_type_def_id(&self, _def_id: DefId) {}
+
+    fn evaluate_conditional(&self, cond: &ConditionalType) -> TypeId {
+        crate::evaluation::evaluate::evaluate_conditional(self.as_type_database(), cond)
+    }
+
+    fn evaluate_index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        self.evaluate_index_access_with_options(
+            object_type,
+            index_type,
+            self.no_unchecked_indexed_access(),
+        )
+    }
+
+    fn evaluate_index_access_with_options(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> TypeId {
+        crate::evaluation::evaluate::evaluate_index_access_with_options(
+            self.as_type_database(),
+            object_type,
+            index_type,
+            no_unchecked_indexed_access,
+        )
+    }
+
+    fn evaluate_type(&self, type_id: TypeId) -> TypeId {
+        crate::evaluation::evaluate::evaluate_type(self.as_type_database(), type_id)
+    }
+
+    fn evaluate_type_with_options(
+        &self,
+        type_id: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> TypeId {
+        if !no_unchecked_indexed_access {
+            return self.evaluate_type(type_id);
+        }
+
+        let mut evaluator =
+            crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator.evaluate(type_id)
+    }
+
+    fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
+        crate::evaluation::evaluate::evaluate_mapped(self.as_type_database(), mapped)
+    }
+
+    /// Look up a shared cache entry for evaluated generic applications.
+    fn lookup_application_eval_cache(
+        &self,
+        _def_id: DefId,
+        _args: &[TypeId],
+        _no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    /// Store an evaluated generic application result in the shared cache.
+    fn insert_application_eval_cache(
+        &self,
+        _def_id: DefId,
+        _args: &[TypeId],
+        _no_unchecked_indexed_access: bool,
+        _result: TypeId,
+    ) {
+    }
+
+    /// Look up a cross-call `instantiate_type` cache entry.
+    ///
+    /// The default returns `None` so non-`QueryCache` databases (raw
+    /// `TypeInterner`, tests) don't need to implement it. Cache-aware
+    /// instantiation entry points consult this after their existing leaf fast
+    /// paths when callers pass `Some(&dyn QueryDatabase)`.
+    fn lookup_instantiation_cache(&self, _key: &InstantiationCacheKey) -> Option<TypeId> {
+        None
+    }
+
+    /// Store an `instantiate_type` result in the cross-call cache.
+    /// Default is a no-op for the same reason as `lookup_instantiation_cache`.
+    fn insert_instantiation_cache(&self, _key: InstantiationCacheKey, _result: TypeId) {}
+
+    /// Look up a cached `remove_subtypes_for_bct` result.
+    ///
+    /// Mirrors `lookup_instantiation_cache`. The default returns `None` so
+    /// non-`QueryCache` databases (raw `TypeInterner`, tests) don't need
+    /// to implement it. Hit/miss counters live on `QueryCache`.
+    ///
+    /// Closes the O(N²) hot loop in `compute_best_common_type` when the
+    /// same input candidate list shows up at multiple call sites — the
+    /// `BCT candidates=200` bench fixture exercises four such sites with
+    /// the same 200-element list, collapsing three of four to O(1).
+    fn lookup_subtype_reduction_cache(
+        &self,
+        _key: &SubtypeReductionKey,
+    ) -> Option<std::sync::Arc<[TypeId]>> {
+        None
+    }
+
+    /// Store a `remove_subtypes_for_bct` result in the cross-call cache.
+    /// Default is a no-op for the same reason as
+    /// `lookup_subtype_reduction_cache`.
+    fn insert_subtype_reduction_cache(
+        &self,
+        _key: SubtypeReductionKey,
+        _result: std::sync::Arc<[TypeId]>,
+    ) {
+    }
+
+    fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
+        crate::evaluation::evaluate::evaluate_keyof(self.as_type_database(), operand)
+    }
+
+    fn narrow(&self, type_id: TypeId, narrower: TypeId) -> TypeId
+    where
+        Self: Sized,
+    {
+        crate::narrowing::NarrowingContext::new(self).narrow(type_id, narrower)
+    }
+
+    fn resolve_property_access(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> crate::operations::property::PropertyAccessResult;
+
+    fn resolve_property_access_with_options(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+        no_unchecked_indexed_access: bool,
+    ) -> crate::operations::property::PropertyAccessResult;
+
+    /// Resolve a value-level element access whose index expression has type
+    /// `any` (e.g. `obj[someAny]`) against the receiver's applicable index
+    /// signature.
+    ///
+    /// `T[any]` at the type level resolves to `any`; this helper is for the
+    /// value-level case where tsc instead routes the access through the
+    /// applicable index signature so `noUncheckedIndexedAccess` keeps
+    /// widening reads to `T | undefined` and rejecting `undefined` writes
+    /// against the un-widened slot type. Returns `None` when the receiver
+    /// has no string or number index signature.
+    fn resolve_any_index_access(
+        &self,
+        object_type: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> Option<crate::operations::property::PropertyAccessResult>;
+
+    fn property_access_type(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> crate::operations::property::PropertyAccessResult {
+        self.resolve_property_access_with_options(
+            object_type,
+            prop_name,
+            self.no_unchecked_indexed_access(),
+        )
+    }
+
+    fn no_unchecked_indexed_access(&self) -> bool {
+        false
+    }
+
+    fn set_no_unchecked_indexed_access(&self, _enabled: bool) {}
+
+    fn exact_optional_property_types(&self) -> bool {
+        false
+    }
+
+    fn set_exact_optional_property_types(&self, _enabled: bool) {}
+
+    fn contextual_property_type(&self, expected: TypeId, prop_name: &str) -> Option<TypeId> {
+        let ctx = crate::ContextualTypeContext::with_expected(self.as_type_database(), expected);
+        ctx.get_property_type(prop_name)
+    }
+
+    fn is_property_readonly(&self, object_type: TypeId, prop_name: &str) -> bool {
+        crate::operations::property::property_is_readonly(
+            self.as_type_database(),
+            object_type,
+            prop_name,
+        )
+    }
+
+    fn is_readonly_index_signature(
+        &self,
+        object_type: TypeId,
+        wants_string: bool,
+        wants_number: bool,
+    ) -> bool {
+        crate::operations::property::is_readonly_index_signature(
+            self.as_type_database(),
+            object_type,
+            wants_string,
+            wants_number,
+        )
+    }
+
+    /// Resolve element access (array/tuple indexing) with detailed error reporting
+    fn resolve_element_access(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> ElementAccessResult {
+        let mut evaluator = ElementAccessEvaluator::new(self.as_type_database());
+        let flag = self.no_unchecked_indexed_access();
+        evaluator.set_no_unchecked_indexed_access(flag);
+        evaluator.resolve_element_access(object_type, index_type, literal_index)
+    }
+
+    /// Resolve element access type with cache-friendly error normalization.
+    fn resolve_element_access_type(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> TypeId {
+        match self.resolve_element_access(object_type, index_type, literal_index) {
+            crate::element_access::ElementAccessResult::Success(type_id) => type_id,
+            _ => TypeId::ERROR,
+        }
+    }
+
+    /// Collect properties that can be spread into object literals.
+    fn collect_object_spread_properties(&self, spread_type: TypeId) -> Vec<PropertyInfo> {
+        let builder = ObjectLiteralBuilder::new(self.as_type_database());
+        builder.collect_spread_properties(spread_type)
+    }
+
+    /// Get index signatures for a type
+    fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo;
+
+    /// Check if a type contains null or undefined
+    fn is_nullish_type(&self, type_id: TypeId) -> bool;
+
+    /// Remove null and undefined from a type
+    fn remove_nullish(&self, type_id: TypeId) -> TypeId;
+
+    /// Get the canonical `TypeId` for a type, achieving O(1) structural identity checks.
+    ///
+    /// This memoizes the Canonicalizer output so that structurally identical types
+    /// (e.g., `type A = Box<Box<string>>` and `type B = Box<Box<string>>`) return
+    /// the same canonical `TypeId`.
+    ///
+    /// The implementation must:
+    /// - Use a fresh Canonicalizer with empty stacks (for absolute De Bruijn indices)
+    /// - Only expand `TypeAlias` (`DefKind::TypeAlias`), preserving nominal types
+    /// - Cache the result for O(1) subsequent lookups
+    ///
+    /// Task #49: Global Canonical Mapping
+    fn canonical_id(&self, type_id: TypeId) -> TypeId;
+
+    fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
+        // Default implementation: use non-strict mode for backward compatibility
+        self.is_subtype_of_with_policy(source, target, RelationPolicy::unflagged_compatibility())
+    }
+
+    /// Subtype check with a typed relation policy.
+    ///
+    /// Prefer this for new relation paths. It keeps relation behavior and cache
+    /// partitioning described by [`RelationPolicy`] instead of extending the
+    /// legacy packed `u16` flag protocol.
+    fn is_subtype_of_with_policy(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> bool {
+        query_relation(
+            self.as_type_database(),
+            source,
+            target,
+            RelationKind::Subtype,
+            policy,
+            RelationContext::default(),
+        )
+        .related
+    }
+
+    /// TypeScript assignability check with full compatibility rules (The Lawyer).
+    ///
+    /// This is distinct from `is_subtype_of`:
+    /// - `is_subtype_of` = Strict structural subtyping (The Judge) - for internal solver use
+    /// - `is_assignable_to` = Loose with TS rules (The Lawyer) - for Checker diagnostics
+    ///
+    /// The Lawyer handles:
+    /// - Any type propagation (any is assignable to/from everything)
+    /// - Legacy null/undefined assignability (without strictNullChecks)
+    /// - Weak type detection (excess property checking)
+    /// - Empty object accepts any non-nullish value
+    /// - Function bivariance (when not in strictFunctionTypes mode)
+    ///
+    /// Uses separate cache from `is_subtype_of` to prevent cache poisoning.
+    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        // Default implementation: use non-strict mode for backward compatibility
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
+    }
+
+    /// Assignability check with a typed relation policy.
+    ///
+    /// Prefer this for new relation paths. It keeps relation behavior and cache
+    /// partitioning described by [`RelationPolicy`] instead of extending the
+    /// legacy packed `u16` flag protocol.
+    fn is_assignable_to_with_policy(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> bool {
+        query_relation(
+            self.as_type_database(),
+            source,
+            target,
+            RelationKind::Assignable,
+            policy,
+            RelationContext::default(),
+        )
+        .related
+    }
+
+    /// Look up a cached subtype result for the given key.
+    /// Returns `None` if the result is not cached.
+    /// Default implementation returns `None` (no caching).
+    fn lookup_subtype_cache(&self, _key: RelationCacheKey) -> Option<bool> {
+        None
+    }
+
+    /// Cache a subtype result for the given key.
+    /// Default implementation is a no-op.
+    fn insert_subtype_cache(&self, _key: RelationCacheKey, _result: bool) {}
+
+    /// Look up a cached intersection-to-merged-object result.
+    /// Used by `build_object_intersection_target` to avoid expensive property
+    /// collection for large intersections that are checked multiple times
+    /// (e.g., `T extends A & B & C & ...` in constraint checking).
+    /// Returns `None` if not cached.
+    fn lookup_intersection_merge(&self, _intersection_id: TypeId) -> Option<Option<TypeId>> {
+        None
+    }
+
+    /// Cache an intersection-to-merged-object result.
+    /// `result` is `Some(merged_type_id)` on success, `None` if the intersection
+    /// is not eligible for merging (contains callables, non-objects, etc.).
+    fn insert_intersection_merge(&self, _intersection_id: TypeId, _result: Option<TypeId>) {}
+
+    /// Look up a cached assignability result for the given key.
+    /// Returns `None` if the result is not cached.
+    /// Default implementation returns `None` (no caching).
+    fn lookup_assignability_cache(&self, _key: RelationCacheKey) -> Option<bool> {
+        None
+    }
+
+    /// Cache an assignability result for the given key.
+    /// Default implementation is a no-op.
+    fn insert_assignability_cache(&self, _key: RelationCacheKey, _result: bool) {}
+
+    #[allow(dead_code, private_interfaces)] // Reserved for full inference pipeline integration
+    fn new_inference_context(&self) -> crate::inference::infer::InferenceContext<'_> {
+        crate::inference::infer::InferenceContext::new(self.as_type_database())
+    }
+
+    /// Task #41: Get the variance mask for a generic type definition.
+    ///
+    /// Returns the variance of each type parameter for the given `DefId`.
+    /// Returns None if the `DefId` is not a generic type or variance cannot be determined.
+    fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>>;
+
+    /// Store a resolver-computed variance mask for reuse by later relation checks.
+    fn insert_type_param_variance(&self, _def_id: DefId, _variance: Arc<[Variance]>) {}
+}
+
+impl QueryDatabase for TypeInterner {
+    fn as_type_database(&self) -> &dyn TypeDatabase {
+        self
+    }
+
+    fn as_type_resolver(&self) -> &dyn TypeResolver {
+        self
+    }
+
+    fn fresh_type_param(&self, info: TypeParamInfo) -> TypeId {
+        Self::fresh_type_param(self, info)
+    }
+
+    fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
+        self.set_array_base_type(type_id, type_params);
+    }
+
+    fn register_array_display_base_type(&self, type_id: TypeId) {
+        self.set_array_display_base_type(type_id);
+    }
+
+    fn register_readonly_array_base_type(&self, type_id: TypeId) {
+        self.set_readonly_array_base_type(type_id);
+    }
+
+    fn register_boxed_type(&self, kind: IntrinsicKind, type_id: TypeId) {
+        TypeInterner::set_boxed_type(self, kind, type_id);
+    }
+
+    fn register_boxed_def_id(&self, kind: IntrinsicKind, def_id: DefId) {
+        TypeInterner::register_boxed_def_id(self, kind, def_id);
+    }
+
+    fn register_this_type_def_id(&self, def_id: DefId) {
+        TypeInterner::register_this_type_def_id(self, def_id);
+    }
+
+    fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
+        match self.lookup(type_id) {
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.object_shape(shape_id);
+                IndexInfo {
+                    string_index: shape.string_index,
+                    number_index: shape.number_index,
+                }
+            }
+            Some(TypeData::Array(element)) => {
+                // Arrays have number index signature with element type
+                IndexInfo {
+                    string_index: None,
+                    number_index: Some(crate::types::IndexSignature {
+                        key_type: TypeId::NUMBER,
+                        value_type: element,
+                        readonly: false,
+                        param_name: None,
+                    }),
+                }
+            }
+            Some(TypeData::Tuple(elements_id)) => {
+                // Tuples have number index signature with union of element types
+                let elements = self.tuple_list(elements_id);
+                let element_types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
+                let value_type = if element_types.is_empty() {
+                    TypeId::UNDEFINED
+                } else if element_types.len() == 1 {
+                    element_types[0]
+                } else {
+                    self.union(element_types)
+                };
+                IndexInfo {
+                    string_index: None,
+                    number_index: Some(crate::types::IndexSignature {
+                        key_type: TypeId::NUMBER,
+                        value_type,
+                        readonly: false,
+                        param_name: None,
+                    }),
+                }
+            }
+            Some(TypeData::Union(members_id)) => {
+                // For unions, collect index signatures from all members
+                let members = self.type_list(members_id);
+                let mut string_indices = Vec::with_capacity(members.len());
+                let mut number_indices = Vec::with_capacity(members.len());
+
+                for &member in members.iter() {
+                    let info = self.get_index_signatures(member);
+                    if let Some(sig) = info.string_index {
+                        string_indices.push(sig);
+                    }
+                    if let Some(sig) = info.number_index {
+                        number_indices.push(sig);
+                    }
+                }
+
+                // Union of the value types
+                let string_index = if string_indices.is_empty() {
+                    None
+                } else {
+                    Some(crate::types::IndexSignature {
+                        key_type: TypeId::STRING,
+                        value_type: self
+                            .union(string_indices.iter().map(|s| s.value_type).collect()),
+                        readonly: string_indices.iter().all(|s| s.readonly),
+                        param_name: None,
+                    })
+                };
+
+                let number_index = if number_indices.is_empty() {
+                    None
+                } else {
+                    Some(crate::types::IndexSignature {
+                        key_type: TypeId::NUMBER,
+                        value_type: self
+                            .union(number_indices.iter().map(|s| s.value_type).collect()),
+                        readonly: number_indices.iter().all(|s| s.readonly),
+                        param_name: None,
+                    })
+                };
+
+                IndexInfo {
+                    string_index,
+                    number_index,
+                }
+            }
+            Some(TypeData::Intersection(members_id)) => {
+                // For intersections, combine index signatures
+                let members = self.type_list(members_id);
+                let mut string_index = None;
+                let mut number_index = None;
+
+                for &member in members.iter() {
+                    let info = self.get_index_signatures(member);
+                    if let Some(sig) = info.string_index {
+                        string_index = Some(sig);
+                    }
+                    if let Some(sig) = info.number_index {
+                        number_index = Some(sig);
+                    }
+                }
+
+                IndexInfo {
+                    string_index,
+                    number_index,
+                }
+            }
+            _ => IndexInfo::default(),
+        }
+    }
+
+    fn is_nullish_type(&self, type_id: TypeId) -> bool {
+        narrowing::is_nullish_type(self, type_id)
+    }
+
+    fn remove_nullish(&self, type_id: TypeId) -> TypeId {
+        narrowing::remove_nullish_query(self, type_id)
+    }
+
+    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        // Default implementation: use non-strict mode for backward compatibility
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
+    }
+
+    fn resolve_property_access(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> crate::operations::property::PropertyAccessResult {
+        // TypeInterner doesn't have TypeResolver capability, so it can't resolve Lazy types
+        // Use PropertyAccessEvaluator with QueryDatabase (self implements both TypeDatabase and TypeResolver)
+        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
+        evaluator
+            .set_exact_optional_property_types(TypeInterner::exact_optional_property_types(self));
+        evaluator.resolve_property_access(object_type, prop_name)
+    }
+
+    fn resolve_property_access_with_options(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+        no_unchecked_indexed_access: bool,
+    ) -> crate::operations::property::PropertyAccessResult {
+        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator
+            .set_exact_optional_property_types(TypeInterner::exact_optional_property_types(self));
+        evaluator.resolve_property_access(object_type, prop_name)
+    }
+
+    fn resolve_any_index_access(
+        &self,
+        object_type: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> Option<crate::operations::property::PropertyAccessResult> {
+        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator
+            .set_exact_optional_property_types(TypeInterner::exact_optional_property_types(self));
+        evaluator.resolve_any_index_access(object_type)
+    }
+
+    fn resolve_element_access(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> ElementAccessResult {
+        let mut evaluator = ElementAccessEvaluator::new(self.as_type_database());
+        evaluator.set_no_unchecked_indexed_access(TypeInterner::no_unchecked_indexed_access(self));
+        evaluator.resolve_element_access(object_type, index_type, literal_index)
+    }
+
+    fn resolve_element_access_type(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> TypeId {
+        match self.resolve_element_access(object_type, index_type, literal_index) {
+            ElementAccessResult::Success(type_id) => type_id,
+            _ => TypeId::ERROR,
+        }
+    }
+
+    fn no_unchecked_indexed_access(&self) -> bool {
+        TypeInterner::no_unchecked_indexed_access(self)
+    }
+
+    fn set_no_unchecked_indexed_access(&self, enabled: bool) {
+        TypeInterner::set_no_unchecked_indexed_access(self, enabled);
+    }
+
+    fn exact_optional_property_types(&self) -> bool {
+        TypeInterner::exact_optional_property_types(self)
+    }
+
+    fn set_exact_optional_property_types(&self, enabled: bool) {
+        TypeInterner::set_exact_optional_property_types(self, enabled);
+    }
+
+    fn get_type_param_variance(&self, _def_id: DefId) -> Option<Arc<[Variance]>> {
+        // TypeInterner doesn't have access to type parameter information.
+        // The Checker will override this to provide the actual implementation.
+        None
+    }
+
+    fn canonical_id(&self, type_id: TypeId) -> TypeId {
+        // TypeInterner doesn't have caching, so compute directly
+        use crate::canonicalize::Canonicalizer;
+        let mut canon = Canonicalizer::new(self, self);
+        canon.canonicalize(type_id)
+    }
+}

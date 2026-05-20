@@ -1,0 +1,662 @@
+//! Speculation / transaction API for checker state.
+//!
+//! Speculative type computation (overload resolution, return-type inference,
+//! contextual typing probes) must not leak committed checker state. This module
+//! provides a reusable transaction boundary that snapshots the mutable
+//! diagnostic / dedup / cache state of `CheckerContext`.
+//!
+//! # Drop semantics — important
+//!
+//! The snapshot/holder types in this module use **explicit-action** semantics,
+//! not RAII. Specifically:
+//!
+//! - **Default on drop: implicit commit.** Speculative state produced after a
+//!   snapshot is taken survives. `Drop` is intentionally not implemented because
+//!   `CheckerContext` is not accessible from `Drop`, and several call sites
+//!   legitimately want to keep speculative output. Names carry `Snapshot`
+//!   (`DiagnosticSnapshot`, `FullSnapshot`, `CacheSnapshot`,
+//!   `DiagnosticSpeculationSnapshot`) to signal this — readers must invoke
+//!   `rollback()` or `rollback_filtered()` themselves when discarding is the
+//!   intent.
+//! - **Explicit commit (no-op vs. drop):** equivalent to dropping the snapshot.
+//!   Provided as a self-documenting call site.
+//! - **Explicit rollback:** the only way to discard speculative diagnostics.
+//! - **Selective keep:** `rollback_filtered` applies a user-supplied filter to
+//!   diagnostics before discarding the rest.
+//!
+//! See `docs/plan/ROADMAP.md` Operating Principle 6 + Workstream 4 Speculation
+//! Policy 3 for the naming rule, and `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`
+//! item #5 for the rationale behind the naming policy.
+//!
+//! # Architecture note
+//!
+//! This is pure checker orchestration — it manages diagnostic/cache state, not
+//! type algorithms. The solver is not involved.
+
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_binder::{FlowNodeId, SymbolId};
+use tsz_parser::parser::NodeIndex;
+use tsz_solver::TypeId;
+
+use crate::diagnostics::Diagnostic;
+
+use super::{CheckerContext, PendingImplicitAnyKind, PendingImplicitAnyVar, RequestCacheKey};
+
+// ---------------------------------------------------------------------------
+// Internal helpers (free functions to avoid borrow conflicts)
+// ---------------------------------------------------------------------------
+
+/// Remove `emitted_ts2454_errors` dedup entries for discarded diagnostics
+/// with code 2454. Without this cleanup, discarded TS2454 errors remain in
+/// the dedup set and prevent re-emission on subsequent passes.
+fn cleanup_ts2454_dedup(
+    emitted_ts2454_errors: &mut FxHashSet<(u32, SymbolId)>,
+    discarded: &[Diagnostic],
+) {
+    for diag in discarded {
+        if diag.code == 2454 {
+            emitted_ts2454_errors.retain(|&(pos, _)| pos != diag.start);
+        }
+    }
+}
+
+/// Diagnostic codes that represent grammar / scope errors which are
+/// independent of speculative type-computation context. They must survive
+/// `rollback_diagnostics`: a `super` reference outside a derived class is
+/// invalid regardless of which overload candidate is being probed.
+///
+/// Without this preservation list, `super` validity errors emitted during
+/// type computation of a static field initializer are silently discarded
+/// when the surrounding speculative context rolls back — even though the
+/// errors themselves are not contingent on that context. Matches tsc's
+/// `checkSuperExpression` placement at the regular check pass.
+///
+/// Currently covers the super-keyword family:
+/// - TS2335: 'super' can only be referenced in a derived class.
+/// - TS2336: 'super' cannot be referenced in constructor arguments.
+/// - TS2337: Super calls are not permitted outside constructors or in nested functions inside them.
+/// - TS2466: 'super' cannot be referenced in a computed property name.
+/// - TS2660: 'super' can only be referenced in members of derived classes or object literal expressions.
+const ALWAYS_EMIT_GRAMMAR_CODES: &[u32] = &[2335, 2336, 2337, 2466, 2660];
+
+fn is_always_emit_grammar_code(code: u32) -> bool {
+    ALWAYS_EMIT_GRAMMAR_CODES.contains(&code)
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot types
+// ---------------------------------------------------------------------------
+
+/// Snapshot of diagnostic state that speculative evaluation may corrupt.
+///
+/// Created by `CheckerContext::snapshot_diagnostics` and consumed by the
+/// `DiagnosticSpeculationSnapshot` holder via explicit `commit()` /
+/// `rollback()` (no `Drop` impl — see module preamble for rationale).
+pub(crate) struct DiagnosticSnapshot {
+    /// Length of `ctx.diagnostics` at snapshot time (truncation point).
+    pub diagnostics_len: usize,
+    /// Clone of `ctx.emitted_diagnostics` for dedup restoration.
+    pub emitted_diagnostics: FxHashSet<(u32, u32)>,
+    /// Clone of nested no-overload call markers for recovery-aware overload
+    /// candidate rejection.
+    pub no_overload_call_nodes: FxHashSet<u32>,
+    /// Length of `ctx.deferred_ts2454_errors` at snapshot time.
+    pub deferred_ts2454_len: usize,
+}
+
+/// Extended snapshot that also captures TS2454/TS2307/implicit-any/cache state.
+///
+/// Used by heavyweight speculative sites (overload resolution, return-type
+/// inference) that mutate more than just the diagnostic vector.
+pub(crate) struct FullSnapshot {
+    pub diag: DiagnosticSnapshot,
+    pub emitted_ts2454_errors: FxHashSet<(u32, SymbolId)>,
+    pub modules_with_ts2307_emitted: FxHashSet<String>,
+    pub pending_implicit_any_vars: FxHashMap<SymbolId, PendingImplicitAnyVar>,
+    pub reported_implicit_any_vars: FxHashMap<SymbolId, PendingImplicitAnyKind>,
+    pub implicit_any_checked_closures: FxHashSet<NodeIndex>,
+    pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
+}
+
+/// Cache snapshot for return-type inference, which also corrupts `node_types`
+/// and `flow_analysis_cache`.
+pub(crate) struct CacheSnapshot {
+    /// Clone of the flat `node_types` cache before speculation.
+    pub node_types: super::NodeTypeCache,
+    /// Full request-aware cache snapshot. Speculation may overwrite existing
+    /// entries, so rollback must restore values, not just prune additions.
+    pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
+    /// Clone of the flow analysis cache.
+    pub flow_analysis_cache: rustc_hash::FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>,
+    /// Thread-local global resolution fuel counter at snapshot time. Speculative
+    /// sites (return-type inference) shouldn't bill their work against the
+    /// global budget when rolled back — the work will be redone non-
+    /// speculatively. Without this, a speculative pass that consumes the full
+    /// 50k global budget on lib-property walks silences every subsequent
+    /// `consume_fuel` caller in the same file (e.g. the post-rollback property
+    /// access check that should emit TS2339).
+    pub global_resolution_fuel: u32,
+}
+
+/// Complete speculation snapshot (full + cache).
+pub(crate) struct ReturnTypeSnapshot {
+    pub full: FullSnapshot,
+    pub cache: CacheSnapshot,
+}
+
+impl ReturnTypeSnapshot {
+    /// The diagnostic checkpoint embedded in this return-type snapshot.
+    pub(crate) const fn diagnostic_snapshot(&self) -> &DiagnosticSnapshot {
+        &self.full.diag
+    }
+
+    /// Roll back return-type inference state through the speculation boundary.
+    pub(crate) fn rollback(&self, speculation: &mut SpeculationState<'_, '_>) {
+        speculation.ctx.rollback_return_type(self);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CheckerContext snapshot methods
+// ---------------------------------------------------------------------------
+
+impl<'a> CheckerContext<'a> {
+    /// Borrow the speculation-scoped state capability.
+    ///
+    /// This exposes rollback-sensitive checker state without handing callers
+    /// the full `CheckerContext` surface.
+    pub(crate) const fn speculation_state(&mut self) -> SpeculationState<'_, 'a> {
+        SpeculationState { ctx: self }
+    }
+
+    /// Borrow the diagnostics-only speculation capability.
+    ///
+    /// This gives snapshot holders a narrow state handle instead of the full
+    /// checker context. The underlying methods still live here during the
+    /// first split so existing direct snapshot users keep their behavior.
+    pub(crate) const fn diagnostic_state(&mut self) -> DiagnosticState<'_, 'a> {
+        DiagnosticState { ctx: self }
+    }
+
+    /// Lightweight diagnostic-only snapshot.
+    ///
+    /// Captures `diagnostics.len()` and clones `emitted_diagnostics`. Suitable
+    /// for speculative sites that only produce diagnostics (JSX overloads,
+    /// `call_helpers` property inference, elaboration probes).
+    pub(crate) fn snapshot_diagnostics(&self) -> DiagnosticSnapshot {
+        DiagnosticSnapshot {
+            diagnostics_len: self.diagnostics.len(),
+            emitted_diagnostics: self.emitted_diagnostics.clone(),
+            no_overload_call_nodes: self.no_overload_call_nodes.clone(),
+            deferred_ts2454_len: self.deferred_ts2454_errors.len(),
+        }
+    }
+
+    /// Full diagnostic + dedup state snapshot.
+    ///
+    /// Captures everything in `DiagnosticSnapshot` plus TS2454/TS2307/
+    /// implicit-any-checked-closures state. Suitable for overload resolution
+    /// and contextual typing probes that may trigger closure checking.
+    pub(crate) fn snapshot_full(&self) -> FullSnapshot {
+        FullSnapshot {
+            diag: self.snapshot_diagnostics(),
+            emitted_ts2454_errors: self.emitted_ts2454_errors.clone(),
+            modules_with_ts2307_emitted: self.modules_with_ts2307_emitted.clone(),
+            pending_implicit_any_vars: self.pending_implicit_any_vars.clone(),
+            reported_implicit_any_vars: self.reported_implicit_any_vars.clone(),
+            implicit_any_checked_closures: self.implicit_any_checked_closures.clone(),
+            request_node_types: self.request_node_types.clone(),
+        }
+    }
+
+    /// Complete snapshot including `node_types` and `flow_analysis_cache`.
+    ///
+    /// Used by return-type inference which evaluates the function body
+    /// speculatively (without narrowing context) and must not pollute caches.
+    pub(crate) fn snapshot_return_type(&self) -> ReturnTypeSnapshot {
+        ReturnTypeSnapshot {
+            full: self.snapshot_full(),
+            cache: CacheSnapshot {
+                node_types: self.node_types.clone(),
+                request_node_types: self.request_node_types.clone(),
+                flow_analysis_cache: self.flow_analysis_cache.borrow().clone(),
+                global_resolution_fuel:
+                    crate::state_domain::type_environment::lazy::global_resolution_fuel_value(),
+            },
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Rollback methods
+    // -----------------------------------------------------------------------
+
+    /// Clamp a snapshot length to the current diagnostics length, handling
+    /// nested/cross-path speculation where the vector may already be shorter.
+    fn clamped_diag_len(&self, snap: &DiagnosticSnapshot) -> usize {
+        snap.diagnostics_len.min(self.diagnostics.len())
+    }
+
+    /// Truncate `deferred_ts2454_errors` back to the snapshot length, clamping
+    /// to the current length to handle nested/cross-path shrinkage.
+    fn truncate_deferred_ts2454(&mut self, snap: &DiagnosticSnapshot) {
+        self.deferred_ts2454_errors.truncate(
+            snap.deferred_ts2454_len
+                .min(self.deferred_ts2454_errors.len()),
+        );
+    }
+
+    /// Roll back to a diagnostic-only snapshot, discarding all speculative
+    /// diagnostics and restoring the dedup set.
+    ///
+    /// **Exception:** diagnostics whose code is in
+    /// [`ALWAYS_EMIT_GRAMMAR_CODES`] (super-keyword grammar/scope errors)
+    /// are preserved across rollback. Their validity is independent of the
+    /// speculative context, so dropping them silently produces missed
+    /// diagnostics (e.g. `super.x` in a non-derived inner class's method
+    /// body when the surrounding static field initializer is evaluated
+    /// speculatively).
+    pub(crate) fn rollback_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
+        let truncate_at = self.clamped_diag_len(snap);
+        cleanup_ts2454_dedup(
+            &mut self.emitted_ts2454_errors,
+            &self.diagnostics[truncate_at..],
+        );
+        let preserved: Vec<Diagnostic> = self.diagnostics[truncate_at..]
+            .iter()
+            .filter(|d| is_always_emit_grammar_code(d.code))
+            .cloned()
+            .collect();
+        self.diagnostics.truncate(truncate_at);
+        self.emitted_diagnostics
+            .clone_from(&snap.emitted_diagnostics);
+        self.no_overload_call_nodes
+            .clone_from(&snap.no_overload_call_nodes);
+        for diag in preserved {
+            let key = self.diagnostic_dedup_key(&diag);
+            self.emitted_diagnostics.insert(key);
+            self.diagnostics.push(diag);
+        }
+        self.truncate_deferred_ts2454(snap);
+    }
+
+    /// Roll back to a full snapshot, discarding speculative diagnostics and
+    /// restoring all dedup/tracking state.
+    pub(crate) fn rollback_full(&mut self, snap: &FullSnapshot) {
+        self.rollback_diagnostics(&snap.diag);
+        self.emitted_ts2454_errors
+            .clone_from(&snap.emitted_ts2454_errors);
+        self.modules_with_ts2307_emitted
+            .clone_from(&snap.modules_with_ts2307_emitted);
+        self.pending_implicit_any_vars
+            .clone_from(&snap.pending_implicit_any_vars);
+        self.reported_implicit_any_vars
+            .clone_from(&snap.reported_implicit_any_vars);
+        self.implicit_any_checked_closures
+            .clone_from(&snap.implicit_any_checked_closures);
+        self.request_node_types.clone_from(&snap.request_node_types);
+    }
+
+    /// Roll back to a return-type snapshot, discarding speculative diagnostics,
+    /// dedup state, and cache entries added during speculation.
+    fn rollback_return_type(&mut self, snap: &ReturnTypeSnapshot) {
+        self.rollback_full(&snap.full);
+        self.node_types.clone_from(&snap.cache.node_types);
+        self.request_node_types
+            .clone_from(&snap.cache.request_node_types);
+        *self.flow_analysis_cache.borrow_mut() = snap.cache.flow_analysis_cache.clone();
+        crate::state_domain::type_environment::lazy::restore_global_resolution_fuel(
+            snap.cache.global_resolution_fuel,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Selective keep / commit helpers
+    // -----------------------------------------------------------------------
+
+    /// Discard speculative diagnostics but selectively keep some that match
+    /// a filter predicate. Diagnostics that pass the filter are re-added and
+    /// their dedup keys re-inserted.
+    ///
+    /// This replaces open-coded `split_off` + filter + extend patterns.
+    pub(crate) fn rollback_diagnostics_filtered(
+        &mut self,
+        snap: &DiagnosticSnapshot,
+        mut keep: impl FnMut(&Diagnostic) -> bool,
+    ) {
+        let split_at = self.clamped_diag_len(snap);
+        let speculative = self.diagnostics.split_off(split_at);
+        self.emitted_diagnostics
+            .clone_from(&snap.emitted_diagnostics);
+        self.no_overload_call_nodes
+            .clone_from(&snap.no_overload_call_nodes);
+        // Truncate deferred TS2454 errors to match rollback_diagnostics behavior.
+        // Without this, deferred entries pushed during speculation survive a
+        // filtered rollback and can cause spurious TS2454 emissions later.
+        self.truncate_deferred_ts2454(snap);
+        for diag in speculative {
+            // Grammar-class super errors survive speculation regardless of
+            // the caller's filter — see `ALWAYS_EMIT_GRAMMAR_CODES`.
+            if is_always_emit_grammar_code(diag.code) || keep(&diag) {
+                let key = self.diagnostic_dedup_key(&diag);
+                self.emitted_diagnostics.insert(key);
+                self.diagnostics.push(diag);
+            } else if diag.code == 2454 {
+                self.emitted_ts2454_errors
+                    .retain(|&(pos, _)| pos != diag.start);
+            }
+        }
+    }
+
+    /// Commit speculative diagnostics: update the dedup set to include all
+    /// diagnostics emitted since the snapshot. The snapshot is consumed.
+    ///
+    /// Used when a speculative path succeeds and its diagnostics should be
+    /// kept. Only the dedup set needs reconciliation — diagnostics are already
+    /// in the vector.
+    #[allow(dead_code)]
+    pub(crate) fn commit_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
+        // Diagnostics already in the vector; just rebuild dedup for new entries.
+        let start = snap.diagnostics_len.min(self.diagnostics.len());
+        for diag in self.diagnostics[start..].iter() {
+            let key = self.diagnostic_dedup_key(diag);
+            self.emitted_diagnostics.insert(key);
+        }
+    }
+
+    /// Extract speculative diagnostics without modifying the context.
+    /// Returns diagnostics added since the snapshot. Clamps to current length
+    /// to handle nested speculation that may have already truncated the vector.
+    pub(crate) fn speculative_diagnostics_since(&self, snap: &DiagnosticSnapshot) -> &[Diagnostic] {
+        let start = snap.diagnostics_len.min(self.diagnostics.len());
+        &self.diagnostics[start..]
+    }
+
+    /// Returns `true` if any diagnostics were added since the snapshot.
+    pub(crate) const fn has_speculative_diagnostics(&self, snap: &DiagnosticSnapshot) -> bool {
+        self.diagnostics.len() > snap.diagnostics_len
+    }
+
+    /// Extract diagnostics in a range between two checkpoints (both expressed
+    /// as snapshot diagnostic lengths). Useful for collecting diagnostics from
+    /// a specific speculative phase without touching the current diagnostic
+    /// vector.
+    pub(crate) fn diagnostics_between(
+        &self,
+        from: &DiagnosticSnapshot,
+        to: &DiagnosticSnapshot,
+    ) -> &[Diagnostic] {
+        let start = from.diagnostics_len.min(self.diagnostics.len());
+        let end = to.diagnostics_len.min(self.diagnostics.len()).max(start);
+        &self.diagnostics[start..end]
+    }
+
+    /// Collect and remove speculative diagnostics since a snapshot, returning
+    /// them as a `Vec`. The diagnostic vector is truncated back to the
+    /// snapshot point. TS2454 dedup entries for taken diagnostics are cleaned
+    /// up so they can be re-emitted later. General dedup state is NOT restored
+    /// (caller is responsible for managing the `emitted_diagnostics` set).
+    pub(crate) fn take_speculative_diagnostics(
+        &mut self,
+        snap: &DiagnosticSnapshot,
+    ) -> Vec<Diagnostic> {
+        let split_at = self.clamped_diag_len(snap);
+        let taken = self.diagnostics.split_off(split_at);
+        // Clean up TS2454 dedup entries for taken diagnostics.
+        cleanup_ts2454_dedup(&mut self.emitted_ts2454_errors, &taken);
+        // Truncate deferred TS2454 errors to match rollback_diagnostics behavior.
+        self.truncate_deferred_ts2454(snap);
+        self.no_overload_call_nodes
+            .clone_from(&snap.no_overload_call_nodes);
+        taken
+    }
+
+    /// Discard speculative diagnostics and replace with a curated set.
+    /// Useful for sites that collect diagnostics from multiple speculative
+    /// passes and need to merge them.
+    pub(crate) fn rollback_and_replace_diagnostics(
+        &mut self,
+        snap: &DiagnosticSnapshot,
+        replacement: Vec<Diagnostic>,
+    ) {
+        // Clean up emitted_ts2454_errors for discarded TS2454 diagnostics
+        // that are not in the replacement set.
+        let truncate_at = self.clamped_diag_len(snap);
+        let replacement_ts2454_positions: rustc_hash::FxHashSet<u32> = replacement
+            .iter()
+            .filter(|d| d.code == 2454)
+            .map(|d| d.start)
+            .collect();
+        for diag in &self.diagnostics[truncate_at..] {
+            if diag.code == 2454 && !replacement_ts2454_positions.contains(&diag.start) {
+                self.emitted_ts2454_errors
+                    .retain(|&(pos, _)| pos != diag.start);
+            }
+        }
+        self.diagnostics.truncate(truncate_at);
+        self.emitted_diagnostics
+            .clone_from(&snap.emitted_diagnostics);
+        self.no_overload_call_nodes
+            .clone_from(&snap.no_overload_call_nodes);
+        self.truncate_deferred_ts2454(snap);
+        for diag in &replacement {
+            let key = self.diagnostic_dedup_key(diag);
+            self.emitted_diagnostics.insert(key);
+        }
+        self.diagnostics.extend(replacement);
+    }
+
+    // -----------------------------------------------------------------------
+    // TS2454 state restore helpers
+    // -----------------------------------------------------------------------
+
+    /// Restore TS2454 dedup state from a snapshot, allowing re-emission during
+    /// a retry pass (e.g., after overload resolution failure).
+    pub(crate) fn restore_ts2454_state(&mut self, snap: &FxHashSet<(u32, SymbolId)>) {
+        self.emitted_ts2454_errors.clone_from(snap);
+    }
+}
+
+/// Snapshot of speculation-scoped implicit-any closure state.
+pub(crate) struct ImplicitAnyClosureSnapshot {
+    checked_closures: FxHashSet<NodeIndex>,
+}
+
+impl ImplicitAnyClosureSnapshot {
+    pub(crate) fn new(ctx: &CheckerContext) -> Self {
+        Self {
+            checked_closures: ctx.implicit_any_checked_closures.clone(),
+        }
+    }
+
+    pub(crate) fn restore_preserving_contextual(self, speculation: &mut SpeculationState<'_, '_>) {
+        let contextual_closures: Vec<_> = speculation
+            .ctx
+            .implicit_any_contextual_closures
+            .iter()
+            .copied()
+            .collect();
+        speculation
+            .ctx
+            .implicit_any_checked_closures
+            .clone_from(&self.checked_closures);
+        speculation
+            .ctx
+            .implicit_any_checked_closures
+            .extend(contextual_closures);
+    }
+}
+
+/// Narrow capability for speculation-scoped state.
+pub(crate) struct SpeculationState<'ctx, 'a> {
+    ctx: &'ctx mut CheckerContext<'a>,
+}
+
+/// Narrow capability for diagnostics-only speculation operations.
+///
+/// This is the first explicit capability split for `CheckerContext`: call
+/// sites that own a diagnostic speculation holder only need the ability to
+/// commit or roll back diagnostic state, not access to every checker cache and
+/// semantic helper on the full context.
+pub(crate) struct DiagnosticState<'ctx, 'a> {
+    ctx: &'ctx mut CheckerContext<'a>,
+}
+
+impl DiagnosticState<'_, '_> {
+    fn commit_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
+        self.ctx.commit_diagnostics(snap);
+    }
+
+    fn rollback_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
+        self.ctx.rollback_diagnostics(snap);
+    }
+
+    fn rollback_diagnostics_filtered(
+        &mut self,
+        snap: &DiagnosticSnapshot,
+        keep: impl FnMut(&Diagnostic) -> bool,
+    ) {
+        self.ctx.rollback_diagnostics_filtered(snap, keep);
+    }
+}
+
+impl SpeculationState<'_, '_> {
+    fn rollback_full(&mut self, snap: &FullSnapshot) {
+        self.ctx.rollback_full(snap);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot holder for diagnostic speculation
+// ---------------------------------------------------------------------------
+
+/// Diagnostic snapshot holder for speculative checking.
+///
+/// Drop semantics: dropping is an **implicit commit** — speculative
+/// diagnostics produced after the snapshot survive. This intentionally is
+/// **not** RAII rollback-on-drop, because `CheckerContext` is not accessible
+/// from `Drop` and several call sites legitimately want to keep speculative
+/// output. The name carries `Snapshot` (matching `DiagnosticSnapshot`,
+/// `FullSnapshot`, `CacheSnapshot`) to signal to readers that they must
+/// call `rollback()` / `rollback_filtered()` explicitly when rollback is
+/// the intent. See `docs/plan/ROADMAP.md` Operating Principle 6 + Workstream
+/// 4 Speculation Policy 3 for the naming rule.
+///
+/// # Usage
+/// ```ignore
+/// let snap = DiagnosticSpeculationSnapshot::new(&ctx);
+/// // ... speculative work ...
+/// snap.commit(ctx);   // explicit commit (same as drop)
+/// // OR
+/// snap.rollback(ctx); // rollback to the checkpoint
+/// // OR
+/// drop(snap);         // implicit commit — speculative diagnostics survive
+/// ```
+#[allow(dead_code)]
+pub(crate) struct DiagnosticSpeculationSnapshot {
+    snapshot: DiagnosticSnapshot,
+    committed: bool,
+}
+
+#[allow(dead_code)]
+impl DiagnosticSpeculationSnapshot {
+    pub(crate) fn new(ctx: &CheckerContext) -> Self {
+        Self {
+            snapshot: ctx.snapshot_diagnostics(),
+            committed: false,
+        }
+    }
+
+    /// The diagnostic checkpoint (`diagnostics.len()` at snapshot time).
+    pub(crate) const fn checkpoint(&self) -> usize {
+        self.snapshot.diagnostics_len
+    }
+
+    /// Commit speculative diagnostics: they survive the snapshot's drop.
+    /// Equivalent to dropping the snapshot without calling `rollback`.
+    pub(crate) fn commit(mut self, diagnostics: &mut DiagnosticState<'_, '_>) {
+        diagnostics.commit_diagnostics(&self.snapshot);
+        self.committed = true;
+    }
+
+    /// Roll back to the snapshot — discards every diagnostic produced after
+    /// the snapshot was taken. Since `Drop` cannot access `CheckerContext`,
+    /// this is the only way to discard speculative diagnostics.
+    pub(crate) fn rollback(mut self, diagnostics: &mut DiagnosticState<'_, '_>) {
+        diagnostics.rollback_diagnostics(&self.snapshot);
+        self.committed = true; // prevent any future misuse; Drop is a no-op anyway
+    }
+
+    /// Rollback and apply a filter to keep some speculative diagnostics.
+    pub(crate) fn rollback_filtered(
+        mut self,
+        diagnostics: &mut DiagnosticState<'_, '_>,
+        keep: impl FnMut(&Diagnostic) -> bool,
+    ) {
+        diagnostics.rollback_diagnostics_filtered(&self.snapshot, keep);
+        self.committed = true;
+    }
+
+    /// Rollback and apply a filter while retaining this checkpoint for another
+    /// explicit rollback from the same speculative boundary.
+    pub(crate) fn rollback_filtered_reusable(
+        &self,
+        diagnostics: &mut DiagnosticState<'_, '_>,
+        keep: impl FnMut(&Diagnostic) -> bool,
+    ) {
+        diagnostics.rollback_diagnostics_filtered(&self.snapshot, keep);
+    }
+
+    /// Access the underlying snapshot for manual operations.
+    pub(crate) const fn snapshot(&self) -> &DiagnosticSnapshot {
+        &self.snapshot
+    }
+
+    /// Consume the snapshot holder and return the inner `DiagnosticSnapshot`
+    /// without any rollback. The caller takes responsibility for state
+    /// management from this point on.
+    pub(crate) fn into_snapshot(mut self) -> DiagnosticSnapshot {
+        self.committed = true;
+        self.snapshot
+    }
+}
+
+// We intentionally do NOT implement Drop with automatic rollback because
+// `CheckerContext` is not accessible from Drop. The snapshot holder is a
+// structured holder for the snapshot — callers must explicitly call
+// `rollback()`, `commit()`, `rollback_filtered()`, or `into_snapshot()`.
+// Dropping without an explicit call means "keep the speculative diagnostics"
+// (implicit commit).
+//
+// Some call sites use the snapshot purely as a holder (accessing
+// `.snapshot()` for manual operations) and intentionally drop it to commit
+// the speculative diagnostics. A debug_assert in Drop would break these
+// legitimate patterns.
+
+/// Full checker-state snapshot holder for speculative checking.
+///
+/// Like `DiagnosticSpeculationSnapshot`, dropping is an implicit commit.
+/// Call `rollback()` explicitly when discarding diagnostics, implicit-any
+/// bookkeeping, and request cache state produced during a speculative probe.
+#[allow(dead_code)]
+pub(crate) struct FullSpeculationSnapshot {
+    snapshot: FullSnapshot,
+    committed: bool,
+}
+
+#[allow(dead_code)]
+impl FullSpeculationSnapshot {
+    pub(crate) fn new(ctx: &CheckerContext) -> Self {
+        Self {
+            snapshot: ctx.snapshot_full(),
+            committed: false,
+        }
+    }
+
+    pub(crate) fn rollback(mut self, speculation: &mut SpeculationState<'_, '_>) {
+        speculation.rollback_full(&self.snapshot);
+        self.committed = true;
+    }
+}
+
+// Unit tests for speculation API are in tests/speculation_rollback_tests.rs
+// (integration tests that use the full parse→bind→check pipeline).

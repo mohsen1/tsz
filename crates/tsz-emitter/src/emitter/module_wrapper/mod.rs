@@ -1,0 +1,24 @@
+mod bang_module_reference;
+mod system_emit;
+mod system_helpers;
+mod system_hoist;
+mod system_legacy_class_decorators;
+#[cfg(test)]
+mod tests;
+mod wrapper_entry;
+
+use std::collections::HashMap;
+
+#[derive(Clone, Default)]
+pub(super) struct SystemDependencyPlan {
+    pub actions: HashMap<String, Vec<SystemDependencyAction>>,
+    pub import_vars: HashMap<u32, String>,
+}
+
+#[derive(Clone)]
+pub(super) enum SystemDependencyAction {
+    Assign(String),
+    ExportStar,
+    NamedExports(Vec<(String, String)>),
+    NamespaceExport(String),
+}

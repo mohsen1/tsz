@@ -1,0 +1,71 @@
+//! TS2567 "Enum declarations can only merge with namespace or other enum
+//! declarations" — partner diagnostic anchoring across module arenas.
+//!
+//! When a module augmentation's `export enum Foo { }` resolves to an existing
+//! class/function/interface via a wildcard-re-export chain, tsc anchors the
+//! partner TS2567 at the *original* declaration (e.g., the `Foo` identifier
+//! of `export class Foo` in the source file), not only at the augmentation
+//! site. tsz was failing to emit the partner diagnostic because its node
+//! lookup used the re-export-chain-resolved file's arena instead of the
+//! arena actually owning the declaration nodes (`symbol.decl_file_idx`).
+//!
+//! This test doesn't exercise the full cross-file conformance runner path
+//! (the harness is single-file), but asserts the no-regression case:
+//! augmentation declared against a local class in a single file still emits
+//! TS2567 correctly.
+
+use tsz_checker::test_utils::{check_source_codes, check_source_diagnostics};
+
+#[test]
+fn augmentation_enum_merged_with_class_still_emits_ts2567() {
+    // Single-file baseline: the augmentation path still works when the
+    // original class and the augmentation are in the same file. (The
+    // cross-file variant is exercised by the
+    // `moduleAugmentationEnumClassMergeOfReexportIsError` conformance test.)
+    let source = r#"
+export class Foo {}
+declare module "./test" {
+    export enum Foo { A, B, C }
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2567),
+        "augmentation-enum merging with an existing class must emit TS2567; got: {codes:?}"
+    );
+}
+
+#[test]
+fn const_enum_namespace_rejected_merge_hides_namespace_member() {
+    let source = r#"
+const enum Direction {
+  Up,
+  Down,
+}
+
+namespace Direction {
+  export function toString(d: Direction): string {
+    return d === Direction.Up ? "up" : "down";
+  }
+}
+
+const dirStr: string = Direction.toString(Direction.Up);
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2567 = diagnostics.iter().filter(|diag| diag.code == 2567).count();
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2339)
+        .collect();
+
+    assert_eq!(
+        ts2567, 2,
+        "const enum/namespace rejected merge should emit both TS2567 diagnostics; got: {diagnostics:?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .any(|diag| diag.message_text.contains("toString")),
+        "namespace member access after rejected const enum merge should emit TS2339; got: {diagnostics:?}"
+    );
+}

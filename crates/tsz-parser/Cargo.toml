@@ -1,0 +1,32 @@
+[package]
+name = "tsz-parser"
+description = "TypeScript parser and AST types for the tsz compiler"
+version.workspace = true
+edition.workspace = true
+autotests = false
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+tsz-common = { workspace = true }
+tsz-scanner = { workspace = true }
+rustc-hash = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+wasm-bindgen = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[package.metadata.cargo-shear]
+ignored = ["serde_json"]
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false

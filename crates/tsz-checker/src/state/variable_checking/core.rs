@@ -1,0 +1,3077 @@
+//! Variable declaration and destructuring checking.
+//!
+//! For-in / for-of loop variable checking is in `for_loop.rs`.
+
+use crate::computation::complex::is_contextually_sensitive;
+use crate::context::{
+    PendingImplicitAnyKind, PendingImplicitAnyVar, TypingRequest,
+    speculation::DiagnosticSpeculationSnapshot,
+};
+use crate::query_boundaries::flow as flow_boundary;
+use crate::query_boundaries::state::checking as query;
+use crate::state::CheckerState;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
+
+impl<'a> CheckerState<'a> {
+    pub(crate) fn explicit_annotation_can_defer_implicit_any_context(
+        &self,
+        annotation_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(annotation_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            return true;
+        }
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            return matches!(
+                self.resolve_identifier_symbol_in_type_position_without_tracking(
+                    type_ref.type_name
+                ),
+                crate::symbol_resolver::TypeSymbolResolution::Type(_)
+            );
+        }
+        false
+    }
+
+    fn bare_type_alias_annotation_declared_type(
+        &mut self,
+        annotation_idx: NodeIndex,
+        resolved_type: TypeId,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(annotation_idx)?;
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        if type_ref.type_arguments.is_some() {
+            return None;
+        }
+        let crate::symbol_resolver::TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return None;
+        };
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+            return None;
+        }
+        // Suppress when the alias body has explicit type arguments
+        // (e.g. `type B = A<X>;`). tsc unfolds such aliases at TS2739
+        // source display to `A<X>`, so storing the bare alias would lose
+        // the unfold target. Bare-reference bodies (`type B = A;` where
+        // `A` carries defaults) keep the alias name.
+        let body_has_explicit_type_args = symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                return false;
+            };
+            let Some(body_node) = self.ctx.arena.get(alias.type_node) else {
+                return false;
+            };
+            if body_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                return false;
+            }
+            self.ctx
+                .arena
+                .get_type_ref(body_node)
+                .is_some_and(|body_ref| body_ref.type_arguments.is_some())
+        });
+        if body_has_explicit_type_args {
+            return None;
+        }
+        let resolves_to_application =
+            crate::query_boundaries::common::application_info(self.ctx.types, resolved_type)
+                .is_some();
+        let resolves_to_named_object =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_type)
+                .and_then(|shape| shape.symbol)
+                .and_then(|target_sym| self.ctx.binder.get_symbol(target_sym))
+                .is_some_and(|target_symbol| {
+                    target_symbol.has_any_flags(
+                        tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::INTERFACE,
+                    )
+                });
+        if !resolves_to_application && !resolves_to_named_object {
+            return None;
+        }
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        Some(self.ctx.types.lazy(def_id))
+    }
+
+    fn initializer_supports_binding_pattern_context(
+        &self,
+        pattern_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+    ) -> bool {
+        let contextual_init = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer_idx);
+
+        self.ctx
+            .arena
+            .get(contextual_init)
+            .is_some_and(|init_node| match self.ctx.arena.kind_at(pattern_idx) {
+                Some(kind) if kind == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                    init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                }
+                Some(kind) if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                    init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                }
+                _ => false,
+            })
+    }
+
+    fn declaration_pattern_initializer_request(
+        &mut self,
+        pattern_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+        typing_request: &TypingRequest,
+    ) -> TypingRequest {
+        if !self.initializer_supports_binding_pattern_context(pattern_idx, initializer_idx) {
+            return TypingRequest::NONE;
+        }
+
+        self.build_contextual_type_from_pattern_with_request(
+            pattern_idx,
+            &typing_request.read().contextual_opt(None),
+        )
+        .map_or(TypingRequest::NONE, TypingRequest::with_contextual_type)
+    }
+
+    fn should_suppress_identifier_initializer_context_for_index_access(
+        &mut self,
+        initializer_idx: NodeIndex,
+        contextual_type: TypeId,
+    ) -> bool {
+        if self
+            .ctx
+            .arena
+            .get(initializer_idx)
+            .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
+        {
+            return false;
+        }
+        crate::query_boundaries::common::index_access_parts(self.ctx.types, contextual_type)
+            .is_some()
+    }
+
+    fn identifier_initializer_symbol_type_for_index_access_target(
+        &mut self,
+        initializer_idx: NodeIndex,
+        contextual_type: TypeId,
+    ) -> Option<TypeId> {
+        if self
+            .ctx
+            .arena
+            .get(initializer_idx)
+            .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
+            || crate::query_boundaries::common::index_access_parts(self.ctx.types, contextual_type)
+                .is_none()
+        {
+            return None;
+        }
+        let sym_id = self.resolve_identifier_symbol(initializer_idx)?;
+        self.ctx
+            .symbol_types
+            .get(&sym_id)
+            .copied()
+            .filter(|&ty| ty != TypeId::ERROR && ty != TypeId::UNKNOWN)
+    }
+
+    fn jsdoc_enum_object_literal_initializer(&self, initializer_idx: NodeIndex) -> NodeIndex {
+        let initializer_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer_idx);
+        let Some(init_node) = self.ctx.arena.get(initializer_idx) else {
+            return initializer_idx;
+        };
+        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return initializer_idx;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(init_node) else {
+            return initializer_idx;
+        };
+        let is_object_freeze = self
+            .ctx
+            .arena
+            .get(call.expression)
+            .and_then(|callee| self.ctx.arena.get_access_expr(callee))
+            .is_some_and(|access| {
+                self.ctx.arena.get_identifier_text(access.expression) == Some("Object")
+                    && self.ctx.arena.get_identifier_text(access.name_or_argument) == Some("freeze")
+            });
+        if !is_object_freeze {
+            return initializer_idx;
+        }
+        call.arguments
+            .as_ref()
+            .and_then(|args| args.nodes.first().copied())
+            .map(|arg| self.ctx.arena.skip_parenthesized_and_assertions(arg))
+            .unwrap_or(initializer_idx)
+    }
+
+    fn check_jsdoc_enum_initializer_values(
+        &mut self,
+        initializer_idx: NodeIndex,
+        enum_element_type: TypeId,
+    ) {
+        let object_idx = self.jsdoc_enum_object_literal_initializer(initializer_idx);
+        let Some(object_node) = self.ctx.arena.get(object_idx) else {
+            return;
+        };
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+        let Some(literal) = self.ctx.arena.get_literal_expr(object_node) else {
+            return;
+        };
+        let property_initializers: Vec<NodeIndex> = literal
+            .elements
+            .nodes
+            .iter()
+            .filter_map(|&element_idx| {
+                self.ctx
+                    .arena
+                    .get(element_idx)
+                    .and_then(|element_node| self.ctx.arena.get_property_assignment(element_node))
+                    .map(|property| property.initializer)
+            })
+            .collect();
+
+        let request = TypingRequest::with_contextual_type(enum_element_type);
+        for property_initializer in property_initializers {
+            let value_type = self.get_type_of_node_with_request(property_initializer, &request);
+            let value_type = self.resolve_lazy_type(value_type);
+            let _ = self.check_assignable_or_report(
+                value_type,
+                enum_element_type,
+                property_initializer,
+            );
+        }
+    }
+
+    fn cached_inferred_variable_type(
+        &self,
+        decl_idx: NodeIndex,
+        name_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let name_is_binding_pattern = self.ctx.arena.kind_at(name_idx).is_some_and(|kind| {
+            kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+        });
+
+        self.ctx
+            .binder
+            .get_node_symbol(decl_idx)
+            .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_node_symbol(name_idx)
+                    .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied())
+            })
+            .or_else(|| {
+                name_is_binding_pattern
+                    .then(|| self.ctx.node_types.get(&decl_idx.0).copied())
+                    .flatten()
+            })
+            .or_else(|| {
+                name_is_binding_pattern
+                    .then(|| self.ctx.node_types.get(&name_idx.0).copied())
+                    .flatten()
+            })
+            .filter(|&type_id| type_id != TypeId::ERROR)
+    }
+
+    fn has_prior_value_declaration_for_symbol(&self, decl_idx: NodeIndex) -> bool {
+        self.has_prior_value_declaration_for_symbol_impl(decl_idx, false)
+    }
+
+    // TS2502 variant: alias-style declarations (imports, namespace exports) do not
+    // establish a value-typed binding in the redeclaring scope, so `typeof X` inside
+    // a later same-named declaration is genuinely circular.  Use this variant only for
+    // the circularity check; the general variant is used for symbol-type caching so
+    // that module augmentations cannot overwrite a prior JS-export type.
+    fn has_prior_value_declaration_for_ts2502(&self, decl_idx: NodeIndex) -> bool {
+        self.has_prior_value_declaration_for_symbol_impl(decl_idx, true)
+    }
+
+    fn has_prior_value_declaration_for_symbol_impl(
+        &self,
+        decl_idx: NodeIndex,
+        exclude_aliases: bool,
+    ) -> bool {
+        let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx).or_else(|| {
+            self.ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| self.ctx.arena.get_variable_declaration(node))
+                .and_then(|decl| self.ctx.binder.get_node_symbol(decl.name))
+        }) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let current_pos = self
+            .ctx
+            .arena
+            .get(decl_idx)
+            .map_or(u32::MAX, |node| node.pos);
+        // Use source position to find prior declarations rather than
+        // relying on declaration-list order. Hoisted `var` declarations
+        // appear first in the list (before parameters) even though the
+        // parameter appears earlier in source. Source-position ordering
+        // correctly identifies the parameter as a prior declaration.
+        //
+        // Exclude block-scoped (let/const) declarations: when a `const`
+        // precedes a `var` of the same name, they occupy different scoping
+        // realms and the const should not be treated as a "prior value
+        // declaration" for the var (that case is TS2451, not TS2403).
+        symbol.declarations.iter().any(|&other| {
+            if other == decl_idx || !other.is_some() {
+                return false;
+            }
+            let has_earlier_pos = self
+                .ctx
+                .arena
+                .get(other)
+                .is_some_and(|node| node.pos < current_pos);
+            if !has_earlier_pos {
+                return false;
+            }
+            // Filter out block-scoped prior declarations (let/const/using).
+            // These don't establish a prior value type for function-scoped vars.
+            if let Some(other_node) = self.ctx.arena.get(other)
+                && other_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                && let Some(other_ext) = self.ctx.arena.get_extended(other)
+                && let Some(other_parent) = self.ctx.arena.get(other_ext.parent)
+                && other_parent.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            {
+                let flags = other_parent.flags as u32;
+                use tsz_parser::parser::node_flags;
+                if node_flags::is_block_scoped(flags) {
+                    return false;
+                }
+            }
+            // When checking for TS2502 circular references, alias-style prior
+            // declarations (imports / UMD namespace exports) do not establish a
+            // value-typed binding in the redeclaring scope, so `typeof X` inside
+            // a later same-named `const X` declaration is genuinely circular.
+            // For symbol-type caching we keep imports as valid prior declarations
+            // so that module augmentations cannot overwrite a JS-export type.
+            if exclude_aliases && let Some(other_node) = self.ctx.arena.get(other) {
+                let kind = other_node.kind;
+                if kind == syntax_kind_ext::NAMESPACE_IMPORT
+                    || kind == syntax_kind_ext::IMPORT_CLAUSE
+                    || kind == syntax_kind_ext::IMPORT_SPECIFIER
+                    || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                    || kind == syntax_kind_ext::NAMESPACE_EXPORT
+                    || kind == syntax_kind_ext::EXPORT_SPECIFIER
+                {
+                    return false;
+                }
+                // The UMD `export as namespace foo` (and a few namespace-export
+                // forms) record the export_clause identifier as the declaration
+                // node; check the parent kind to filter that case as well.
+                if kind == SyntaxKind::Identifier as u16
+                    && let Some(other_ext) = self.ctx.arena.get_extended(other)
+                    && let Some(parent_node) = self.ctx.arena.get(other_ext.parent)
+                    && (parent_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                        || parent_node.kind == syntax_kind_ext::NAMESPACE_EXPORT
+                        || parent_node.kind == syntax_kind_ext::IMPORT_CLAUSE
+                        || parent_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+                        || parent_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+                        || parent_node.kind == syntax_kind_ext::EXPORT_SPECIFIER)
+                {
+                    return false;
+                }
+            }
+            true
+        })
+    }
+
+    fn redeclaration_initializer_request(
+        &mut self,
+        decl_idx: NodeIndex,
+        name_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+    ) -> TypingRequest {
+        if !self.has_prior_value_declaration_for_symbol(decl_idx) {
+            return TypingRequest::NONE;
+        }
+
+        let Some(init_node) = self.ctx.arena.get(
+            self.ctx
+                .arena
+                .skip_parenthesized_and_assertions(initializer_idx),
+        ) else {
+            return TypingRequest::NONE;
+        };
+        // tsc does NOT propagate prior declaration types as contextual type for
+        // call/new expressions. Generic inference in call expressions must rely on
+        // argument types alone, not on the prior declaration's type. Providing
+        // contextual type here would cause inference to succeed (e.g., T=Function
+        // from contextual return type) when tsc would infer T=unknown, suppressing
+        // TS2403 and potentially masking TS2345 argument errors.
+        //
+        // Contextual typing from prior declarations only applies to contextually
+        // sensitive expressions (object/array literals, arrow/function expressions).
+        let initializer_needs_context = matches!(
+            init_node.kind,
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+        ) || is_contextually_sensitive(self, initializer_idx);
+        if !initializer_needs_context {
+            return TypingRequest::NONE;
+        }
+
+        let Some(cached_type) = self.cached_inferred_variable_type(decl_idx, name_idx) else {
+            return TypingRequest::NONE;
+        };
+        if matches!(cached_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+            return TypingRequest::NONE;
+        }
+
+        TypingRequest::with_contextual_type(self.contextual_type_for_expression(cached_type))
+    }
+
+    fn checked_js_remote_class_declared_type_for_variable(
+        &mut self,
+        decl_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        if !self.is_js_file()
+            || !self.ctx.compiler_options.check_js
+            || self.ctx.binder.is_external_module()
+        {
+            return None;
+        }
+
+        let node = self.ctx.arena.get(decl_idx)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(node)?;
+        if var_decl.initializer.is_none() {
+            return None;
+        }
+        let name = self
+            .ctx
+            .arena
+            .get_identifier_at(var_decl.name)?
+            .escaped_text
+            .clone();
+
+        let all_arenas = self.ctx.all_arenas.clone()?;
+        let all_binders = self.ctx.all_binders.clone()?;
+
+        for (file_idx, binder) in all_binders.iter().enumerate() {
+            if file_idx == self.ctx.current_file_idx || binder.is_external_module() {
+                continue;
+            }
+            let arena = all_arenas.get(file_idx)?;
+            let source_file = arena.source_files.first()?;
+
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                    continue;
+                }
+                let Some(class_decl) = arena.get_class(stmt_node) else {
+                    continue;
+                };
+                let Some(ident) = arena.get_identifier_at(class_decl.name) else {
+                    continue;
+                };
+                if ident.escaped_text != name || !arena.is_in_ambient_context(stmt_idx) {
+                    continue;
+                }
+                let Some(sym_id) = binder.get_node_symbol(stmt_idx) else {
+                    continue;
+                };
+                self.ctx.register_symbol_file_index(sym_id, file_idx);
+                let base_type = self.get_type_of_symbol(sym_id);
+                // When a JS-file `const X = ...` merges with a TS-file
+                // `declare class X`, fold JS-side expando assignments
+                // (`X.prop = ...`) into the merged static type so the
+                // initializer assignability check sees every property tsc
+                // reports as missing (TS2739, not TS2741).
+                return Some(self.augment_callable_type_with_expandos(&name, sym_id, base_type));
+            }
+        }
+
+        None
+    }
+
+    fn maybe_clear_checked_initializer_type_cache(&mut self, initializer_idx: NodeIndex) {
+        // Some initializer forms are first visited during build_type_environment, where we only
+        // want a stable type shape. The later checked pass must revisit them so body/member
+        // diagnostics (for example TS2454 inside class-expression methods or TS2564 on class
+        // fields) are emitted from the canonical checked path.
+        if let Some(init_node) = self.ctx.arena.get(initializer_idx)
+            && matches!(
+                init_node.kind,
+                syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::NEW_EXPRESSION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            )
+        {
+            self.invalidate_initializer_for_context_change(initializer_idx);
+        }
+    }
+
+    /// Check a single variable declaration.
+    #[tracing::instrument(level = "trace", skip(self), fields(decl_idx = ?decl_idx))]
+    pub(crate) fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
+        self.check_variable_declaration_with_request(decl_idx, &TypingRequest::NONE);
+    }
+
+    #[tracing::instrument(level = "trace", skip(self, typing_request), fields(decl_idx = ?decl_idx))]
+    pub(crate) fn check_variable_declaration_with_request(
+        &mut self,
+        decl_idx: NodeIndex,
+        typing_request: &TypingRequest,
+    ) {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return;
+        };
+
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) else {
+            return;
+        };
+
+        self.check_await_expression(decl_idx);
+
+        // TS1155: Check if const declarations must be initialized
+        // Skip check for ambient declarations (e.g., declare const x;)
+        // Skip when file has real syntax errors — the parse error is sufficient.
+        if !self.is_ambient_declaration(decl_idx) && !self.ctx.has_real_syntax_errors {
+            // Get the parent node (VARIABLE_DECLARATION_LIST) to check flags
+            if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            {
+                use tsz_parser::parser::node_flags;
+                let is_const = (parent_node.flags & node_flags::CONST as u16) != 0;
+                if is_const && var_decl.initializer.is_none() {
+                    // Skip for destructuring patterns - they get TS1182 from the parser
+                    let is_binding_pattern =
+                        if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
+                            name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        } else {
+                            false
+                        };
+                    // Check if this is in a for-in or for-of loop (allowed)
+                    let is_in_for_loop =
+                        if let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) {
+                            if let Some(gp_node) = self.ctx.arena.get(parent_ext.parent) {
+                                gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                                    || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+                    if !is_in_for_loop && !is_binding_pattern {
+                        self.ctx.error(
+                            node.pos,
+                            node.end - node.pos,
+                            "'const' declarations must be initialized.".to_string(),
+                            1155,
+                        );
+                    }
+                }
+            }
+        }
+
+        // TS1255/TS1263/TS1264: Definite assignment assertion checks on variables
+        if var_decl.exclamation_token {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+            // tsc points TS1255/TS1263/TS1264 at the `!` token itself, which is
+            // immediately after the variable name node (name_node.end, length 1).
+            let excl_pos = self.ctx.arena.end_at(var_decl.name);
+
+            // TS1255: ! is not permitted in ambient context (declare let/var/const)
+            if self.is_ambient_declaration(decl_idx) {
+                if let Some(pos) = excl_pos {
+                    self.emit_error_at(
+                        pos,
+                        1,
+                        diagnostic_messages::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                        diagnostic_codes::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                    );
+                } else {
+                    self.error_at_node(
+                        var_decl.name,
+                        diagnostic_messages::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                        diagnostic_codes::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                    );
+                }
+            }
+
+            // TS1263: ! with initializer is contradictory
+            if var_decl.initializer.is_some() {
+                if let Some(pos) = excl_pos {
+                    self.emit_error_at(
+                        pos,
+                        1,
+                        diagnostic_messages::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                        diagnostic_codes::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                    );
+                } else {
+                    self.error_at_node(
+                        var_decl.name,
+                        diagnostic_messages::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                        diagnostic_codes::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                    );
+                }
+            }
+
+            // TS1264: ! without type annotation is meaningless
+            // Only emit when there is no initializer — if an initializer is present,
+            // TS1263 already fires and tsc suppresses TS1264 in that case.
+            if var_decl.type_annotation.is_none() && var_decl.initializer.is_none() {
+                if let Some(pos) = excl_pos {
+                    self.emit_error_at(
+                        pos,
+                        1,
+                        diagnostic_messages::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                        diagnostic_codes::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                    );
+                } else {
+                    self.error_at_node(
+                        var_decl.name,
+                        diagnostic_messages::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                        diagnostic_codes::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                    );
+                }
+            }
+        }
+
+        // TS2481: Check var declarations that shadow block-scoped variables.
+        // When a `var` declaration appears in a scope where a `let`/`const` with the same
+        // name exists in an enclosing block (but not at function/module/source-file level),
+        // the var initialization would write to the outer hoisted variable while the
+        // block-scoped binding shadows it — this is a runtime SyntaxError.
+        self.check_var_declared_names_not_shadowed(decl_idx, var_decl);
+        // Check if this is a destructuring pattern (object/array binding)
+        let is_destructuring = if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
+            name_node.kind != SyntaxKind::Identifier as u16
+        } else {
+            false
+        };
+        // Get the variable name for adding to local scope
+        let var_name = if !is_destructuring {
+            if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
+                self.ctx
+                    .arena
+                    .get_identifier(name_node)
+                    .map(|ident| ident.escaped_text.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        // TS1212/1213/1214: Identifier expected. '{0}' is a reserved word in strict mode.
+        // Check if variable name is a strict-mode reserved word used in strict context.
+        let mut is_ambient = self.ctx.is_declaration_file();
+        if !is_ambient {
+            let mut current = decl_idx;
+            let mut guard = 0;
+            while current.is_some() {
+                guard += 1;
+                if guard > 256 {
+                    break;
+                }
+                if let Some(node) = self.ctx.arena.get(current) {
+                    if node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION {
+                        if let Some(module) = self.ctx.arena.get_module(node)
+                            && self.ctx.arena.has_modifier(
+                                &module.modifiers,
+                                tsz_scanner::SyntaxKind::DeclareKeyword,
+                            )
+                        {
+                            is_ambient = true;
+                            break;
+                        }
+                    } else if node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT {
+                        if let Some(var_stmt) = self.ctx.arena.get_variable(node)
+                            && self.ctx.arena.has_modifier(
+                                &var_stmt.modifiers,
+                                tsz_scanner::SyntaxKind::DeclareKeyword,
+                            )
+                        {
+                            is_ambient = true;
+                            break;
+                        }
+                    } else if node.kind == tsz_parser::parser::syntax_kind_ext::SOURCE_FILE {
+                        break;
+                    }
+                }
+                if let Some(ext) = self.ctx.arena.get_extended(current) {
+                    current = ext.parent;
+                } else {
+                    break;
+                }
+            }
+        }
+        let in_non_ambient_class = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .is_some_and(|c| !c.is_declared)
+            || self.is_within_non_ambient_class_body(decl_idx);
+        let in_static_block = self.find_enclosing_static_block(var_decl.name).is_some();
+
+        // When an identifier is spelled with unicode escapes (e.g., \u0079ield for yield),
+        // TSC treats it as a regular identifier and does NOT emit TS1212/TS1213/TS1214.
+        let name_has_unicode_escape = self
+            .ctx
+            .arena
+            .get(var_decl.name)
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .is_some_and(|ident| ident.original_text.is_some());
+        if !is_ambient
+            && !name_has_unicode_escape
+            && self.is_strict_mode_for_node(var_decl.name)
+            && let Some(ref name) = var_name
+            && crate::state_checking::is_strict_mode_reserved_name(name)
+            && !(name.as_str() == "arguments" && in_non_ambient_class)
+        {
+            self.emit_strict_mode_reserved_word_error(var_decl.name, name, true);
+        }
+        // TS1210: `eval` or `arguments` used as a local binding in a class body.
+        if !is_ambient
+            && self.is_strict_mode_for_node(var_decl.name)
+            && let Some(ref name) = var_name
+            && crate::state_checking::is_eval_or_arguments(name)
+            && in_non_ambient_class
+            && !in_static_block
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                &[name],
+            );
+            self.error_at_node(
+                var_decl.name,
+                &message,
+                diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+            );
+        }
+        if !is_ambient
+            && self.is_strict_mode_for_node(var_decl.name)
+            && let Some(ref name) = var_name
+            && crate::state_checking::is_eval_or_arguments(name)
+            && !in_non_ambient_class
+        {
+            self.emit_eval_or_arguments_strict_mode_error(var_decl.name, name);
+        }
+        // TS2480: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
+        if let Some(ref name) = var_name
+            && name == "let"
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+        {
+            use tsz_parser::parser::node_flags;
+            let parent_flags = parent_node.flags as u32;
+            if parent_flags & node_flags::LET != 0 || parent_flags & node_flags::CONST != 0 {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                        var_decl.name,
+                        diagnostic_messages::LET_IS_NOT_ALLOWED_TO_BE_USED_AS_A_NAME_IN_LET_OR_CONST_DECLARATIONS,
+                        diagnostic_codes::LET_IS_NOT_ALLOWED_TO_BE_USED_AS_A_NAME_IN_LET_OR_CONST_DECLARATIONS,
+                    );
+            }
+        }
+
+        // TS2397: Declaration name conflicts with built-in global identifier.
+        // tsc emits TS2397 when a variable is declared with the name `undefined` or `globalThis`
+        // in a script file (non-module). Both names are only protected at global scope; a
+        // module-scoped declaration is contained and does not conflict.
+        if let Some(ref name) = var_name {
+            let should_emit = (name == "globalThis" || name == "undefined")
+                && !self.ctx.binder.is_external_module();
+            if should_emit {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let message = format_message(
+                    diagnostic_messages::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                    &[name],
+                );
+                self.error_at_node(
+                    var_decl.name,
+                    &message,
+                    diagnostic_codes::DECLARATION_NAME_CONFLICTS_WITH_BUILT_IN_GLOBAL_IDENTIFIER,
+                );
+            }
+        }
+
+        let is_catch_variable = self.is_catch_clause_variable_declaration(decl_idx);
+        // TS1039/TS1254: Check initializers in ambient contexts.
+        // Use is_in_ambient_context (checks for explicit `declare` keyword ancestors)
+        // rather than is_ambient_declaration (which also returns true for all .d.ts files).
+        // TSC does not emit TS1039 for variable initializers in .d.ts files.
+        if var_decl.initializer.is_some() && self.ctx.arena.is_in_ambient_context(decl_idx) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let is_const = self.is_const_variable_declaration(decl_idx);
+            if is_const && var_decl.type_annotation.is_none() {
+                // Ambient const without type annotation: only string/numeric literals allowed
+                if !self.is_valid_ambient_const_initializer(var_decl.initializer) {
+                    self.error_at_node(
+                        var_decl.initializer,
+                        diagnostic_messages::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                        diagnostic_codes::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                    );
+                }
+            } else {
+                // Non-const or const with type annotation
+                self.error_at_node(
+                    var_decl.initializer,
+                    diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                    diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                );
+            }
+        }
+        let mut jsdoc_declared_type = None;
+        let mut compute_final_type = |checker: &mut CheckerState| -> TypeId {
+            let mut has_type_annotation = var_decl.type_annotation.is_some();
+            let mut declared_type = if has_type_annotation {
+                // Check for undefined type names in nested types (e.g., function type parameters)
+                // Skip top-level TYPE_REFERENCE to avoid duplicates with get_type_from_type_node
+                checker.check_type_for_missing_names_skip_top_level_ref(var_decl.type_annotation);
+                checker.check_type_for_parameter_properties(var_decl.type_annotation);
+                let type_id = checker.get_type_from_type_node(var_decl.type_annotation);
+                let type_id = if var_decl.initializer.is_none() {
+                    checker
+                        .bare_type_alias_annotation_declared_type(var_decl.type_annotation, type_id)
+                        .unwrap_or(type_id)
+                } else {
+                    type_id
+                };
+                // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'.
+                // When the annotation is invalid, fall back to the catch-variable default
+                // (any/unknown) so the catch body sees the same type tsc uses, preventing
+                // cascade errors like TS2339 on `e.method()` or destructured names.
+                let invalid_catch_annotation = is_catch_variable
+                    && type_id != TypeId::ANY
+                    && type_id != TypeId::UNKNOWN
+                    && !checker.type_contains_error(type_id);
+                if invalid_catch_annotation {
+                    use crate::diagnostics::diagnostic_codes;
+                    checker.error_at_node(
+                        var_decl.type_annotation,
+                        "Catch clause variable type annotation must be 'any' or 'unknown' if specified.",
+                        diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION_MUST_BE_ANY_OR_UNKNOWN_IF_SPECIFIED,
+                    );
+                }
+                if invalid_catch_annotation {
+                    flow_boundary::resolve_catch_variable_type(
+                        checker.ctx.use_unknown_in_catch_variables(),
+                    )
+                } else {
+                    type_id
+                }
+            } else if is_catch_variable {
+                // Route catch variable type resolution through the flow
+                // observation boundary for centralized policy.
+                flow_boundary::resolve_catch_variable_type(
+                    checker.ctx.use_unknown_in_catch_variables(),
+                )
+            } else {
+                TypeId::ANY
+            };
+            if !has_type_annotation
+                && let Some(jsdoc_type) = checker
+                    .jsdoc_type_annotation_for_node(decl_idx)
+                    .or_else(|| checker.jsdoc_type_annotation_for_node_inference(decl_idx))
+            {
+                // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'
+                // This also applies to JSDoc @type annotations on catch variables in JS files.
+                let is_invalid_catch_jsdoc = is_catch_variable
+                    && jsdoc_type != TypeId::ANY
+                    && jsdoc_type != TypeId::UNKNOWN
+                    && !checker.type_contains_error(jsdoc_type);
+                if is_invalid_catch_jsdoc {
+                    use crate::diagnostics::diagnostic_codes;
+                    let jsdoc_type_span = checker.jsdoc_type_expression_span_for_node(decl_idx);
+                    if let Some((start, length)) = jsdoc_type_span {
+                        checker.error_at_position(
+                            start,
+                            length,
+                            "Catch clause variable type annotation must be 'any' or 'unknown' if specified.",
+                            diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION_MUST_BE_ANY_OR_UNKNOWN_IF_SPECIFIED,
+                        );
+                    } else {
+                        checker.error_at_node(
+                            decl_idx,
+                            "Catch clause variable type annotation must be 'any' or 'unknown' if specified.",
+                            diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION_MUST_BE_ANY_OR_UNKNOWN_IF_SPECIFIED,
+                        );
+                    }
+                }
+                declared_type = if is_invalid_catch_jsdoc {
+                    flow_boundary::resolve_catch_variable_type(
+                        checker.ctx.use_unknown_in_catch_variables(),
+                    )
+                } else {
+                    jsdoc_type
+                };
+                jsdoc_declared_type = Some(declared_type);
+                has_type_annotation = true;
+            }
+            if !has_type_annotation
+                && let Some(merged_type) =
+                    checker.checked_js_remote_class_declared_type_for_variable(decl_idx)
+            {
+                declared_type = merged_type;
+                has_type_annotation = true;
+            }
+            // If there's a type annotation, that determines the type (even for 'any')
+            if has_type_annotation {
+                if checker.ctx.no_implicit_any()
+                    && let Some(sf) = checker.ctx.arena.source_files.first()
+                    && let Some(jsdoc) = checker.find_jsdoc_for_function(decl_idx)
+                    && CheckerState::jsdoc_type_tag_function_missing_return(&jsdoc)
+                    && let Some((_, comment_pos)) = checker.try_jsdoc_with_ancestor_walk_and_pos(
+                        decl_idx,
+                        &sf.comments,
+                        &sf.text,
+                    )
+                    && let Some(function_pos) =
+                        CheckerState::jsdoc_type_tag_function_keyword_pos_in_source(
+                            &sf.text,
+                            comment_pos,
+                        )
+                {
+                    checker.ctx.error(
+                        function_pos,
+                        "function".len() as u32,
+                        crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::FUNCTION_TYPE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
+                            &["any"],
+                        ),
+                        crate::diagnostics::diagnostic_codes::FUNCTION_TYPE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
+                    );
+                }
+                if var_decl.initializer.is_some() {
+                    // Evaluate the declared type to resolve conditionals before using as context.
+                    // This ensures types like `type C = string extends string ? "yes" : "no"`
+                    // provide proper contextual typing for literals, preventing them from widening to string.
+                    // Only evaluate conditional/mapped/index access types - NOT type aliases or interface
+                    // references, as evaluating those can change their representation and break variance checking.
+                    let evaluated_type = if declared_type != TypeId::ANY {
+                        checker.contextual_type_for_expression(declared_type)
+                    } else {
+                        declared_type
+                    };
+                    // Build a TypingRequest for the initializer (but not for 'any')
+                    let initializer_is_function = checker
+                        .ctx
+                        .arena
+                        .get(var_decl.initializer)
+                        .is_some_and(|init_node| {
+                            matches!(
+                                init_node.kind,
+                                syntax_kind_ext::FUNCTION_EXPRESSION
+                                    | syntax_kind_ext::ARROW_FUNCTION
+                            )
+                        });
+                    let jsdoc_callable_context = initializer_is_function
+                        .then(|| {
+                            if var_decl.type_annotation.is_none() {
+                                checker.jsdoc_callable_type_annotation_for_node(decl_idx)
+                            } else {
+                                None
+                            }
+                        })
+                        .flatten()
+                        .map(|ty| checker.contextual_type_for_expression(ty));
+                    let jsdoc_blocks_callable_context = initializer_is_function
+                        && var_decl.type_annotation.is_none()
+                        && checker.jsdoc_type_annotation_for_node(decl_idx).is_some()
+                        && jsdoc_callable_context.is_none();
+                    let suppress_initializer_context = evaluated_type != TypeId::ANY
+                        && checker.suppress_initializer_contextual_type_for_generic_call(
+                            var_decl.initializer,
+                            evaluated_type,
+                        );
+                    let suppress_identifier_context = checker
+                        .should_suppress_identifier_initializer_context_for_index_access(
+                            var_decl.initializer,
+                            evaluated_type,
+                        );
+                    let request = if let Some(jsdoc_callable_context) = jsdoc_callable_context {
+                        TypingRequest::with_contextual_type(jsdoc_callable_context)
+                    } else if evaluated_type != TypeId::ANY
+                        && !jsdoc_blocks_callable_context
+                        && !suppress_initializer_context
+                        && !suppress_identifier_context
+                    {
+                        TypingRequest::with_contextual_type(evaluated_type)
+                    } else {
+                        TypingRequest::NONE
+                    };
+                    if initializer_is_function
+                        && evaluated_type == TypeId::ERROR
+                        && var_decl.type_annotation.is_some()
+                        && checker.explicit_annotation_can_defer_implicit_any_context(
+                            var_decl.type_annotation,
+                        )
+                    {
+                        checker
+                            .ctx
+                            .implicit_any_contextual_closures
+                            .insert(var_decl.initializer);
+                    }
+                    if initializer_is_function && jsdoc_blocks_callable_context {
+                        checker
+                            .ctx
+                            .implicit_any_contextual_closures
+                            .remove(&var_decl.initializer);
+                        checker
+                            .ctx
+                            .implicit_any_checked_closures
+                            .remove(&var_decl.initializer);
+                        checker.invalidate_initializer_for_context_change(var_decl.initializer);
+                    }
+                    let conditional_branch_ranges = checker
+                        .ctx
+                        .arena
+                        .get(var_decl.initializer)
+                        .filter(|node| node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION)
+                        .and_then(|node| checker.ctx.arena.get_conditional_expr(node))
+                        .map(|cond| {
+                            let when_true = checker
+                                .ctx
+                                .arena
+                                .get(cond.when_true)
+                                .map(|node| (node.pos, node.end));
+                            let when_false = checker
+                                .ctx
+                                .arena
+                                .get(cond.when_false)
+                                .map(|node| (node.pos, node.end));
+                            [when_true, when_false]
+                        });
+                    if !request.is_empty()
+                        && let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
+                    {
+                        let init_start = init_node.pos;
+                        let init_end = init_node.end;
+                        let object_literal_method_name_spans: Vec<(u32, u32)> = if init_node.kind
+                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        {
+                            checker
+                                .ctx
+                                .arena
+                                .get_literal_expr(init_node)
+                                .map(|literal| {
+                                    literal
+                                        .elements
+                                        .nodes
+                                        .iter()
+                                        .filter_map(|&element_idx| {
+                                            let element_node =
+                                                checker.ctx.arena.get(element_idx)?;
+                                            if element_node.kind
+                                                != syntax_kind_ext::METHOD_DECLARATION
+                                            {
+                                                return None;
+                                            }
+                                            let method =
+                                                checker.ctx.arena.get_method_decl(element_node)?;
+                                            let name_node = checker.ctx.arena.get(method.name)?;
+                                            if name_node.kind
+                                                == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                                            {
+                                                return None;
+                                            }
+                                            Some((name_node.pos, name_node.end))
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        };
+                        checker.ctx.diagnostics.retain(|diag| {
+                            diag.code
+                                == crate::diagnostics::diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
+                                // TS2693/TS2585/TS1361/TS1362: type-only keywords and
+                                // type-only import/export used as values are structural
+                                // errors, not contextual-typing artifacts.
+                                // They must survive the pre-contextual diagnostic reset.
+                                || diag.code == crate::diagnostics::diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE
+                                || diag.code == crate::diagnostics::diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO
+                                || diag.code == crate::diagnostics::diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE
+                                || diag.code == crate::diagnostics::diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE
+                                // Preserve TS2454 (variable used before assignment) — these
+                                // are definite-assignment errors for variables referenced
+                                // inside the initializer, not stale contextual-typing
+                                // diagnostics that need to be re-evaluated.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+                                // TS2348/TS2538: invalid calls and invalid
+                                // index expressions are structural initializer
+                                // diagnostics, not artifacts of contextual
+                                // typing from the variable annotation.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE
+                                // TS2339: "Property does not exist on type" is a structural
+                                // error (the object type and property name don't depend on
+                                // contextual typing). Preserve it so namespace/module
+                                // property-access errors survive the pre-contextual reset.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                                // TS2304: "Cannot find name" is a name-resolution
+                                // failure tied to the source identifier; it must
+                                // survive the pre-contextual reset so e.g.
+                                // `var x: T = new T()` reports both the
+                                // annotation and value-position lookups when `T`
+                                // is unresolved.
+                                || (diag.code
+                                    == crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                                    && !object_literal_method_name_spans
+                                        .iter()
+                                        .any(|&(start, end)| diag.start >= start && diag.start < end))
+                                // TS2322 diagnostics from the pre-contextual
+                                // assignment check can be stale for object
+                                // literal methods: contextual method typing may
+                                // supply the function shape that makes the final
+                                // object assignable. The contextual check below
+                                // re-emits real assignment failures.
+                                || (diag.code
+                                    == crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                                    && object_literal_method_name_spans.is_empty())
+                                // TS2538: "Type 'X' cannot be used as an index
+                                // type" is a structural error about the index
+                                // expression's shape; it doesn't depend on the
+                                // outer contextual type.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE
+                                // TS2348: "Value of type 'X' is not callable.
+                                // Did you mean to include 'new'?" is a
+                                // structural error about a non-callable value
+                                // appearing in call position; not contextual.
+                                || diag.code
+                                    == crate::diagnostics::diagnostic_codes::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW
+                                || diag.start < init_start
+                                || diag.start >= init_end
+                        });
+                        checker.ctx.rebuild_emitted_diagnostics_from_current();
+                    }
+                    let init_snap = DiagnosticSpeculationSnapshot::new(&checker.ctx);
+                    let init_diagnostics_len = init_snap.snapshot().diagnostics_len;
+                    checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
+                    let mut init_type =
+                        checker.get_type_of_node_with_request(var_decl.initializer, &request);
+                    if init_type == TypeId::ERROR
+                        && let Some(symbol_type) = checker
+                            .identifier_initializer_symbol_type_for_index_access_target(
+                                var_decl.initializer,
+                                evaluated_type,
+                            )
+                    {
+                        init_type = symbol_type;
+                    }
+                    // Ensure the contextually-typed init type is stored in node_types
+                    // for the initializer expression. Error elaboration may re-check
+                    // the initializer without contextual type, which widens literal
+                    // types (e.g., "ok" -> string) and overwrites node_types. By
+                    // seeding node_types here, subsequent context-free lookups
+                    // (including flow analysis for assignment narrowing, and the
+                    // fingerprint policy's callable-initializer detection in
+                    // variable_declaration_anchor) reuse the contextually-inferred
+                    // result. This must run in release builds too — the prior
+                    // #[cfg(debug_assertions)] gate caused fingerprint divergence.
+                    if !request.is_empty() && init_type != TypeId::ERROR {
+                        checker
+                            .ctx
+                            .node_types
+                            .insert(var_decl.initializer.0, init_type);
+                    }
+                    let (mut init_type_for_relation, remapped_mapped_initializer) = if checker
+                        .ctx
+                        .arena
+                        .get(var_decl.initializer)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                    {
+                        checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
+                        let raw_init_type = checker.get_type_of_node_with_request(
+                            var_decl.initializer,
+                            &TypingRequest::NONE,
+                        );
+                        if crate::query_boundaries::common::is_remapped_mapped_index_access(
+                            checker.ctx.types,
+                            raw_init_type,
+                        ) {
+                            (raw_init_type, true)
+                        } else {
+                            (checker.resolve_lazy_type(init_type), false)
+                        }
+                    } else {
+                        (checker.resolve_lazy_type(init_type), false)
+                    };
+                    let jsdoc_new_expression_relation = jsdoc_declared_type.is_some()
+                        && var_decl.type_annotation.is_none()
+                        && checker
+                            .ctx
+                            .arena
+                            .get(var_decl.initializer)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION);
+                    if jsdoc_new_expression_relation {
+                        let raw_init_snap = DiagnosticSpeculationSnapshot::new(&checker.ctx);
+                        // Preserve the contextual cache entry. The raw probe below
+                        // runs with TypingRequest::NONE and repopulates node_types
+                        // with a non-contextual initializer type.
+                        let saved_initializer_node_type =
+                            checker.ctx.node_types.get(&var_decl.initializer.0).copied();
+                        checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
+                        let raw_init_type = checker.get_type_of_node_with_request(
+                            var_decl.initializer,
+                            &TypingRequest::NONE,
+                        );
+                        raw_init_snap.rollback(&mut checker.ctx.diagnostic_state());
+                        if let Some(saved) = saved_initializer_node_type {
+                            checker.ctx.node_types.insert(var_decl.initializer.0, saved);
+                        } else {
+                            checker.ctx.node_types.remove(&var_decl.initializer.0);
+                        }
+                        init_type_for_relation = checker.resolve_lazy_type(raw_init_type);
+                    }
+                    if let Some(branch_ranges) = conditional_branch_ranges {
+                        // Preserve non-assignability diagnostics from the branch expressions
+                        // (e.g. TS2352/TS2873), but drop premature TS2322s produced while
+                        // contextually typing the individual branches. The outer variable
+                        // declaration check should report the canonical whole-expression error.
+                        init_snap.rollback_filtered(&mut checker.ctx.diagnostic_state(), |diag| {
+                            let in_branch = branch_ranges
+                                .iter()
+                                .flatten()
+                                .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                            !(in_branch && diag.code == 2322)
+                        });
+                    }
+                    let function_initializer_body_has_error = checker
+                        .ctx
+                        .arena
+                        .get(var_decl.initializer)
+                        .and_then(|init_node| {
+                            if !matches!(
+                                init_node.kind,
+                                syntax_kind_ext::ARROW_FUNCTION
+                                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                            ) {
+                                return None;
+                            }
+                            let func = checker.ctx.arena.get_function(init_node)?;
+                            let body_node = checker.ctx.arena.get(func.body)?;
+                            if body_node.kind == syntax_kind_ext::BLOCK {
+                                // For block-body functions, check if the body
+                                // already emitted TS2322 (e.g., from return
+                                // statement checks against a contextual return
+                                // type). When it did, the outer assignment-level
+                                // TS2322 is redundant.
+                                return Some(
+                                    checker.ctx.diagnostics[init_diagnostics_len..].iter().any(
+                                        |diag| {
+                                            diag.start >= body_node.pos
+                                                && diag.start < body_node.end
+                                                && matches!(diag.code, 2322 | 2339)
+                                        },
+                                    ),
+                                );
+                            }
+                            Some(checker.ctx.diagnostics[init_diagnostics_len..].iter().any(
+                                |diag| {
+                                    diag.start >= body_node.pos
+                                        && diag.start < body_node.end
+                                        && matches!(diag.code, 2322 | 2339)
+                                },
+                            ))
+                        })
+                        .unwrap_or(false);
+                    // Check assignability (skip for 'any' since anything is assignable to any,
+                    // and skip for TypeId::ERROR since the type annotation failed to resolve).
+                    // Note: we intentionally do NOT use type_contains_error() here because it
+                    // recursively traverses all method/property types — interfaces like String
+                    // have methods that reference unresolved lib types (e.g. Intl.CollatorOptions),
+                    // causing type_contains_error to return true even though the declared type
+                    // itself (String interface) is perfectly valid for assignability checking.
+                    if declared_type != TypeId::ANY && declared_type != TypeId::ERROR {
+                        // Augment function initializer with expando properties (suppresses spurious TS2741).
+                        let checked_init_type = if initializer_is_function
+                            && let Some(ref name) = var_name
+                            && let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx)
+                        {
+                            checker.augment_callable_type_with_expandos(
+                                name,
+                                sym_id,
+                                init_type_for_relation,
+                            )
+                        } else {
+                            init_type_for_relation
+                        };
+                        if let Some((source_level, target_level)) =
+                            checker.constructor_accessibility_mismatch_for_var_decl(var_decl)
+                        {
+                            checker.error_constructor_accessibility_not_assignable(
+                                checked_init_type,
+                                declared_type,
+                                source_level,
+                                target_level,
+                                decl_idx,
+                            );
+                        } else if is_destructuring {
+                            // For destructuring patterns, try element-level elaboration first
+                            // (tsc reports TS2322 on each mismatching element), then fall back
+                            // to a generic TS2322 error.
+                            if !checker.try_elaborate_initializer_elements(
+                                checked_init_type,
+                                declared_type,
+                                var_decl.initializer,
+                            ) {
+                                // For object-literal initializers, try per-property elaboration
+                                // before the generic fallback. tsc reports TS2322 per mismatching
+                                // property (e.g. `var {a}: {a: number} = {a: true}` → error at
+                                // `a` in the RHS literal), not a single error at the binding
+                                // pattern. Mirror the same guard used in the non-destructuring
+                                // path (lines below).
+                                let elaborated_obj = checker
+                                    .initializer_reaches_object_literal_through_wrappers(
+                                        var_decl.initializer,
+                                    )
+                                    && !checker.is_assignable_to(checked_init_type, declared_type)
+                                    && checker
+                                        .try_elaborate_object_literal_properties_for_var_init(
+                                            var_decl.initializer,
+                                            declared_type,
+                                        );
+                                if !elaborated_obj {
+                                    let skip_generic_outer_error = checker
+                                        .ctx
+                                        .arena
+                                        .get(var_decl.name)
+                                        .and_then(|pattern_node| {
+                                            checker.ctx.arena.get_binding_pattern(pattern_node)
+                                        })
+                                        .is_some_and(|pattern| {
+                                            pattern.elements.nodes.is_empty()
+                                                && var_decl.type_annotation.is_some()
+                                        });
+                                    if !skip_generic_outer_error {
+                                        let _ = checker.check_assignable_or_report_generic_at(
+                                            checked_init_type,
+                                            declared_type,
+                                            var_decl.initializer,
+                                            decl_idx,
+                                        );
+                                    }
+                                }
+                            }
+                        } else {
+                            let excess_property_target = if var_decl.type_annotation.is_some() {
+                                checker
+                                    .excess_property_target_from_type_annotation(
+                                        var_decl.type_annotation,
+                                    )
+                                    .unwrap_or(declared_type)
+                            } else {
+                                declared_type
+                            };
+                            let handled_discriminated = checker
+                                .try_discriminated_union_excess_check(
+                                    checked_init_type,
+                                    excess_property_target,
+                                    var_decl.initializer,
+                                );
+                            if handled_discriminated {
+                                // Discriminated union excess property check handled the error.
+                                // tsc reports TS2353 against the narrowed member instead of
+                                // a generic TS2322 for these cases.
+                            } else {
+                                let elaborated_elements = checker
+                                    .try_elaborate_initializer_elements(
+                                        checked_init_type,
+                                        declared_type,
+                                        var_decl.initializer,
+                                    );
+                                if elaborated_elements {
+                                    // Elaboration emitted per-element TS2322 errors on the specific
+                                    // mismatching array/tuple elements. Skip the generic TS2322.
+                                } else if function_initializer_body_has_error {
+                                    // The function initializer already produced the canonical body
+                                    // diagnostic (for example on an expression-bodied arrow or
+                                    // block-body function with return statement errors). Skip
+                                    // the redundant outer assignment TS2322 and elaboration.
+                                } else if initializer_is_function
+                                    && jsdoc_declared_type.is_some()
+                                    && checker.async_function_jsdoc_return_type_suppression(
+                                        checked_init_type,
+                                        declared_type,
+                                    )
+                                {
+                                    // Async function with JSDoc non-Promise return type:
+                                    // tsc reports TS1064 for the async/return-type mismatch
+                                    // and checks body return statements, but does NOT emit
+                                    // TS2322 at the assignment level for the Promise wrapping
+                                    // difference.
+                                } else if initializer_is_function
+                                    && !checker.is_assignable_to(checked_init_type, declared_type)
+                                    && checker.try_elaborate_assignment_source_error(
+                                        var_decl.initializer,
+                                        declared_type,
+                                    )
+                                {
+                                    // Function initializer return elaboration emitted the canonical
+                                    // nested TS2322 for a mismatching returned literal/expression.
+                                } else {
+                                    // TS2353 (excess property) takes priority over TS2741/TS2322.
+                                    let diags_before = checker.ctx.diagnostics.len();
+                                    checker.check_object_literal_excess_properties(
+                                        checked_init_type,
+                                        excess_property_target,
+                                        var_decl.initializer,
+                                    );
+                                    if checker.ctx.diagnostics.len() == diags_before {
+                                        // to an index-signature type) instead of on the outer assignment.
+                                        // Only attempt elaboration when overall assignment fails AND
+                                        // the initializer reaches an object literal through paren or
+                                        // comma-expression wrappers (e.g. `var x: T = (void 0, {...})`).
+                                        // The wrapper gate is required: calling `is_assignable_to`
+                                        // on unrelated initializers (`null as any`, identifiers, ...)
+                                        // has cache side-effects that perturb downstream JSX and
+                                        // contextual-typing decisions (`callsOnComplexSignatures`).
+                                        if checker
+                                            .initializer_reaches_object_literal_through_wrappers(
+                                                var_decl.initializer,
+                                            )
+                                            && !checker
+                                                .is_assignable_to(checked_init_type, declared_type)
+                                            && checker.try_elaborate_object_literal_properties_for_var_init(
+                                                var_decl.initializer,
+                                                declared_type,
+                                            )
+                                        {
+                                        } else {
+                                            // Disable callable-with-type-params suppression
+                                            // for variable declarations. The suppression is
+                                            // designed for class member checks (TS2416/TS2720)
+                                            // but incorrectly hides real TS2322 errors when
+                                            // a callable with outer-scope type params is
+                                            // assigned to a concrete callable target.
+                                            // (e.g., (cb: (x: string, ...rest: T) => void) => void
+                                            //   vs (cb: (...args: never) => void) => void)
+                                            if jsdoc_new_expression_relation
+                                                && !checker.is_assignable_to(
+                                                    checked_init_type,
+                                                    declared_type,
+                                                )
+                                            {
+                                                checker.error_type_not_assignable_generic_at(
+                                                    checked_init_type,
+                                                    declared_type,
+                                                    decl_idx,
+                                                );
+                                            } else if !checker
+                                                .type_contains_invalid_mapped_key_type(declared_type)
+                                            {
+                                                checker.ctx.skip_callable_type_param_suppression.set(true);
+                                                // Match tsc: explicit type assertions (`as`/`<T>`/`satisfies`)
+                                                // on the initializer are opaque for elaboration — anchor at
+                                                // the binding with outer types rather than drilling.
+                                                let _ = if checker.initializer_is_type_assertion(var_decl.initializer) {
+                                                    checker.check_assignable_or_report_at_without_source_elaboration(
+                                                        checked_init_type, declared_type, var_decl.initializer, decl_idx,
+                                                    )
+                                                } else if remapped_mapped_initializer {
+                                                    checker.error_type_not_assignable_generic_at(
+                                                        checked_init_type, declared_type, decl_idx,
+                                                    );
+                                                    false
+                                                } else {
+                                                    checker.check_assignable_or_report_at(
+                                                        checked_init_type, declared_type, var_decl.initializer, decl_idx,
+                                                    )
+                                                };
+                                                checker.ctx.skip_callable_type_param_suppression.set(false);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Note: Freshness is tracked by the TypeId flags.
+                    // Fresh vs non-fresh object types are interned distinctly.
+                }
+                // `const k: unique symbol = Symbol()` — create a proper UniqueSymbol
+                // type using the variable's binder symbol as identity.
+                if declared_type == TypeId::SYMBOL
+                    && checker.is_const_variable_declaration(decl_idx)
+                    && checker.is_unique_symbol_type_annotation(var_decl.type_annotation)
+                    && let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx)
+                {
+                    return checker
+                        .ctx
+                        .types
+                        .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
+                }
+                // Type annotation determines the final type
+                return declared_type;
+            }
+            // No type annotation - infer from initializer
+            if var_decl.initializer.is_some() {
+                checker.report_malformed_jsdoc_satisfies_tags(decl_idx);
+                checker.report_duplicate_jsdoc_satisfies_tags(decl_idx);
+                if let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx)
+                    && let Some(enum_element_type) =
+                        checker.jsdoc_enum_annotation_type_for_symbol_decl(sym_id, decl_idx)
+                {
+                    checker.check_jsdoc_enum_initializer_values(
+                        var_decl.initializer,
+                        enum_element_type,
+                    );
+                }
+                // JSDoc @satisfies on variable declarations: provide contextual type
+                // for the initializer so that object literal methods and arrow function
+                // parameters get contextually typed from the satisfies type.
+                // This mirrors the `satisfies Expr` TypeScript syntax behavior.
+                let satisfies_info = checker.jsdoc_satisfies_annotation_with_pos(decl_idx);
+                if let Some((sat_type, keyword_pos)) = satisfies_info {
+                    let request = TypingRequest::with_contextual_type(sat_type);
+                    let init_type =
+                        checker.get_type_of_node_with_request(var_decl.initializer, &request);
+                    // Check satisfies assignability
+                    checker.ensure_relation_input_ready(init_type);
+                    checker.ensure_relation_input_ready(sat_type);
+                    if !checker.type_contains_error(sat_type) {
+                        let _ = checker.check_satisfies_assignable_or_report(
+                            init_type,
+                            sat_type,
+                            var_decl.initializer,
+                            Some(keyword_pos),
+                        );
+                    }
+                    return init_type;
+                }
+                checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
+                // When the binding pattern contains array sub-patterns and the
+                // initializer has matching array literals, provide a contextual type
+                // so array literals produce positional (tuple) types instead of widened
+                // union arrays.  This matches tsc: `var [a, b] = [1, "hello"]` infers
+                // a=number, b=string (tuple), not a=string|number (array).
+                let request = if is_destructuring {
+                    checker.declaration_pattern_initializer_request(
+                        var_decl.name,
+                        var_decl.initializer,
+                        typing_request,
+                    )
+                } else {
+                    checker.redeclaration_initializer_request(
+                        decl_idx,
+                        var_decl.name,
+                        var_decl.initializer,
+                    )
+                };
+                let preserve_initializer_overload_diagnostics = checker
+                    .ctx
+                    .arena
+                    .kind_at(var_decl.name)
+                    .is_some_and(|kind| kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+                    && !checker.initializer_supports_binding_pattern_context(
+                        var_decl.name,
+                        var_decl.initializer,
+                    );
+                if preserve_initializer_overload_diagnostics {
+                    checker.invalidate_expression_for_contextual_retry(var_decl.initializer);
+                }
+                let prev_preserve_overloads = checker
+                    .ctx
+                    .preserve_destructuring_initializer_overload_diagnostics;
+                checker
+                    .ctx
+                    .preserve_destructuring_initializer_overload_diagnostics =
+                    prev_preserve_overloads || preserve_initializer_overload_diagnostics;
+                let mut init_type =
+                    checker.get_type_of_node_with_request(var_decl.initializer, &request);
+                checker
+                    .ctx
+                    .preserve_destructuring_initializer_overload_diagnostics =
+                    prev_preserve_overloads;
+                // TypeScript treats unannotated empty-array declaration initializers
+                // (`let/var/const x = []`) as evolving-any arrays for subsequent writes.
+                // Keep expression-level `[]` behavior unchanged by only applying this to
+                // direct declaration initializers.
+                let init_is_direct_empty_array = checker
+                    .ctx
+                    .arena
+                    .get(var_decl.initializer)
+                    .is_some_and(|init_node| {
+                        init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            && checker
+                                .ctx
+                                .arena
+                                .get_literal_expr(init_node)
+                                .is_some_and(|lit| lit.elements.nodes.is_empty())
+                    });
+                if init_is_direct_empty_array
+                    && query::array_element_type(checker.ctx.types, init_type)
+                        == Some(TypeId::NEVER)
+                {
+                    init_type = checker.ctx.types.factory().array(TypeId::ANY);
+                }
+                // When strictNullChecks is off, undefined and null widen to any
+                // (TypeScript treats `var x = undefined` as `any` without strict)
+                if !checker.ctx.strict_null_checks()
+                    && (init_type == TypeId::UNDEFINED || init_type == TypeId::NULL)
+                {
+                    return TypeId::ANY;
+                }
+                let direct_nullish_initializer = checker
+                    .literal_type_from_initializer(var_decl.initializer)
+                    .is_some_and(|ty| ty == TypeId::UNDEFINED || ty == TypeId::NULL);
+                // Under noImplicitAny, mutable unannotated bindings initialized with
+                // `undefined`/`null` should behave like evolving-any variables so later
+                // assignments don't produce TS2322 (TypeScript reports implicit-any diagnostics).
+                if checker.ctx.no_implicit_any()
+                    && !checker.is_const_variable_declaration(decl_idx)
+                    && var_decl.type_annotation.is_none()
+                    && direct_nullish_initializer
+                    && (init_type == TypeId::UNDEFINED || init_type == TypeId::NULL)
+                {
+                    return TypeId::ANY;
+                }
+                // Note: Freshness is tracked by the TypeId flags.
+                // Fresh vs non-fresh object types are interned distinctly.
+                if checker.is_const_variable_declaration(decl_idx) {
+                    // When the initializer type is `any` or `unknown` (e.g. from
+                    // a JSDoc `@type {*}` cast), the assertion determines the type.
+                    // `literal_type_from_initializer` looks through parenthesized
+                    // expressions and would find the inner literal (`null`), incorrectly
+                    // overriding the cast result.
+                    if init_type != TypeId::ANY
+                        && init_type != TypeId::UNKNOWN
+                        && let Some(literal_type) =
+                            checker.literal_type_from_initializer(var_decl.initializer)
+                    {
+                        return literal_type;
+                    }
+                    // `const k = Symbol()` / `const k = Symbol.for(...)` — infer
+                    // unique symbol type. In TypeScript, unannotated const
+                    // declarations initialized with global symbol factory calls get
+                    // a unique symbol type (typeof k), not the general `symbol` type.
+                    if (checker.is_symbol_call_initializer(var_decl.initializer)
+                        || checker.is_symbol_for_call_initializer(var_decl.initializer))
+                        && let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx)
+                    {
+                        return checker
+                            .ctx
+                            .types
+                            .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
+                    }
+                    return init_type;
+                }
+                // Only widen when the initializer is a "fresh" literal expression
+                // (direct literal in source code). Types from variable references,
+                // narrowing, or computed expressions are "non-fresh" and NOT widened.
+                // EXCEPTION: Enum member types are always widened for mutable bindings.
+                let is_enum_member = checker.is_enum_member_type_for_widening(init_type);
+                let widened = if is_enum_member
+                    || checker.is_fresh_literal_expression(var_decl.initializer)
+                {
+                    checker.widen_initializer_type_for_mutable_binding(init_type)
+                } else {
+                    init_type
+                };
+                // Route null/undefined widening through the flow observation boundary.
+                flow_boundary::widen_null_undefined_to_any(
+                    checker.ctx.types,
+                    widened,
+                    checker.ctx.strict_null_checks(),
+                )
+            } else {
+                // For for-in/for-of loop variables, the element type has already been cached
+                // by assign_for_in_of_initializer_types. Use that instead of defaulting to any.
+                if let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx)
+                    && let Some(&cached) = checker.ctx.symbol_types.get(&sym_id)
+                    && cached != TypeId::ANY
+                    && cached != TypeId::ERROR
+                {
+                    return cached;
+                }
+                declared_type
+            }
+        };
+
+        // TS7031: For destructuring patterns without type annotation or initializer,
+        // emit TS7031 for each leaf binding element under noImplicitAny.
+        // This must be done before the symbol check since destructuring declarations
+        // don't get a symbol assigned to the declaration node itself.
+        //
+        // Skip for:
+        // - catch clause variables (type is implicitly `any` or `unknown`)
+        // - for-in/for-of loop variables (type comes from the iterable expression)
+        if self.ctx.no_implicit_any()
+            && !self.ctx.has_real_syntax_errors
+            && !is_catch_variable
+            && var_decl.type_annotation.is_none()
+            && var_decl.initializer.is_none()
+            && !self.is_for_in_or_of_variable_declaration(decl_idx)
+        {
+            let is_destructuring_pattern =
+                self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
+                    name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                });
+            if is_destructuring_pattern {
+                self.emit_implicit_any_for_var_destructuring(var_decl.name);
+            }
+        }
+
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
+            self.push_symbol_dependency(sym_id, true);
+
+            // When a `var` redeclares a constructor parameter (e.g., `constructor(options?: number) { var options = ... }`),
+            // the parameter and var share the same symbol. If the var's initializer references
+            // the variable (e.g., `var options = (options || 0)`), the symbol resolution detects
+            // circularity and returns ERROR. To match tsc behavior, pre-seed the symbol type
+            // cache with the parameter's declared type before computing the var's type. This
+            // ensures the initializer resolves the identifier to the parameter's type.
+            if !self.ctx.symbol_types.contains_key(&sym_id)
+                && var_decl.initializer.is_some()
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                for &other_decl in &symbol.declarations {
+                    if other_decl == decl_idx {
+                        break;
+                    }
+                    if other_decl.is_some()
+                        && let Some(other_node) = self.ctx.arena.get(other_decl)
+                        && other_node.kind == syntax_kind_ext::PARAMETER
+                        && let Some(param) = self.ctx.arena.get_parameter(other_node)
+                    {
+                        let mut param_type = if param.type_annotation.is_some() {
+                            self.get_type_from_type_node(param.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
+                        if param.dot_dot_dot_token {
+                            param_type = self.ctx.types.array(param_type);
+                        }
+                        if param.question_token && param_type != TypeId::ANY {
+                            param_type = self.ctx.types.union2(param_type, TypeId::UNDEFINED);
+                        }
+                        self.ctx.symbol_types.insert(sym_id, param_type);
+                        break;
+                    }
+                }
+            }
+
+            // Snapshot whether symbol was already cached BEFORE compute_final_type.
+            // If it was, any ERROR in the cache is from earlier resolution (e.g., use-before-def),
+            // not from circular detection during this declaration's initializer processing.
+            let sym_already_cached = self.ctx.symbol_types.contains_key(&sym_id);
+            let var_decl_snap =
+                crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
+            let mut final_type = compute_final_type(self);
+            // Check if get_type_of_symbol cached ERROR specifically DURING compute_final_type.
+            // This happens when the initializer (directly or indirectly) references the variable,
+            // causing the node-level cycle detection to return ERROR.
+            let sym_cached_as_error =
+                !sym_already_cached && self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
+            let circular_return_sites = if self.ctx.no_implicit_any()
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+            {
+                let consumed = self
+                    .consume_circular_return_sites_for_initializer(sym_id, var_decl.initializer);
+                self.retain_immediate_initializer_circular_return_sites(
+                    var_decl.initializer,
+                    consumed,
+                )
+            } else {
+                Vec::new()
+            };
+            let has_recorded_circular_return = !circular_return_sites.is_empty();
+
+            // TS2502: 'x' is referenced directly or indirectly in its own type annotation.
+            // Skip this check when the variable already had a type from a prior value declaration
+            // (including merged parameters). In that case, `typeof x` resolves to the
+            // previously-established type, not circularly to itself.
+            // This matches tsc behavior where `var p: Point; var p: typeof p;` is valid and
+            // where `function f(x: A) { var x: typeof x; }` uses the parameter surface.
+            //
+            // Two variants are used intentionally:
+            // - ts2502: excludes alias-style declarations (imports) so that `typeof a` inside
+            //   a same-named `const a` is treated as circular (crashDeclareGlobalTypeofExport).
+            // - general: includes imports so that module-augmentation declarations cannot
+            //   overwrite the JS-export type established by `import { a }`.
+            let is_redeclaration_for_ts2502 = self.has_prior_value_declaration_for_ts2502(decl_idx);
+            let is_redeclaration = self.has_prior_value_declaration_for_symbol(decl_idx);
+            let is_js_require_binding = self.ctx.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && var_decl.initializer.is_some()
+                && self
+                    .get_require_module_specifier(var_decl.initializer)
+                    .is_some();
+            let mut type_annotation_circular_for_ts2502 = false;
+            if var_decl.type_annotation.is_some() && !is_redeclaration_for_ts2502 {
+                let accessor_circular =
+                    self.type_literal_has_circular_accessor_reference(var_decl.type_annotation);
+                // Try AST-based check first (catches complex circularities that confuse the solver)
+                let ast_circular = !accessor_circular
+                    && self
+                        .find_circular_reference_in_type_node(
+                            var_decl.type_annotation,
+                            sym_id,
+                            false,
+                        )
+                        .is_some();
+                // Then try semantic check
+                let semantic_circular = !accessor_circular
+                    && !ast_circular
+                    && query::has_type_query_for_symbol(
+                        self.ctx.types,
+                        final_type,
+                        sym_id.0,
+                        |ty| self.resolve_lazy_type(ty),
+                    );
+                // Third check: transitive typeof circularity.
+                // E.g., `var d: typeof e; var e: typeof d;` — the AST check only
+                // sees `typeof e` doesn't directly reference `d`, but following the
+                // chain through `e`'s annotation reveals `typeof d`.
+                let transitive_circular = !accessor_circular
+                    && !ast_circular
+                    && !semantic_circular
+                    && self.check_transitive_type_query_circularity(final_type, sym_id);
+                if !accessor_circular
+                    && (ast_circular || semantic_circular || transitive_circular)
+                    && let Some(ref name) = var_name
+                {
+                    let message = format!(
+                        "'{name}' is referenced directly or indirectly in its own type annotation."
+                    );
+                    self.error_at_node(var_decl.name, &message, 2502);
+                    type_annotation_circular_for_ts2502 = true;
+                    final_type = TypeId::ANY;
+                }
+            }
+
+            if !self.ctx.compiler_options.sound_mode {
+                final_type =
+                    crate::query_boundaries::common::widen_freshness(self.ctx.types, final_type);
+            }
+            self.pop_symbol_dependency();
+
+            // FIX: Always cache the widened type, overwriting any fresh type that was
+            // cached during compute_final_type. This prevents "Zombie Freshness" where
+            // get_type_of_symbol returns the stale fresh type instead of the widened type.
+            //
+            // EXCEPT: For merged interface+variable symbols (e.g., `interface Error` +
+            // `declare var Error: ErrorConstructor`), get_type_of_symbol already cached
+            // the INTERFACE type (which is the correct type for type-position usage like
+            // `var e: Error`). The variable declaration's type annotation resolves to
+            // the constructor/value type, so overwriting would corrupt the cached interface
+            // type. Value-position resolution (`new Error()`) is handled separately by
+            // `get_type_of_identifier` which has its own merged-symbol path.
+            //
+            // EXCEPT: For merged type-alias+variable symbols (e.g.,
+            // `const X = {...} as const; type X = typeof X[keyof typeof X]`),
+            // `symbol_types[X]` must hold the TYPE ALIAS body type (the result of
+            // evaluating the alias), not the VALUE type of the const declaration.
+            // Type-position references (`const d: X = 0`) must resolve to the alias
+            // body type; value-position `typeof X` resolution is handled separately
+            // through `merged_value_types` in `get_type_from_type_query`.
+            {
+                let (is_merged_named_type_with_variable, is_canonical_value_declaration) = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map(|s| {
+                        let merged = (s.flags & tsz_binder::symbol_flags::INTERFACE != 0
+                            || s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+                            && s.flags
+                                & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                                    | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+                                != 0;
+                        let canonical = s.value_declaration == decl_idx;
+                        (merged, canonical)
+                    })
+                    .unwrap_or((false, false));
+                // For var redeclarations, do NOT overwrite the symbol type.
+                // The first declaration's type is canonical. Overwriting with a
+                // subsequent declaration's inferred type can corrupt recursive
+                // type resolution chains (e.g., `typeof k` indexers resolve to
+                // `any` after the symbol type is overwritten by a redeclaration).
+                if !is_merged_named_type_with_variable
+                    && (is_canonical_value_declaration || is_js_require_binding)
+                    && (!is_redeclaration || is_js_require_binding)
+                {
+                    // Augment callable types with expando properties before caching.
+                    if let Some(ref name) = var_name {
+                        final_type =
+                            self.augment_callable_type_with_expandos(name, sym_id, final_type);
+                        if self.ctx.is_js_file() {
+                            final_type =
+                                self.augment_object_type_with_define_properties(name, final_type);
+                            if var_decl.initializer.is_some()
+                                && self
+                                    .direct_commonjs_module_export_assignment_rhs(
+                                        self.ctx.arena,
+                                        var_decl.initializer,
+                                    )
+                                    .is_some()
+                            {
+                                final_type = self.ctx.types.factory().intersection2(
+                                    final_type,
+                                    self.current_file_commonjs_module_exports_namespace_type(),
+                                );
+                            }
+                        }
+                    }
+                    self.cache_symbol_type(sym_id, final_type);
+                }
+            }
+
+            // FIX: Update node_types cache with the widened type
+            self.ctx.node_types.insert(decl_idx.0, final_type);
+            if var_decl.name.is_some() {
+                self.ctx.node_types.insert(var_decl.name.0, final_type);
+            }
+
+            // Capture the raw declared type of THIS specific declaration for TS2403.
+            // A bare `var y;` (no annotation, no initializer) always declares `any`,
+            // even if the symbol type was previously cached as a concrete type.
+            // `compute_final_type` may return a cached type for for-in/for-of loops,
+            // so we must override that for bare redeclarations.
+            let is_in_for_in_or_for_of = self.is_var_decl_in_for_in_or_for_of(decl_idx);
+            let raw_declared_type = if type_annotation_circular_for_ts2502 {
+                TypeId::ANY
+            } else if let Some(jsdoc_type) = jsdoc_declared_type {
+                jsdoc_type
+            } else if var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_none()
+                && !is_in_for_in_or_for_of
+            {
+                TypeId::ANY
+            } else if var_decl.type_annotation.is_none() && var_decl.initializer.is_some() {
+                // For TS2403, when the initializer is a bare enum identifier (e.g., `var x = E`),
+                // tsc treats the declared type as `typeof E` (the enum object type), not `E`.
+                // This ensures `var x = E; var x = E.a;` correctly triggers TS2403 because
+                // `typeof E` and `E` are not type-identical.
+                self.initializer_ts2403_type(var_decl.initializer, final_type)
+            } else {
+                // When the type annotation is `typeof EnumSymbol`, resolve to the enum
+                // object type. This matches tsc where `typeof E` is the enum object
+                // shape, ensuring `var e = E; var e: typeof E;` is compatible.
+                self.annotation_ts2403_type(var_decl.type_annotation, final_type)
+            };
+            let annotation_names_global_augmentation = var_decl.initializer.is_none()
+                && var_decl.type_annotation.is_some()
+                && self
+                    .ctx
+                    .arena
+                    .get(var_decl.type_annotation)
+                    .and_then(|node| self.ctx.arena.get_type_ref(node))
+                    .and_then(|type_ref| self.ctx.arena.get(type_ref.type_name))
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_some_and(|ident| {
+                        self.ctx
+                            .binder
+                            .global_augmentations
+                            .contains_key(ident.escaped_text.as_str())
+                    });
+            // Variables without an initializer/annotation can still get a contextual type in some
+            // constructs (notably `for-in` / `for-of` initializers). In those cases, the symbol
+            // type may already be cached from the contextual typing logic; prefer that over the
+            // default `any` so we match tsc and avoid spurious noImplicitAny errors.
+            if var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_none()
+                && final_type == TypeId::ANY
+                && let Some(inferred) = self.ctx.symbol_types.get(&sym_id).copied()
+                && inferred != TypeId::ERROR
+            {
+                final_type = inferred;
+            }
+            // TS7005: Variable implicitly has an 'any' type
+            // Report this error when noImplicitAny is enabled and the variable has no type annotation
+            // and the inferred type is 'any'.
+            // Skip destructuring patterns - TypeScript doesn't emit TS7005 for them
+            // because binding elements with default values can infer their types.
+            //
+            // For non-ambient declarations, `symbol_types` guards against emitting
+            // TS7005 for control-flow typed variables (e.g., `var x;` later assigned).
+            // For ambient declarations (`declare var foo;`), there's no control flow
+            // so we always emit when the type is implicitly `any`.
+            let is_ambient = self.is_ambient_declaration(decl_idx);
+            let is_exported = self.is_declaration_exported(self.ctx.arena, decl_idx);
+            if is_exported {
+                if var_decl.type_annotation.is_some() {
+                    self.maybe_report_private_name_in_exported_variable_type_annotation(
+                        var_decl.name,
+                        var_name.as_deref().unwrap_or(""),
+                        var_decl.type_annotation,
+                    );
+                } else {
+                    self.maybe_report_unnameable_exported_variable_type(
+                        var_decl.name,
+                        var_name.as_deref().unwrap_or(""),
+                        var_decl.initializer,
+                        final_type,
+                    );
+                }
+            }
+            // TS4094: Property of exported anonymous class type may not be private or protected.
+            if is_exported && var_decl.initializer.is_some() {
+                self.maybe_report_exported_anonymous_class_private_members(
+                    var_decl.name,
+                    var_decl.initializer,
+                );
+            }
+            let emit_declaration_site_implicit_any = (self.is_const_variable_declaration(decl_idx)
+                && !is_in_for_in_or_for_of)
+                || is_exported
+                || (is_ambient && !self.ctx.is_declaration_file());
+            if self.ctx.no_implicit_any()
+                && !self.ctx.has_real_syntax_errors
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_none()
+                && raw_declared_type == TypeId::ANY
+            {
+                // Check if the variable name is a destructuring pattern
+                let is_destructuring_pattern =
+                    self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
+                        name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    });
+                if !is_destructuring_pattern && let Some(ref name) = var_name {
+                    if emit_declaration_site_implicit_any {
+                        // TS7005: exported declarations and ambient declarations in `.ts` files
+                        // emit at the declaration site. Other source variables may still acquire
+                        // a concrete type from control flow or loop-element inference.
+                        // In `.d.ts` files, plain ambient namespace members stay suppressed,
+                        // but exported bare variables still report TS7005.
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            var_decl.name,
+                            diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
+                            &[name, "any"],
+                        );
+                    } else if !sym_already_cached {
+                        // Non-ambient: defer decision between TS7034 and no-error.
+                        // Bare declarations start as implicit-any even if later
+                        // assignments let flow analysis recover a concrete type.
+                        // TS7034 fires only when a nested capture observes the
+                        // variable before it becomes definitely assigned.
+                        self.ctx.pending_implicit_any_vars.insert(
+                            sym_id,
+                            PendingImplicitAnyVar {
+                                name_node: var_decl.name,
+                                kind: PendingImplicitAnyKind::CaptureOnly,
+                            },
+                        );
+                    }
+                }
+            }
+            let direct_empty_array_implicit_any = self.ctx.no_implicit_any()
+                && !self.ctx.has_real_syntax_errors
+                && !sym_already_cached
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+                && self
+                    .ctx
+                    .arena
+                    .get(var_decl.initializer)
+                    .is_some_and(|init_node| {
+                        init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            && self
+                                .ctx
+                                .arena
+                                .get_literal_expr(init_node)
+                                .is_some_and(|lit| lit.elements.nodes.is_empty())
+                    })
+                && query::array_element_type(self.ctx.types, final_type) == Some(TypeId::ANY);
+            if direct_empty_array_implicit_any {
+                let is_destructuring_pattern =
+                    self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
+                        name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    });
+                if !is_destructuring_pattern {
+                    self.ctx.pending_implicit_any_vars.insert(
+                        sym_id,
+                        PendingImplicitAnyVar {
+                            name_node: var_decl.name,
+                            kind: PendingImplicitAnyKind::EvolvingArray,
+                        },
+                    );
+                }
+            }
+
+            // TS7022/TS7023: Circular initializer/return type implicit any diagnostics.
+            // Gated by noImplicitAny (like all TS7xxx implicit-any diagnostics).
+            //
+            // Detection: During compute_final_type, if get_type_of_symbol was called for
+            // this variable's symbol and cached ERROR (sym_cached_as_error), it means the
+            // initializer references the variable creating a circular dependency.
+            //
+            // TS7022: Structural circularity — `var a = { f: a }`.
+            // TS7023: Return-type circularity — `var f = () => f()` or
+            //         `var f = function() { return f(); }`.
+            let init_kind = self.ctx.arena.kind_at(var_decl.initializer);
+            let is_direct_deferred_initializer = init_kind.is_some_and(|kind| {
+                matches!(
+                    kind,
+                    syntax_kind_ext::FUNCTION_EXPRESSION
+                        | syntax_kind_ext::ARROW_FUNCTION
+                        | syntax_kind_ext::CLASS_EXPRESSION
+                )
+            });
+            // Check once whether all self-references are inside deferred contexts
+            // (getter/setter/function/arrow/method/class bodies). Used by both
+            // TS7022 paths to suppress false circularity diagnostics.
+            let has_non_deferred_self_reference = self
+                .initializer_has_non_deferred_self_reference(var_decl.initializer, sym_id)
+                || var_name.as_ref().is_some_and(|name| {
+                    self.initializer_has_non_deferred_self_reference_by_name(
+                        var_decl.initializer,
+                        name,
+                    )
+                });
+            let all_refs_deferred = !has_non_deferred_self_reference;
+            let has_type_wrapper = init_kind.is_some_and(|k| {
+                matches!(
+                    k,
+                    syntax_kind_ext::SATISFIES_EXPRESSION | syntax_kind_ext::AS_EXPRESSION
+                )
+            });
+            let has_jsdoc_satisfies_wrapper = {
+                self.has_satisfies_jsdoc_comment(decl_idx)
+                    || self.has_satisfies_jsdoc_comment(var_decl.initializer)
+            };
+            // When a var declaration merges with a parameter (e.g.,
+            // `constructor(options?) { var options = (options || 0); }`),
+            // the initializer reference to the parameter is not circular
+            // because the parameter already has a known type.
+            let is_merged_with_parameter =
+                self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                    symbol.declarations.iter().any(|&d| {
+                        self.ctx
+                            .arena
+                            .get(d)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::PARAMETER)
+                    })
+                });
+            let is_skip_circularity = init_kind
+                .is_some_and(|k| k == syntax_kind_ext::CLASS_EXPRESSION)
+                || has_type_wrapper
+                || has_jsdoc_satisfies_wrapper
+                || all_refs_deferred
+                || is_merged_with_parameter;
+            if self.ctx.no_implicit_any()
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+                && has_recorded_circular_return
+                && !has_jsdoc_satisfies_wrapper
+                && !has_type_wrapper
+                && !is_merged_with_parameter
+                && !is_direct_deferred_initializer
+            {
+                self.suppress_circular_initializer_relation_diagnostics(
+                    var_decl_snap,
+                    var_decl.initializer,
+                );
+                final_type = TypeId::ANY;
+                if let Some(ref name) = var_name {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        var_decl.name,
+                        diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                        &[name],
+                    );
+                    for &site_idx in &circular_return_sites {
+                        self.emit_circular_return_site_diagnostic(
+                            site_idx,
+                            Some(name.as_str()),
+                            var_decl.name,
+                            var_decl.initializer,
+                        );
+                    }
+                }
+            } else if self.ctx.no_implicit_any()
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+                && is_direct_deferred_initializer
+            {
+                let has_wrapped_self_call = self
+                    .function_like_initializer_has_wrapped_self_call_in_return_expression(
+                        var_decl.initializer,
+                        sym_id,
+                    );
+                if has_wrapped_self_call {
+                    final_type = TypeId::ANY;
+                    if let Some(ref name) = var_name {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            var_decl.name,
+                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                            &[name],
+                        );
+                    }
+                }
+            } else if self.ctx.no_implicit_any()
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+                && !is_skip_circularity
+                && sym_cached_as_error
+            {
+                // TS7022: The initializer has a non-deferred self-reference AND the
+                // symbol was actually cached as ERROR during resolution (confirming
+                // semantic circularity, not just an AST name match to a different
+                // entity like an enum or namespace with the same name).
+                final_type = TypeId::ANY;
+                if let Some(ref name) = var_name {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        var_decl.name,
+                        diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                        &[name],
+                    );
+                }
+            } else if self.ctx.no_implicit_any()
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+                && sym_cached_as_error
+                && self.type_contains_error(final_type)
+            {
+                // Class expressions resolve through the constructor type system.
+                // Self-references like `let C = class { foo() { return new C(); } }`
+                // are valid — skip circularity diagnostics for them.
+                //
+                // Object literals wrapped in `satisfies`/`as` have explicit type
+                // context, so getter self-references like
+                //   `const a = { get self() { return a; } } satisfies T`
+                // are valid and should NOT get TS7022.  Bare object literals
+                // like `var a = { f: a }` SHOULD still get TS7022.
+                //
+                // Self-references inside getter/setter/function/method bodies are
+                // deferred (lazily evaluated) and should NOT trigger TS7022.
+                // E.g., `const a = { get self() { return a; } }` or
+                //        `const C = object({ get parent() { return optional(C); } })`
+                if !is_skip_circularity {
+                    let is_deferred_initializer =
+                        self.ctx.arena.get(var_decl.initializer).is_some_and(|n| {
+                            matches!(
+                                n.kind,
+                                syntax_kind_ext::FUNCTION_EXPRESSION
+                                    | syntax_kind_ext::ARROW_FUNCTION
+                            )
+                        });
+                    if let Some(ref name) = var_name {
+                        use crate::diagnostics::diagnostic_codes;
+                        if is_deferred_initializer {
+                            // TS7023: Function/arrow initializer with circular return type.
+                            self.error_at_node_msg(
+                                var_decl.name,
+                                diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                                &[name],
+                            );
+                        } else {
+                            // TS7022: Structural circularity in initializer.
+                            self.error_at_node_msg(
+                                var_decl.name,
+                                diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                                &[name],
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Check for variable redeclaration in the current scope (TS2403).
+            // Note: This applies specifically to 'var' merging where types must match.
+            // let/const duplicates are caught earlier by the binder (TS2451).
+            // Skip TS2403 for mergeable declarations (namespace, enum, class, interface, function overloads).
+            // Bare declarations (`var x;` with no annotation/initializer) don't establish a
+            // type constraint and never trigger TS2403 in tsc.
+            //
+            // Non-checked JS files should not participate in TS2403 at all.
+            // tsc doesn't type-check JS files without checkJs, so they don't
+            // establish `var_decl_types` entries. Without this guard, a JS file
+            // processed before a TS file can set a bogus prev_type that causes
+            // false TS2403 on the TS file's declaration.
+            let is_non_checked_js = self.ctx.is_js_file() && !self.ctx.should_resolve_jsdoc();
+            // Exception: for-in/for-of loop variables (`for (var x in obj)`) ARE typed
+            // (string for for-in, element type for for-of) even without explicit annotation.
+            let is_bare_declaration = var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_none()
+                && !is_in_for_in_or_for_of;
+            let is_block_scoped = if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+                && let Some(parent) = self.ctx.arena.get(ext.parent)
+                && parent.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            {
+                let flags = parent.flags as u32;
+                use tsz_parser::parser::node_flags;
+                node_flags::is_block_scoped(flags)
+            } else {
+                false
+            };
+
+            // TS2403 only applies to non-block-scoped variables (var).
+            // Also skip when the var shares a block scope with a const/let of the same
+            // name — that case is TS2481 (handled by check_var_declared_names_not_shadowed).
+            let is_ts2481_case =
+                !is_block_scoped && self.is_var_shadowing_block_scoped_in_same_scope(decl_idx);
+            if !is_block_scoped && !is_ts2481_case {
+                // Non-exported variables inside namespace bodies are local to that body.
+                // They should not trigger TS2403 against exported variables of the same
+                // name from other (merged) namespace bodies, even if the binder merged
+                // their symbols.
+                let current_ns_export_status = self.var_decl_namespace_export_status(decl_idx);
+                let is_non_exported_ns_var = current_ns_export_status == Some(false);
+                // Skip TS2403 when declarations in the same namespace have
+                // different export visibility (one exported, one not). In tsc,
+                // these are separate symbols (locals vs exports table) and
+                // never compared for type identity.  TS2395 already covers
+                // the visibility conflict.
+                let has_ns_export_visibility_mismatch =
+                    if let Some(current_exported) = current_ns_export_status {
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            symbol.declarations.iter().any(|&other_decl| {
+                                other_decl != decl_idx
+                                    && other_decl.is_some()
+                                    && self.var_decl_namespace_export_status(other_decl)
+                                        == Some(!current_exported)
+                            })
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                let local_decl_count = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map(|symbol| {
+                        symbol
+                            .declarations
+                            .iter()
+                            .filter(|&&decl| decl.is_some())
+                            .count()
+                    })
+                    .unwrap_or(0);
+                if let Some(prev_type) = self.ctx.var_decl_types.get(&sym_id).copied() {
+                    if local_decl_count <= 1 {
+                        let refined = self.refine_var_decl_type(prev_type, final_type);
+                        if refined != prev_type && !is_non_checked_js {
+                            self.ctx.var_decl_types.insert(sym_id, refined);
+                        }
+                        return;
+                    }
+                    // Check if this is a mergeable declaration by looking at the node kind.
+                    // Mergeable declarations: namespace/module, enum, class, interface, function.
+                    // When these are declared with the same name, they merge instead of conflicting.
+                    let is_mergeable_declaration =
+                        if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                            matches!(
+                                decl_node.kind,
+                                syntax_kind_ext::MODULE_DECLARATION  // namespace/module
+                                | syntax_kind_ext::ENUM_DECLARATION // enum
+                                | syntax_kind_ext::CLASS_DECLARATION // class
+                                | syntax_kind_ext::INTERFACE_DECLARATION // interface
+                                | syntax_kind_ext::FUNCTION_DECLARATION // function
+                            )
+                        } else {
+                            false
+                        };
+                    // Skip TS2403 when the declarations are in different namespace body
+                    // blocks (ModuleBlock nodes) of the same merged namespace. TSC treats
+                    // each namespace body as a separate declaration context, so
+                    // `namespace A { export var x: number; }` and
+                    // `namespace A { export var x: string; }` don't conflict via TS2403.
+                    let is_cross_namespace_body = if let Some(symbol) =
+                        self.ctx.binder.get_symbol(sym_id)
+                    {
+                        symbol.declarations.iter().any(|&other_decl| {
+                            other_decl != decl_idx
+                                && other_decl.is_some()
+                                && self
+                                    .are_decls_in_different_namespace_bodies(decl_idx, other_decl)
+                        })
+                    } else {
+                        false
+                    };
+                    // Unchecked JS files do not participate in TS2403, but checked
+                    // JS (`// @ts-check` / checkJs) still uses redeclaration identity.
+                    if !is_mergeable_declaration
+                        && !has_ns_export_visibility_mismatch
+                        && !is_cross_namespace_body
+                        && !is_non_checked_js
+                        && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
+                    {
+                        if let Some(ref name) = var_name {
+                            self.error_subsequent_variable_declaration(
+                                name,
+                                prev_type,
+                                raw_declared_type,
+                                decl_idx,
+                            );
+                        }
+                    } else {
+                        let refined = self.refine_var_decl_type(prev_type, final_type);
+                        if refined != prev_type && !is_non_checked_js {
+                            self.ctx.var_decl_types.insert(sym_id, refined);
+                        }
+                    }
+                } else {
+                    // If this is the first time we see this variable in the current check run,
+                    // check if it has prior declarations (e.g. in lib.d.ts or earlier in the file)
+                    // that establish its type.
+                    let mut prior_type_found = None;
+                    let symbol_name = self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .map(|s| s.escaped_name.clone());
+                    // 1. Check lib contexts for prior declarations (e.g. 'var symbol' in lib.d.ts)
+                    // Extract data to avoid holding borrow on self during loop
+                    let types = self.ctx.types;
+                    let compiler_options = self.ctx.compiler_options.clone();
+                    let definition_store = self.ctx.definition_store.clone();
+                    let lib_contexts = self.ctx.lib_contexts.clone();
+                    let lib_contexts_data: Vec<_> = lib_contexts
+                        .iter()
+                        .map(|ctx| (ctx.arena.clone(), ctx.binder.clone()))
+                        .collect();
+                    // Only compare against lib declarations when the current variable
+                    // is at global file scope. Variables in non-global scopes are
+                    // distinct from lib declarations and never trigger TS2403:
+                    // - Module files (files with imports/exports are module-scoped)
+                    // - Namespace bodies (whether exported or not)
+                    // - Function scopes (e.g. `var top` vs global `window.top`)
+                    let is_in_namespace = current_ns_export_status.is_some();
+                    let is_in_function_scope = self.find_enclosing_function(decl_idx).is_some();
+                    let is_in_external_module = self.ctx.binder.is_external_module();
+                    if let Some(name) = symbol_name {
+                        for (arena, binder) in lib_contexts_data {
+                            // Lookup by name in lib binder to ensure we find the matching symbol
+                            // even if SymbolIds are not perfectly aligned across contexts.
+                            if let Some(lib_sym_id) = binder.file_locals.get(&name)
+                                && let Some(lib_sym) = binder.get_symbol(lib_sym_id)
+                            {
+                                // TS2403 only applies when the lib symbol has a VALUE
+                                // declaration (variable, function, etc.). Type-only symbols
+                                // (interfaces, type aliases) occupy a different declaration
+                                // space and never conflict with var declarations.
+                                use tsz_binder::symbols::symbol_flags;
+                                if !lib_sym.has_any_flags(symbol_flags::VALUE) {
+                                    continue;
+                                }
+                                for &lib_decl in &lib_sym.declarations {
+                                    if lib_decl.is_some()
+                                        && CheckerState::enter_cross_arena_delegation()
+                                    {
+                                        let mut lib_checker =
+                                            CheckerState::new_with_shared_def_store(
+                                                &arena,
+                                                &binder,
+                                                types,
+                                                "lib.d.ts".to_string(),
+                                                compiler_options.clone(),
+                                                definition_store.clone(),
+                                            );
+                                        // Ensure lib checker can resolve types from other lib files
+                                        lib_checker.ctx.lib_contexts = lib_contexts.clone();
+                                        let lib_type = lib_checker.get_type_of_node(lib_decl);
+                                        CheckerState::leave_cross_arena_delegation();
+                                        if !is_in_namespace && !is_in_external_module {
+                                            // Check compatibility (skip for bare declarations).
+                                            // Function-scoped variables shadow globals and
+                                            // never trigger TS2403 against lib types.
+                                            // Module-scoped variables don't merge with globals.
+                                            if !is_in_function_scope
+                                                && !is_js_require_binding
+                                                && !is_bare_declaration
+                                                && !is_non_checked_js
+                                                && !annotation_names_global_augmentation
+                                                && !self.are_var_decl_types_compatible(
+                                                    lib_type,
+                                                    raw_declared_type,
+                                                )
+                                                && let Some(ref name) = var_name
+                                            {
+                                                self.error_subsequent_variable_declaration(
+                                                    name,
+                                                    lib_type,
+                                                    raw_declared_type,
+                                                    decl_idx,
+                                                );
+                                            }
+                                            prior_type_found =
+                                                Some(if let Some(prev) = prior_type_found {
+                                                    self.refine_var_decl_type(prev, lib_type)
+                                                } else {
+                                                    lib_type
+                                                });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // 2. Check local declarations (in case of intra-file redeclaration)
+                    // Use source position to determine which declarations are "prior"
+                    // rather than relying on declaration-list order. Hoisted `var`
+                    // declarations are added to the symbol before parameters during
+                    // binding, which means a simple break-at-self misses parameter
+                    // declarations that appear earlier in source (but later in the list).
+                    let this_pos = self.ctx.arena.get(decl_idx).map_or(0, |n| n.pos);
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                        for &other_decl in &symbol.declarations {
+                            if other_decl == decl_idx {
+                                continue;
+                            }
+                            // Only check declarations that appear before us in source order.
+                            let other_pos =
+                                self.ctx.arena.get(other_decl).map_or(u32::MAX, |n| n.pos);
+                            if other_pos >= this_pos {
+                                continue;
+                            }
+                            // Skip block-scoped (let/const/using) prior declarations.
+                            // When const/let and var share a name (TS2451), they occupy
+                            // different scoping realms and should not trigger TS2403.
+                            if let Some(other_node) = self.ctx.arena.get(other_decl)
+                                && other_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                                && let Some(other_ext) = self.ctx.arena.get_extended(other_decl)
+                                && let Some(other_parent) = self.ctx.arena.get(other_ext.parent)
+                                && other_parent.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                            {
+                                let flags = other_parent.flags as u32;
+                                use tsz_parser::parser::node_flags;
+                                if node_flags::is_block_scoped(flags) {
+                                    continue;
+                                }
+                            }
+                            if other_decl.is_some() {
+                                // For merged global symbols, the declarations list may
+                                // contain NodeIndex values from OTHER files' arenas.
+                                // Accessing them in the current arena yields wrong nodes
+                                // (different declarations at the same index). Guard: verify
+                                // the node at other_decl resolves to a declaration with the
+                                // same name as our symbol. A name mismatch means the NodeIndex
+                                // is from a different file's arena.
+                                let name_matches = if let Some(ref expected_name) = var_name {
+                                    self.get_declaration_name_text(other_decl)
+                                        .is_some_and(|n| n == *expected_name)
+                                } else {
+                                    true // No name to compare, assume OK
+                                };
+                                if !name_matches {
+                                    continue;
+                                }
+                                let other_is_bare = self.is_bare_var_declaration_node(other_decl)
+                                    && !self.is_var_decl_in_for_in_or_for_of(other_decl);
+                                let other_type = if other_is_bare {
+                                    // Bare `var x;` declarations have type `any`.
+                                    // tsc treats them as establishing type `any` for TS2403.
+                                    TypeId::ANY
+                                } else {
+                                    let raw = self.get_type_of_node(other_decl);
+                                    // get_type_of_node may return ERROR for parameter nodes since
+                                    // they are not VariableDeclaration nodes. Compute the
+                                    // parameter's declared type from its type annotation and
+                                    // optional modifier so TS2403 can compare correctly.
+                                    if raw == TypeId::ERROR
+                                        && let Some(other_node) = self.ctx.arena.get(other_decl)
+                                        && other_node.kind == syntax_kind_ext::PARAMETER
+                                        && let Some(param) =
+                                            self.ctx.arena.get_parameter(other_node)
+                                    {
+                                        let mut param_type = if param.type_annotation.is_some() {
+                                            self.get_type_from_type_node(param.type_annotation)
+                                        } else {
+                                            TypeId::ANY
+                                        };
+                                        // Rest parameters (...args) have array type
+                                        if param.dot_dot_dot_token {
+                                            param_type = self.ctx.types.array(param_type);
+                                        }
+                                        // Optional parameters (?) include undefined in their type
+                                        if param.question_token && param_type != TypeId::ANY {
+                                            param_type = self
+                                                .ctx
+                                                .types
+                                                .union2(param_type, TypeId::UNDEFINED);
+                                        }
+                                        param_type
+                                    } else {
+                                        raw
+                                    }
+                                };
+                                // Check if other declaration is mergeable (namespace, etc.)
+                                let other_node_kind =
+                                    self.ctx.arena.get(other_decl).map_or(0, |n| n.kind);
+                                let is_other_mergeable = matches!(
+                                    other_node_kind,
+                                    syntax_kind_ext::MODULE_DECLARATION
+                                        | syntax_kind_ext::ENUM_DECLARATION
+                                        | syntax_kind_ext::CLASS_DECLARATION
+                                        | syntax_kind_ext::INTERFACE_DECLARATION
+                                        | syntax_kind_ext::FUNCTION_DECLARATION
+                                );
+                                // Functions, classes, and enums don't merge with variables,
+                                // so they should not establish a "previous variable type" for TS2403.
+                                // Only other variables and namespaces (which DO merge with vars) establish this.
+                                let establishes_var_type = matches!(
+                                    other_node_kind,
+                                    syntax_kind_ext::VARIABLE_DECLARATION
+                                        | syntax_kind_ext::PARAMETER
+                                        | syntax_kind_ext::BINDING_ELEMENT
+                                        | syntax_kind_ext::MODULE_DECLARATION
+                                );
+                                if !establishes_var_type {
+                                    continue;
+                                }
+                                // Skip TS2403 when either declaration is a non-exported
+                                // namespace variable — non-exported members are local to
+                                // their namespace body and don't merge with other bodies.
+                                let is_other_non_exported_ns_var = self
+                                    .var_decl_namespace_export_status(other_decl)
+                                    == Some(false);
+                                if !is_other_mergeable
+                                    && !is_bare_declaration
+                                    && !is_non_exported_ns_var
+                                    && !is_other_non_exported_ns_var
+                                    && !has_ns_export_visibility_mismatch
+                                    && !self.are_var_decl_types_compatible(
+                                        other_type,
+                                        raw_declared_type,
+                                    )
+                                    && let Some(ref name) = var_name
+                                {
+                                    self.error_subsequent_variable_declaration(
+                                        name,
+                                        other_type,
+                                        raw_declared_type,
+                                        decl_idx,
+                                    );
+                                }
+                                prior_type_found = Some(if let Some(prev) = prior_type_found {
+                                    self.refine_var_decl_type(prev, other_type)
+                                } else {
+                                    other_type
+                                });
+                            }
+                        }
+                    }
+                    // 3. Check cross-file global declarations (TS2403 across file boundaries).
+                    // In script files (non-module), global `var` declarations merge across
+                    // files. If the same name appears in another file with a different type,
+                    // emit TS2403.
+                    if prior_type_found.is_none()
+                        && !is_js_require_binding
+                        && !is_bare_declaration
+                        && !is_in_namespace
+                        && !is_in_function_scope
+                        && !is_in_external_module
+                        && !is_non_checked_js
+                        && let Some(ref name_str) = var_name
+                    {
+                        // Clone entries to avoid holding borrow on self during mutation.
+                        let cross_file_entries: Vec<(usize, tsz_binder::SymbolId)> = self
+                            .ctx
+                            .global_file_locals_index
+                            .as_ref()
+                            .and_then(|idx| idx.get(name_str.as_str()))
+                            .cloned()
+                            .unwrap_or_default();
+                        let all_arenas_opt = self.ctx.all_arenas.clone();
+                        let all_binders_opt = self.ctx.all_binders.clone();
+                        if let Some(all_arenas) = all_arenas_opt
+                            && let Some(all_binders) = all_binders_opt
+                            && !cross_file_entries.is_empty()
+                        {
+                            let current_file_idx = self.ctx.current_file_idx;
+                            let types = self.ctx.types;
+                            let compiler_options = self.ctx.compiler_options.clone();
+                            let definition_store = self.ctx.definition_store.clone();
+                            let lib_contexts = self.ctx.lib_contexts.clone();
+                            let mut found_cross_file_type = false;
+                            for &(file_idx, other_sym_id) in &cross_file_entries {
+                                if found_cross_file_type {
+                                    break;
+                                }
+                                // Only check against files with lower indices (earlier in
+                                // the program). The first file to declare the variable
+                                // establishes its type; subsequent files are checked against
+                                // that established type. This matches tsc behavior.
+                                if file_idx >= current_file_idx {
+                                    continue;
+                                }
+                                let Some(other_binder) = all_binders.get(file_idx) else {
+                                    continue;
+                                };
+                                // Only merge with other script files (non-module).
+                                if other_binder.is_external_module {
+                                    continue;
+                                }
+                                let Some(other_arena) = all_arenas.get(file_idx) else {
+                                    continue;
+                                };
+                                let other_file_name = other_arena
+                                    .source_files
+                                    .first()
+                                    .map(|sf| sf.file_name.clone())
+                                    .unwrap_or_else(|| format!("cross-file-{file_idx}"));
+                                // JavaScript declarations do not act as the source side of
+                                // cross-file TS2403 comparisons. They can still influence
+                                // later symbol/type resolution, but tsc does not issue
+                                // subsequent-variable-declaration errors against them here.
+                                if crate::context::is_js_file_name(&other_file_name) {
+                                    continue;
+                                }
+                                let Some(other_sym) = other_binder.get_symbol(other_sym_id) else {
+                                    continue;
+                                };
+                                // Find var declarations in the other file's symbol.
+                                // Merged global symbols may contain NodeIndex values from
+                                // multiple files. Verify each declaration belongs to this
+                                // file's arena by checking the name matches.
+                                for &other_decl in &other_sym.declarations {
+                                    if !other_decl.is_some() {
+                                        continue;
+                                    }
+                                    let Some(other_node) = other_arena.get(other_decl) else {
+                                        continue;
+                                    };
+                                    // Guard: verify this NodeIndex resolves to a declaration
+                                    // with the expected name in this arena.
+                                    let decl_name_matches = other_arena
+                                        .get(other_decl)
+                                        .and_then(|n| {
+                                            other_arena.get_variable_declaration(n).and_then(|vd| {
+                                                other_arena
+                                                    .get(vd.name)
+                                                    .and_then(|name_node| {
+                                                        other_arena.get_identifier(name_node)
+                                                    })
+                                                    .map(|id| {
+                                                        other_arena.resolve_identifier_text(id)
+                                                    })
+                                            })
+                                        })
+                                        .is_some_and(|n| n == name_str.as_str());
+                                    if !decl_name_matches {
+                                        continue;
+                                    }
+                                    // Only compare against var declarations (not classes, namespaces, etc.)
+                                    if other_node.kind
+                                        != tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                                        && other_node.kind
+                                            != tsz_parser::parser::syntax_kind_ext::PARAMETER
+                                    {
+                                        continue;
+                                    }
+                                    // Check if the other declaration is also a `var` (not let/const)
+                                    if let Some(other_ext) = other_arena.get_extended(other_decl)
+                                        && let Some(other_parent) =
+                                            other_arena.get(other_ext.parent)
+                                        && other_parent.kind
+                                            == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                                    {
+                                        let other_flags = other_parent.flags as u32;
+                                        use tsz_parser::parser::node_flags;
+                                        if node_flags::is_block_scoped(other_flags) {
+                                            continue; // block-scoped, skip
+                                        }
+                                    }
+                                    // Skip bare declarations in the other file
+                                    let other_is_bare = other_arena
+                                        .get(other_decl)
+                                        .and_then(|n| other_arena.get_variable_declaration(n))
+                                        .is_some_and(|d| {
+                                            d.type_annotation.is_none() && d.initializer.is_none()
+                                        });
+                                    if other_is_bare {
+                                        continue;
+                                    }
+                                    // Resolve the type of the cross-file declaration
+                                    if !CheckerState::enter_cross_arena_delegation() {
+                                        continue;
+                                    }
+                                    let mut cross_checker = CheckerState::new_with_shared_def_store(
+                                        other_arena,
+                                        other_binder,
+                                        types,
+                                        other_file_name.clone(),
+                                        compiler_options.clone(),
+                                        definition_store.clone(),
+                                    );
+                                    cross_checker.ctx.lib_contexts = lib_contexts.clone();
+                                    let other_type = cross_checker.get_type_of_node(other_decl);
+                                    CheckerState::leave_cross_arena_delegation();
+                                    if other_type != TypeId::ERROR
+                                        && !self.are_var_decl_types_compatible(
+                                            other_type,
+                                            raw_declared_type,
+                                        )
+                                    {
+                                        self.error_subsequent_variable_declaration(
+                                            name_str,
+                                            other_type,
+                                            raw_declared_type,
+                                            decl_idx,
+                                        );
+                                    }
+                                    prior_type_found = Some(if let Some(prev) = prior_type_found {
+                                        self.refine_var_decl_type(prev, other_type)
+                                    } else {
+                                        other_type
+                                    });
+                                    found_cross_file_type = true;
+                                    break; // One declaration per file is enough
+                                }
+                            }
+                        }
+                    }
+                    let type_to_store = if let Some(prior) = prior_type_found {
+                        self.refine_var_decl_type(prior, raw_declared_type)
+                    } else {
+                        raw_declared_type
+                    };
+                    // Always store the declared type, including bare declarations
+                    // (`var x;` → type `any`). In tsc, bare declarations establish
+                    // type `any` for TS2403 purposes, so subsequent declarations
+                    // with different types correctly trigger TS2403.
+                    // Skip for non-checked JS files to avoid polluting cross-file
+                    // TS2403 checks with types from unchecked JavaScript sources.
+                    if !is_non_checked_js {
+                        self.ctx.var_decl_types.insert(sym_id, type_to_store);
+                    }
+                }
+            }
+        } else {
+            // Destructuring declarations have no symbol on the VariableDeclaration
+            // node itself, but we still need to cache the computed type so the
+            // declaration emitter can find it via node_types for DTS output.
+            let final_type = compute_final_type(self);
+            if final_type != TypeId::ANY && final_type != TypeId::ERROR {
+                self.ctx.node_types.insert(decl_idx.0, final_type);
+                if var_decl.name.is_some() {
+                    self.ctx.node_types.insert(var_decl.name.0, final_type);
+                }
+            }
+        }
+
+        // If the variable name is a binding pattern, check binding element default values
+        if let Some(name_node) = self.ctx.arena.get(var_decl.name)
+            && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+        {
+            // Prefer explicit type annotation; otherwise infer from initializer (matching tsc).
+            // This type is used for both default-value checking and for assigning types to
+            // binding element symbols created by the binder.
+            let pattern_type = if var_decl.type_annotation.is_some() {
+                let annotated = self.get_type_from_type_node(var_decl.type_annotation);
+                // Catch-clause variables with an invalid type annotation (anything other
+                // than `any`/`unknown`) trigger TS1196. Mirror tsc by falling back to the
+                // catch-variable default for the binding pattern so destructured names
+                // like `({ x }: object)` don't cascade into spurious TS2339s alongside
+                // the TS1196 emitted on the annotation.
+                if is_catch_variable
+                    && annotated != TypeId::ANY
+                    && annotated != TypeId::UNKNOWN
+                    && !self.type_contains_error(annotated)
+                {
+                    flow_boundary::resolve_catch_variable_type(
+                        self.ctx.use_unknown_in_catch_variables(),
+                    )
+                } else {
+                    annotated
+                }
+            } else if let Some(jsdoc_type) = jsdoc_declared_type {
+                jsdoc_type
+            } else if let Some(inferred) =
+                self.cached_inferred_variable_type(decl_idx, var_decl.name)
+            {
+                // Reuse the declaration's already-computed type so destructuring
+                // element checks see the same request-aware initializer result.
+                inferred
+            } else if var_decl.initializer.is_some() {
+                let preserve_initializer_overload_diagnostics = name_node.kind
+                    == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    && !self.initializer_supports_binding_pattern_context(
+                        var_decl.name,
+                        var_decl.initializer,
+                    );
+                if preserve_initializer_overload_diagnostics {
+                    self.invalidate_expression_for_contextual_retry(var_decl.initializer);
+                }
+                let initializer_request = self.declaration_pattern_initializer_request(
+                    var_decl.name,
+                    var_decl.initializer,
+                    typing_request,
+                );
+                let prev_preserve_overloads = self
+                    .ctx
+                    .preserve_destructuring_initializer_overload_diagnostics;
+                self.ctx
+                    .preserve_destructuring_initializer_overload_diagnostics =
+                    prev_preserve_overloads || preserve_initializer_overload_diagnostics;
+                let initializer_type =
+                    self.get_type_of_node_with_request(var_decl.initializer, &initializer_request);
+                self.ctx
+                    .preserve_destructuring_initializer_overload_diagnostics =
+                    prev_preserve_overloads;
+                initializer_type
+            } else if is_catch_variable {
+                flow_boundary::resolve_catch_variable_type(
+                    self.ctx.use_unknown_in_catch_variables(),
+                )
+            } else if let Some(inferred) = self.compute_for_in_of_variable_type(decl_idx) {
+                inferred
+            } else {
+                TypeId::ANY
+            };
+
+            if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+                self.check_destructuring_object_literal_computed_excess_properties(
+                    var_decl.name,
+                    var_decl.initializer,
+                    pattern_type,
+                    !var_decl.type_annotation.is_some(),
+                );
+            }
+
+            // TS2488: Check array destructuring for iterability before assigning types
+            if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                let is_iterable = self.check_destructuring_iterability(
+                    var_decl.name,
+                    pattern_type,
+                    var_decl.initializer,
+                );
+                if is_iterable {
+                    self.report_empty_array_destructuring_bounds(
+                        var_decl.name,
+                        var_decl.initializer,
+                    );
+
+                    // Ensure binding element identifiers get the correct inferred types.
+                    let binding_request = typing_request.read().contextual_opt(None);
+                    self.assign_binding_pattern_symbol_types_with_request(
+                        var_decl.name,
+                        pattern_type,
+                        &binding_request,
+                    );
+                    self.check_binding_pattern_with_request(
+                        var_decl.name,
+                        pattern_type,
+                        var_decl.type_annotation.is_some(),
+                        &binding_request,
+                    );
+                }
+            } else {
+                // Ensure binding element identifiers get the correct inferred types.
+                let binding_request = typing_request.read().contextual_opt(None);
+                self.assign_binding_pattern_symbol_types_with_request(
+                    var_decl.name,
+                    pattern_type,
+                    &binding_request,
+                );
+                self.check_binding_pattern_with_request(
+                    var_decl.name,
+                    pattern_type,
+                    var_decl.type_annotation.is_some(),
+                    &binding_request,
+                );
+            }
+
+            // Record source expression for flow-based property narrowing.
+            // When `const { bar } = aFoo` and `aFoo.bar` was narrowed by a condition,
+            // the binding element `bar` should use the narrowed property type.
+            if var_decl.initializer.is_some()
+                && name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            {
+                self.record_destructured_binding_sources(var_decl.name, var_decl.initializer);
+            }
+
+            // Track destructured binding groups for correlated narrowing.
+            // Only needed for union source types where narrowing one property affects others.
+            let mut resolved_for_union = self.resolve_lazy_type(pattern_type);
+            if query::union_members(self.ctx.types, resolved_for_union).is_none()
+                && let Some(constraint) =
+                    query::type_parameter_constraint(self.ctx.types, resolved_for_union)
+            {
+                resolved_for_union = self.evaluate_type_for_assignability(constraint);
+            }
+            if query::union_members(self.ctx.types, resolved_for_union).is_some() {
+                // Check if this is a const declaration
+                let is_const = if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
+                    if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                        use tsz_parser::parser::node_flags;
+                        (parent_node.flags & node_flags::CONST as u16) != 0
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                self.record_destructured_binding_group(
+                    var_decl.name,
+                    resolved_for_union,
+                    is_const,
+                    name_node.kind,
+                );
+            }
+        }
+    }
+
+    /// Check whether an async function initializer's type differs from the
+    /// declared JSDoc type only because of Promise wrapping on the return type.
+    /// When that is the case, tsc reports TS1064 (async return type must be
+    /// Promise) but suppresses the assignment-level TS2322.
+    pub(crate) fn async_function_jsdoc_return_type_suppression(
+        &mut self,
+        init_type: TypeId,
+        declared_type: TypeId,
+    ) -> bool {
+        let init_return =
+            crate::query_boundaries::common::return_type_for_type(self.ctx.types, init_type);
+        let declared_return =
+            crate::query_boundaries::common::return_type_for_type(self.ctx.types, declared_type);
+        let (Some(init_ret), Some(decl_ret)) = (init_return, declared_return) else {
+            return false;
+        };
+        // Check if the init return type is Promise<T> where T is assignable
+        // to the declared return type.
+        if let Some(unwrapped) = self.unwrap_promise_type(init_ret) {
+            self.is_assignable_to(unwrapped, decl_ret)
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "core_tests.rs"]
+mod core_tests;

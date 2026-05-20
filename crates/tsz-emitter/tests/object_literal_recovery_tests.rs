@@ -1,0 +1,190 @@
+//! Integration tests for object-literal emit error recovery.
+//!
+//! When the parser encounters an unexpected token in property-name position
+//! (e.g. extra commas: `{ x: 0,, }`), it emits a `TS1136 Property assignment
+//! expected` diagnostic and synthesizes a placeholder `SHORTHAND_PROPERTY_ASSIGNMENT`.
+//! The emitter must NOT print stray commas/text from these zero-width
+//! placeholders. This guards the parser/emitter coordination that fixes
+//! the `parseErrorDoubleCommaInCall` conformance test.
+//!
+//! See:
+//! - `crates/tsz-parser/src/parser/state_expressions_literals.rs`
+//!   (`parse_property_name`)
+//! - `crates/tsz-emitter/src/emitter/expressions/literals.rs`
+//!   (`emit_object_literal` skip-empty-shorthand guard)
+
+use tsz_emitter::output::printer::PrintOptions;
+
+#[path = "test_support.rs"]
+mod test_support;
+
+use test_support::parse_and_print_with_opts;
+
+fn print_es2015(source: &str) -> String {
+    parse_and_print_with_opts(source, PrintOptions::es6())
+}
+
+/// Source `Boolean({ x: 0,, });` (TypeScript test
+/// `parseErrorDoubleCommaInCall.ts`) must emit the same `Boolean({ x: 0, });`
+/// shape that tsc produces — no stray `,,` placeholder line.
+#[test]
+fn double_comma_in_call_does_not_emit_stray_commas() {
+    let source = "Boolean({\n    x: 0,,\n});\n";
+    let output = print_es2015(source);
+    assert!(
+        !output.contains(",,"),
+        "double comma should not survive emit; output:\n{output}"
+    );
+    assert!(
+        output.contains("x: 0"),
+        "first property must still be emitted; output:\n{output}"
+    );
+}
+
+/// Trailing `,,}` at end of object literal must collapse to a single trailing
+/// comma (or none) — never produce extra empty lines with commas.
+#[test]
+fn trailing_double_comma_collapses() {
+    let source = "var o = { a: 1,, };\n";
+    let output = print_es2015(source);
+    assert!(
+        !output.contains(",,"),
+        "trailing double comma should not survive emit; output:\n{output}"
+    );
+    assert!(
+        output.contains("a: 1"),
+        "valid property must still be emitted; output:\n{output}"
+    );
+}
+
+/// Object literal followed by close-brace immediately after a comma in source
+/// (`{ a: 1, }`) must continue to emit normally — this guards that the
+/// recovery fix doesn't disturb the legitimate trailing-comma path.
+#[test]
+fn legitimate_trailing_comma_preserved() {
+    let source = "var o = { a: 1, b: 2, };\n";
+    let output = print_es2015(source);
+    assert!(
+        output.contains("a: 1"),
+        "first property must be emitted; output:\n{output}"
+    );
+    assert!(
+        output.contains("b: 2"),
+        "second property must be emitted; output:\n{output}"
+    );
+}
+
+/// A recovered object method with no body (`{ foo(); }`) is erased by tsc
+/// instead of being printed as a synthetic empty method.
+#[test]
+fn object_method_without_body_is_dropped() {
+    let source = "var v = { foo(); };\n";
+    let output = print_es2015(source);
+    assert_eq!(output.trim_end(), "var v = {};");
+}
+
+/// A comma-terminated recovered object method is emitted by tsc as an empty
+/// method, and its trailing comment must not leak into the next method's params.
+#[test]
+fn comma_terminated_object_method_without_body_is_recovered() {
+    let source = "var b = {\n    foo(x = 1), // error\n    foo(x = 1) { }, // error\n};\n";
+    let output = print_es2015(source);
+
+    assert_eq!(
+        output.matches("foo(x = 1) { }").count(),
+        2,
+        "Both object methods should be emitted; output:\n{output}"
+    );
+    assert!(
+        !output.contains("foo(// error"),
+        "Trailing comment from recovered method must not move into params; output:\n{output}"
+    );
+}
+
+#[test]
+fn missing_object_literal_separator_after_get_set_shorthand_is_emitted() {
+    let source = "const c = {\n    get\n    *x() {}\n};\nconst d = {\n    set\n    *x() {}\n};\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("const c = {\n    get,\n    *x() { }\n};"),
+        "get shorthand should be separated from the following generator method; output:\n{output}"
+    );
+    assert!(
+        output.contains("const d = {\n    set,\n    *x() { }\n};"),
+        "set shorthand should be separated from the following generator method; output:\n{output}"
+    );
+}
+
+#[test]
+fn object_binding_reserved_shorthand_emits_empty_property_assignment() {
+    let source = "var { while } = { while: 1 };\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("var { while:  } = { while: 1 };"),
+        "reserved shorthand binding should recover as an empty property assignment; output:\n{output}"
+    );
+}
+
+#[test]
+fn object_binding_reserved_renaming_recovers_duplicate_empty_binding() {
+    let source = "var { while: while } = { while: 1 };\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("var { while: , while:  } = { while: 1 };"),
+        "reserved renamed binding should leave the token for the recovered duplicate binding; output:\n{output}"
+    );
+}
+
+#[test]
+fn rest_array_binding_initializer_is_preserved_in_declaration() {
+    let source = "var [...x = a] = a;\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("var [...x = a] = a;"),
+        "invalid rest binding initializer should be preserved for JS emit; output:\n{output}"
+    );
+}
+
+#[test]
+fn object_rest_with_recovered_property_name_uses_initializer_directly() {
+    let source = "const { ...a: b } = {};\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("const b = __rest({}, []);"),
+        "only-rest recovery should pass the initializer to __rest directly; output:\n{output}"
+    );
+    assert!(
+        !output.contains("__rest(_a, [])"),
+        "only-rest recovery should not use an unassigned temp; output:\n{output}"
+    );
+}
+
+/// When an object property's value is an array containing nested objects with
+/// their own trailing comma, the `find_token_end_before_trivia` boundary scan
+/// must not stop at the inner objects' `}` — otherwise the subsequent
+/// `find_comma_pos_after` scan starts inside the array and treats the array's
+/// own trailing comma as a property-level trailing comma, producing
+/// `items: [...],` after a single-property outer object.
+///
+/// Source has no trailing comma after `items: [...]`; the array does have one.
+/// Output must preserve this asymmetry.
+#[test]
+fn object_property_with_nested_array_does_not_inherit_array_trailing_comma() {
+    let source =
+        "const TEST_VALUE = {\n    items: [\n        { id: 1 },\n        { id: 2 },\n    ]\n};\n";
+    let output = print_es2015(source);
+
+    assert!(
+        output.contains("    ]\n};"),
+        "object's closing `}}` must follow the array close `]` directly with no trailing comma.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("    ],\n};"),
+        "outer object must not pick up the array's trailing comma as its own.\nOutput:\n{output}"
+    );
+}

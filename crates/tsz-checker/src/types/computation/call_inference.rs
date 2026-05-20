@@ -1,0 +1,3100 @@
+//! Generic-call inference and round-2 contextual typing helpers.
+
+mod indexed_callback;
+mod return_context;
+mod unknown_callback;
+
+use crate::call_checker::CallableContext;
+use crate::context::TypingRequest;
+use crate::context::speculation::{DiagnosticSpeculationSnapshot, ImplicitAnyClosureSnapshot};
+use crate::query_boundaries::checkers::call as call_checker;
+use crate::query_boundaries::checkers::call::is_type_parameter_type;
+use crate::query_boundaries::common;
+use crate::query_boundaries::common::CallResult;
+use crate::query_boundaries::common::LiteralTypeKind;
+use crate::state::CheckerState;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::borrow::Cow;
+use tsz_common::Atom;
+use tsz_common::diagnostics::diagnostic_codes;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::{FunctionShape, TypeId};
+
+/// Detect spread marker tuples `[...T]` created by the checker for generic
+/// `TypeParameter` spreads. A spread marker is a 1-element tuple where the single
+/// element is a rest element whose inner type is a `TypeParameter`.
+fn is_spread_marker_tuple(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+    if let Some(elems) = common::tuple_elements(db, type_id) {
+        elems.len() == 1 && elems[0].rest && is_type_parameter_type(db, elems[0].type_id)
+    } else {
+        false
+    }
+}
+
+/// Count the number of non-`any` parameter types in a callable type.
+///
+/// Used to compare contextual type candidates: whichever has more specific
+/// (non-`any`) parameter types provides better contextual typing for callbacks.
+/// Returns 0 for non-callable types.
+fn callable_param_specificity(db: &dyn tsz_solver::QueryDatabase, ty: TypeId) -> usize {
+    if let Some(shape) = common::function_shape_for_type(db, ty) {
+        shape
+            .params
+            .iter()
+            .filter(|p| p.type_id != TypeId::ANY)
+            .count()
+    } else {
+        0
+    }
+}
+
+fn contextual_constraint_preserves_literals(
+    db: &dyn tsz_solver::QueryDatabase,
+    type_id: TypeId,
+) -> bool {
+    if type_id == TypeId::STRING
+        || type_id == TypeId::NUMBER
+        || type_id == TypeId::BOOLEAN
+        || type_id == TypeId::BIGINT
+    {
+        return true;
+    }
+
+    if matches!(
+        common::classify_literal_type(db, type_id),
+        LiteralTypeKind::String(_)
+            | LiteralTypeKind::Number(_)
+            | LiteralTypeKind::BigInt(_)
+            | LiteralTypeKind::Boolean(_)
+    ) {
+        return true;
+    }
+
+    if let Some(members) = common::union_members(db, type_id) {
+        return members
+            .iter()
+            .copied()
+            .any(|member| contextual_constraint_preserves_literals(db, member));
+    }
+
+    false
+}
+
+fn sanitize_function_shape_binding_pattern_params(
+    shape: &tsz_solver::FunctionShape,
+    binding_pattern_param_positions: &[usize],
+) -> tsz_solver::FunctionShape {
+    shape.with_replaced_params(common::sanitize_params_at_positions(
+        &shape.params,
+        binding_pattern_param_positions,
+        TypeId::UNKNOWN,
+    ))
+}
+
+pub(crate) fn should_preserve_contextual_application_shape(
+    db: &dyn tsz_solver::TypeDatabase,
+    ty: TypeId,
+) -> bool {
+    common::contains_application_in_structure(db, ty)
+}
+
+fn instantiate_function_shape_with_substitution(
+    types: &dyn tsz_solver::QueryDatabase,
+    func: &tsz_solver::FunctionShape,
+    substitution: &crate::query_boundaries::common::TypeSubstitution,
+) -> tsz_solver::FunctionShape {
+    common::instantiate_function_shape(types, func, substitution)
+}
+
+fn instantiate_contextual_target_shape_for_return_context(
+    types: &dyn tsz_solver::QueryDatabase,
+    func: &tsz_solver::FunctionShape,
+) -> tsz_solver::FunctionShape {
+    common::instantiate_shape_to_defaults(types, func)
+}
+
+impl<'a> CheckerState<'a> {
+    fn substitution_with_source_constraint_fallbacks(
+        &mut self,
+        source_fn: &tsz_solver::FunctionShape,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> crate::query_boundaries::common::TypeSubstitution {
+        let mut constrained = substitution.clone();
+        for tp in &source_fn.type_params {
+            let Some(candidate) = constrained.get(tp.name) else {
+                continue;
+            };
+            let Some(raw_constraint) = tp.constraint else {
+                continue;
+            };
+
+            let constraint = common::instantiate_type(self.ctx.types, raw_constraint, &constrained);
+            if !self.is_assignable_to_with_env(candidate, constraint) {
+                constrained.insert(tp.name, constraint);
+            }
+        }
+        constrained
+    }
+
+    pub(crate) fn resolve_signature_parameter_type_queries(
+        &mut self,
+        sig_params: &[tsz_solver::ParamInfo],
+        instantiated_params: &[tsz_solver::ParamInfo],
+    ) -> Vec<tsz_solver::ParamInfo> {
+        let has_rest_function_parameter = sig_params.iter().any(|param| {
+            common::function_shape_for_type(self.ctx.types, param.type_id)
+                .is_some_and(|shape| shape.params.iter().any(|param| param.rest))
+        });
+        if !has_rest_function_parameter {
+            return instantiated_params.to_vec();
+        }
+
+        let tracked_type_params: FxHashSet<_> = sig_params
+            .iter()
+            .flat_map(|param| common::collect_referenced_types(self.ctx.types, param.type_id))
+            .filter_map(|type_id| common::type_param_info(self.ctx.types, type_id))
+            .map(|info| info.name)
+            .collect();
+        let mut parameter_substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        if !tracked_type_params.is_empty() {
+            let mut visited = FxHashSet::default();
+            for (sig_param, instantiated_param) in sig_params.iter().zip(instantiated_params.iter())
+            {
+                self.collect_return_context_substitution(
+                    sig_param.type_id,
+                    instantiated_param.type_id,
+                    &tracked_type_params,
+                    &mut parameter_substitution,
+                    &mut visited,
+                );
+            }
+        }
+
+        let mut replacements = FxHashMap::default();
+        for (sig_param, instantiated_param) in sig_params.iter().zip(instantiated_params.iter()) {
+            if let Some(name) = sig_param.name {
+                let replacement = if parameter_substitution.is_empty() {
+                    instantiated_param.type_id
+                } else {
+                    crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        instantiated_param.type_id,
+                        &parameter_substitution,
+                    )
+                };
+                replacements.insert(
+                    self.ctx.types.resolve_atom_ref(name).to_string(),
+                    replacement,
+                );
+            }
+        }
+
+        if replacements.is_empty() {
+            return instantiated_params.to_vec();
+        }
+
+        instantiated_params
+            .iter()
+            .map(|param| {
+                let mut resolved = *param;
+                resolved.type_id = common::replace_type_queries_and_lazies_with(
+                    self.ctx.types,
+                    resolved.type_id,
+                    |symbol| {
+                        self.ctx
+                            .binder
+                            .symbols
+                            .get(tsz_binder::SymbolId(symbol.0))
+                            .and_then(|symbol| replacements.get(symbol.escaped_name.as_str()))
+                            .copied()
+                    },
+                    |def_id| {
+                        self.ctx.definition_store.get_name(def_id).and_then(|name| {
+                            if tracked_type_params.contains(&name) {
+                                parameter_substitution.get(name)
+                            } else {
+                                replacements
+                                    .get(self.ctx.types.resolve_atom_ref(name).as_ref())
+                                    .copied()
+                            }
+                        })
+                    },
+                );
+                resolved
+            })
+            .collect()
+    }
+
+    pub(crate) fn widen_round2_contextual_substitution(
+        &mut self,
+        shape: &FunctionShape,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> crate::query_boundaries::common::TypeSubstitution {
+        let mut widened = substitution.clone();
+
+        for tp in &shape.type_params {
+            if tp.is_const {
+                continue;
+            }
+
+            let Some(current) = widened.get(tp.name) else {
+                continue;
+            };
+
+            if current == TypeId::UNKNOWN || current == TypeId::ERROR {
+                continue;
+            }
+
+            let preserve_literals = tp.constraint.is_some_and(|constraint| {
+                let instantiated = crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    constraint,
+                    substitution,
+                );
+                contextual_constraint_preserves_literals(self.ctx.types, instantiated) || {
+                    let evaluated = self.evaluate_type_with_env(instantiated);
+                    evaluated != instantiated
+                        && contextual_constraint_preserves_literals(self.ctx.types, evaluated)
+                }
+            });
+            if preserve_literals {
+                continue;
+            }
+
+            let widened_current = common::widen_type(self.ctx.types, current);
+            if widened_current == current {
+                continue;
+            }
+
+            let chosen = if let Some(constraint) = tp.constraint {
+                let instantiated_constraint = crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    constraint,
+                    substitution,
+                );
+                let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
+                if !self.is_assignable_to(widened_current, evaluated_constraint)
+                    && self.is_assignable_to(current, evaluated_constraint)
+                {
+                    current
+                } else {
+                    widened_current
+                }
+            } else {
+                widened_current
+            };
+
+            widened.insert(tp.name, chosen);
+        }
+
+        widened
+    }
+
+    fn fill_unresolved_contextual_substitution_from_constraints(
+        &mut self,
+        shape: &FunctionShape,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> crate::query_boundaries::common::TypeSubstitution {
+        let mut filled = substitution.clone();
+
+        for tp in &shape.type_params {
+            let current = filled.get(tp.name);
+            let unresolved = current.is_none_or(|mapped| {
+                mapped == TypeId::UNKNOWN
+                    || mapped == TypeId::ERROR
+                    || common::contains_infer_types(self.ctx.types, mapped)
+                    || common::contains_type_parameters(self.ctx.types, mapped)
+            });
+
+            let Some(fallback) = tp.default.or(tp.constraint) else {
+                continue;
+            };
+            let instantiated = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                fallback,
+                &filled,
+            );
+            let fallback_name = self.format_type_diagnostic(instantiated);
+            let resolved_fallback = self
+                .is_well_known_lib_type_name(&fallback_name)
+                .then(|| self.resolve_lib_type_by_name(&fallback_name))
+                .flatten()
+                .unwrap_or(instantiated);
+            let evaluated = self.evaluate_type_with_env(resolved_fallback);
+            let contextual_fallback =
+                if evaluated == TypeId::ANY && resolved_fallback != TypeId::ANY {
+                    resolved_fallback
+                } else {
+                    evaluated
+                };
+            let fallback_is_nominal_lib_object =
+                self.is_nominal_lib_object_type_name(&fallback_name);
+            if !unresolved {
+                // A resolved inference candidate is better contextual information
+                // than its broad constraint. Keep the nominal-lib primitive guard
+                // that intentionally falls back to the library object shape.
+                let primitive_fails_nominal_lib_object = current.is_some_and(|mapped| {
+                    common::is_primitive_type(self.ctx.types, mapped)
+                        && fallback_is_nominal_lib_object
+                });
+                if !primitive_fails_nominal_lib_object {
+                    continue;
+                }
+            }
+            if contextual_fallback == TypeId::UNKNOWN
+                || contextual_fallback == TypeId::ERROR
+                || common::contains_infer_types(self.ctx.types, contextual_fallback)
+                || (!fallback_is_nominal_lib_object
+                    && common::contains_type_parameters(self.ctx.types, contextual_fallback))
+            {
+                continue;
+            }
+
+            filled.insert(tp.name, contextual_fallback);
+        }
+
+        filled
+    }
+
+    pub(crate) fn direct_round1_literal_conflict_type_params(
+        &mut self,
+        shape: &FunctionShape,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+        sensitive_args: &[bool],
+    ) -> crate::query_boundaries::common::TypeSubstitution {
+        let mut seen_bases: Vec<(Atom, TypeId, TypeId)> = Vec::new();
+        let mut conflicts = crate::query_boundaries::common::TypeSubstitution::new();
+
+        for (i, &arg_type) in arg_types.iter().enumerate() {
+            if sensitive_args.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+
+            let Some(param) = shape.params.get(i) else {
+                continue;
+            };
+            if param.rest || arg_type.is_any_unknown_or_error() {
+                continue;
+            }
+            let param_type = param.type_id;
+            let Some(tp_info) = common::type_param_info(self.ctx.types, param_type) else {
+                continue;
+            };
+            if !shape.type_params.iter().any(|tp| tp.name == tp_info.name) {
+                continue;
+            }
+
+            let literal_arg_type = args
+                .get(i)
+                .and_then(|&arg_idx| self.literal_type_from_initializer(arg_idx))
+                .unwrap_or(arg_type);
+            let base = self.widen_literal_type(literal_arg_type);
+            if base == literal_arg_type {
+                continue;
+            }
+
+            if let Some((_, previous_base, first_arg_type)) =
+                seen_bases.iter().find(|(name, _, _)| *name == tp_info.name)
+            {
+                if *previous_base != base {
+                    conflicts.insert(tp_info.name, *first_arg_type);
+                }
+            } else {
+                seen_bases.push((tp_info.name, base, literal_arg_type));
+            }
+        }
+
+        conflicts
+    }
+
+    pub(crate) fn restore_conflicting_direct_literal_substitutions(
+        &self,
+        widened: &mut crate::query_boundaries::common::TypeSubstitution,
+        conflicts: &crate::query_boundaries::common::TypeSubstitution,
+    ) {
+        for (&name, &original_type) in conflicts.map() {
+            if original_type == TypeId::UNKNOWN
+                || original_type == TypeId::ERROR
+                || common::contains_infer_types(self.ctx.types, original_type)
+            {
+                continue;
+            }
+            widened.insert(name, original_type);
+        }
+    }
+
+    pub(crate) fn rest_argument_element_type_with_env(&mut self, type_id: TypeId) -> TypeId {
+        let evaluated = self.evaluate_type_with_env(type_id);
+        common::rest_argument_element_type(self.ctx.types, evaluated)
+    }
+
+    pub(crate) fn target_contains_blocking_return_context_type_params(
+        &self,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<Atom>,
+    ) -> bool {
+        if common::contains_infer_types(self.ctx.types, target) {
+            return true;
+        }
+
+        // A contextual callback target can mention an outer type parameter with the
+        // same name as the callee's type parameter, e.g.
+        // `outer<T>(obj: T) { id<U extends Function>(fn: U): U; ... }` where
+        // `id` is contextually expected as `(target: T) => boolean`. At this point
+        // type parameters are name-keyed, so treating every same-name reference as
+        // self-recursive blocks the useful return-context substitution.
+        if call_checker::get_contextual_signature(self.ctx.types, target).is_some() {
+            return false;
+        }
+
+        common::references_any_type_param_named(self.ctx.types, target, tracked_type_params)
+    }
+
+    fn instantiate_contextual_constraint_without_unresolved_self(
+        &mut self,
+        type_param_type: TypeId,
+        tp_info: &tsz_solver::TypeParamInfo,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> Option<TypeId> {
+        let constraint = tp_info.constraint?;
+        let should_drop_self = substitution.get(tp_info.name).is_some_and(|ty| {
+            ty == TypeId::ERROR
+                || ty == TypeId::UNKNOWN
+                || common::contains_infer_types(self.ctx.types, ty)
+        });
+        let mut contextual_substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        for (&name, &type_id) in substitution.map() {
+            let aliases_current_type_param = type_id == type_param_type;
+            if (should_drop_self && name == tp_info.name) || aliases_current_type_param {
+                continue;
+            }
+            contextual_substitution.insert(name, type_id);
+        }
+        // When the constraint is self-referential (contains the type parameter
+        // itself) and the parameter is not yet resolved in the substitution,
+        // substitute the self-reference with `unknown` to break the cycle.
+        //
+        // Example: `O extends NoExcessProperties<RepeatOptions<A>, O>` — the
+        // constraint references `O` itself. Without this substitution, the
+        // instantiated constraint still contains `O`, which is detected as
+        // "contains type parameters" and discarded in favor of the unresolved
+        // placeholder, yielding `any` as the contextual type for callbacks.
+        // With `O → unknown`, the constraint evaluates to `RepeatOptions<A>`,
+        // giving the correct contextual type for properties like `until`.
+        if substitution.get(tp_info.name).is_none()
+            && common::contains_type_parameter_named(self.ctx.types, constraint, tp_info.name)
+        {
+            contextual_substitution.insert(tp_info.name, TypeId::UNKNOWN);
+        }
+        Some(crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            constraint,
+            &contextual_substitution,
+        ))
+    }
+
+    fn unresolved_contextual_substitution_target(
+        &self,
+        tp_info: &tsz_solver::TypeParamInfo,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> Option<TypeId> {
+        let ty = substitution.get(tp_info.name)?;
+        (ty == TypeId::ERROR
+            || ty == TypeId::UNKNOWN
+            || common::contains_infer_types(self.ctx.types, ty))
+        .then_some(ty)
+    }
+
+    fn evaluate_for_return_context_substitution(&mut self, ty: TypeId) -> TypeId {
+        if common::application_info(self.ctx.types, ty).is_some() {
+            crate::query_boundaries::state::type_environment::evaluate_type_with_resolver(
+                self.ctx.types,
+                &self.ctx,
+                ty,
+            )
+        } else {
+            self.evaluate_type_with_env(ty)
+        }
+    }
+
+    pub(crate) fn instantiate_generic_function_argument_against_target_for_refinement(
+        &mut self,
+        source_ty: TypeId,
+        target_ty: TypeId,
+    ) -> TypeId {
+        let source_eval = self.evaluate_type_with_env(source_ty);
+        let target_eval = self.evaluate_type_with_env(target_ty);
+        let function_info = match (
+            call_checker::get_contextual_signature(self.ctx.types, source_ty),
+            call_checker::get_contextual_signature(self.ctx.types, target_ty),
+        ) {
+            (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
+            _ => match (
+                call_checker::get_contextual_signature(self.ctx.types, source_eval),
+                call_checker::get_contextual_signature(self.ctx.types, target_eval),
+            ) {
+                (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
+                _ => None,
+            },
+        };
+
+        let Some((source_fn, target_fn)) = function_info else {
+            return source_ty;
+        };
+        let normalize = |shape: tsz_solver::FunctionShape| {
+            let unpacked: Vec<_> = shape
+                .params
+                .iter()
+                .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
+                .collect();
+            shape.with_replaced_params(unpacked)
+        };
+        let source_fn = normalize(source_fn);
+        let target_fn = normalize(target_fn);
+        if target_fn.params.iter().any(|param| param.rest) {
+            return source_ty;
+        }
+        if source_fn.type_params.is_empty() || source_fn.params.len() > target_fn.params.len() {
+            return source_ty;
+        }
+        if !target_fn.type_params.is_empty() {
+            return source_ty;
+        }
+        // When every source type parameter is fixed by parameter positions,
+        // the target return type should not feed inference. A generic like
+        // `<A, B>(a: A, b: B) => A | B` against `(...args: [string, number])
+        // => string | number` must infer A/B from the tuple-rest parameters,
+        // not from the whole contextual function type.
+        let source_type_params_fully_determined_by_params =
+            source_fn.type_params.iter().all(|tp| {
+                source_fn.params.iter().any(|param| {
+                    common::collect_referenced_types(self.ctx.types, param.type_id)
+                        .into_iter()
+                        .any(|ty| {
+                            common::type_param_info(self.ctx.types, ty)
+                                .is_some_and(|info| info.name == tp.name)
+                        })
+                })
+            });
+        let target_params_are_concrete =
+            target_fn
+                .params
+                .iter()
+                .take(source_fn.params.len())
+                .all(|param| {
+                    !matches!(param.type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                        && !common::contains_infer_types(self.ctx.types, param.type_id)
+                        && !common::contains_type_parameters(self.ctx.types, param.type_id)
+                });
+        if source_type_params_fully_determined_by_params && target_params_are_concrete {
+            return self
+                .instantiate_generic_function_argument_against_target_params(source_ty, target_ty);
+        }
+
+        let target_param_types: Vec<_> = target_fn
+            .params
+            .iter()
+            .take(source_fn.params.len())
+            .map(|p| p.type_id)
+            .collect();
+        let substitution = {
+            let env = self.ctx.type_env.borrow();
+            call_checker::compute_contextual_types_with_context(
+                self.ctx.types,
+                &self.ctx,
+                &env,
+                &source_fn,
+                &target_param_types,
+                Some(target_ty),
+            )
+        };
+        let substitution =
+            self.substitution_with_source_constraint_fallbacks(&source_fn, &substitution);
+        let instantiated =
+            instantiate_function_shape_with_substitution(self.ctx.types, &source_fn, &substitution);
+        self.ctx.types.factory().function(instantiated)
+    }
+
+    pub(crate) fn instantiate_generic_function_argument_against_target_params(
+        &mut self,
+        source_ty: TypeId,
+        target_ty: TypeId,
+    ) -> TypeId {
+        let source_eval = self.evaluate_type_with_env(source_ty);
+        let target_eval = self.evaluate_type_with_env(target_ty);
+        let function_info = match (
+            call_checker::get_contextual_signature(self.ctx.types, source_ty),
+            call_checker::get_contextual_signature(self.ctx.types, target_ty),
+        ) {
+            (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
+            _ => match (
+                call_checker::get_contextual_signature(self.ctx.types, source_eval),
+                call_checker::get_contextual_signature(self.ctx.types, target_eval),
+            ) {
+                (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
+                _ => None,
+            },
+        };
+
+        let Some((source_fn, target_fn)) = function_info else {
+            return source_ty;
+        };
+        let normalize = |shape: tsz_solver::FunctionShape| {
+            let unpacked: Vec<_> = shape
+                .params
+                .iter()
+                .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
+                .collect();
+            shape.with_replaced_params(unpacked)
+        };
+        let source_fn = normalize(source_fn);
+        let target_fn = normalize(target_fn);
+        if target_fn.params.iter().any(|param| param.rest) {
+            return source_ty;
+        }
+        if source_fn.type_params.is_empty() || source_fn.params.len() > target_fn.params.len() {
+            return source_ty;
+        }
+
+        let target_param_types: Vec<_> = target_fn
+            .params
+            .iter()
+            .take(source_fn.params.len())
+            .map(|p| p.type_id)
+            .collect();
+
+        let has_concrete_param_context = target_param_types.iter().any(|&param_ty| {
+            param_ty != TypeId::ANY
+                && param_ty != TypeId::UNKNOWN
+                && !common::contains_infer_types(self.ctx.types, param_ty)
+                && !common::contains_type_parameters(self.ctx.types, param_ty)
+        });
+        if !has_concrete_param_context {
+            return source_ty;
+        }
+
+        let substitution = {
+            let env = self.ctx.type_env.borrow();
+            call_checker::compute_contextual_types_with_context(
+                self.ctx.types,
+                &self.ctx,
+                &env,
+                &source_fn,
+                &target_param_types,
+                None,
+            )
+        };
+        let substitution =
+            self.substitution_with_source_constraint_fallbacks(&source_fn, &substitution);
+        let instantiated =
+            instantiate_function_shape_with_substitution(self.ctx.types, &source_fn, &substitution);
+        self.ctx.types.factory().function(instantiated)
+    }
+
+    pub(crate) fn target_has_concrete_return_context_for_generic_refinement(
+        &mut self,
+        target_ty: TypeId,
+    ) -> bool {
+        let target_eval = self.evaluate_type_with_env(target_ty);
+        let target_fn = call_checker::get_contextual_signature(self.ctx.types, target_ty)
+            .or_else(|| call_checker::get_contextual_signature(self.ctx.types, target_eval));
+        let Some(target_fn) = target_fn else {
+            return false;
+        };
+
+        let return_ty = target_fn.return_type;
+        return_ty != TypeId::ANY
+            && return_ty != TypeId::UNKNOWN
+            && return_ty != TypeId::ERROR
+            && !common::contains_infer_types(self.ctx.types, return_ty)
+            && !common::contains_type_parameters(self.ctx.types, return_ty)
+    }
+
+    pub(crate) fn contextual_param_types_from_instantiated_params(
+        &mut self,
+        instantiated_params: &[tsz_solver::ParamInfo],
+        arg_count: usize,
+    ) -> Vec<Option<TypeId>> {
+        let normalize_contextual_param = |this: &mut Self, param: &tsz_solver::ParamInfo| {
+            let ty = param.type_id;
+            let evaluated = this.evaluate_type_with_env(ty);
+            let mut contextual =
+                if crate::query_boundaries::checkers::call::get_contextual_signature(
+                    this.ctx.types,
+                    evaluated,
+                )
+                .is_some()
+                {
+                    this.normalize_contextual_signature_with_env(evaluated)
+                } else {
+                    evaluated
+                };
+            if param.optional && contextual != TypeId::ANY && contextual != TypeId::UNKNOWN {
+                contextual = common::union_with_undefined(this.ctx.types, contextual);
+            }
+            contextual
+        };
+        let unpacked_params: Vec<_> = instantiated_params
+            .iter()
+            .flat_map(|param| common::unpack_tuple_rest_parameter(self.ctx.types, param))
+            .collect();
+        let rest_start = if unpacked_params.last().is_some_and(|param| param.rest) {
+            unpacked_params.len().saturating_sub(1)
+        } else {
+            unpacked_params.len()
+        };
+
+        let contextuals: Vec<_> = (0..arg_count)
+            .map(|index| {
+                if index < rest_start {
+                    unpacked_params
+                        .get(index)
+                        .map(|param| normalize_contextual_param(self, param))
+                } else {
+                    unpacked_params
+                        .last()
+                        .filter(|param| param.rest)
+                        .map(|param| {
+                            let rest_type = normalize_contextual_param(self, param);
+                            self.rest_argument_element_type_with_env(rest_type)
+                        })
+                }
+            })
+            .collect();
+        contextuals
+    }
+
+    pub(crate) fn compute_callback_argument_type_rollback_unknown_body_diagnostics(
+        &mut self,
+        arg_idx: NodeIndex,
+        contextual_type: TypeId,
+        check_excess_properties: bool,
+        index: usize,
+        args_len: usize,
+        callable_ctx: CallableContext,
+        callback_body_spans: &[(u32, u32)],
+    ) {
+        let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
+        let _ = self.compute_single_call_argument_type(
+            arg_idx,
+            Some(contextual_type),
+            check_excess_properties,
+            index,
+            args_len,
+            false,
+            callable_ctx,
+        );
+        snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
+            matches!(
+                diag.code,
+                diagnostic_codes::IS_OF_TYPE_UNKNOWN | diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN
+            ) && callback_body_spans
+                .iter()
+                .any(|(start, end)| diag.start >= *start && diag.start < *end)
+        });
+    }
+
+    pub(crate) fn refine_generic_function_args_against_instantiated_params(
+        &mut self,
+        arg_types: Vec<TypeId>,
+        instantiated_params: &[tsz_solver::ParamInfo],
+    ) -> Vec<TypeId> {
+        let expected_types = self
+            .contextual_param_types_from_instantiated_params(instantiated_params, arg_types.len());
+
+        arg_types
+            .into_iter()
+            .enumerate()
+            .map(|(i, arg_type)| {
+                let expected = expected_types.get(i).copied().flatten();
+                expected
+                    .map(|expected| {
+                        self.instantiate_generic_function_argument_against_target_params(
+                            arg_type, expected,
+                        )
+                    })
+                    .unwrap_or(arg_type)
+            })
+            .collect()
+    }
+
+    /// Check whether an evaluated type is iterable-like (has a `[Symbol.iterator]`
+    /// property or a number index signature). Used to detect `Iterable<T>`,
+    /// `ArrayLike<T>`, etc. during contextual substitution so that when matching
+    /// against an Array target, we extract the element type rather than using the
+    /// full array type.
+    fn is_iterable_like_for_substitution(&self, type_id: TypeId) -> bool {
+        let has_iterator_in_props = |props: &[tsz_solver::type_handles::PropertyInfo]| {
+            props.iter().any(|prop| {
+                let name = self.ctx.types.resolve_atom(prop.name);
+                name == "__@iterator" || name == "[Symbol.iterator]"
+            })
+        };
+        if let Some(shape_id) = crate::query_boundaries::common::object_shape_id(
+            self.ctx.types,
+            type_id,
+        )
+        .or_else(|| {
+            crate::query_boundaries::common::object_with_index_shape_id(self.ctx.types, type_id)
+        }) {
+            let shape = self.ctx.types.object_shape(shape_id);
+            return shape.number_index.is_some() || has_iterator_in_props(&shape.properties);
+        }
+        if let Some(shape_id) =
+            crate::query_boundaries::common::callable_shape_id(self.ctx.types, type_id)
+        {
+            let shape = self.ctx.types.callable_shape(shape_id);
+            return shape.number_index.is_some() || has_iterator_in_props(&shape.properties);
+        }
+        false
+    }
+
+    fn array_or_number_index_element_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(elem) = common::array_element_type(self.ctx.types, type_id) {
+            return Some(elem);
+        }
+
+        let resolved = self.resolve_lazy_type(type_id);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let resolved = self.resolve_type_for_property_access(resolved);
+        let resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+        resolver.resolve_number_index(resolved)
+    }
+
+    fn return_context_application_bases_match(&self, left: TypeId, right: TypeId) -> bool {
+        use tsz_binder::SymbolId;
+
+        if left == right {
+            return true;
+        }
+
+        let symbol_for_base = |base: TypeId| {
+            common::lazy_def_id(self.ctx.types, base)
+                .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+                .or_else(|| {
+                    crate::query_boundaries::common::type_query_symbol(self.ctx.types, base)
+                        .map(|symbol_ref| SymbolId(symbol_ref.0))
+                })
+        };
+
+        let left_symbol = symbol_for_base(left);
+        let right_symbol = symbol_for_base(right);
+        if left_symbol.is_some() && left_symbol == right_symbol {
+            return true;
+        }
+
+        let base_name = |symbol_id: Option<SymbolId>| {
+            symbol_id
+                .and_then(|symbol_id| self.ctx.binder.get_symbol(symbol_id))
+                .map(|symbol| symbol.escaped_name.as_str())
+        };
+
+        matches!(
+            (base_name(left_symbol), base_name(right_symbol)),
+            (Some(left_name), Some(right_name)) if left_name == right_name
+        )
+    }
+
+    fn return_context_type_head(&self, type_id: TypeId) -> Option<String> {
+        let display = self.format_type(type_id);
+        let trimmed = display.trim();
+        if !trimmed.contains('<') {
+            return None;
+        }
+
+        Some(
+            trimmed
+                .split('<')
+                .next()
+                .unwrap_or(trimmed)
+                .trim()
+                .to_string(),
+        )
+    }
+
+    fn return_context_types_share_outer_structure(&mut self, left: TypeId, right: TypeId) -> bool {
+        let left_application = common::application_info(self.ctx.types, left).or_else(|| {
+            let evaluated = self.evaluate_for_return_context_substitution(left);
+            (evaluated != left).then(|| common::application_info(self.ctx.types, evaluated))?
+        });
+        let right_application = common::application_info(self.ctx.types, right).or_else(|| {
+            let evaluated = self.evaluate_for_return_context_substitution(right);
+            (evaluated != right).then(|| common::application_info(self.ctx.types, evaluated))?
+        });
+        if let (Some((left_base, _)), Some((right_base, _))) = (left_application, right_application)
+            && self.return_context_application_bases_match(left_base, right_base)
+        {
+            return true;
+        }
+
+        let left_eval = self.evaluate_for_return_context_substitution(left);
+        let right_eval = self.evaluate_for_return_context_substitution(right);
+        matches!(
+            (
+                common::object_shape_for_type(self.ctx.types, left_eval).is_some(),
+                common::object_shape_for_type(self.ctx.types, right_eval).is_some(),
+                call_checker::get_contextual_signature(self.ctx.types, left_eval).is_some(),
+                call_checker::get_contextual_signature(self.ctx.types, right_eval).is_some(),
+            ),
+            (true, true, _, _) | (_, _, true, true)
+        )
+    }
+
+    pub(crate) fn collect_return_context_substitution(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<Atom>,
+        substitution: &mut crate::query_boundaries::common::TypeSubstitution,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+    ) {
+        if !visited.insert((source, target)) {
+            return;
+        }
+        // Depth guard: evaluate_type_with_env can produce fresh TypeIds, defeating
+        // the visited set and causing unbounded recursion.
+        if !self.ctx.enter_recursion() {
+            return;
+        }
+        self.collect_return_context_substitution_impl(
+            source,
+            target,
+            tracked_type_params,
+            substitution,
+            visited,
+        );
+        self.ctx.leave_recursion();
+    }
+
+    fn collect_return_context_substitution_impl(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<Atom>,
+        substitution: &mut crate::query_boundaries::common::TypeSubstitution,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+    ) {
+        if let Some(tp) = common::type_param_info(self.ctx.types, source)
+            && tracked_type_params.contains(&tp.name)
+            && target != TypeId::UNKNOWN
+            && target != TypeId::ERROR
+            && !self
+                .target_contains_blocking_return_context_type_params(target, tracked_type_params)
+        {
+            if substitution.get(tp.name).is_none() {
+                substitution.insert(tp.name, target);
+            }
+            return;
+        }
+
+        if self.collect_awaited_return_context_substitution_by_shape(
+            source,
+            target,
+            tracked_type_params,
+            substitution,
+            0,
+        ) {
+            return;
+        }
+
+        let awaited_source = self.evaluate_awaited_application_for_assignability(source);
+        if awaited_source != source {
+            self.collect_return_context_substitution(
+                awaited_source,
+                target,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            if !substitution.is_empty() {
+                return;
+            }
+        }
+
+        // When target (expected return type) is a type param and source (actual return type)
+        // is a concrete type, infer the type param from the source. This handles JSX
+        // intra-expression inference like:
+        //   <Foo a={(x) => 10} b={(arg) => arg.toString()} />
+        // where Props<T> has a: (x: string) => T and b: (arg: T) => void.
+        // The actual return type of `(x) => 10` is `number`, and the expected return
+        // type is `T`, so we infer T = number.
+        if let Some(tp) = common::type_param_info(self.ctx.types, target)
+            && tracked_type_params.contains(&tp.name)
+            && source != TypeId::UNKNOWN
+            && source != TypeId::ERROR
+            && !common::references_any_type_param_named(self.ctx.types, source, tracked_type_params)
+        {
+            if substitution.get(tp.name).is_none() {
+                substitution.insert(tp.name, source);
+            }
+            return;
+        }
+
+        if let (Some(source_members), Some(target_members)) = (
+            common::union_members(self.ctx.types, source),
+            common::union_members(self.ctx.types, target),
+        ) {
+            let source_members: Vec<_> = source_members
+                .into_iter()
+                .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
+                .collect();
+            let target_members: Vec<_> = target_members
+                .into_iter()
+                .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
+                .collect();
+            let all_source_members_are_tracked_params = !source_members.is_empty()
+                && source_members.iter().all(|member| {
+                    common::type_param_info(self.ctx.types, *member)
+                        .is_some_and(|tp| tracked_type_params.contains(&tp.name))
+                });
+            if all_source_members_are_tracked_params && source_members.len() == target_members.len()
+            {
+                for (source_member, target_member) in source_members
+                    .iter()
+                    .copied()
+                    .zip(target_members.iter().copied())
+                {
+                    if let Some(tp) = common::type_param_info(self.ctx.types, source_member)
+                        && substitution.get(tp.name).is_none()
+                        && target_member != TypeId::UNKNOWN
+                        && target_member != TypeId::ERROR
+                        && !self.target_contains_blocking_return_context_type_params(
+                            target_member,
+                            tracked_type_params,
+                        )
+                    {
+                        substitution.insert(tp.name, target_member);
+                    }
+                }
+                if !substitution.is_empty() {
+                    return;
+                }
+            }
+            let mut matched_structured_member = false;
+            for source_member in source_members.iter().copied() {
+                if common::type_param_info(self.ctx.types, source_member)
+                    .is_some_and(|tp| tracked_type_params.contains(&tp.name))
+                {
+                    continue;
+                }
+                for target_member in target_members.iter().copied() {
+                    if self.return_context_types_share_outer_structure(source_member, target_member)
+                    {
+                        matched_structured_member = true;
+                        self.collect_return_context_substitution(
+                            source_member,
+                            target_member,
+                            tracked_type_params,
+                            substitution,
+                            visited,
+                        );
+                    }
+                }
+            }
+            if matched_structured_member {
+                return;
+            }
+        }
+
+        // When source (return type) is a union like `E | null`, decompose it
+        // and try each non-nullish member against the target contextual type.
+        // This handles the common pattern `querySelector<E>(...): E | null`
+        // where the contextual type `SVGRectElement` should infer E = SVGRectElement.
+        if let Some(source_members) = common::union_members(self.ctx.types, source) {
+            for member in source_members
+                .into_iter()
+                .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
+            {
+                self.collect_return_context_substitution(
+                    member,
+                    target,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+            }
+            if !substitution.is_empty() {
+                return;
+            }
+        }
+
+        if let Some(target_members) = common::union_members(self.ctx.types, target) {
+            let before_len = substitution.len();
+            for member in target_members
+                .into_iter()
+                .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
+            {
+                self.collect_return_context_substitution(
+                    source,
+                    member,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+                if substitution.len() > before_len {
+                    return;
+                }
+            }
+        }
+
+        if let Some(inner) = common::unwrap_readonly_or_noinfer(self.ctx.types, target) {
+            self.collect_return_context_substitution(
+                source,
+                inner,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            if !substitution.is_empty() {
+                return;
+            }
+        }
+
+        if let Some(inner) = common::unwrap_readonly_or_noinfer(self.ctx.types, source) {
+            self.collect_return_context_substitution(
+                inner,
+                target,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            if !substitution.is_empty() {
+                return;
+            }
+        }
+        let source_evaluated_for_wrapper = self.evaluate_for_return_context_substitution(source);
+        if source_evaluated_for_wrapper != source
+            && let Some(inner) =
+                common::unwrap_readonly_or_noinfer(self.ctx.types, source_evaluated_for_wrapper)
+        {
+            self.collect_return_context_substitution(
+                inner,
+                target,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            if !substitution.is_empty() {
+                return;
+            }
+        }
+
+        let source_application = common::application_info(self.ctx.types, source).or_else(|| {
+            let evaluated = self.evaluate_for_return_context_substitution(source);
+            (evaluated != source).then(|| common::application_info(self.ctx.types, evaluated))?
+        });
+        let target_application = common::application_info(self.ctx.types, target).or_else(|| {
+            let evaluated = self.evaluate_for_return_context_substitution(target);
+            (evaluated != target).then(|| common::application_info(self.ctx.types, evaluated))?
+        });
+
+        // Handle Application types like Readonly<T>, Promise<T>, etc.
+        // When source is Application(Base, [args...]) and target is NOT
+        // a matching Application, decompose the source Application's type
+        // arguments and recursively match each against the target. This
+        // handles cases like Readonly<T> where T needs to be inferred from
+        // the contextual type (e.g., readonly [string, number][]).
+        if let Some((source_base, source_args)) = source_application.as_ref() {
+            // Only try if target is not already matched as Application(same_base)
+            // (that case is handled later at the Application-Application matching).
+            let target_same_base =
+                target_application
+                    .as_ref()
+                    .is_some_and(|(target_base, target_args)| {
+                        self.return_context_application_bases_match(*source_base, *target_base)
+                            && target_args.len() == source_args.len()
+                    })
+                    || (target_application.is_none()
+                        && self.return_context_type_head(source)
+                            == self.return_context_type_head(target));
+            if !target_same_base {
+                // When the source Application evaluates to a callable type
+                // (e.g., Mapper<T, U> = (x: T) => U) and the target is also
+                // a callable type (e.g., (x: string) => number), skip the
+                // naive decomposition that would map each type arg to the
+                // whole target. The function matching below (via
+                // get_contextual_signature) will correctly decompose the
+                // evaluated callable's parameters and return type.
+                let source_eval_for_guard = self.evaluate_for_return_context_substitution(source);
+                let target_eval_for_guard = self.evaluate_for_return_context_substitution(target);
+                let source_base_is_callable =
+                    call_checker::get_contextual_signature(self.ctx.types, *source_base).is_some();
+                let source_base_has_callable_shape =
+                    common::callable_shape_for_type(self.ctx.types, *source_base).is_some()
+                        || common::function_shape_for_type(self.ctx.types, *source_base).is_some();
+                let source_evals_to_callable =
+                    call_checker::get_contextual_signature(self.ctx.types, source).is_some()
+                        || source_base_is_callable
+                        || source_base_has_callable_shape
+                        || (source_eval_for_guard != source
+                            && call_checker::get_contextual_signature(
+                                self.ctx.types,
+                                source_eval_for_guard,
+                            )
+                            .is_some());
+                let target_is_callable =
+                    call_checker::get_contextual_signature(self.ctx.types, target).is_some();
+                let both_evaluate_to_structural_objects =
+                    common::object_shape_for_type(self.ctx.types, source_eval_for_guard).is_some()
+                        && common::object_shape_for_type(self.ctx.types, target_eval_for_guard)
+                            .is_some();
+                if target_application.is_some() {
+                    // When both sides are Applications of different bases, mapping each
+                    // source type arg directly to the whole target wrapper is almost
+                    // always wrong (e.g. AssignAction<T> vs ActionFunction<U> would infer
+                    // T = ActionFunction<U>). Let the later structural/application-aware
+                    // matching determine whether the wrappers reveal a meaningful mapping.
+                } else if source_evals_to_callable && target_is_callable {
+                    // Don't decompose — let function matching below handle it
+                } else if both_evaluate_to_structural_objects {
+                    // Differing application wrappers like AssignAction<T> and
+                    // ActionFunction<U> often carry the tracked type parameter on
+                    // marker/object properties after evaluation. Decomposing their
+                    // type arguments directly would bind T to the whole target
+                    // wrapper instead of letting structural matching infer from the
+                    // evaluated property shapes.
+                } else {
+                    // Special case: when the source Application evaluates to an
+                    // iterable-like interface (e.g., Iterable<T>) and the target
+                    // is an Array or Tuple, skip the naive decomposition that would
+                    // map T to the full array type. The solver's constraint
+                    // collection has proper iterable matching that extracts the
+                    // element type correctly. Without this guard, `Iterable<T>`
+                    // matched against `number[]` infers T = number[] instead of
+                    // letting the solver infer T = number.
+                    let target_is_array_like =
+                        self.array_or_number_index_element_type(target).is_some();
+                    let source_is_iterable_like =
+                        target_is_array_like && !source_args.is_empty() && {
+                            let evaluated = self.evaluate_type_with_env(source);
+                            self.is_iterable_like_for_substitution(evaluated)
+                        };
+                    if source_is_iterable_like {
+                        // Extract the array element type and widen it (e.g., 0|2|8 → number)
+                        // before mapping against the source type args. This prevents the
+                        // contextual substitution from using unwidened literal types that
+                        // would cause false TS2345 mismatches.
+                        let elem = self
+                            .array_or_number_index_element_type(target)
+                            .expect("array target should have element type");
+                        let widened_elem = tsz_solver::operations::widening::widen_literal_type(
+                            self.ctx.types,
+                            elem,
+                        );
+                        for &source_arg in source_args {
+                            self.collect_return_context_substitution(
+                                source_arg,
+                                widened_elem,
+                                tracked_type_params,
+                                substitution,
+                                visited,
+                            );
+                        }
+                        if !substitution.is_empty() {
+                            return;
+                        }
+                    } else {
+                        for &source_arg in source_args {
+                            self.collect_return_context_substitution(
+                                source_arg,
+                                target,
+                                tracked_type_params,
+                                substitution,
+                                visited,
+                            );
+                        }
+                        if !substitution.is_empty() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        let source_eval = self.evaluate_for_return_context_substitution(source);
+        let target_eval = self.evaluate_for_return_context_substitution(target);
+
+        if let (Some((source_base, source_args)), Some((target_base, target_args))) =
+            (source_application.as_ref(), target_application.as_ref())
+            && self.return_context_application_bases_match(*source_base, *target_base)
+            && source_args.len() == target_args.len()
+        {
+            for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                self.collect_return_context_substitution(
+                    *source_arg,
+                    *target_arg,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+            }
+            return;
+        }
+
+        let function_info = match (
+            call_checker::get_contextual_signature(self.ctx.types, source),
+            call_checker::get_contextual_signature(self.ctx.types, target),
+        ) {
+            (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
+            _ => match (
+                call_checker::get_contextual_signature(self.ctx.types, source_eval),
+                call_checker::get_contextual_signature(self.ctx.types, target_eval),
+            ) {
+                (Some(source_fn), Some(target_fn)) => Some((source_fn, target_fn)),
+                _ => None,
+            },
+        };
+
+        if let Some((source_fn, target_fn)) = function_info
+            && source_fn.params.len() <= target_fn.params.len()
+        {
+            let substitution_len_before_callable = substitution.len();
+            let target_fn =
+                instantiate_contextual_target_shape_for_return_context(self.ctx.types, &target_fn);
+            let mut target_index = 0usize;
+            for source_param in &source_fn.params {
+                let target_type = if source_param.rest {
+                    let remaining = &target_fn.params[target_index..];
+                    if remaining.len() == 1 && remaining[0].rest {
+                        remaining[0].type_id
+                    } else {
+                        self.ctx
+                            .types
+                            .factory()
+                            .tuple(common::params_to_tuple_elements(remaining))
+                    }
+                } else {
+                    let Some(target_param) = target_fn.params.get(target_index) else {
+                        break;
+                    };
+                    target_index += 1;
+                    target_param.type_id
+                };
+                // When the source param is a type alias Application (e.g.,
+                // Either<E, A>) and the target param is its evaluated form
+                // (e.g., Left<string> | Right<number>), evaluate the source
+                // param first so both sides are at the same level. Without
+                // this, the Application vs union mismatch causes incorrect
+                // decomposition (e.g., A → Left<string> instead of A → number).
+                let source_param_type =
+                    if common::application_info(self.ctx.types, source_param.type_id).is_some()
+                        && common::union_members(self.ctx.types, target_type).is_some()
+                    {
+                        let evaluated = self.evaluate_type_with_env(source_param.type_id);
+                        if evaluated != source_param.type_id {
+                            evaluated
+                        } else {
+                            source_param.type_id
+                        }
+                    } else {
+                        source_param.type_id
+                    };
+                self.collect_return_context_substitution(
+                    source_param_type,
+                    target_type,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+                if source_param.rest {
+                    break;
+                }
+            }
+            self.collect_return_context_substitution(
+                source_fn.return_type,
+                target_fn.return_type,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            if substitution.len() > substitution_len_before_callable
+                || (source_application.is_none() && target_application.is_none())
+            {
+                return;
+            }
+        }
+
+        if let (Some(source_elems), Some(target_elems)) = (
+            common::tuple_elements(self.ctx.types, source),
+            common::tuple_elements(self.ctx.types, target),
+        ) {
+            for (source_elem, target_elem) in source_elems.iter().zip(target_elems.iter()) {
+                self.collect_return_context_substitution(
+                    source_elem.type_id,
+                    target_elem.type_id,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+            }
+            return;
+        }
+
+        let source_array_elem = common::array_element_type(self.ctx.types, source);
+        let target_array_elem = common::array_element_type(self.ctx.types, target);
+        if let (Some(source_elem), Some(target_elem)) = (source_array_elem, target_array_elem) {
+            self.collect_return_context_substitution(
+                source_elem,
+                target_elem,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            return;
+        }
+
+        if let Some(source_elem) = source_array_elem
+            && let Some((_target_base, target_args)) =
+                common::application_info(self.ctx.types, target)
+            && target_args.len() == 1
+        {
+            self.collect_return_context_substitution(
+                source_elem,
+                target_args[0],
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            return;
+        }
+
+        if let Some(source_elem) = source_array_elem
+            && let Some(iterator_info) = common::get_iterator_info(self.ctx.types, target, false)
+        {
+            self.collect_return_context_substitution(
+                source_elem,
+                iterator_info.yield_type,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            return;
+        }
+
+        // Structural property matching: when either side evaluates to a callable/object
+        // wrapper with marker properties (for example ActionFunction<T> carrying
+        // `_out_TActor?: T`), recurse through matching properties to recover the
+        // underlying type-parameter mapping.
+        let source_properties =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, source_eval)
+                .map(|shape| shape.properties.clone())
+                .or_else(|| {
+                    crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        source_eval,
+                    )
+                    .map(|shape| shape.properties.clone())
+                });
+        let target_properties =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, target_eval)
+                .map(|shape| shape.properties.clone())
+                .or_else(|| {
+                    crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        target_eval,
+                    )
+                    .map(|shape| shape.properties.clone())
+                });
+        if let (Some(source_properties), Some(target_properties)) =
+            (source_properties.as_ref(), target_properties.as_ref())
+        {
+            for source_prop in source_properties.iter() {
+                if let Some(target_prop) =
+                    common::find_matching_property(target_properties, source_prop.name)
+                {
+                    self.collect_return_context_substitution(
+                        source_prop.type_id,
+                        target_prop.type_id,
+                        tracked_type_params,
+                        substitution,
+                        visited,
+                    );
+                }
+            }
+        }
+    }
+
+    pub(crate) fn compute_return_context_substitution_from_shape(
+        &mut self,
+        shape: &tsz_solver::FunctionShape,
+        contextual_type: Option<TypeId>,
+    ) -> crate::query_boundaries::common::TypeSubstitution {
+        let Some(contextual_type) = contextual_type else {
+            return crate::query_boundaries::common::TypeSubstitution::new();
+        };
+        let tracked_type_params: FxHashSet<_> =
+            shape.type_params.iter().map(|tp| tp.name).collect();
+        if tracked_type_params.is_empty() {
+            return crate::query_boundaries::common::TypeSubstitution::new();
+        }
+
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut visited = FxHashSet::default();
+        self.collect_return_context_substitution(
+            shape.return_type,
+            contextual_type,
+            &tracked_type_params,
+            &mut substitution,
+            &mut visited,
+        );
+        substitution
+    }
+
+    /// Build a substitution map that, when applied to `sig.params`, reproduces
+    /// `instantiated_params`. Walks each `(sig_param, instantiated_param)` pair
+    /// structurally and records the binding for any tracked type parameter that
+    /// appears on the source side. This recovers round-1's inference as a
+    /// substitution map so that it can be composed with a return-context
+    /// substitution (where the latter takes precedence on overlap).
+    ///
+    /// Used by overload retry to retain type parameters inferred from
+    /// non-callback arguments (e.g., `T` in `from<T,U>(ArrayLike<T>, mapfn): U[]`)
+    /// alongside type parameters bound from the contextual return type
+    /// (e.g., `U` from `A[]`). Without this composition the callback body
+    /// would be evaluated with `T` still uninstantiated, producing spurious
+    /// TS2339 / TS2769 inside the callback.
+    pub(crate) fn extract_arg_inference_substitution(
+        &mut self,
+        sig_params: &[tsz_solver::ParamInfo],
+        instantiated_params: &[tsz_solver::ParamInfo],
+        type_params: &[tsz_solver::TypeParamInfo],
+    ) -> crate::query_boundaries::common::TypeSubstitution {
+        let tracked_type_params: FxHashSet<_> = type_params.iter().map(|tp| tp.name).collect();
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        if tracked_type_params.is_empty() {
+            return substitution;
+        }
+        let mut visited = FxHashSet::default();
+        for (sig_param, inst_param) in sig_params.iter().zip(instantiated_params.iter()) {
+            if sig_param.type_id == inst_param.type_id {
+                continue;
+            }
+            self.collect_return_context_substitution(
+                sig_param.type_id,
+                inst_param.type_id,
+                &tracked_type_params,
+                &mut substitution,
+                &mut visited,
+            );
+        }
+        substitution
+    }
+
+    pub(crate) fn callback_first_conditional_branch(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let node = self
+            .callback_function_index(arg_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))?;
+        let func = self.ctx.arena.get_function(node)?;
+        if func.type_annotation.is_some() {
+            return None;
+        }
+
+        let body_node = self.ctx.arena.get(func.body)?;
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            let block = self.ctx.arena.get_block(body_node)?;
+            let ret_expr = block.statements.nodes.iter().find_map(|&stmt_idx| {
+                let stmt_node = self.ctx.arena.get(stmt_idx)?;
+                if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                    return None;
+                }
+                self.ctx
+                    .arena
+                    .get_return_statement(stmt_node)
+                    .and_then(|ret| (ret.expression != NodeIndex::NONE).then_some(ret.expression))
+            })?;
+            let ret_node = self.ctx.arena.get(ret_expr)?;
+            if ret_node.kind != syntax_kind_ext::CONDITIONAL_EXPRESSION {
+                return None;
+            }
+            return self
+                .ctx
+                .arena
+                .get_conditional_expr(ret_node)
+                .map(|cond| cond.when_true);
+        }
+
+        if body_node.kind != syntax_kind_ext::CONDITIONAL_EXPRESSION {
+            return None;
+        }
+        self.ctx
+            .arena
+            .get_conditional_expr(body_node)
+            .map(|cond| cond.when_true)
+    }
+
+    pub(crate) fn unannotated_zero_param_callback_return_expression(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let node = self
+            .callback_function_index(arg_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))?;
+        let func = self.ctx.arena.get_function(node)?;
+        if !func.parameters.nodes.is_empty() || func.type_annotation.is_some() {
+            return None;
+        }
+
+        let body_node = self.ctx.arena.get(func.body)?;
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return Some(func.body);
+        }
+
+        let block = self.ctx.arena.get_block(body_node)?;
+        block.statements.nodes.iter().find_map(|&stmt_idx| {
+            let stmt_node = self.ctx.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                return None;
+            }
+            self.ctx
+                .arena
+                .get_return_statement(stmt_node)
+                .and_then(|ret| (ret.expression != NodeIndex::NONE).then_some(ret.expression))
+        })
+    }
+
+    pub(crate) fn sanitize_generic_inference_arg_type(
+        &mut self,
+        arg_idx: NodeIndex,
+        arg_type: TypeId,
+    ) -> TypeId {
+        let Some(arg_node) = self
+            .callback_function_index(arg_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))
+        else {
+            return arg_type;
+        };
+
+        let Some(func) = self.ctx.arena.get_function(arg_node) else {
+            return arg_type;
+        };
+
+        let mut binding_pattern_param_positions = Vec::new();
+        for (index, &param_idx) in func.parameters.nodes.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.type_annotation.is_some() {
+                continue;
+            }
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                binding_pattern_param_positions.push(index);
+            }
+        }
+
+        if binding_pattern_param_positions.is_empty() {
+            return arg_type;
+        }
+
+        if let Some(shape) = common::function_shape_for_type(self.ctx.types, arg_type) {
+            let sanitized = sanitize_function_shape_binding_pattern_params(
+                &shape,
+                &binding_pattern_param_positions,
+            );
+            self.ctx.types.factory().function(sanitized)
+        } else if let Some(shape) = common::callable_shape_for_type(self.ctx.types, arg_type) {
+            let sanitized = common::sanitize_callable_shape_binding_pattern_params(
+                &shape,
+                &binding_pattern_param_positions,
+                TypeId::UNKNOWN,
+            );
+            self.ctx.types.factory().callable(sanitized)
+        } else {
+            arg_type
+        }
+    }
+
+    pub(crate) fn inference_type_is_anyish(&self, ty: TypeId) -> bool {
+        common::is_type_deeply_any(self.ctx.types, ty)
+    }
+
+    pub(crate) fn sanitize_generic_inference_arg_types<'b>(
+        &mut self,
+        _callee_expr: NodeIndex,
+        args: &[NodeIndex],
+        arg_types: &'b [TypeId],
+    ) -> (Cow<'b, [TypeId]>, bool) {
+        let mut changed = false;
+        let expanded_args;
+        let source_args: &[NodeIndex] = if args.len() == arg_types.len() {
+            args
+        } else {
+            expanded_args = self.build_expanded_args_for_error(args);
+            &expanded_args
+        };
+
+        let mut sanitized: Option<Vec<TypeId>> = None;
+
+        for (index, (&arg_idx, &original_arg_type)) in
+            source_args.iter().zip(arg_types.iter()).enumerate()
+        {
+            // Resolve enum types to their namespace object representation.
+            // When an enum identifier (like `E1`) is used as a call argument,
+            // it resolves to an Enum type with a DefId. For inference against
+            // index-signature targets like `{ [x: string]: T }`, the inference
+            // engine needs to see the namespace Object type with named member
+            // properties. This mirrors tsc's behavior where `typeof E1`
+            // (the enum namespace) has an implicit string index signature.
+            let enum_def = common::enum_def_id(self.ctx.types, original_arg_type);
+            let mut arg_type = if let Some(def_id) = enum_def {
+                let sym_id = self.ctx.def_to_symbol_id(def_id);
+                let ns_type =
+                    sym_id.and_then(|sid| self.ctx.enum_namespace_types.get(&sid).copied());
+                if let Some(ns) = ns_type {
+                    changed = true;
+                    ns
+                } else {
+                    original_arg_type
+                }
+            } else {
+                original_arg_type
+            };
+
+            if self
+                .ctx
+                .arena
+                .get(arg_idx)
+                .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16)
+                && self.ctx.enclosing_class.is_some()
+                && !self.is_this_in_nested_function_without_own_this_binding(arg_idx)
+            {
+                changed = true;
+                arg_type = self.ctx.types.this_type();
+            }
+
+            let sanitized_arg = self.sanitize_generic_inference_arg_type(arg_idx, arg_type);
+            if sanitized_arg != arg_type {
+                changed = true;
+            }
+
+            if sanitized_arg != original_arg_type && sanitized.is_none() {
+                let mut owned = Vec::with_capacity(arg_types.len());
+                owned.extend_from_slice(&arg_types[..index]);
+                sanitized = Some(owned);
+            }
+            if let Some(owned) = sanitized.as_mut() {
+                owned.push(sanitized_arg);
+            }
+        }
+
+        if let Some(owned) = sanitized {
+            (Cow::Owned(owned), changed)
+        } else {
+            (Cow::Borrowed(arg_types), changed)
+        }
+    }
+
+    /// When the checker's intra-expression Round 2 inferred concrete types for
+    /// generic parameters that the solver's single-pass `resolve_call` could not
+    /// recover, refine the solver's `instantiated_params` so the post-call
+    /// assignability recheck sees the tighter expected types.
+    ///
+    /// The solver loses bindings in patterns where one object-literal property
+    /// contributes a concrete type to a parameter (`setup(): { outputs: O }`
+    /// pins `O = { ... }`) and another property's contextual signature uses the
+    /// same parameter through a homomorphic mapped + `infer` shape that fails
+    /// reverse inference (`map: (...) => Unwrap<O>`). The solver's defaulting
+    /// then widens the parameter to its constraint, masking errors in the
+    /// callback body. The checker's Round 2 substitution preserves the
+    /// concrete binding from `setup`.
+    ///
+    /// We only adopt the checker's value when it is strictly more specific than
+    /// the solver's (a fresh subtype). When the solver's inference is the same
+    /// or more specific, leave it untouched.
+    pub(crate) fn refine_instantiated_params_with_checker_substitution(
+        &mut self,
+        orig_shape: &FunctionShape,
+        params: &mut [tsz_solver::ParamInfo],
+        checker_sub: &common::TypeSubstitution,
+    ) {
+        // Build the merged substitution that would re-instantiate `orig_shape.params`
+        // using the checker's intra-expression Round 2 inferences. Skip type
+        // parameters where the checker's value is not concrete or where the
+        // checker matches the constraint (no improvement).
+        let mut merged = common::TypeSubstitution::new();
+        let mut any_override = false;
+        for tp in &orig_shape.type_params {
+            let Some(checker_val) = checker_sub.get(tp.name) else {
+                continue;
+            };
+            if checker_val == TypeId::UNKNOWN
+                || checker_val == TypeId::ERROR
+                || common::contains_infer_types(self.ctx.types, checker_val)
+                || common::contains_type_parameters(self.ctx.types, checker_val)
+            {
+                continue;
+            }
+            if Some(checker_val) == tp.constraint {
+                continue;
+            }
+            merged.insert(tp.name, checker_val);
+            any_override = true;
+        }
+        if !any_override {
+            return;
+        }
+        // Detect type parameters where the solver effectively defaulted (its
+        // instantiation can be reproduced by `T => T.constraint`). Only those
+        // are safe to override with the checker's value: when the solver
+        // bound a type parameter to anything else, it had information from the
+        // arg-type unification step that the checker doesn't see.
+        let mut constraint_default = common::TypeSubstitution::new();
+        for tp in &orig_shape.type_params {
+            constraint_default.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+        }
+        let mut solver_defaulted = rustc_hash::FxHashSet::default();
+        for tp in &orig_shape.type_params {
+            // Build a substitution that maps THIS tp to its constraint and
+            // every OTHER tp to a fresh marker. Then compare the resulting
+            // shape.params with the solver's instantiated_params at any
+            // position whose type contains this tp. If they agree, the
+            // solver defaulted this tp.
+            let mut probe = common::TypeSubstitution::new();
+            for other_tp in &orig_shape.type_params {
+                if other_tp.name == tp.name {
+                    probe.insert(
+                        other_tp.name,
+                        other_tp.constraint.unwrap_or(TypeId::UNKNOWN),
+                    );
+                } else if let Some(checker_val) = checker_sub.get(other_tp.name) {
+                    probe.insert(other_tp.name, checker_val);
+                } else {
+                    probe.insert(
+                        other_tp.name,
+                        other_tp.constraint.unwrap_or(TypeId::UNKNOWN),
+                    );
+                }
+            }
+            let mut all_match = true;
+            let mut any_referenced = false;
+            for (i, orig_param) in orig_shape.params.iter().enumerate() {
+                if i >= params.len() {
+                    break;
+                }
+                let referenced =
+                    common::collect_referenced_types(self.ctx.types, orig_param.type_id)
+                        .into_iter()
+                        .any(|ty| {
+                            common::type_param_info(self.ctx.types, ty)
+                                .is_some_and(|info| info.name == tp.name)
+                        });
+                if !referenced {
+                    continue;
+                }
+                any_referenced = true;
+                let probed = common::instantiate_type(self.ctx.types, orig_param.type_id, &probe);
+                if probed == params[i].type_id {
+                    continue;
+                }
+                // Different `TypeId`s can still represent the same type
+                // (alias unfoldings, interner aliasing, etc.). Treat as equal
+                // when each side is mutually assignable to the other.
+                let mutually_assignable = self.is_assignable_to_with_env(probed, params[i].type_id)
+                    && self.is_assignable_to_with_env(params[i].type_id, probed);
+                if !mutually_assignable {
+                    all_match = false;
+                    break;
+                }
+            }
+            if any_referenced && all_match {
+                solver_defaulted.insert(tp.name);
+            }
+        }
+        // Drop checker overrides for type params the solver did NOT default —
+        // the solver had non-default information we shouldn't clobber.
+        let mut filtered_merged = common::TypeSubstitution::new();
+        let mut any_filtered_override = false;
+        for tp in &orig_shape.type_params {
+            if let Some(val) = merged.get(tp.name)
+                && solver_defaulted.contains(&tp.name)
+            {
+                filtered_merged.insert(tp.name, val);
+                any_filtered_override = true;
+            } else if let Some(other) = checker_sub.get(tp.name) {
+                // Even when we keep the solver's binding for this tp, we still
+                // need a substitution entry so re-instantiating doesn't leave
+                // bare `tp` refs in composite types referencing both this tp
+                // and a tp we are overriding. Use the checker's value for
+                // structural completeness; if the solver had more info this
+                // entry won't be applied (the per-param assignability gate
+                // below will reject any widening).
+                filtered_merged.insert(tp.name, other);
+            }
+        }
+        if !any_filtered_override {
+            return;
+        }
+        for (i, orig_param) in orig_shape.params.iter().enumerate() {
+            if i >= params.len() {
+                break;
+            }
+            let new_type =
+                common::instantiate_type(self.ctx.types, orig_param.type_id, &filtered_merged);
+            if new_type == params[i].type_id {
+                continue;
+            }
+            if common::contains_type_parameters(self.ctx.types, new_type) {
+                continue;
+            }
+            // Final guard: only adopt when the checker's instantiation is a
+            // fresh subtype of the solver's. This rejects any widening the
+            // filtered substitution might still introduce.
+            if self.is_assignable_to_with_env(new_type, params[i].type_id) {
+                params[i].type_id = new_type;
+            }
+        }
+    }
+
+    pub(crate) fn refine_bare_instantiated_params_with_direct_literal_conflicts(
+        &mut self,
+        orig_shape: &FunctionShape,
+        params: &mut [tsz_solver::ParamInfo],
+        conflicts: &common::TypeSubstitution,
+    ) {
+        if conflicts.is_empty() {
+            return;
+        }
+
+        for (i, orig_param) in orig_shape.params.iter().enumerate() {
+            if i >= params.len() || orig_param.rest {
+                break;
+            }
+            let Some(tp_info) = common::type_param_info(self.ctx.types, orig_param.type_id) else {
+                continue;
+            };
+            let Some(literal_type) = conflicts.get(tp_info.name) else {
+                continue;
+            };
+            if literal_type == TypeId::UNKNOWN
+                || literal_type == TypeId::ERROR
+                || common::contains_infer_types(self.ctx.types, literal_type)
+                || common::contains_type_parameters(self.ctx.types, literal_type)
+            {
+                continue;
+            }
+
+            let current = params[i].type_id;
+            if current == literal_type {
+                continue;
+            }
+            if self.is_assignable_to_with_env(literal_type, current) {
+                params[i].type_id = literal_type;
+            }
+        }
+    }
+
+    pub(crate) fn recheck_generic_call_arguments_with_real_types(
+        &mut self,
+        result: CallResult,
+        instantiated_params: &[tsz_solver::ParamInfo],
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+    ) -> CallResult {
+        let success_return = if let CallResult::Success(return_type) = result {
+            return_type
+        } else {
+            return result;
+        };
+        let expected_signature = (!instantiated_params.is_empty()).then(|| {
+            self.ctx.types.factory().function(FunctionShape::new(
+                instantiated_params.to_vec(),
+                TypeId::UNKNOWN,
+            ))
+        });
+        for (index, &cached_actual) in arg_types.iter().enumerate() {
+            // Skip spread marker tuples [...T] created by the checker for generic
+            // TypeParameter spreads. The solver already validated these against the
+            // full rest parameter type; re-checking here would incorrectly compare
+            // the spread marker against the rest element type (e.g., [...U] vs
+            // `string | number | boolean` instead of `(string | number | boolean)[]`).
+            if crate::query_boundaries::common::is_spread_marker_tuple(
+                self.ctx.types.as_type_database(),
+                cached_actual,
+            ) {
+                continue;
+            }
+
+            let expected = expected_signature.and_then(|signature| {
+                self.contextual_parameter_type_for_call_with_env_from_expected(
+                    signature,
+                    index,
+                    arg_types.len(),
+                )
+            });
+
+            let Some(mut expected) = expected else {
+                break;
+            };
+
+            // When the expected type has readonly members (from const type parameter
+            // inference), skip the recheck for this argument. The argument was already
+            // validated against the const-inferred type during the solver's
+            // resolve_generic_call. Re-checking here would re-compute the argument
+            // type without in_const_assertion, producing a mutable type that fails
+            // assignability against the readonly expected type.
+            if crate::query_boundaries::common::type_has_readonly_members(
+                self.ctx.types.as_type_database(),
+                expected,
+            ) {
+                continue;
+            }
+
+            // Skip rechecking arguments whose expected type still contains inference
+            // placeholders. In those cases, the call solver's earlier check already
+            // used the concrete placeholder-driven relationships, and re-checking with
+            // concrete assignability tends to produce false positives (for example,
+            // constraint signatures with `infer` branches).
+            if crate::query_boundaries::common::contains_infer_types(self.ctx.types, expected) {
+                continue;
+            }
+
+            // When the argument is a variadic tuple spread marker `[...U]`
+            // (created by the call checker for generic type parameter spreads),
+            // unwrap the marker to get U and compare it against the full rest
+            // parameter array type.  The marker is synthetic — tsc never
+            // produces this comparison — so we must undo the wrapping here.
+            let spread_inner = common::tuple_elements(self.ctx.types, cached_actual)
+                .filter(|elems| elems.len() == 1 && elems[0].rest)
+                .map(|elems| elems[0].type_id);
+            if let Some(inner_type) = spread_inner
+                && let Some(param) = instantiated_params.get(index).or_else(|| {
+                    let last = instantiated_params.last()?;
+                    last.rest.then_some(last)
+                })
+                && param.rest
+            {
+                let rest_array_type = self.evaluate_type_with_env(param.type_id);
+                let is_assignable = self.is_assignable_to_with_env(inner_type, rest_array_type);
+                if is_assignable {
+                    continue;
+                }
+                // If not directly assignable, fall through to normal check
+                expected = rest_array_type;
+            }
+
+            let arg_idx = args.get(index).copied();
+            let skip_unresolved_callable_recheck = arg_idx.is_some_and(|arg_idx| {
+                self.is_callback_like_argument(arg_idx)
+                    && (common::contains_type_parameters(self.ctx.types, expected)
+                        || common::contains_infer_types(self.ctx.types, expected))
+                    && crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        expected,
+                    )
+                    .or_else(|| {
+                        let evaluated = self.evaluate_type_with_env(expected);
+                        crate::query_boundaries::checkers::call::get_contextual_signature(
+                            self.ctx.types,
+                            evaluated,
+                        )
+                    })
+                    .is_some()
+                    && crate::query_boundaries::checkers::call::get_contextual_signature(
+                        self.ctx.types,
+                        cached_actual,
+                    )
+                    .or_else(|| {
+                        let evaluated = self.evaluate_type_with_env(cached_actual);
+                        crate::query_boundaries::checkers::call::get_contextual_signature(
+                            self.ctx.types,
+                            evaluated,
+                        )
+                    })
+                    .is_some()
+            });
+            if skip_unresolved_callable_recheck {
+                continue;
+            }
+
+            let object_literal_function_param_spans = arg_idx
+                .filter(|&arg_idx| {
+                    self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                        node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    })
+                })
+                .map(|arg_idx| self.object_literal_function_like_param_spans(arg_idx))
+                .unwrap_or_default();
+            let refresh_snap = self.ctx.snapshot_diagnostics();
+            let actual = args
+                .get(index)
+                .copied()
+                .map(|arg_idx| {
+                    self.refreshed_generic_call_arg_type_with_context(
+                        arg_idx,
+                        cached_actual,
+                        Some(expected),
+                    )
+                })
+                .unwrap_or(cached_actual);
+            let actual = arg_idx
+                .map(|arg_idx| self.sanitize_generic_inference_arg_type(arg_idx, actual))
+                .unwrap_or(actual);
+            let refreshed_object_literal_param_has_implicit_any = !object_literal_function_param_spans
+                .is_empty()
+                && self.ctx.speculative_diagnostics_since(&refresh_snap).iter().any(|diag| {
+                    matches!(
+                        diag.code,
+                        crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                            | crate::diagnostics::diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
+                            | crate::diagnostics::diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+                            | crate::diagnostics::diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
+                    ) && object_literal_function_param_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end)
+                });
+            let expected_is_concrete = expected != TypeId::UNKNOWN
+                && expected != TypeId::ERROR
+                && !common::contains_infer_types(self.ctx.types, expected)
+                && !common::contains_type_parameters(self.ctx.types, expected);
+            if expected_is_concrete && !refreshed_object_literal_param_has_implicit_any {
+                self.ctx.diagnostics.retain(|diag| {
+                    !matches!(
+                        diag.code,
+                        crate::diagnostics::diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                            | crate::diagnostics::diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
+                            | crate::diagnostics::diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+                            | crate::diagnostics::diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
+                    ) || !object_literal_function_param_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end)
+                });
+            }
+
+            // Skip spread marker tuples [...T] created by the checker for generic
+            // TypeParameter spreads. These are already validated by the solver's
+            // check_argument_types_with which has spread-aware logic. The recheck
+            // here compares against the element type of the rest param, which would
+            // incorrectly reject `[...U]` against `ElementType`.
+            if is_spread_marker_tuple(self.ctx.types, actual) {
+                continue;
+            }
+
+            let actual_is_object_literal = arg_idx.is_some_and(|arg_idx| {
+                self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                    node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                })
+            });
+            if actual_is_object_literal
+                && common::type_is_conditional_type_result_with_unresolved_inference(
+                    self.ctx.types,
+                    expected,
+                )
+            {
+                continue;
+            }
+
+            let is_assignable = self.is_assignable_to_with_env(actual, expected)
+                || self.is_assignable_via_contextual_signatures(actual, expected);
+
+            if !is_assignable {
+                return CallResult::ArgumentTypeMismatch {
+                    index,
+                    expected,
+                    actual,
+                    fallback_return: success_return,
+                };
+            }
+        }
+
+        CallResult::Success(success_return)
+    }
+
+    pub(crate) fn compute_round2_contextual_types(
+        &mut self,
+        shape: &tsz_solver::FunctionShape,
+        round1_instantiated_params: Option<&[tsz_solver::ParamInfo]>,
+        sensitive_args: &[bool],
+        current_substitution: &crate::query_boundaries::common::TypeSubstitution,
+        arg_count: usize,
+    ) -> Vec<Option<TypeId>> {
+        let resolved_round1_instantiated_params = round1_instantiated_params
+            .map(|params| self.resolve_signature_parameter_type_queries(&shape.params, params));
+        let round1_instantiated_params = resolved_round1_instantiated_params
+            .as_deref()
+            .or(round1_instantiated_params);
+        let mut round2_contextual_types: Vec<Option<TypeId>> = Vec::with_capacity(arg_count);
+        for i in 0..arg_count {
+            let shape_round2_param =
+                shape
+                    .params
+                    .get(i)
+                    .map(|p| (p.type_id, p.rest))
+                    .or_else(|| {
+                        let last = shape.params.last()?;
+                        last.rest.then_some((last.type_id, true))
+                    });
+            let round2_param = round1_instantiated_params
+                .and_then(|params| {
+                    params.get(i).map(|p| (p.type_id, p.rest)).or_else(|| {
+                        let last = params.last()?;
+                        last.rest.then_some((last.type_id, true))
+                    })
+                })
+                .or(shape_round2_param);
+            let is_sensitive = i < sensitive_args.len() && sensitive_args[i];
+            let round2_param = if is_sensitive {
+                match (shape_round2_param, round2_param) {
+                    (Some(shape_param), Some(instantiated_param)) => {
+                        let shape_is_genericish =
+                            common::contains_infer_types(self.ctx.types, shape_param.0)
+                                || common::contains_type_parameters(self.ctx.types, shape_param.0)
+                                || !common::collect_type_queries(self.ctx.types, shape_param.0)
+                                    .is_empty();
+                        let instantiated_is_concrete =
+                            !common::contains_infer_types(self.ctx.types, instantiated_param.0)
+                                && !common::contains_type_parameters(
+                                    self.ctx.types,
+                                    instantiated_param.0,
+                                );
+                        if shape_is_genericish && instantiated_is_concrete {
+                            Some(instantiated_param)
+                        } else {
+                            Some(shape_param)
+                        }
+                    }
+                    (shape_param, None) => shape_param,
+                    (None, instantiated_param) => instantiated_param,
+                }
+            } else {
+                round2_param
+            };
+            let ctx_type = if let Some((param_type, is_rest_param)) = round2_param {
+                let contextual_substitution = if is_sensitive {
+                    self.fill_unresolved_contextual_substitution_from_constraints(
+                        shape,
+                        current_substitution,
+                    )
+                } else {
+                    current_substitution.clone()
+                };
+                let fresh_instantiated_from_shape =
+                    shape_round2_param.map(|(shape_param_type, _)| {
+                        crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            shape_param_type,
+                            &contextual_substitution,
+                        )
+                    });
+                let round1_has_unknown =
+                    common::contains_type_by_id(self.ctx.types, param_type, TypeId::UNKNOWN);
+                let round1_has_error =
+                    common::contains_type_by_id(self.ctx.types, param_type, TypeId::ERROR);
+                // For sensitive (callback) args, we normally re-instantiate from the
+                // shape to pick up contextual-return-type inference. However, if
+                // the substitution only contains widened primitives (string, number,
+                // etc.), the solver likely widened literal inferences (K = "a" → string).
+                // In that case the round1 result, which preserves literals, is more
+                // specific and should be preferred.
+                let sensitive_needs_fresh = is_sensitive
+                    && (round1_has_unknown
+                        || round1_has_error
+                        || current_substitution.map().values().any(|&v| {
+                            v != TypeId::STRING
+                                && v != TypeId::NUMBER
+                                && v != TypeId::BOOLEAN
+                                && v != TypeId::BIGINT
+                                && v != TypeId::UNKNOWN
+                                && v != TypeId::ERROR
+                        }));
+                let prefer_fresh_instantiation = sensitive_needs_fresh
+                    || round1_has_error
+                    || common::contains_infer_types(self.ctx.types, param_type)
+                    || common::contains_type_parameters(self.ctx.types, param_type)
+                    || fresh_instantiated_from_shape.is_some_and(|fresh| {
+                        (round1_has_unknown || round1_has_error)
+                            && (common::contains_infer_types(self.ctx.types, fresh)
+                                || common::contains_type_parameters(self.ctx.types, fresh))
+                    });
+                let instantiated = if round1_instantiated_params.is_some()
+                    && !prefer_fresh_instantiation
+                {
+                    let original_param = shape_round2_param.map(|(type_id, _)| type_id);
+                    if let Some(orig) = original_param
+                        && let Some(tp_info) = common::type_param_info(self.ctx.types, orig)
+                        && self
+                            .unresolved_contextual_substitution_target(
+                                &tp_info,
+                                &contextual_substitution,
+                            )
+                            .is_some()
+                    {
+                        let instantiated_constraint = match self
+                            .instantiate_contextual_constraint_without_unresolved_self(
+                                orig,
+                                &tp_info,
+                                &contextual_substitution,
+                            ) {
+                            Some(instantiated_constraint) => instantiated_constraint,
+                            None => param_type,
+                        };
+                        let evaluated_constraint =
+                            self.evaluate_type_with_env(instantiated_constraint);
+                        if !common::contains_type_parameters(self.ctx.types, evaluated_constraint) {
+                            let constraint_specificity =
+                                callable_param_specificity(self.ctx.types, evaluated_constraint);
+                            let round1_specificity =
+                                callable_param_specificity(self.ctx.types, param_type);
+                            if constraint_specificity >= round1_specificity {
+                                evaluated_constraint
+                            } else {
+                                param_type
+                            }
+                        } else {
+                            param_type
+                        }
+                    } else {
+                        param_type
+                    }
+                } else {
+                    let base_param_type = if prefer_fresh_instantiation {
+                        shape_round2_param
+                            .map(|(type_id, _)| type_id)
+                            .unwrap_or(param_type)
+                    } else {
+                        param_type
+                    };
+                    let inst = if let Some(tp_info) =
+                        common::type_param_info(self.ctx.types, base_param_type)
+                    {
+                        if self
+                            .unresolved_contextual_substitution_target(
+                                &tp_info,
+                                &contextual_substitution,
+                            )
+                            .is_some()
+                        {
+                            self.instantiate_contextual_constraint_without_unresolved_self(
+                                base_param_type,
+                                &tp_info,
+                                &contextual_substitution,
+                            )
+                            .unwrap_or_else(|| {
+                                crate::query_boundaries::common::instantiate_type(
+                                    self.ctx.types,
+                                    base_param_type,
+                                    &contextual_substitution,
+                                )
+                            })
+                        } else {
+                            crate::query_boundaries::common::instantiate_type(
+                                self.ctx.types,
+                                base_param_type,
+                                &contextual_substitution,
+                            )
+                        }
+                    } else {
+                        crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            base_param_type,
+                            &contextual_substitution,
+                        )
+                    };
+                    if let Some(tp_info) = common::type_param_info(self.ctx.types, inst) {
+                        let instantiated_constraint = match self
+                            .instantiate_contextual_constraint_without_unresolved_self(
+                                inst,
+                                &tp_info,
+                                &contextual_substitution,
+                            ) {
+                            Some(instantiated_constraint) => instantiated_constraint,
+                            None => inst,
+                        };
+                        let evaluated = self.evaluate_type_with_env(instantiated_constraint);
+                        if !common::contains_type_parameters(self.ctx.types, evaluated) {
+                            evaluated
+                        } else {
+                            inst
+                        }
+                    } else {
+                        inst
+                    }
+                };
+                let preserve_application_shape =
+                    should_preserve_contextual_application_shape(self.ctx.types, instantiated);
+                let evaluated = if common::contains_type_parameters(self.ctx.types, instantiated)
+                    || common::contains_infer_types(self.ctx.types, instantiated)
+                    || preserve_application_shape
+                {
+                    instantiated
+                } else {
+                    self.evaluate_type_with_env(instantiated)
+                };
+                let evaluated = if is_sensitive
+                    && (common::contains_type_parameters(self.ctx.types, evaluated)
+                        || common::contains_infer_types(self.ctx.types, evaluated))
+                {
+                    self.instantiate_remaining_contextual_type_params(
+                        evaluated,
+                        &shape.type_params,
+                        &contextual_substitution,
+                    )
+                } else {
+                    evaluated
+                };
+                Some(if is_rest_param {
+                    self.rest_argument_element_type_with_env(evaluated)
+                } else {
+                    evaluated
+                })
+            } else {
+                None
+            };
+            round2_contextual_types.push(ctx_type);
+        }
+        round2_contextual_types
+    }
+
+    fn instantiate_remaining_contextual_type_params(
+        &self,
+        type_id: TypeId,
+        type_params: &[tsz_solver::TypeParamInfo],
+        current_substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> TypeId {
+        // A return-context substitution can bind a callee type parameter to a
+        // contextual callback that mentions an outer type parameter with the
+        // same name. Because substitutions are name-keyed, do not default that
+        // outer parameter to the callee's constraint; use the outer parameter's
+        // own bound instead.
+        for tp in type_params {
+            if current_substitution.get(tp.name) != Some(type_id)
+                || !common::contains_type_parameter_named(self.ctx.types, type_id, tp.name)
+            {
+                continue;
+            }
+
+            let declared_param = self.ctx.types.factory().type_param(*tp);
+            let mut shadow_substitution = crate::query_boundaries::common::TypeSubstitution::new();
+            for referenced in common::collect_referenced_types(self.ctx.types, type_id) {
+                let Some(referenced_info) = common::type_param_info(self.ctx.types, referenced)
+                else {
+                    continue;
+                };
+                if referenced_info.name != tp.name || referenced == declared_param {
+                    continue;
+                }
+                if let Some(replacement) = referenced_info.default.or(referenced_info.constraint) {
+                    shadow_substitution.insert(tp.name, replacement);
+                } else {
+                    return type_id;
+                }
+            }
+
+            if !shadow_substitution.is_empty() {
+                return crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    type_id,
+                    &shadow_substitution,
+                );
+            }
+        }
+
+        let mut infer_bindings =
+            crate::query_boundaries::inference::collect_infer_bindings(self.ctx.types, type_id);
+        for referenced in common::collect_referenced_types(self.ctx.types, type_id) {
+            let Some(info) = common::type_param_info(self.ctx.types, referenced) else {
+                continue;
+            };
+            let name = self.ctx.types.resolve_atom(info.name);
+            if name.starts_with("__infer_") || name.starts_with("__infer_src_") {
+                infer_bindings.push((info.name, referenced));
+            }
+        }
+        if type_params.is_empty() && infer_bindings.is_empty() {
+            return type_id;
+        }
+
+        let mut substitution = current_substitution.clone();
+        for tp in type_params {
+            if substitution.get(tp.name).is_some_and(|mapped| {
+                !common::contains_type_parameters(self.ctx.types, mapped)
+                    && !common::contains_infer_types(self.ctx.types, mapped)
+            }) {
+                continue;
+            }
+            let replacement = tp.default.or(tp.constraint).unwrap_or(TypeId::UNKNOWN);
+            let replacement = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                replacement,
+                &substitution,
+            );
+            let replacement = if common::contains_type_parameters(self.ctx.types, replacement)
+                || common::contains_infer_types(self.ctx.types, replacement)
+            {
+                TypeId::UNKNOWN
+            } else {
+                replacement
+            };
+            substitution.insert(tp.name, replacement);
+        }
+        for (name, infer_type) in infer_bindings {
+            if substitution.get(name).is_some_and(|mapped| {
+                !common::contains_type_parameters(self.ctx.types, mapped)
+                    && !common::contains_infer_types(self.ctx.types, mapped)
+            }) {
+                continue;
+            }
+            let replacement = common::type_param_info(self.ctx.types, infer_type)
+                .and_then(|info| info.default.or(info.constraint))
+                .unwrap_or(TypeId::UNKNOWN);
+            let replacement = crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                replacement,
+                &substitution,
+            );
+            let replacement = if common::contains_type_parameters(self.ctx.types, replacement)
+                || common::contains_infer_types(self.ctx.types, replacement)
+            {
+                TypeId::UNKNOWN
+            } else {
+                replacement
+            };
+            substitution.insert(name, replacement);
+        }
+
+        crate::query_boundaries::inference::instantiate_type_with_infer(
+            self.ctx.types,
+            type_id,
+            &substitution,
+        )
+    }
+
+    pub(crate) fn compute_single_call_argument_type(
+        &mut self,
+        arg_idx: NodeIndex,
+        expected_type: Option<TypeId>,
+        check_excess_properties: bool,
+        effective_index: usize,
+        arg_count: usize,
+        suppress_diagnostics: bool,
+        callable_ctx: CallableContext,
+    ) -> TypeId {
+        use tsz_scanner::SyntaxKind;
+
+        let syntax_needs_contextual = {
+            let Some(node) = self.ctx.arena.get(arg_idx) else {
+                return TypeId::ERROR;
+            };
+            let is_literal = matches!(
+                node.kind,
+                k if k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::NumericLiteral as u16
+                    || k == SyntaxKind::BigIntLiteral as u16
+                    || k == SyntaxKind::TrueKeyword as u16
+                    || k == SyntaxKind::FalseKeyword as u16
+                    || k == SyntaxKind::NullKeyword as u16
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            );
+            if is_literal {
+                true
+            } else {
+                matches!(
+                    node.kind,
+                    k if k == syntax_kind_ext::ARROW_FUNCTION
+                        || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                        || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                        || k == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                        || k == syntax_kind_ext::CALL_EXPRESSION
+                        || k == syntax_kind_ext::NEW_EXPRESSION
+                        || k == syntax_kind_ext::YIELD_EXPRESSION
+                        || k == syntax_kind_ext::TEMPLATE_EXPRESSION
+                )
+            }
+        };
+        let expected_is_unresolved = expected_type.is_some_and(|expected| {
+            expected == TypeId::UNKNOWN
+                || expected == TypeId::ERROR
+                || common::contains_infer_types(self.ctx.types, expected)
+        });
+        let expected_context_type =
+            self.contextual_type_option_for_call_argument(expected_type, arg_idx, callable_ctx);
+        let expected_context_is_generic_callable =
+            expected_context_type.or(expected_type).is_some_and(|ty| {
+                let evaluated = self.evaluate_type_with_env(ty);
+                call_checker::get_contextual_signature(self.ctx.types, ty)
+                    .or_else(|| call_checker::get_contextual_signature(self.ctx.types, evaluated))
+                    .is_some_and(|shape| !shape.type_params.is_empty())
+            });
+        let skip_generic_callable_context_for_annotated_generic_function =
+            expected_context_is_generic_callable
+                && self.explicit_generic_function_has_fully_annotated_signature(arg_idx);
+        let needs_contextual_signature_instantiation =
+            self.expression_needs_contextual_signature_instantiation(arg_idx, expected_type);
+        let apply_contextual = (syntax_needs_contextual
+            || needs_contextual_signature_instantiation)
+            && !skip_generic_callable_context_for_annotated_generic_function;
+        let suppress_unresolved_object_literal_context = self
+            .ctx
+            .arena
+            .get(arg_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            && expected_context_type.is_some_and(|ty| {
+                let evaluated = self.evaluate_type_with_env(ty);
+                common::contains_type_parameters(self.ctx.types, ty)
+                    || common::contains_infer_types(self.ctx.types, ty)
+                    || common::contains_type_parameters(self.ctx.types, evaluated)
+                    || common::contains_infer_types(self.ctx.types, evaluated)
+            });
+        let _concrete_callback_context = expected_context_type.is_some_and(|ty| {
+            ty != TypeId::ANY
+                && ty != TypeId::UNKNOWN
+                && ty != TypeId::ERROR
+                && !common::contains_type_parameters(self.ctx.types, ty)
+                && !common::contains_infer_types(self.ctx.types, ty)
+                && crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
+                    .is_some_and(|shape| shape.params.iter().all(|param| !param.rest))
+        });
+        let raw_context_requires_generic_epc_skip = expected_context_type.is_some_and(|ty| {
+            common::contains_type_parameters(self.ctx.types, ty)
+                || should_preserve_contextual_application_shape(self.ctx.types, ty)
+        });
+        let callable_context_requires_generic_epc_skip =
+            callable_ctx.callable_type.is_some_and(|callable_type| {
+                let ctx =
+                    common::ContextualTypeContext::with_expected(self.ctx.types, callable_type);
+                ctx.get_parameter_type_for_call(effective_index, arg_count)
+                    .is_some_and(|param_type| {
+                        common::contains_type_parameters(self.ctx.types, param_type)
+                            || should_preserve_contextual_application_shape(
+                                self.ctx.types,
+                                param_type,
+                            )
+                    })
+            });
+
+        // Extract ThisType<T> marker from the unevaluated expected type BEFORE
+        // contextual_type_for_expression evaluates it away. ThisType<T> is an empty
+        // interface marker, so intersection simplification removes it. We need to
+        // preserve it for object literal methods' `this` type.
+        let is_object_literal_arg = self
+            .ctx
+            .arena
+            .get(self.ctx.arena.skip_parenthesized_and_assertions(arg_idx))
+            .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
+        let pushed_this_type = if is_object_literal_arg && let Some(et) = expected_type {
+            let ctx_helper = common::ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                et,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+            let _env = self.ctx.type_env.borrow();
+            if let Some(this_type) = ctx_helper
+                .get_this_type_from_marker()
+                .or_else(|| ctx_helper.get_this_type_from_marker())
+            {
+                self.ctx.this_type_stack.push(this_type);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        let skip_flow = if apply_contextual {
+            false
+        } else if let Some(node) = self.ctx.arena.get(arg_idx) {
+            if node.kind != SyntaxKind::Identifier as u16 {
+                false
+            } else if let Some(sym_id) = self
+                .ctx
+                .binder
+                .get_node_symbol(arg_idx)
+                .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, arg_idx))
+            {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    let value_decl = symbol.value_declaration;
+                    if value_decl.is_none() || !self.is_const_variable_declaration(value_decl) {
+                        false
+                    } else if let Some(decl_node) = self.ctx.arena.get(value_decl) {
+                        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) {
+                            if var_decl.type_annotation.is_some() || var_decl.initializer.is_none()
+                            {
+                                false
+                            } else if let Some(init_node) = self.ctx.arena.get(var_decl.initializer)
+                            {
+                                init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                    || init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        let request = if apply_contextual {
+            if suppress_unresolved_object_literal_context {
+                TypingRequest::NONE
+            } else {
+                match expected_context_type {
+                    Some(ty) => TypingRequest::with_contextual_type(ty),
+                    None => TypingRequest::NONE,
+                }
+            }
+        } else if skip_flow {
+            TypingRequest::for_write_context()
+        } else {
+            TypingRequest::NONE
+        };
+        if skip_generic_callable_context_for_annotated_generic_function {
+            self.invalidate_expression_for_contextual_retry(arg_idx);
+            self.clear_contextual_resolution_cache();
+        }
+
+        // Snapshot diagnostic + closure state when in speculative round2.
+        // Round2 marks closures as "already checked" even when their TS7006 diagnostics are later
+        // dropped by the suppress filter. Without restoring, the final retry pass sees these
+        // closures as already-checked and skips TS7006 — silencing real implicit-any errors
+        // for parameters whose object-literal-property contextual type is never (e.g., an
+        // extra key C in a negated-type-like constraint mapped type maps to never).
+        let speculation_snap =
+            suppress_diagnostics.then(|| DiagnosticSpeculationSnapshot::new(&self.ctx));
+        let implicit_any_closure_snapshot =
+            suppress_diagnostics.then(|| ImplicitAnyClosureSnapshot::new(&self.ctx));
+        let provisional_context_snap =
+            (!suppress_diagnostics && apply_contextual && expected_is_unresolved)
+                .then(|| DiagnosticSpeculationSnapshot::new(&self.ctx));
+        let arg_type = self.get_type_of_node_with_request(arg_idx, &request);
+
+        if check_excess_properties
+            && let Some(expected) = expected_type
+            && expected != TypeId::ANY
+            && expected != TypeId::UNKNOWN
+            && let Some(arg_node) = self.ctx.arena.get(arg_idx)
+            && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && !is_type_parameter_type(self.ctx.types, expected)
+            && !self
+                .ctx
+                .generic_excess_skip
+                .as_ref()
+                .is_some_and(|skip| effective_index < skip.len() && skip[effective_index])
+            && !raw_context_requires_generic_epc_skip
+            && !callable_context_requires_generic_epc_skip
+            && !expected_is_unresolved
+        {
+            self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
+        }
+
+        let arg_node = self.ctx.arena.get(arg_idx);
+        let provisional_context_arg_span = arg_node.and_then(|node| {
+            let is_context_sensitive_arg = self.is_callback_like_argument(arg_idx)
+                || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
+            is_context_sensitive_arg.then_some((node.pos, node.end))
+        });
+
+        if let Some(snap) = speculation_snap {
+            let object_literal_method_param_spans: Vec<(u32, u32)> = arg_node
+                .filter(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                .and_then(|node| self.ctx.arena.get_literal_expr(node))
+                .map(|obj| {
+                    obj.elements
+                        .nodes
+                        .iter()
+                        .filter_map(|&element_idx| {
+                            let element = self.ctx.arena.get(element_idx)?;
+                            match element.kind {
+                                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                                    .ctx
+                                    .arena
+                                    .get_method_decl(element)
+                                    .map(|method| method.parameters.nodes.as_slice()),
+                                k if k == syntax_kind_ext::GET_ACCESSOR
+                                    || k == syntax_kind_ext::SET_ACCESSOR =>
+                                {
+                                    self.ctx
+                                        .arena
+                                        .get_accessor(element)
+                                        .map(|accessor| accessor.parameters.nodes.as_slice())
+                                }
+                                _ => None,
+                            }
+                            .map(|params| {
+                                params
+                                    .iter()
+                                    .filter_map(|&param_idx| {
+                                        let param_node = self.ctx.arena.get(param_idx)?;
+                                        Some((param_node.pos, param_node.end))
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                        })
+                        .flatten()
+                        .collect()
+                })
+                .unwrap_or_default();
+            let callback_body_spans: Vec<_> = self
+                .callback_body_spans(arg_idx)
+                .into_iter()
+                .filter(|(start, end)| start < end)
+                .collect();
+            let callback_param_spans = self.callback_function_param_spans(arg_idx);
+            let function_arg_span = self.callback_argument_span(arg_idx);
+            let callback_has_block_body = self
+                .callback_function_index(arg_idx)
+                .and_then(|callback_idx| self.ctx.arena.get(callback_idx))
+                .and_then(|callback_node| self.ctx.arena.get_function(callback_node))
+                .and_then(|func| self.ctx.arena.get(func.body))
+                .is_some_and(|body_node| body_node.kind == syntax_kind_ext::BLOCK);
+            let diag_len = snap.checkpoint();
+            // Build pre-existing diagnostic keys for exact dedup.
+            let existing_diag_keys: Vec<_> = self
+                .ctx
+                .diagnostics
+                .iter()
+                .take(diag_len)
+                .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
+                .collect();
+            let mut seen_new_diags = FxHashSet::default();
+            let mut seen_diag_keys = existing_diag_keys;
+            let types = self.ctx.types;
+            snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
+                if Self::should_preserve_speculative_call_diagnostic(diag) {
+                    return true;
+                }
+                // --- Phase 1: dedup by (code, start) against pre-existing + already-kept ---
+                let key = (diag.code, diag.start);
+                if !seen_new_diags.insert(key) {
+                    return false;
+                }
+                // Duplicate of a pre-speculation diagnostic — drop.
+                if seen_diag_keys.iter().any(|existing| existing.0 == diag.code && existing.1 == diag.start) {
+                    return false;
+                }
+                // --- Phase 2: classify the diagnostic ---
+                let is_provisional_implicit_any = matches!(
+                    diag.code,
+                    diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE
+                        | diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
+                        | diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+                        | diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN
+                );
+                let is_assignability = diag.code
+                    == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    || diag.code
+                        == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
+                let is_object_literal_diag = arg_node.is_some_and(|node| {
+                    node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        && diag.start >= node.pos
+                        && diag.start < node.end
+                });
+                let is_function_arg_implicit_any_diag = is_provisional_implicit_any
+                    && callback_param_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                let is_function_arg_diag = function_arg_span
+                    .is_some_and(|(start, end)| diag.start >= start && diag.start < end);
+                let is_nullish_callback_body_diag = callback_body_spans.iter().any(|(start, _)| {
+                    diag.start == *start
+                        && matches!(
+                            diag.code,
+                            diagnostic_codes::IS_POSSIBLY_NULL
+                                | diagnostic_codes::IS_POSSIBLY_UNDEFINED
+                                | diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
+                                | diagnostic_codes::OBJECT_IS_POSSIBLY_NULL
+                                | diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED
+                                | diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED
+                                | diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_NULL
+                                | diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_UNDEFINED
+                                | diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_NULL_OR_UNDEFINED
+                        )
+                });
+                let is_direct_callback_body_assignability = is_assignability
+                    && callback_body_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                // When the contextual type for a callback argument is fully
+                // resolved (no type parameters, no infer types), assignability
+                // errors from inside the callback body are real — the later
+                // instantiated retry does not re-check the body, so these
+                // diagnostics would be lost. Keep them.
+                // Note: the diagnostic position may be at the arrow function
+                // start rather than inside the body, so we also check for
+                // assignability errors anywhere in the function arg when the
+                // context is concrete.
+                // Check if the expected type or its constraint is concrete.
+                // For generic calls like `g6<T extends () => any>(x: T)`, the expected
+                // type is `T` (has type params), but the constraint `() => any` is
+                // concrete. The contextual callable comes from the constraint, so
+                // TS7006 is definitive if the constraint is concrete.
+                let has_concrete_expected_type = !expected_is_unresolved
+                    && expected_type.is_some_and(|et| {
+                        if et == TypeId::UNKNOWN || et == TypeId::ERROR || et == TypeId::ANY {
+                            return false;
+                        }
+                        if !common::contains_type_parameters(types, et) {
+                            return true;
+                        }
+                        // Expected type has type params — check if it's a single type
+                        // parameter with a concrete constraint (the contextual callable
+                        // source for callback args).
+                        let constraint = common::type_parameter_constraint(types, et);
+                        constraint.is_some_and(|c| {
+                            c != TypeId::UNKNOWN
+                                && c != TypeId::ERROR
+                                && c != TypeId::ANY
+                                && !common::contains_type_parameters(types, c)
+                                && !common::contains_infer_types(types, c)
+                        })
+                    });
+                let is_concrete_callback_assignability = is_function_arg_diag
+                    && is_assignability
+                    && has_concrete_expected_type;
+                let is_concrete_expression_body_callback_assignability =
+                    is_concrete_callback_assignability && !callback_has_block_body;
+                // When the callback's contextual type is fully concrete (no type
+                // parameters, no infer types), TS2339 (property does not exist)
+                // errors from inside the callback body are definitive — the
+                // parameter types are fully resolved and the later instantiated
+                // retry will not change them. Keep these diagnostics so that e.g.
+                // `make<A,B>(fn: (a:A)=>B): (s:A)=>B` with contextual type
+                // `(s:number)=>string` correctly reports TS2339 for
+                // `(x) => x.toUpperCase()` when x is inferred as number.
+                //
+                // Only apply this for expression-body arrows (where the body IS
+                // the expression that fails) — block-body callbacks may get
+                // stale TS2339 from speculative union-contextual passes that
+                // will be refined in the instantiated retry.
+                let is_concrete_callback_body_property_error = has_concrete_expected_type
+                    && diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                    && !matches!(
+                        request.contextual_type,
+                        Some(ctx_type)
+                            if common::contains_type_parameters(types, ctx_type)
+                                || common::contains_infer_types(types, ctx_type)
+                    )
+                    && callback_body_spans
+                        .iter()
+                        .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                if expected_is_unresolved
+                    && (is_function_arg_diag
+                        || (is_object_literal_diag && is_provisional_implicit_any))
+                {
+                    return false;
+                }
+                // Round-2/single-arg recomputes are speculative for direct callback
+                // arguments. Keep their diagnostics owned by the final contextual
+                // recheck so stale wide-generic errors (for example TS2339 from
+                // `ClientEvents[string]`) do not leak past the instantiated retry.
+                // The narrow exceptions here are body-owned diagnostics that the
+                // later instantiated retry does not recreate: nullish checks like
+                // TS18048, direct callback-body assignability like nested JSX
+                // TS2322, and assignability errors from callbacks with concrete
+                // contextual types.
+                // When the contextual type is concrete (no type parameters, no
+                // infer types), TS7006 (parameter implicitly has 'any' type) is
+                // definitive — if the contextual callable signature has fewer
+                // parameters than the callback, there's no later refinement that
+                // will provide a type for the excess parameters. Preserve these.
+                let is_concrete_callback_implicit_any = is_provisional_implicit_any
+                    && has_concrete_expected_type;
+                if is_function_arg_diag
+                    && !is_nullish_callback_body_diag
+                    && !is_direct_callback_body_assignability
+                    && !is_concrete_expression_body_callback_assignability
+                    && !is_concrete_callback_body_property_error
+                    && !is_concrete_callback_implicit_any
+                {
+                    return false;
+                }
+                // Keep implicit-any diagnostics (TS7006/TS7019/TS7031) from inside object
+                // literals even in round2 speculative passes. Unlike assignability errors
+                // (which get a definitive check in resolve_call_with_checker_adapter), TS7006
+                // is determined by whether the contextual type is available in THIS pass.
+                let implicit_any_in_object_literal =
+                    is_provisional_implicit_any && is_object_literal_diag;
+                let implicit_any_in_object_literal_method =
+                    implicit_any_in_object_literal
+                        && object_literal_method_param_spans
+                            .iter()
+                            .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                // TS2345 diagnostics from within object literals come from
+                // nested call argument checking, not speculative property
+                // assignment. They are definitive and should be preserved.
+                let is_nested_call_arg_error = is_object_literal_diag
+                    && diag.code
+                        == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
+                // TS18046/TS2571 ("is of type 'unknown'") from within object
+                // literal arguments are provisional during speculative passes.
+                // During generic inference, callback parameters in nested objects
+                // may get their type from an unresolved type parameter constraint
+                // (e.g., Record<string, unknown>) that will be replaced by the
+                // actual inferred type in the final contextual pass.
+                let is_provisional_unknown_in_object_literal = is_object_literal_diag
+                    && matches!(
+                        diag.code,
+                        diagnostic_codes::IS_OF_TYPE_UNKNOWN
+                            | diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN
+                    );
+                let keep = is_nested_call_arg_error
+                    || (!is_assignability
+                        && !is_provisional_implicit_any
+                        && !is_provisional_unknown_in_object_literal)
+                    || (implicit_any_in_object_literal
+                        && !implicit_any_in_object_literal_method)
+                    || is_nullish_callback_body_diag
+                    || is_concrete_callback_implicit_any
+                    || !(is_object_literal_diag || is_function_arg_implicit_any_diag);
+                // --- Phase 3: exact-message dedup for kept diagnostics ---
+                if keep {
+                    let full_key = (
+                        diag.code,
+                        diag.start,
+                        diag.length,
+                        diag.message_text.clone(),
+                    );
+                    if seen_diag_keys.iter().any(|existing| existing == &full_key) {
+                        return false;
+                    }
+                    seen_diag_keys.push(full_key);
+                }
+                keep
+            });
+            // Restore implicit-any closure tracking to the pre-round2 state so the final
+            // retry pass can re-emit TS7006 for closures whose diagnostics were suppressed.
+            if let Some(snapshot) = implicit_any_closure_snapshot {
+                snapshot.restore_preserving_contextual(&mut self.ctx.speculation_state());
+            }
+        }
+        if let Some(snap) = provisional_context_snap {
+            snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
+                Self::should_preserve_speculative_call_diagnostic(diag)
+                    || !provisional_context_arg_span
+                        .is_some_and(|(start, end)| diag.start >= start && diag.start < end)
+            });
+        }
+
+        if pushed_this_type {
+            self.ctx.this_type_stack.pop();
+        }
+        arg_type
+    }
+}
+
+#[cfg(test)]
+#[path = "intra_expression_inference_tests.rs"]
+mod intra_expression_inference_tests;

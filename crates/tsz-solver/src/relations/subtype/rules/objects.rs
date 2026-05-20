@@ -1,0 +1,1664 @@
+//! Object type subtype checking.
+//!
+//! This module handles subtyping for TypeScript's object types:
+//! - Plain objects with named properties
+//! - Objects with index signatures (string and number)
+//! - Property compatibility (optional, readonly, type, `write_type`)
+//! - **Rule #26**: Split Accessors (Getter/Setter Variance)
+//!   - Read types are covariant: source.read <: target.read
+//!   - Write types are contravariant: target.write <: source.write
+//!   - Readonly target properties only check read type (no write access)
+//! - Private brand checking for nominal class typing
+
+use crate::operations::iterators::get_iterator_info;
+use crate::type_queries::get_return_type;
+use crate::types::{
+    IntrinsicKind, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility,
+};
+use crate::utils;
+use crate::visitor::{
+    application_id, object_shape_id, object_with_index_shape_id, template_literal_id, union_list_id,
+};
+use tsz_common::interner::Atom;
+
+use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+
+impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Look up a property in a list of properties, using cached index if available.
+    pub(crate) fn lookup_property<'props>(
+        &self,
+        props: &'props [PropertyInfo],
+        shape_id: Option<ObjectShapeId>,
+        name: Atom,
+    ) -> Option<&'props PropertyInfo> {
+        crate::utils::lookup_property(self.interner, props, shape_id, name)
+    }
+
+    fn extract_iterator_like_yield_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let app_id = application_id(self.interner, type_id)?;
+        let app = self.interner.type_application(app_id);
+        app.args.first().copied()
+    }
+
+    fn shape_or_receiver_requires_declared_index_signature(
+        &self,
+        shape: &ObjectShape,
+        receiver: Option<TypeId>,
+    ) -> bool {
+        let is_named_non_enum = |shape: &ObjectShape| {
+            shape.symbol.is_some() && !shape.flags.contains(ObjectFlags::ENUM_NAMESPACE)
+        };
+        if is_named_non_enum(shape) {
+            return true;
+        }
+
+        let Some(receiver) = receiver else {
+            return false;
+        };
+
+        let receiver_shape = object_with_index_shape_id(self.interner, receiver).or_else(|| {
+            let app_id = application_id(self.interner, receiver)?;
+            let app = self.interner.type_application(app_id);
+            object_with_index_shape_id(self.interner, app.base)
+        });
+
+        receiver_shape
+            .map(|shape_id| self.interner.object_shape(shape_id))
+            .is_some_and(|shape| is_named_non_enum(&shape))
+    }
+
+    fn has_compatible_symbol_iterator_methods(
+        &mut self,
+        source: &PropertyInfo,
+        target: &PropertyInfo,
+        source_method_type: TypeId,
+        target_method_type: TypeId,
+    ) -> bool {
+        let symbol_iterator = self.interner.intern_string("[Symbol.iterator]");
+        let internal_iterator = self.interner.intern_string("__@iterator");
+        let is_iterator_name = |name: Atom| name == symbol_iterator || name == internal_iterator;
+        if !is_iterator_name(source.name) || !is_iterator_name(target.name) {
+            return false;
+        }
+
+        let Some(query_db) = self.query_db else {
+            return false;
+        };
+
+        let Some(source_return_type) = get_return_type(query_db, source_method_type) else {
+            return false;
+        };
+        let Some(target_return_type) = get_return_type(query_db, target_method_type) else {
+            return false;
+        };
+
+        let source_yield_type = get_iterator_info(query_db, source_return_type, false)
+            .map(|info| info.yield_type)
+            .or_else(|| self.extract_iterator_like_yield_type(source_return_type));
+        let target_yield_type = get_iterator_info(query_db, target_return_type, false)
+            .map(|info| info.yield_type)
+            .or_else(|| self.extract_iterator_like_yield_type(target_return_type));
+
+        source_yield_type
+            .zip(target_yield_type)
+            .is_some_and(|(source_yield, target_yield)| {
+                self.check_subtype(source_yield, target_yield).is_true()
+            })
+    }
+
+    /// Check private brand compatibility for object subtyping.
+    ///
+    /// Private brands are used for nominal typing of classes with private fields.
+    /// If both source and target have private brands, they must be the same.
+    /// If target has a brand but source doesn't (e.g., object literal), this fails.
+    /// Returns false if brands don't match, true otherwise (including when neither has a brand).
+    pub(crate) fn check_private_brand_compatibility(
+        &self,
+        source: &[PropertyInfo],
+        target: &[PropertyInfo],
+    ) -> bool {
+        // Fast path: if neither side has non-public properties, there can't be any
+        // private brands. This avoids the expensive resolve_atom + starts_with scan
+        // on every property.
+        let target_has_nonpublic = target.iter().any(|p| p.visibility != Visibility::Public);
+        if !target_has_nonpublic {
+            // No non-public target properties → no brand to check against
+            return true;
+        }
+
+        let source_brand = source.iter().find(|p| {
+            p.visibility != Visibility::Public && {
+                let name = self.interner.resolve_atom(p.name);
+                name.starts_with("__private_brand_")
+            }
+        });
+        let target_brand = target.iter().find(|p| {
+            p.visibility != Visibility::Public && {
+                let name = self.interner.resolve_atom(p.name);
+                name.starts_with("__private_brand_")
+            }
+        });
+
+        // Check private brand compatibility
+        match (source_brand, target_brand) {
+            (Some(s_brand), Some(t_brand)) => {
+                // Both have private brands - they must match exactly
+                let s_brand_name = self.interner.resolve_atom(s_brand.name);
+                let t_brand_name = self.interner.resolve_atom(t_brand.name);
+                s_brand_name == t_brand_name
+            }
+            (None, Some(_)) => {
+                // Target has a private brand but source doesn't
+                // This happens when assigning object literal to class with private members
+                // Object literals can never have private brands, so this fails
+                false
+            }
+            _ => {
+                // Neither has a brand, or source has brand but target doesn't - both OK
+                true
+            }
+        }
+    }
+
+    /// Look up a property in the global Object interface (Object.prototype).
+    ///
+    /// TypeScript treats all object interface types as implicitly having Object.prototype
+    /// methods. When a structural check finds a required property absent from the source,
+    /// this fallback allows the check to pass if the global Object type provides a
+    /// compatible property.
+    fn get_object_base_property(&mut self, name: Atom) -> Option<PropertyInfo> {
+        let object_type = self.resolver.get_boxed_type(IntrinsicKind::Object)?;
+        let object_type = self.evaluate_type(object_type);
+        let shape_id = object_shape_id(self.interner, object_type)?;
+        let shape = self.interner.object_shape(shape_id);
+        self.lookup_property(&shape.properties, Some(shape_id), name)
+            .cloned()
+    }
+
+    /// Check object subtyping (structural with nominal optimization).
+    ///
+    /// Validates that source object is a subtype of target object by checking:
+    /// 1. **Fast path**: Nominal inheritance check (O(1) for class instances)
+    /// 2. Private brand compatibility (for nominal class typing with private fields)
+    /// 3. For each target property, source must have a compatible property
+    pub(crate) fn check_object_subtype(
+        &mut self,
+        source: &ObjectShape,
+        source_shape_id: Option<ObjectShapeId>,
+        source_receiver: Option<TypeId>,
+        target: &ObjectShape,
+        target_receiver: Option<TypeId>,
+    ) -> SubtypeResult {
+        // Prefer the caller-provided receiver (which preserves type arguments,
+        // e.g., Runtype<any>) over the shape-derived DefId reference (which loses
+        // them, e.g., bare Runtype). This ensures `this` type substitution in
+        // properties like `constraint: Constraint<this>` produces the correct
+        // parameterized type (e.g., Constraint<Runtype<any>>).
+        let source_receiver =
+            source_receiver.or_else(|| self.receiver_type_from_shape_symbol(source));
+        let target_receiver =
+            target_receiver.or_else(|| self.receiver_type_from_shape_symbol(target));
+        // Private brand checking for nominal typing of classes with private fields
+        if !self.check_private_brand_compatibility(&source.properties, &target.properties) {
+            return SubtypeResult::False;
+        }
+
+        // Weak type check (TS2559): if the target is a "weak type" (all properties optional,
+        // at least one property, no index signatures), reject if the source has properties
+        // but none in common with the target. Propagated from CompatChecker via
+        // `enforce_weak_types`. tsc skips when the source is ALSO a weak type.
+        //
+        // When checking direct intersection members (`in_intersection_member_check`),
+        // suppress this check: the source may have no common properties with one
+        // weak-type member but still be assignable to the combined intersection
+        // (e.g., ITreeItem <: ITreeItem & { Id?: number }).
+        //
+        // However, when we're inside a nested property type comparison
+        // (`in_property_check`), the weak type check must still apply:
+        //   { x: { c: string } } <: { x: { a?: string } }
+        // The inner `{ c: string } <: { a?: string }` must fail because `{ a?: string }`
+        // is a weak type and `{ c: string }` has no common properties with it.
+        if self.enforce_weak_types
+            && (!self.in_intersection_member_check || self.in_property_check)
+            && !source.properties.is_empty()
+            && Self::is_weak_type_shape(target)
+            && !Self::is_weak_type_shape(source)
+            && !self.is_global_object_shape(source)
+            && !crate::utils::has_common_property_name(&source.properties, &target.properties)
+        {
+            return SubtypeResult::False;
+        }
+
+        // Fast fail for private/protected members: check these first so unrelated
+        // class instances can fail before expensive public method comparison.
+        for t_prop in &target.properties {
+            if t_prop.visibility == Visibility::Public {
+                continue;
+            }
+
+            let Some(s_prop) =
+                self.lookup_property(&source.properties, source_shape_id, t_prop.name)
+            else {
+                return SubtypeResult::False;
+            };
+
+            let result =
+                self.check_property_compatibility(s_prop, t_prop, source_receiver, target_receiver);
+            if !result.is_true() {
+                return result;
+            }
+        }
+
+        let source_len = source.properties.len();
+        let target_len = target.properties.len();
+        let use_merge_scan =
+            source_shape_id.is_none() || source_len <= target_len.saturating_mul(4);
+
+        if use_merge_scan {
+            return self.check_object_subtype_merge_scan(
+                source,
+                target,
+                source_receiver,
+                target_receiver,
+            );
+        }
+
+        // For each property in target, source must have a compatible property
+        for t_prop in &target.properties {
+            // Private/protected members were handled in the fast-fail prepass.
+            if t_prop.visibility != Visibility::Public {
+                continue;
+            }
+            let s_prop = self.lookup_property(&source.properties, source_shape_id, t_prop.name);
+
+            let result = match s_prop {
+                Some(sp) => {
+                    self.check_property_compatibility(sp, t_prop, source_receiver, target_receiver)
+                }
+                None => {
+                    // Private/Protected properties cannot be missing, even if optional
+                    if t_prop.visibility != Visibility::Public {
+                        return SubtypeResult::False;
+                    }
+
+                    // Property missing - only OK if target property is optional
+                    if t_prop.optional {
+                        SubtypeResult::True
+                    } else {
+                        // Object.prototype fallback: TypeScript treats all object interface
+                        // types as implicitly having Object.prototype methods.
+                        if let Some(obj_prop) = self.get_object_base_property(t_prop.name) {
+                            self.check_property_compatibility(
+                                &obj_prop,
+                                t_prop,
+                                source_receiver,
+                                target_receiver,
+                            )
+                        } else {
+                            SubtypeResult::False
+                        }
+                    }
+                }
+            };
+
+            if !result.is_true() {
+                return result;
+            }
+        }
+
+        SubtypeResult::True
+    }
+
+    fn check_object_subtype_merge_scan(
+        &mut self,
+        source: &ObjectShape,
+        target: &ObjectShape,
+        source_receiver: Option<TypeId>,
+        target_receiver: Option<TypeId>,
+    ) -> SubtypeResult {
+        let s_props = &source.properties;
+        let t_props = &target.properties;
+
+        let mut s_idx = 0;
+        for t_prop in t_props {
+            if t_prop.visibility != Visibility::Public {
+                continue;
+            }
+
+            while s_idx < s_props.len() && s_props[s_idx].name < t_prop.name {
+                s_idx += 1;
+            }
+
+            if s_idx < s_props.len() && s_props[s_idx].name == t_prop.name {
+                let result = self.check_property_compatibility(
+                    &s_props[s_idx],
+                    t_prop,
+                    source_receiver,
+                    target_receiver,
+                );
+                if !result.is_true() {
+                    return result;
+                }
+                s_idx += 1;
+                continue;
+            }
+
+            // Property missing - only OK if target property is optional and public
+            if t_prop.visibility != Visibility::Public {
+                return SubtypeResult::False;
+            }
+            if !t_prop.optional {
+                // Object.prototype fallback: TypeScript treats all object interface
+                // types as implicitly having Object.prototype methods.
+                if let Some(obj_prop) = self.get_object_base_property(t_prop.name) {
+                    let compat = self.check_property_compatibility(
+                        &obj_prop,
+                        t_prop,
+                        source_receiver,
+                        target_receiver,
+                    );
+                    if compat.is_true() {
+                        continue;
+                    }
+                }
+                return SubtypeResult::False;
+            }
+        }
+
+        SubtypeResult::True
+    }
+
+    /// Check if a source property is compatible with a target property.
+    ///
+    /// This validates property compatibility for structural object subtyping:
+    ///
+    /// ## Rules:
+    /// 1. **Optional compatibility**: Optional in source can't satisfy required in target
+    ///    - `{ x?: number }` ≤ `{ x: number }` ❌
+    ///    - `{ x: number }` ≤ `{ x?: number }` ✅
+    ///
+    /// 2. **Readonly compatibility**: TypeScript allows readonly source to satisfy mutable target
+    ///    - `{ readonly x: number }` ≤ `{ x: number }` ✅ (readonly is on the reference)
+    ///    - `{ x: number }` ≤ `{ readonly x: number }` ✅
+    ///
+    /// 3. **Type compatibility**: Source type must be subtype of target type
+    ///    - Methods use bivariant checking (both directions)
+    ///    - Properties use contravariant checking
+    ///
+    /// 4. **Write type compatibility**: For mutable properties with different write types,
+    ///    target's write type must be subtype of source's (contravariance for writes)
+    ///
+    /// Check property compatibility between source and target properties.
+    ///
+    /// This implements **Rule #26: Split Accessors (Getter/Setter Variance)**.
+    ///
+    /// ## Split Accessor Variance
+    ///
+    /// Properties can have different types for reading (getter) vs writing (setter):
+    /// ```typescript
+    /// class C {
+    ///   private _x: string | number;
+    ///   get x(): string { return this._x as string; }
+    ///   set x(v: string | number) { this._x = v; }
+    /// }
+    /// ```
+    ///
+    /// In this example, reading `x` yields `string`, but writing accepts `string | number`.
+    ///
+    /// ## Subtyping Rules
+    ///
+    /// For `source_prop <: target_prop`:
+    ///
+    /// 1. **Read types are COVARIANT**: `source.read <: target.read`
+    ///    - When reading from source, we get something that's safe to use as target's read type
+    ///
+    /// 2. **Write types are CONTRAVARIANT**: `target.write <: source.write`
+    ///    - When writing to target, we accept something that's also safe for source
+    ///    - This ensures source can accept everything target can write
+    ///
+    /// 3. **Readonly properties**: If target property is readonly, we only check read types
+    ///    - You can't write to a readonly target, so write type doesn't matter
+    ///
+    /// ## Example
+    ///
+    /// ```typescript
+    /// class Base {
+    ///   get x(): string { return "hello"; }
+    ///   set x(v: string | number) {}
+    /// }
+    ///
+    /// class Derived extends Base {
+    ///   get x(): string { return "world"; }  // OK: string <: string
+    ///   set x(v: string) {}  // OK: string <: string | number (contravariant)
+    /// }
+    /// ```
+    ///
+    /// ## Additional Checks
+    ///
+    /// - Optional properties: source optional can't satisfy target required
+    /// - Readonly properties: source readonly can't satisfy target mutable
+    pub(crate) fn check_property_compatibility(
+        &mut self,
+        source: &PropertyInfo,
+        target: &PropertyInfo,
+        source_receiver: Option<TypeId>,
+        target_receiver: Option<TypeId>,
+    ) -> SubtypeResult {
+        // Rule: Private and Protected properties are nominal.
+        if target.visibility != Visibility::Public {
+            if source.parent_id != target.parent_id {
+                // Trace: Property nominal mismatch
+                if let Some(tracer) = &mut self.tracer
+                    && !tracer.on_mismatch_dyn(
+                        crate::diagnostics::SubtypeFailureReason::PropertyNominalMismatch {
+                            property_name: source.name,
+                        },
+                    )
+                {
+                    return SubtypeResult::False;
+                }
+                return SubtypeResult::False;
+            }
+        } else if source.visibility != Visibility::Public {
+            // Cannot assign private/protected source to public target
+            // Trace: Property visibility mismatch
+            if let Some(tracer) = &mut self.tracer
+                && !tracer.on_mismatch_dyn(
+                    crate::diagnostics::SubtypeFailureReason::PropertyVisibilityMismatch {
+                        property_name: source.name,
+                        source_visibility: source.visibility,
+                        target_visibility: target.visibility,
+                    },
+                )
+            {
+                return SubtypeResult::False;
+            }
+            return SubtypeResult::False;
+        }
+
+        // Optional source properties cannot satisfy required target properties.
+        // In standard mode, optional_property_type() widens the read type to `T | undefined`,
+        // but the property may still be absent.
+        if source.optional && !target.optional {
+            if let Some(tracer) = &mut self.tracer
+                && !tracer.on_mismatch_dyn(
+                    crate::diagnostics::SubtypeFailureReason::OptionalPropertyRequired {
+                        property_name: source.name,
+                    },
+                )
+            {
+                return SubtypeResult::False;
+            }
+            return SubtypeResult::False;
+        }
+
+        // Note: TypeScript does NOT reject readonly source → mutable target for
+        // individual properties. `{ readonly x: number }` IS assignable to `{ x: number }`.
+        // Readonly on properties is a usage constraint, not a structural typing constraint.
+        // This is different from ReadonlyArray vs Array, where structural differences exist.
+        //
+        // Exception: when comparing types for IDENTITY (not just assignability),
+        // readonly difference IS observable. This is what makes the higher-order
+        // `IfEquals` pattern work — it relies on `{ readonly x: T }` and
+        // `{ x: T }` being distinct types when used as the extends-clause of a
+        // conditional inside `(<T>() => T extends X ? 1 : 2)`. The
+        // `strict_readonly_identity` flag is toggled on by the conditional
+        // extends-type equivalence helper for exactly that purpose.
+        if self.strict_readonly_identity && source.readonly != target.readonly {
+            return SubtypeResult::False;
+        }
+
+        // Rule #26: Split Accessors (Getter/Setter Variance)
+        //
+        // Properties with split accessors (get/set) have different types for reading vs writing:
+        // - Read type (getter): covariant - source.read must be subtype of target.read
+        // - Write type (setter): contravariant - target.write must be subtype of source.write
+        //
+        // For readonly properties in target, we only check read type (no writes allowed)
+        // For mutable properties, we check both read and write types
+
+        // 1. Check READ type (covariant): source.read <: target.read
+        let source_read =
+            self.bind_property_receiver_this(source_receiver, self.optional_property_type(source));
+        let target_read =
+            self.bind_property_receiver_this(target_receiver, self.optional_property_type(target));
+        let allow_bivariant = source.is_method || target.is_method;
+
+        // Mark that we're inside a property comparison so nested weak type checks
+        // apply to recursive structural comparisons of property types.
+        let prev_in_property_check = self.in_property_check;
+        self.in_property_check = true;
+        let generic_args_start = self.instantiated_generic_method_args.len();
+        if allow_bivariant {
+            self.extend_instantiated_generic_method_args(source_receiver);
+            self.extend_instantiated_generic_method_args(target_receiver);
+        }
+        let result = self.check_property_types(
+            source,
+            target,
+            source_receiver,
+            target_receiver,
+            source_read,
+            target_read,
+            allow_bivariant,
+        );
+        self.instantiated_generic_method_args
+            .truncate(generic_args_start);
+        self.in_property_check = prev_in_property_check;
+        result
+    }
+
+    fn extend_instantiated_generic_method_args(&mut self, receiver: Option<TypeId>) {
+        let Some(receiver) = receiver else {
+            return;
+        };
+        let application = match self.interner.lookup(receiver) {
+            Some(crate::types::TypeData::Application(app_id)) => Some(app_id),
+            _ => self.interner.get_display_alias(receiver).and_then(|alias| {
+                match self.interner.lookup(alias) {
+                    Some(crate::types::TypeData::Application(app_id)) => Some(app_id),
+                    _ => None,
+                }
+            }),
+        };
+
+        if let Some(app_id) = application {
+            let app = self.interner.type_application(app_id);
+            self.instantiated_generic_method_args
+                .extend(app.args.iter().copied());
+        }
+    }
+
+    /// Inner property type comparison with `in_property_check` already set.
+    /// Separated to ensure `in_property_check` is always restored via the caller.
+    fn check_property_types(
+        &mut self,
+        source: &PropertyInfo,
+        target: &PropertyInfo,
+        source_receiver: Option<TypeId>,
+        target_receiver: Option<TypeId>,
+        source_read: TypeId,
+        target_read: TypeId,
+        allow_bivariant: bool,
+    ) -> SubtypeResult {
+        if self.has_compatible_symbol_iterator_methods(source, target, source_read, target_read) {
+            return SubtypeResult::True;
+        }
+
+        // Rule #26: Split Accessors - Covariant reads
+        // Source read type must be subtype of target read type
+        if source_read != target_read
+            && !self
+                .check_subtype_with_method_variance(source_read, target_read, allow_bivariant)
+                .is_true()
+        {
+            return SubtypeResult::False;
+        }
+
+        // Rule #26: Split Accessors - Contravariant writes
+        // For mutable target properties WITH DIFFERENT READ/WRITE TYPES, check write type compatibility
+        // Target write type must be subtype of source write type (contravariance)
+        //
+        // IMPORTANT: This contravariant check only applies to "split accessors" where the
+        // property has different types for reading vs writing (e.g., getter returns `string`,
+        // setter accepts `string | number`). For regular properties where read and write types
+        // are the same, TypeScript uses covariant checking for both.
+        //
+        // Without this condition, we would incorrectly reject valid assignments like:
+        // - { a: string } <: { a?: string } (required to optional)
+        // - { x: undefined } <: { x?: number } (undefined to optional)
+        // TypeScript treats readonly as a usage constraint, not a structural one:
+        // `{ readonly x: T }` IS assignable to `{ x: T }`. When the source
+        // property is readonly, its write_type is irrelevant (it may be NONE or
+        // a sentinel value), so skip the write check entirely.
+        let has_split_accessor =
+            !source.readonly && (source.has_split_accessor() || target.has_split_accessor());
+
+        if !target.readonly && has_split_accessor {
+            let source_write = self.bind_property_receiver_this(
+                source_receiver,
+                self.optional_property_write_type(source),
+            );
+            let target_write = self.bind_property_receiver_this(
+                target_receiver,
+                self.optional_property_write_type(target),
+            );
+
+            // Contravariant writes: target.write must be subtype of source.write
+            // This ensures that anything we can write to target is also safe to write to source
+            if target_write != source_write
+                && !self
+                    .check_subtype_with_method_variance(target_write, source_write, allow_bivariant)
+                    .is_true()
+            {
+                return SubtypeResult::False;
+            }
+        }
+
+        SubtypeResult::True
+    }
+
+    fn receiver_type_from_shape_symbol(&self, shape: &ObjectShape) -> Option<TypeId> {
+        let sym_id = shape.symbol?;
+        let symbol_ref = crate::SymbolRef(sym_id.0);
+        // Only nominalize when the resolver can produce a real DefId.
+        // Falling back to `interner.reference(symbol_ref)` here would conflate
+        // `SymbolId.0` with `DefId.0` (independent ID spaces) and yield a
+        // Lazy(DefId) that points at an unrelated declaration.
+        self.resolver
+            .symbol_to_def_id(symbol_ref)
+            .map(|def_id| self.interner.lazy(def_id))
+    }
+
+    fn bind_property_receiver_this(&self, receiver: Option<TypeId>, type_id: TypeId) -> TypeId {
+        if let Some(receiver) = receiver.map(|receiver| self.normalize_receiver_type(receiver))
+            && crate::contains_this_type(self.interner, type_id)
+        {
+            crate::substitute_this_type_cached(self.interner, self.query_db, type_id, receiver)
+        } else {
+            type_id
+        }
+    }
+
+    fn normalize_receiver_type(&self, receiver: TypeId) -> TypeId {
+        if receiver.is_intrinsic() {
+            return receiver;
+        }
+        match self.interner.lookup(receiver) {
+            Some(crate::types::TypeData::Object(shape_id))
+            | Some(crate::types::TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                if let Some(sym_id) = shape.symbol {
+                    let symbol_ref = crate::SymbolRef(sym_id.0);
+                    // Only nominalize when the resolver can produce a real DefId.
+                    // Falling back to `interner.reference(symbol_ref)` would conflate
+                    // `SymbolId.0` with `DefId.0` and produce a Lazy pointing at an
+                    // unrelated declaration. When no DefId mapping exists, keep the
+                    // original Object receiver — the structural shape is still a
+                    // sound `this` substitution target.
+                    if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
+                        return self.interner.lazy(def_id);
+                    }
+                }
+                receiver
+            }
+            _ => receiver,
+        }
+    }
+
+    pub(crate) fn requires_explicit_declared_index_signature(&self, shape: &ObjectShape) -> bool {
+        if shape.flags.contains(ObjectFlags::ENUM_NAMESPACE) {
+            return false;
+        }
+
+        let Some(sym_id) = shape.symbol else {
+            return false;
+        };
+
+        let symbol_ref = crate::SymbolRef(sym_id.0);
+        if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
+            return matches!(
+                self.resolver.get_def_kind(def_id),
+                Some(crate::def::DefKind::Class | crate::def::DefKind::Interface)
+            );
+        }
+
+        self.is_class_symbol
+            .is_some_and(|is_class_symbol| is_class_symbol(symbol_ref))
+    }
+
+    /// Check string index signature compatibility between source and target.
+    ///
+    /// Validates that string index signatures are compatible, handling:
+    /// - **Both have string index**: Source index must be subtype of target index
+    /// - **Only target has string index**: All source properties must be compatible with target's index
+    /// - **Only source has string index**: Compatible (target accepts string access via index)
+    /// - **Neither has string index**: Compatible (no string index constraint)
+    ///
+    /// ## Readonly Constraints:
+    /// - If target index is readonly, source index can be readonly or mutable
+    /// - If target index is mutable, source index must be mutable (readonly source not compatible)
+    pub(crate) fn check_string_index_compatibility(
+        &mut self,
+        source: &ObjectShape,
+        source_receiver: Option<TypeId>,
+        target: &ObjectShape,
+        target_receiver: Option<TypeId>,
+    ) -> SubtypeResult {
+        let Some(t_string_idx) = target
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL)
+        else {
+            return SubtypeResult::True; // Target has no string index constraint
+        };
+
+        // tsc: `indexSignaturesRelatedTo` short-circuit (checker.ts ~24828):
+        //   when the target has a string index AND the target's index info value
+        //   maps to `any`, the source need not declare a matching index signature.
+        //   This is the rule that allows `{ [n: number]: any }` -> `{ [s: string]: any }`
+        //   even when the source is a named class/interface. We mirror it here for
+        //   the assignability path (non-strict subtype).
+        if !self.disable_method_bivariance && t_string_idx.value_type.is_any() {
+            return SubtypeResult::True;
+        }
+
+        match source
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL)
+        {
+            Some(s_string_idx) => {
+                // Note: tsc does NOT enforce readonly on index signatures during
+                // assignability. A readonly source index IS assignable to a writable
+                // target index — readonly only prevents mutation through the reference.
+                let source_value =
+                    self.bind_property_receiver_this(source_receiver, s_string_idx.value_type);
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, t_string_idx.value_type);
+                if !self.check_subtype(source_value, target_value).is_true() {
+                    return SubtypeResult::False;
+                }
+                SubtypeResult::True
+            }
+            None => {
+                // Target has string index, source doesn't have a string index.
+                // Check if source has a number index — in TypeScript, a numeric index
+                // signature implies a string index (JS converts numeric keys to strings).
+                // So `{ [n: number]: T }` is assignable to `{ [s: string]: T }` when
+                // the value types are compatible.
+                if let Some(s_number_idx) = &source.number_index {
+                    // Note: We intentionally do NOT enforce readonly here. When a
+                    // source type has a readonly number index (e.g., enum reverse
+                    // mappings like `typeof E1`), it should still satisfy a writable
+                    // string index target. The readonly constraint is about mutability,
+                    // not value type compatibility. tsc allows `typeof E1` (with
+                    // readonly number index for reverse mappings) to be assigned to
+                    // `{ [x: string]: T }` (writable string index) when the value
+                    // types are compatible.
+                    let source_value =
+                        self.bind_property_receiver_this(source_receiver, s_number_idx.value_type);
+                    let target_value =
+                        self.bind_property_receiver_this(target_receiver, t_string_idx.value_type);
+                    if !self.check_subtype(source_value, target_value).is_true() {
+                        return SubtypeResult::False;
+                    }
+                    // Don't return here — fall through to also check named properties
+                    // against the target string index (implicit index signature path).
+                }
+
+                // Class and interface instance types must declare an explicit
+                // **string** index signature to satisfy a target that requires
+                // one.  Having only a number index is NOT sufficient — a number
+                // index constrains only numeric keys but says nothing about
+                // arbitrary string keys.  tsc reports TS2345 with the message
+                // "Index signature for type 'string' is missing in type …"
+                // when e.g. `NumberMap<Function>` (only `[n: number]: Function`)
+                // is passed where `StringMap<T>` (requires `[s: string]: T`)
+                // is expected.
+                //
+                // Namespace-like value objects and anonymous types can still
+                // satisfy the target structurally through their exported members.
+                if self.requires_explicit_declared_index_signature(source) {
+                    return SubtypeResult::False;
+                }
+
+                // An empty source vacuously satisfies the string index constraint.
+                // tsc: `{} -> { [s: string]: T }` is assignable.
+                if source.properties.is_empty() {
+                    return SubtypeResult::True;
+                }
+
+                for prop in &source.properties {
+                    if self.is_symbol_named_property(prop.name) {
+                        continue;
+                    }
+                    // Note: We do NOT check property readonly vs target index readonly
+                    // here. A source with readonly properties (e.g., enum namespaces)
+                    // IS assignable to a target with a writable index signature. The
+                    // readonly constraint means the property can't be written through
+                    // the source, but assignability only checks value types. tsc
+                    // allows `{ readonly A: E1 } <: { [k: string]: E1 }`.
+                    //
+                    // The inverse (writable source property vs readonly target index)
+                    // is checked elsewhere via index signature compatibility.
+                    //
+                    // Strip `undefined` from optional property types when checking against
+                    // index signatures. In tsc, `{ a: string, b?: number }` is assignable to
+                    // `{ [s: string]: string | number }` because `b?` contributes `number`,
+                    // not `number | undefined`.
+                    let raw_prop_type = if prop.optional {
+                        crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
+                    } else {
+                        prop.type_id
+                    };
+                    let prop_type =
+                        self.bind_property_receiver_this(source_receiver, raw_prop_type);
+                    let target_value =
+                        self.bind_property_receiver_this(target_receiver, t_string_idx.value_type);
+                    if !self.check_subtype(prop_type, target_value).is_true() {
+                        return SubtypeResult::False;
+                    }
+                }
+                SubtypeResult::True
+            }
+        }
+    }
+
+    /// Check number index signature compatibility between source and target objects.
+    ///
+    /// Validates that number index signatures (`[key: number]: T`) are compatible
+    /// when checking if source is a subtype of target.
+    ///
+    /// ## TypeScript Soundness:
+    /// - **Both have number index**: Source index must be subtype of target index
+    /// - **Only target has number index**: Source must provide a compatible number/string index
+    /// - **Only source has number index**: Compatible (target accepts numeric access via index)
+    /// - **Neither has number index**: Source must have compatible numeric property names
+    ///   (for index-less source objects assigned to indexed targets)
+    pub(crate) fn check_number_index_compatibility(
+        &mut self,
+        source: &ObjectShape,
+        source_receiver: Option<TypeId>,
+        target: &ObjectShape,
+        target_receiver: Option<TypeId>,
+    ) -> SubtypeResult {
+        let Some(ref t_number_idx) = target.number_index else {
+            return SubtypeResult::True; // Target has no number index constraint
+        };
+
+        // tsc: `indexSignaturesRelatedTo` short-circuit (checker.ts ~24828):
+        //   if THIS target index info maps to `any` AND the target ALSO has a
+        //   string index signature, the source need not declare a matching
+        //   number index. Gated on a NAMED target (`target.symbol.is_some()`)
+        //   so we don't loosen merged-intersection synthetic shapes whose
+        //   indexes come from distinct intersection members; tsc relates each
+        //   intersection member separately, while our interner eagerly merges
+        //   them. Without this gate, `Obj <: StringTo<any> & NumberTo<any>`
+        //   would incorrectly succeed.
+        if !self.disable_method_bivariance
+            && t_number_idx.value_type.is_any()
+            && target
+                .string_index
+                .as_ref()
+                .is_some_and(|idx| idx.key_type != TypeId::SYMBOL)
+            && target.symbol.is_some()
+        {
+            return SubtypeResult::True;
+        }
+
+        match &source.number_index {
+            Some(s_number_idx) => {
+                // Note: tsc does NOT enforce readonly on index signatures during
+                // assignability. Readonly source index IS assignable to writable target.
+                let source_value =
+                    self.bind_property_receiver_this(source_receiver, s_number_idx.value_type);
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, t_number_idx.value_type);
+                if !self.check_subtype(source_value, target_value).is_true() {
+                    return SubtypeResult::False;
+                }
+                SubtypeResult::True
+            }
+            None if source
+                .string_index
+                .as_ref()
+                .is_some_and(|idx| idx.key_type != TypeId::SYMBOL) =>
+            {
+                // A compatible string index can satisfy numeric index access.
+                let Some(s_string_idx) = source
+                    .string_index
+                    .as_ref()
+                    .filter(|idx| idx.key_type != TypeId::SYMBOL)
+                else {
+                    return SubtypeResult::False;
+                };
+                // Note: tsc does NOT enforce readonly on index signatures during
+                // assignability. Readonly source index IS assignable to writable target.
+                let source_value =
+                    self.bind_property_receiver_this(source_receiver, s_string_idx.value_type);
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, t_number_idx.value_type);
+                if !self.check_subtype(source_value, target_value).is_true() {
+                    return SubtypeResult::False;
+                }
+                SubtypeResult::True
+            }
+            None => {
+                // TypeScript only synthesizes an implicit numeric index signature
+                // for anonymous object types and enum namespaces. Named class/interface
+                // instance types must declare a real number/string index signature.
+                // Check if source is a named type that ISN'T an enum namespace.
+                if self.shape_or_receiver_requires_declared_index_signature(source, source_receiver)
+                {
+                    return SubtypeResult::False;
+                }
+
+                // A truly empty anonymous source vacuously satisfies the numeric
+                // index signature. tsc accepts `{}`-like object literal types here.
+                if source.properties.is_empty() {
+                    return SubtypeResult::True;
+                }
+
+                // Check any numeric-keyed source properties against the target's
+                // number index type. If a numeric property has an incompatible type,
+                // the assignment fails.
+                //
+                // Implicit Index Signature Rule:
+                // If the source has no index signature, it is considered to have one
+                // implicitly IF AND ONLY IF it has properties that match the index key type.
+                // If there are NO numeric properties, the source does NOT satisfy the
+                // numeric index signature requirement.
+                let mut found_numeric_prop = false;
+                for prop in &source.properties {
+                    if !utils::is_numeric_property_name(self.interner, prop.name) {
+                        continue;
+                    }
+                    found_numeric_prop = true;
+
+                    // Note: tsc does NOT reject readonly properties against writable
+                    // number index targets during assignability checks.
+                    // For NUMBER index signatures, optional properties carry an implicit
+                    // `| undefined` that must flow into the check (tsc: `{ 1?: string }`
+                    // vs `{ [k: number]: string }` fails on `string | undefined <: string`).
+                    let raw_prop_type = self.optional_property_type(prop);
+                    let prop_type =
+                        self.bind_property_receiver_this(source_receiver, raw_prop_type);
+                    let target_value =
+                        self.bind_property_receiver_this(target_receiver, t_number_idx.value_type);
+                    if !self
+                        .check_subtype_with_method_variance(prop_type, target_value, prop.is_method)
+                        .is_true()
+                    {
+                        return SubtypeResult::False;
+                    }
+                }
+
+                if found_numeric_prop {
+                    SubtypeResult::True
+                } else {
+                    // TypeScript treats number index signatures as constraining only
+                    // numerically named members for anonymous object types. If the
+                    // source has no numeric members, the numeric index constraint is
+                    // vacuously satisfied.
+                    SubtypeResult::True
+                }
+            }
+        }
+    }
+
+    /// Check object with index signature subtyping.
+    ///
+    /// Validates subtype compatibility between two objects that both have index signatures.
+    /// This requires:
+    /// 1. Named property compatibility (all target properties must exist in source)
+    /// 2. String index signature compatibility
+    /// 3. Number index signature compatibility
+    /// 4. All source properties must be compatible with target index signatures
+    /// 5. If source has both string and number indexes, they must be compatible
+    pub(crate) fn check_object_with_index_subtype(
+        &mut self,
+        source: &ObjectShape,
+        source_shape_id: Option<ObjectShapeId>,
+        source_receiver: Option<TypeId>,
+        target: &ObjectShape,
+        target_receiver: Option<TypeId>,
+    ) -> SubtypeResult {
+        // Prefer the caller-provided receiver (which preserves type arguments,
+        // e.g., Runtype<any>) over the shape-derived DefId reference (which loses
+        // them, e.g., bare Runtype). This ensures `this` type substitution in
+        // properties like `constraint: Constraint<this>` produces the correct
+        // parameterized type (e.g., Constraint<Runtype<any>>).
+        let source_receiver =
+            source_receiver.or_else(|| self.receiver_type_from_shape_symbol(source));
+        let target_receiver =
+            target_receiver.or_else(|| self.receiver_type_from_shape_symbol(target));
+        // First check named properties (nominal + structural)
+        // Note: We pass the full shapes to enable nominal inheritance check
+        if !self
+            .check_object_subtype(
+                source,
+                source_shape_id,
+                source_receiver,
+                target,
+                target_receiver,
+            )
+            .is_true()
+        {
+            return SubtypeResult::False;
+        }
+
+        // Check string index signature compatibility
+        if !self
+            .check_string_index_compatibility(source, source_receiver, target, target_receiver)
+            .is_true()
+        {
+            return SubtypeResult::False;
+        }
+
+        // Check number index signature compatibility
+        if !self
+            .check_number_index_compatibility(source, source_receiver, target, target_receiver)
+            .is_true()
+        {
+            return SubtypeResult::False;
+        }
+
+        if !self
+            .check_properties_against_index_signatures(
+                &source.properties,
+                source_receiver,
+                target,
+                target_receiver,
+            )
+            .is_true()
+        {
+            return SubtypeResult::False;
+        }
+
+        // For declared source types, if source has both string and number indexes,
+        // the number index value type must be compatible with the string index value
+        // type. Fresh object literals can transiently infer different string/number
+        // index value unions during generic contextual typing, and tsc does not reject
+        // assignment on that basis when the target index type already accepts both.
+        if let (Some(s_string_idx), Some(s_number_idx)) = (
+            source
+                .string_index
+                .as_ref()
+                .filter(|idx| idx.key_type != TypeId::SYMBOL),
+            &source.number_index,
+        ) && !source
+            .flags
+            .contains(crate::types::ObjectFlags::FRESH_LITERAL)
+            && !self
+                .check_subtype(
+                    self.bind_property_receiver_this(source_receiver, s_number_idx.value_type),
+                    self.bind_property_receiver_this(source_receiver, s_string_idx.value_type),
+                )
+                .is_true()
+        {
+            return SubtypeResult::False;
+        }
+
+        SubtypeResult::True
+    }
+
+    /// Check object with index signature to plain object subtyping.
+    ///
+    /// Validates that a source object with an index signature can be a subtype of
+    /// a target object with only named properties. For each target property:
+    /// 1. Look up the property by name in source (including via index signatures)
+    /// 2. Check property compatibility (optional, readonly, type, `write_type`)
+    /// 3. If property not found in source, check if index signature can satisfy it
+    pub(crate) fn check_object_with_index_to_object(
+        &mut self,
+        source: &ObjectShape,
+        source_shape_id: ObjectShapeId,
+        source_receiver: Option<TypeId>,
+        target: &[PropertyInfo],
+        target_receiver: Option<TypeId>,
+    ) -> SubtypeResult {
+        let source_receiver =
+            source_receiver.or_else(|| self.receiver_type_from_shape_symbol(source));
+        for t_prop in target {
+            if let Some(sp) =
+                self.lookup_property(&source.properties, Some(source_shape_id), t_prop.name)
+            {
+                // Visibility check (Nominal)
+                if t_prop.visibility != Visibility::Public {
+                    if sp.parent_id != t_prop.parent_id {
+                        return SubtypeResult::False;
+                    }
+                } else if sp.visibility != Visibility::Public {
+                    // Cannot assign private/protected source to public target
+                    return SubtypeResult::False;
+                }
+
+                // Check optional compatibility (see check_property_compatibility for rationale)
+                if sp.optional && !t_prop.optional {
+                    return SubtypeResult::False;
+                }
+                // NOTE: TypeScript allows readonly source to satisfy mutable target
+                // (readonly is a constraint on the reference, not structural compatibility)
+                let source_type = self
+                    .bind_property_receiver_this(source_receiver, self.optional_property_type(sp));
+                let target_type = self.bind_property_receiver_this(
+                    target_receiver,
+                    self.optional_property_type(t_prop),
+                );
+                let allow_bivariant = sp.is_method || t_prop.is_method;
+                if !self
+                    .check_subtype_with_method_variance(source_type, target_type, allow_bivariant)
+                    .is_true()
+                {
+                    return SubtypeResult::False;
+                }
+                if !t_prop.readonly && (sp.has_split_accessor() || t_prop.has_split_accessor()) {
+                    let source_write = self.bind_property_receiver_this(
+                        source_receiver,
+                        self.optional_property_write_type(sp),
+                    );
+                    let target_write = self.bind_property_receiver_this(
+                        target_receiver,
+                        self.optional_property_write_type(t_prop),
+                    );
+                    if !self
+                        .check_subtype_with_method_variance(
+                            target_write,
+                            source_write,
+                            allow_bivariant,
+                        )
+                        .is_true()
+                    {
+                        return SubtypeResult::False;
+                    }
+                }
+            } else if !self
+                .check_missing_property_against_index_signatures(
+                    source,
+                    source_receiver,
+                    t_prop,
+                    target_receiver,
+                )
+                .is_true()
+            {
+                return SubtypeResult::False;
+            }
+        }
+
+        SubtypeResult::True
+    }
+
+    /// Check if a missing target property can be satisfied by source index signatures.
+    ///
+    /// When a target property doesn't exist in the source object, the source's index
+    /// signatures can potentially satisfy it:
+    /// - If property name is numeric, check against number index signature
+    /// - Always check against string index signature (since numbers convert to strings)
+    pub(crate) fn check_missing_property_against_index_signatures(
+        &mut self,
+        source: &ObjectShape,
+        source_receiver: Option<TypeId>,
+        target_prop: &PropertyInfo,
+        target_receiver: Option<TypeId>,
+    ) -> SubtypeResult {
+        // Required properties cannot be satisfied by index signatures (soundness).
+        // An index signature { [k: string]: V } admits the empty object {},
+        // but a required property means the target does NOT admit {}.
+        // This is a fundamental set-theoretic mismatch, not just a TS compatibility rule.
+        if !target_prop.optional {
+            return SubtypeResult::False;
+        }
+
+        // Private/Protected properties cannot be satisfied by index signatures.
+        // They must be explicitly present in the source and match nominally.
+        if target_prop.visibility != Visibility::Public {
+            return SubtypeResult::False;
+        }
+
+        // Check if property name matches index signatures
+        // Numeric property names can match number index signatures
+        // All property names can match string index signatures (numbers convert to strings)
+        let target_type = self
+            .bind_property_receiver_this(target_receiver, self.optional_property_type(target_prop));
+
+        if utils::is_numeric_property_name(self.interner, target_prop.name)
+            && let Some(number_idx) = &source.number_index
+        {
+            if number_idx.readonly && !target_prop.readonly {
+                return SubtypeResult::False;
+            }
+            let source_value =
+                self.bind_property_receiver_this(source_receiver, number_idx.value_type);
+            if !self
+                .check_subtype_with_method_variance(
+                    source_value,
+                    target_type,
+                    target_prop.is_method,
+                )
+                .is_true()
+            {
+                return SubtypeResult::False;
+            }
+            return SubtypeResult::True;
+        }
+
+        if let Some(string_idx) = source
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL)
+        {
+            if string_idx.readonly && !target_prop.readonly {
+                return SubtypeResult::False;
+            }
+            let source_value =
+                self.bind_property_receiver_this(source_receiver, string_idx.value_type);
+            if !self
+                .check_subtype_with_method_variance(
+                    source_value,
+                    target_type,
+                    target_prop.is_method,
+                )
+                .is_true()
+            {
+                return SubtypeResult::False;
+            }
+            return SubtypeResult::True;
+        }
+
+        // No matching index signature
+        // For optional properties, this is OK
+        // For required properties, this is an error
+        if !target_prop.optional {
+            SubtypeResult::False
+        } else {
+            SubtypeResult::True
+        }
+    }
+
+    fn is_symbol_named_property(&self, name: Atom) -> bool {
+        let text = self.interner.resolve_atom(name);
+        text.starts_with("__unique_") || text.starts_with("[Symbol.")
+    }
+
+    fn property_name_matches_string_index_key(&mut self, name: Atom, key_type: TypeId) -> bool {
+        if key_type == TypeId::STRING {
+            return true;
+        }
+
+        if let Some(template_id) = template_literal_id(self.interner, key_type) {
+            return self
+                .check_literal_matches_template_literal(name, template_id)
+                .is_true();
+        }
+
+        if let Some(union_id) = union_list_id(self.interner, key_type) {
+            let members = self.interner.type_list(union_id).to_vec();
+            let mut saw_template_member = false;
+            for member in members {
+                if member == TypeId::STRING {
+                    return true;
+                }
+                let Some(template_id) = template_literal_id(self.interner, member) else {
+                    return true;
+                };
+                saw_template_member = true;
+                if self
+                    .check_literal_matches_template_literal(name, template_id)
+                    .is_true()
+                {
+                    return true;
+                }
+            }
+            return !saw_template_member;
+        }
+
+        true
+    }
+
+    /// Check that source properties are compatible with target index signatures.
+    ///
+    /// When a target has an index signature, all source properties must satisfy it:
+    /// - String index: All string-named properties must be compatible with index type
+    /// - Number index: All numerically-named properties must be compatible with index type
+    pub(crate) fn check_properties_against_index_signatures(
+        &mut self,
+        source: &[PropertyInfo],
+        source_receiver: Option<TypeId>,
+        target: &ObjectShape,
+        target_receiver: Option<TypeId>,
+    ) -> SubtypeResult {
+        let string_index = target
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type != TypeId::SYMBOL);
+        let symbol_index = target
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type == TypeId::SYMBOL);
+        let number_index = target.number_index.as_ref();
+
+        if string_index.is_none() && number_index.is_none() && symbol_index.is_none() {
+            return SubtypeResult::True;
+        }
+
+        for prop in source {
+            // If target declares this property explicitly, its compatibility is
+            // checked via named-property rules. Don't also force it through the
+            // index signature value type (tsc behavior for intersections like
+            // `{ a: X } & { [k: string]: Y }` where `a` is validated against `X`).
+            if target
+                .properties
+                .binary_search_by_key(&prop.name, |p| p.name)
+                .is_ok()
+            {
+                continue;
+            }
+
+            // For NUMBER index signatures, optional properties carry an implicit
+            // `| undefined` that must flow into the check (e.g. `{ 1?: string }`
+            // vs `{ [k: number]: string }` fails on `string | undefined <: string`).
+            // For STRING index signatures, tsc strips the implicit `| undefined`
+            // so `{ b?: number }` is assignable to `{ [k: string]: number }`.
+            //
+            // But when the property type is itself `undefined` (e.g.
+            // `k1?: undefined`), stripping yields `never`, which is
+            // vacuously assignable to anything and silences a real
+            // mismatch. Use the original property type in that case so
+            // the check still fires (tsc emits TS2322 for
+            // `{ k1?: undefined }` against `{ [key: string]: string }`).
+            let string_prop_type = if prop.optional {
+                let stripped =
+                    crate::narrowing::utils::remove_undefined(self.interner, prop.type_id);
+                if stripped == TypeId::NEVER {
+                    prop.type_id
+                } else {
+                    stripped
+                }
+            } else {
+                prop.type_id
+            };
+            let string_prop_type =
+                self.bind_property_receiver_this(source_receiver, string_prop_type);
+            let number_prop_type = if prop.optional {
+                self.bind_property_receiver_this(source_receiver, self.optional_property_type(prop))
+            } else {
+                string_prop_type
+            };
+            let allow_bivariant = prop.is_method;
+
+            if let Some(number_idx) = number_index {
+                let is_numeric = utils::is_numeric_property_name(self.interner, prop.name);
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, number_idx.value_type);
+                if is_numeric
+                    && !self
+                        .check_subtype_with_method_variance(
+                            number_prop_type,
+                            target_value,
+                            allow_bivariant,
+                        )
+                        .is_true()
+                {
+                    return SubtypeResult::False;
+                }
+                // Note: tsc does NOT reject readonly properties against writable
+                // number index targets during assignability checks.
+            }
+
+            if let Some(string_idx) = string_index {
+                if self.is_symbol_named_property(prop.name) {
+                    continue;
+                }
+                // Non-matching keys aren't constrained: `click` ∉ `on${string}`, so
+                // `{ click: number }` is fine against `{ [k: on${string}]: () => void }`.
+                if !self.property_name_matches_string_index_key(prop.name, string_idx.key_type) {
+                    continue;
+                }
+                // Note: We do NOT reject readonly source properties against writable
+                // string index targets. A source with readonly properties (e.g., enum
+                // namespaces, frozen objects) IS assignable to a target with a writable
+                // index signature — the readonly constraint means the property can't be
+                // written through the source reference, but assignability only checks
+                // value type compatibility. tsc allows this pattern.
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, string_idx.value_type);
+                if !self
+                    .check_subtype_with_method_variance(
+                        string_prop_type,
+                        target_value,
+                        allow_bivariant,
+                    )
+                    .is_true()
+                {
+                    return SubtypeResult::False;
+                }
+            }
+
+            if let Some(symbol_idx) = symbol_index
+                && self.is_symbol_named_property(prop.name)
+            {
+                let target_value =
+                    self.bind_property_receiver_this(target_receiver, symbol_idx.value_type);
+                if !self
+                    .check_subtype_with_method_variance(
+                        string_prop_type,
+                        target_value,
+                        allow_bivariant,
+                    )
+                    .is_true()
+                {
+                    return SubtypeResult::False;
+                }
+            }
+        }
+
+        SubtypeResult::True
+    }
+
+    /// Check simple object to object with index signature.
+    ///
+    /// Validates that a source object with only named properties is a subtype of
+    /// a target object with an index signature. This requires:
+    /// 1. All target named properties must have compatible source properties
+    /// 2. All source properties must be compatible with the index signature type
+    pub(crate) fn check_object_to_indexed(
+        &mut self,
+        source: &[PropertyInfo],
+        source_shape_id: Option<ObjectShapeId>,
+        source_receiver: Option<TypeId>,
+        target: &ObjectShape,
+        target_receiver: Option<TypeId>,
+    ) -> SubtypeResult {
+        // Preserve the original shape identity when available. Named interface/class
+        // types follow different index-signature rules than anonymous object types,
+        // and rebuilding them as anonymous shapes loses that distinction.
+        let source_shape = source_shape_id
+            .map(|id| self.interner.object_shape(id))
+            .unwrap_or_else(|| {
+                ObjectShape {
+                    flags: ObjectFlags::empty(),
+                    properties: source.to_vec(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                }
+                .into()
+            });
+        let source_receiver = self
+            .receiver_type_from_shape_symbol(&source_shape)
+            .or(source_receiver);
+        let target_receiver = self
+            .receiver_type_from_shape_symbol(target)
+            .or(target_receiver);
+        if !self
+            .check_object_subtype(
+                &source_shape,
+                source_shape_id,
+                source_receiver,
+                target,
+                target_receiver,
+            )
+            .is_true()
+        {
+            return SubtypeResult::False;
+        }
+
+        // Named class/interface types require an explicit string index signature to
+        // satisfy a string-indexed target — compatible properties alone are not enough.
+        // Symbol-keyed indices and any-value targets are exempted (same shortcircuits
+        // as check_string_index_compatibility).
+        if target.string_index.as_ref().is_some_and(|idx| {
+            idx.key_type != TypeId::SYMBOL
+                && (self.disable_method_bivariance || !idx.value_type.is_any())
+        }) && self.requires_explicit_declared_index_signature(&source_shape)
+        {
+            return SubtypeResult::False;
+        }
+
+        // A target number index signature requires the source to provide
+        // number-compatible indexing via a number or string index signature.
+        // A plain object with only named properties cannot satisfy arbitrary
+        // numeric index access.
+        if !self
+            .check_number_index_compatibility(
+                &source_shape,
+                source_receiver,
+                target,
+                target_receiver,
+            )
+            .is_true()
+        {
+            return SubtypeResult::False;
+        }
+        self.check_properties_against_index_signatures(
+            source,
+            source_receiver,
+            target,
+            target_receiver,
+        )
+    }
+
+    /// Get the effective type of an optional property for reading.
+    ///
+    /// Optional properties in TypeScript can be undefined even if their type doesn't
+    /// explicitly include undefined. This function adds undefined to the type unless
+    /// exactOptionalPropertyTypes is enabled.
+    pub(crate) fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
+        if prop.optional && !self.exact_optional_property_types && self.strict_null_checks {
+            self.interner.union2(prop.type_id, TypeId::UNDEFINED)
+        } else {
+            prop.type_id
+        }
+    }
+
+    /// Get the effective write type of an optional property.
+    /// Falls back to `type_id` when `write_type` is `NONE` (readonly sentinel).
+    pub(crate) fn optional_property_write_type(&self, prop: &PropertyInfo) -> TypeId {
+        let write = if prop.write_type == TypeId::NONE {
+            prop.type_id
+        } else {
+            prop.write_type
+        };
+        if prop.optional && !self.exact_optional_property_types && self.strict_null_checks {
+            self.interner.union2(write, TypeId::UNDEFINED)
+        } else {
+            write
+        }
+    }
+
+    /// Check if an object shape is a "weak type": all properties are optional,
+    /// there is at least one property, and there are no index signatures.
+    /// Weak types trigger TS2559 when the source has no common properties.
+    fn is_weak_type_shape(shape: &ObjectShape) -> bool {
+        !shape.properties.is_empty()
+            && shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.properties.iter().all(|p| p.optional)
+    }
+
+    /// Check if an object shape is the global `Object` interface from lib.d.ts.
+    ///
+    /// The global `Object` type is exempt from weak type checks because in tsc,
+    /// all object types implicitly inherit `Object`'s properties (`toString`,
+    /// `valueOf`, `constructor`, etc.). When tsc checks `hasCommonProperties`
+    /// for the weak type rule, the target type's apparent type includes these
+    /// inherited members, so `Object` and any weak type always share common
+    /// properties. Our shapes don't include inherited members, so we exempt
+    /// `Object` explicitly to match tsc behavior (see TypeScript PR #16047).
+    fn is_global_object_shape(&self, shape: &ObjectShape) -> bool {
+        // Object interface has exactly 7 properties: constructor, toString,
+        // toLocaleString, valueOf, hasOwnProperty, isPrototypeOf,
+        // propertyIsEnumerable. Use a tight cap to avoid matching derived
+        // types like Boolean (8+ props) or Number (~10 props).
+        if shape.properties.len() > 7 {
+            return false;
+        }
+        let constructor = self.interner.intern_string("constructor");
+        let has_own = self.interner.intern_string("hasOwnProperty");
+        let is_proto = self.interner.intern_string("isPrototypeOf");
+        shape.properties.iter().any(|p| p.name == constructor)
+            && shape.properties.iter().any(|p| p.name == has_own)
+            && shape.properties.iter().any(|p| p.name == is_proto)
+    }
+
+    /// `ObjectWithIndex` source vs `Tuple` target.
+    ///
+    /// Matches tsc's behavior for array-like interfaces assigned to a tuple
+    /// type, e.g.
+    /// ```ts
+    /// interface StrNum extends Array<string|number> {
+    ///   0: string;
+    ///   1: number;
+    ///   length: 2;
+    /// }
+    /// declare let x: [string, number];
+    /// declare let y: StrNum;
+    /// x = y;  // OK
+    /// ```
+    ///
+    /// Iterates the target tuple's elements and looks up each by its numeric
+    /// property name (`"0"`, `"1"`, ...) on the source shape. Optional/rest
+    /// elements use the source's number index signature as a fallback.
+    /// `length` is also checked when the tuple has a fixed arity and the
+    /// source declares a numeric `length`.
+    pub(crate) fn check_object_with_index_to_tuple(
+        &mut self,
+        source: &ObjectShape,
+        source_receiver: Option<TypeId>,
+        t_list: crate::types::TupleListId,
+        target_type: TypeId,
+    ) -> SubtypeResult {
+        use crate::types::PropertyInfo;
+        let target_elems = self.interner.tuple_list(t_list);
+        let source_receiver =
+            source_receiver.or_else(|| self.receiver_type_from_shape_symbol(source));
+
+        for (i, t_elem) in target_elems.iter().enumerate() {
+            // Variadic / rest elements aren't structurally implementable by
+            // a fixed-property interface — bail out conservatively.
+            if t_elem.rest {
+                return SubtypeResult::False;
+            }
+            let prop_name = self.interner.intern_string(&i.to_string());
+            let s_prop_opt = PropertyInfo::find_in_slice(&source.properties, prop_name);
+
+            // Optional tuple slot can be satisfied by either a (matching) source
+            // property OR by the source's number index signature.
+            let s_type = if let Some(sp) = s_prop_opt {
+                self.bind_property_receiver_this(source_receiver, self.optional_property_type(sp))
+            } else if let Some(idx) = &source.number_index {
+                self.bind_property_receiver_this(source_receiver, idx.value_type)
+            } else if t_elem.optional {
+                continue;
+            } else {
+                return SubtypeResult::False;
+            };
+
+            let t_type = t_elem.type_id;
+            if !self.check_subtype(s_type, t_type).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+
+        // Length check: when the target tuple has a fixed arity (no rest), the
+        // source's `length` property type must be assignable to the literal
+        // target length. tsc applies this strictly — `length: 2` is not
+        // assignable to `length: 1`, and `length: number` is not assignable
+        // to `length: 1` either.
+        let length_atom = self.interner.intern_string("length");
+        if let Some(s_length) = PropertyInfo::find_in_slice(&source.properties, length_atom)
+            && target_elems.iter().all(|e| !e.rest)
+        {
+            let s_length_type = self.bind_property_receiver_this(source_receiver, s_length.type_id);
+            let target_len = target_elems.len();
+            let target_len_type = self.interner.literal_number(target_len as f64);
+            if !self.check_subtype(s_length_type, target_len_type).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+
+        let _ = target_type;
+        SubtypeResult::True
+    }
+}

@@ -1,0 +1,2088 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT_DIR"
+source scripts/ci/suite-metadata.sh
+
+export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
+export CARGO_HOME="${TSZ_CI_CARGO_HOME:-$ROOT_DIR/.ci-cache/cargo-home}"
+SCCACHE_VERSION="${SCCACHE_VERSION:-0.9.1}"
+export CARGO_PROFILE_DIST_FAST_LTO="${CARGO_PROFILE_DIST_FAST_LTO:-false}"
+export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
+export RUST_TEST_TIMEOUT="${RUST_TEST_TIMEOUT:-300}"
+export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$ROOT_DIR/.ci-cache/npm}"
+export npm_config_cache="$NPM_CONFIG_CACHE"
+export TSZ_CI_WASM_PACK_CACHE="${TSZ_CI_WASM_PACK_CACHE:-$ROOT_DIR/.ci-cache/wasm-pack}"
+export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+
+mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE" "$TSZ_CI_WASM_PACK_CACHE"
+
+# Main's heavy-suite snapshots currently overstate the merge-gate floor. Shards
+# report their expected pass count from the partition they actually ran; gate on
+# that deficit when available so corpus-total drift does not force blind
+# absolute-floor edits. The fallback floor still protects paths without shard
+# expected counts.
+TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-12556}"
+# Optional accepted-regression list for temporary conformance runways. Keep this
+# path-based, not count-based: fixing one listed test must not let a new
+# unlisted regression pass CI under the same aggregate deficit.
+TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS:-scripts/conformance/conformance-accepted-regressions.txt}"
+TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1486}"
+
+cap_positive_baseline() {
+  local baseline="$1"
+  local accepted_floor="$2"
+  if [[ "$baseline" =~ ^[0-9]+$ && "$accepted_floor" =~ ^[0-9]+$ \
+    && "$baseline" -gt 0 && "$accepted_floor" -gt 0 \
+    && "$baseline" -gt "$accepted_floor" ]]; then
+    printf '%s\n' "$accepted_floor"
+  else
+    printf '%s\n' "$baseline"
+  fi
+}
+
+HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 8)"
+# shellcheck source=scripts/ci/ci-resources.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ci-resources.sh"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(default_cargo_build_jobs)}"
+echo "info: CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} (HOST_CPUS=${HOST_CPUS})" >&2
+
+SHARD_COUNT="${TSZ_CI_SHARDS:-4}"
+
+EMIT_WORKERS="${TSZ_CI_EMIT_WORKERS:-${TSZ_CI_SHARD_WORKERS:-$(default_emit_workers)}}"
+FOURSLASH_WORKERS="${TSZ_CI_FOURSLASH_WORKERS:-${TSZ_CI_SHARD_WORKERS:-$(default_fourslash_workers)}}"
+CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-$(default_conformance_workers)}"
+CONFORMANCE_SHARD_INDEX="${_TSZ_CI_CONFORMANCE_SHARD_INDEX:-${TSZ_CI_CONFORMANCE_SHARD_INDEX:-0}}"
+CONFORMANCE_SHARD_COUNT="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-1}}"
+CONFORMANCE_SHARD_STRATEGY="${TSZ_CI_CONFORMANCE_SHARD_STRATEGY:-hash}"
+EMIT_CHUNK="${TSZ_CI_EMIT_CHUNK:-4000}"
+EMIT_TIMEOUT_MS="${TSZ_CI_EMIT_TIMEOUT_MS:-60000}"
+METRICS_DIR="${TSZ_CI_METRICS_DIR:-.ci-metrics}"
+LOG_DIR="${TSZ_CI_LOG_DIR:-.ci-logs}"
+if [[ "$METRICS_DIR" != /* ]]; then
+  METRICS_DIR="$ROOT_DIR/$METRICS_DIR"
+fi
+if [[ "$LOG_DIR" != /* ]]; then
+  LOG_DIR="$ROOT_DIR/$LOG_DIR"
+fi
+SYNTHETIC_GIT_CHECKOUT=0
+
+mkdir -p "$METRICS_DIR" "$LOG_DIR"
+
+ci_section() {
+  printf '\n==> %s\n' "$*"
+}
+
+timed() {
+  local name="$1"
+  shift
+  local start end rc
+  start="$(date +%s)"
+  echo "CI_START ${name} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  set +e
+  "$@"
+  rc="$?"
+  set -e
+  end="$(date +%s)"
+  echo "CI_END ${name} rc=${rc} duration_seconds=$((end - start))"
+  return "$rc"
+}
+
+num_or_zero() {
+  local value="${1:-}"
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$value"
+  else
+    printf '0\n'
+  fi
+}
+
+publish_latest_metric() {
+  local suite="$1"
+  local file="$2"
+  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  if [[ -z "$bucket" || ! -f "$file" ]]; then
+    return 0
+  fi
+  if command -v gsutil >/dev/null 2>&1; then
+    gsutil -q cp "$file" "${bucket%/}/metrics/latest/${suite}.json" \
+      && echo "Published latest ${suite} metrics" \
+      || echo "warning: failed to publish latest ${suite} metrics (non-fatal)" >&2
+  fi
+}
+
+suite_needs_group() {
+  ci_suite_needs_group "$@"
+}
+
+ensure_host_tools() {
+  local suite="${1:-all}"
+  ci_section "Install host tools"
+
+  if [[ "${TSZ_CI_SKIP_HOST_APT:-0}" == "1" ]]; then
+    echo "Skipping apt host tool installation (TSZ_CI_SKIP_HOST_APT=1)"
+  elif command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    local apt_packages=(
+      build-essential
+      ca-certificates
+      curl
+      git
+      jq
+      python3
+      pkg-config
+    )
+    if suite_needs_group "$suite" wasm; then
+      apt_packages+=(binaryen)
+    fi
+    if suite_needs_group "$suite" node; then
+      apt_packages+=(nodejs npm)
+    fi
+
+    apt-get update -qq
+    apt-get install -y --no-install-recommends "${apt_packages[@]}"
+  fi
+
+  if command -v rustup >/dev/null 2>&1; then
+    if suite_needs_group "$suite" lint; then
+      rustup component add clippy rustfmt
+    fi
+    if suite_needs_group "$suite" wasm; then
+      rustup target add wasm32-unknown-unknown
+    fi
+  fi
+
+  if suite_needs_group "$suite" unit && ! command -v cargo-nextest >/dev/null 2>&1; then
+    curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C /usr/local/bin
+  fi
+
+  if suite_needs_group "$suite" wasm && ! command -v wasm-pack >/dev/null 2>&1; then
+    curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+  fi
+
+  if suite_needs_group "$suite" rust_compile; then
+    setup_sccache
+  fi
+
+  rustc -V
+  cargo -V
+  if command -v node >/dev/null 2>&1; then
+    node -v
+  fi
+  if command -v npm >/dev/null 2>&1; then
+    npm -v
+  fi
+  nproc
+}
+
+ensure_gcs_auth() {
+  # Set GOOGLE_APPLICATION_CREDENTIALS from SCCACHE_GCS_KEY_JSON when the
+  # caller hasn't gone through setup_sccache (e.g. conformance shards that
+  # skip Rust compilation).  gsutil respects GOOGLE_APPLICATION_CREDENTIALS,
+  # so without this the upload/download falls back to the Cloud Run metadata
+  # server, which is intermittently unavailable on self-hosted runners.
+  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" && -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+    local key_file="/tmp/sccache-gcs-key.json"
+    printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
+    chmod 600 "$key_file"
+    export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
+    echo "gcs-auth: using service account key from SCCACHE_GCS_KEY_JSON"
+  fi
+}
+
+setup_sccache() {
+  if command -v sccache >/dev/null 2>&1; then
+    echo "sccache $(sccache --version 2>&1 | head -1) already available"
+    return 0
+  fi
+
+  local arch platform
+  arch="$(uname -m)"
+  if [[ "$arch" == "aarch64" ]]; then
+    platform="aarch64-unknown-linux-musl"
+  else
+    platform="x86_64-unknown-linux-musl"
+  fi
+
+  local url="https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-${platform}.tar.gz"
+  local tmp_dir install_dir
+  tmp_dir="$(mktemp -d)"
+  # Prefer system bin dirs with write access, fall back to CARGO_HOME/bin or ~/bin
+  if [[ -w /usr/local/bin ]]; then
+    install_dir=/usr/local/bin
+  elif [[ -d "$CARGO_HOME/bin" ]]; then
+    install_dir="$CARGO_HOME/bin"
+  else
+    install_dir="$HOME/.local/bin"
+    mkdir -p "$install_dir"
+    export PATH="$install_dir:$PATH"
+  fi
+  echo "Downloading sccache v${SCCACHE_VERSION} → ${install_dir}..."
+  if curl -fsSL "$url" -o "$tmp_dir/sccache.tar.gz" 2>/dev/null; then
+    tar -xzf "$tmp_dir/sccache.tar.gz" -C "$tmp_dir" 2>/dev/null
+    local bin="$tmp_dir/sccache-v${SCCACHE_VERSION}-${platform}/sccache"
+    if [[ -f "$bin" ]]; then
+      install -m 755 "$bin" "$install_dir/sccache"
+    fi
+  fi
+  rm -rf "$tmp_dir"
+
+  if command -v sccache >/dev/null 2>&1; then
+    echo "sccache installed: $(sccache --version 2>&1 | head -1)"
+  else
+    echo "warning: sccache install failed; builds will proceed without it" >&2
+  fi
+}
+
+configure_sccache() {
+  if ! command -v sccache >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local bucket_uri="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  if [[ -z "$bucket_uri" ]]; then
+    echo "sccache: no GCS bucket configured, skipping"
+    return 0
+  fi
+
+  # Parse gs://bucket-name/key/prefix → bucket + prefix
+  local no_scheme="${bucket_uri#gs://}"
+  local gcs_bucket="${no_scheme%%/*}"
+  local gcs_prefix="${no_scheme#*/}/sccache"
+
+  export SCCACHE_GCS_BUCKET="$gcs_bucket"
+  export SCCACHE_GCS_KEY_PREFIX="$gcs_prefix"
+  export SCCACHE_GCS_RW_MODE="${SCCACHE_GCS_RW_MODE:-READ_WRITE}"
+  export RUSTC_WRAPPER="sccache"
+  export CARGO_INCREMENTAL="0"  # incompatible with sccache
+  export SCCACHE_LOG="${SCCACHE_LOG:-warn}"
+
+  # Write SA key to disk if injected via secret; otherwise fall back to ADC metadata URL
+  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
+    local key_file="/tmp/sccache-gcs-key.json"
+    printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
+    chmod 600 "$key_file"
+    export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
+    echo "sccache: using service account key from SCCACHE_GCS_KEY_JSON"
+  else
+    export SCCACHE_GCS_CREDENTIALS_URL="${SCCACHE_GCS_CREDENTIALS_URL:-http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token}"
+    echo "sccache: using metadata server credentials"
+  fi
+
+  echo "sccache: GCS bucket=${gcs_bucket} prefix=${gcs_prefix} mode=${SCCACHE_GCS_RW_MODE}"
+  sccache --stop-server 2>/dev/null || true
+  if sccache --start-server; then
+    echo "sccache server started"
+  else
+    echo "warning: sccache server failed to start; unsetting RUSTC_WRAPPER" >&2
+    unset RUSTC_WRAPPER
+    export CARGO_INCREMENTAL="1"
+  fi
+}
+
+setup_wasm_pack_cache() {
+  local home_cache="$HOME/.cache"
+  local link_path="$home_cache/.wasm-pack"
+  mkdir -p "$home_cache" "$TSZ_CI_WASM_PACK_CACHE"
+
+  if [[ -e "$link_path" && ! -L "$link_path" ]]; then
+    if [[ -d "$link_path" ]]; then
+      shopt -s dotglob nullglob
+      local entries=("$link_path"/*)
+      if (( ${#entries[@]} > 0 )); then
+        cp -a "${entries[@]}" "$TSZ_CI_WASM_PACK_CACHE"/
+      fi
+      shopt -u dotglob nullglob
+      rm -rf "$link_path"
+    else
+      rm -f "$link_path"
+    fi
+  fi
+
+  ln -sfn "$TSZ_CI_WASM_PACK_CACHE" "$link_path"
+  echo "wasm-pack cache: ${link_path} -> ${TSZ_CI_WASM_PACK_CACHE}"
+}
+
+ensure_source_git_context() {
+  ci_section "Ensure git metadata"
+
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return 0
+  fi
+
+  SYNTHETIC_GIT_CHECKOUT=1
+  git init
+  git config user.email "cloud-build@thirdface-ai-oauth.iam.gserviceaccount.com"
+  git config user.name "Cloud Build"
+  git remote add origin "${TSZ_CI_REPO_URL:-https://github.com/mohsen1/tsz.git}"
+  git add -A
+  git commit -q -m "cloud build source snapshot"
+}
+
+init_typescript_submodule() {
+  ci_section "Init TypeScript submodule"
+  local ref_file="$ROOT_DIR/scripts/ci/typescript-submodule-ref"
+  local expected_ref
+  expected_ref="$(tr -d '[:space:]' < "$ref_file")"
+
+  if [[ -f TypeScript/.tsz-cache-ref ]]; then
+    local cached_ref
+    cached_ref="$(tr -d '[:space:]' < TypeScript/.tsz-cache-ref)"
+    if [[ "$cached_ref" == "$expected_ref" && -f TypeScript/src/lib/es5.d.ts ]]; then
+      echo "Using cached TypeScript source tree at ${cached_ref}"
+      return 0
+    fi
+    echo "Discarding stale TypeScript cache: ${cached_ref} != ${expected_ref}" >&2
+    rm -rf TypeScript
+  fi
+
+  if [[ "$SYNTHETIC_GIT_CHECKOUT" -eq 0 ]] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    local gitlink_ref
+    gitlink_ref="$(git ls-tree HEAD TypeScript | awk '{print $3}')"
+    if [[ -z "$gitlink_ref" ]]; then
+      rm -rf TypeScript
+      git clone --filter=blob:none https://github.com/microsoft/TypeScript.git TypeScript
+      git -C TypeScript fetch --depth 1 origin "$expected_ref"
+      git -C TypeScript checkout --detach FETCH_HEAD
+    elif [[ "$gitlink_ref" != "$expected_ref" ]]; then
+      echo "error: scripts/ci/typescript-submodule-ref is stale: ${expected_ref} != ${gitlink_ref}" >&2
+      return 1
+    else
+      git submodule update --init --depth 1 -- TypeScript
+    fi
+  else
+    rm -rf TypeScript
+    git clone --filter=blob:none https://github.com/microsoft/TypeScript.git TypeScript
+    git -C TypeScript fetch --depth 1 origin "$expected_ref"
+    git -C TypeScript checkout --detach FETCH_HEAD
+  fi
+
+  test -f TypeScript/src/lib/es5.d.ts
+}
+
+run_lint() {
+  ci_section "Lint"
+  cargo fmt --all --check || return $?
+  scripts/arch/check-workspace-metadata.sh || return $?
+  scripts/check-crate-root-files.sh || return $?
+  node scripts/bench/test-project-rows.mjs || return $?
+  node scripts/bench/project-row-summary.mjs || return $?
+  node scripts/bench/test-project-row-summary.mjs || return $?
+  node scripts/bench/validate-project-metadata.mjs || return $?
+  node scripts/bench/test-validate-project-metadata.mjs || return $?
+  node scripts/bench/test-merge-results.mjs || return $?
+  node scripts/bench/test-perf-hotspots.mjs || return $?
+  node scripts/bench/test-tsgo-winner-report.mjs || return $?
+  node scripts/bench/test-reduction-backlog.mjs || return $?
+  node scripts/bench/test-timeout-runner.mjs || return $?
+  node scripts/bench/test-check-artifact-readiness.mjs || return $?
+  for script in scripts/ci/*type-challenges*.mjs; do
+    node --check "$script" || return $?
+  done
+  node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
+  node scripts/ci/test-pr-ownership-report.mjs || return $?
+  node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
+  node scripts/ci/test-pr-ready-state.mjs || return $?
+  node scripts/ci/test-wip-state-comments.mjs || return $?
+  node scripts/ci/test-project-compatibility.mjs || return $?
+  node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
+  python3 scripts/ci/test_ci_resources.py || return $?
+  python3 scripts/ci/test_gcp_full_ci_conformance_artifacts.py || return $?
+  python3 scripts/conformance/test_query_conformance.py || return $?
+  # Use the dedicated ci-lint profile (debug=false, incremental=false,
+  # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
+  # — separate cache key from .target/debug so dev incrementals on a
+  # contributor's machine aren't poisoned by CI-shaped fingerprints, and
+  # vice versa.
+  cargo clippy --profile ci-lint \
+    -p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder \
+    -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp \
+    --all-targets -- -D warnings || return $?
+  scripts/arch/check-checker-boundaries.sh || return $?
+  # Surface sccache stats so the cache health is visible without reading
+  # the workflow log into a separate step.
+  if command -v sccache >/dev/null 2>&1; then
+    echo "::group::sccache stats"
+    sccache --show-stats || true
+    echo "::endgroup::"
+  fi
+}
+
+nextest_allow_no_tests() {
+  set +e
+  cargo nextest run --profile ci "$@"
+  local rc="$?"
+  set -e
+  if [[ "$rc" -eq 0 || "$rc" -eq 4 ]]; then
+    return 0
+  fi
+  return "$rc"
+}
+
+_UNIT_TEST_PACKAGES=(
+  tsz-common
+  tsz-scanner
+  tsz-parser
+  tsz-binder
+  tsz-solver
+  tsz-checker
+  tsz-emitter
+  tsz-lsp
+  tsz-core
+)
+
+# The `tsz-checker` lib-test target currently exceeds the self-hosted runner
+# memory limit even with one Cargo job and serialized codegen. Keep checker
+# integration tests in the unit job by enumerating declared `[[test]]` targets
+# and avoiding the monolithic `rustc --test crates/tsz-checker/src/lib.rs`
+# artifact.
+
+# Resolve the active package set for `run_unit_tests` / `build_unit_test_archive`.
+#
+# `_TSZ_CI_UNIT_PACKAGES_OVERRIDE` is the gate-computed narrow set for
+# draft-phase fast-fail (P4). It is a space-separated list of crate names
+# (e.g., "tsz-parser tsz-binder"). When non-empty AND the names are all
+# known workspace crates, this returns one crate name per line. Otherwise it
+# returns the full `_UNIT_TEST_PACKAGES`.
+#
+# Unknown names are an error rather than silent fallback — a typo'd crate
+# name would otherwise skip tests in a way that goes unnoticed.
+unit_test_packages() {
+  local override="${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}"
+  if [[ -z "$override" ]]; then
+    printf '%s\n' "${_UNIT_TEST_PACKAGES[@]}"
+    return
+  fi
+  local known=" tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-emitter tsz-lsp tsz-core "
+  local crate
+  for crate in $override; do
+    if [[ "$known" != *" $crate "* ]]; then
+      echo "error: _TSZ_CI_UNIT_PACKAGES_OVERRIDE contains unknown crate '$crate'" >&2
+      echo "  valid crates:${known}" >&2
+      return 2
+    fi
+  done
+  for crate in $override; do
+    printf '%s\n' "$crate"
+  done
+}
+
+unit_archive_package_args() {
+  local package
+  for package in "${_UNIT_TEST_PACKAGES[@]}"; do
+    if [[ "$package" == "tsz-checker" ]]; then
+      continue
+    fi
+    printf -- '-p\n%s\n' "$package"
+  done
+}
+
+checker_integration_test_args() {
+  local test_name
+  while IFS= read -r test_name; do
+    printf -- '--test\n%s\n' "$test_name"
+  done < <(checker_integration_test_names)
+}
+
+checker_integration_test_names() {
+  cargo metadata --no-deps --format-version 1 \
+    | jq -r '.packages[]
+        | select(.name == "tsz-checker")
+        | .targets[]
+        | select(.kind[]? == "test")
+        | .name' \
+    | sort
+}
+
+run_unit_tests() {
+  ci_section "Workspace nextest suites"
+  local package package_names checker_selected general_pkg_args
+  local checker_batch_size checker_batch_names checker_batch_args
+  mapfile -t package_names < <(unit_test_packages)
+  if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
+    echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
+  fi
+
+  checker_selected=0
+  general_pkg_args=()
+  for package in "${package_names[@]}"; do
+    if [[ "$package" == "tsz-checker" ]]; then
+      checker_selected=1
+    else
+      general_pkg_args+=(-p "$package")
+    fi
+  done
+
+  if (( ${#general_pkg_args[@]} > 0 )); then
+    cargo nextest run --profile ci --cargo-profile ci-unit \
+      --build-jobs "$CARGO_BUILD_JOBS" \
+      "${general_pkg_args[@]}"
+  fi
+
+  if (( checker_selected )); then
+    # The checker lib-test binary is larger than the 32 GiB CI runners can
+    # link reliably. Keep checker integration tests in unit CI while avoiding
+    # that monolithic `rustc --test crates/tsz-checker/src/lib.rs` artifact.
+    #
+    # Cargo also struggles when one command asks it to link every checker
+    # integration target. Batch the declared targets so each `cargo test
+    # --no-run` phase has a bounded link set while preserving the same test
+    # coverage.
+    checker_batch_size="${TSZ_CI_CHECKER_TEST_BATCH_SIZE:-40}"
+    if ! [[ "$checker_batch_size" =~ ^[0-9]+$ ]] || (( checker_batch_size < 1 )); then
+      echo "error: TSZ_CI_CHECKER_TEST_BATCH_SIZE must be a positive integer" >&2
+      return 2
+    fi
+    checker_batch_names=()
+    while IFS= read -r test_name; do
+      checker_batch_names+=("$test_name")
+      if (( ${#checker_batch_names[@]} >= checker_batch_size )); then
+        checker_batch_args=()
+        for test_name in "${checker_batch_names[@]}"; do
+          checker_batch_args+=(--test "$test_name")
+        done
+        echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
+        cargo nextest run --profile ci --cargo-profile ci-unit \
+          --build-jobs "$CARGO_BUILD_JOBS" \
+          -p tsz-checker "${checker_batch_args[@]}"
+        checker_batch_names=()
+      fi
+    done < <(checker_integration_test_names)
+
+    if (( ${#checker_batch_names[@]} > 0 )); then
+      checker_batch_args=()
+      for test_name in "${checker_batch_names[@]}"; do
+        checker_batch_args+=(--test "$test_name")
+      done
+      echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
+      cargo nextest run --profile ci --cargo-profile ci-unit \
+        --build-jobs "$CARGO_BUILD_JOBS" \
+        -p tsz-checker "${checker_batch_args[@]}"
+    fi
+  fi
+}
+
+build_unit_test_archive() {
+  ci_section "Build unit test archive"
+  local bucket run_key archive_uri tmp_archive
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+
+  if [[ -z "$bucket" ]]; then
+    echo "No GCS bucket configured, skipping unit test archive"
+    return 0
+  fi
+
+  archive_uri="${bucket}/unit-archive/${run_key}.tar.zst"
+
+  if gsutil -q stat "$archive_uri" 2>/dev/null; then
+    echo "Unit test archive already exists for ${run_key}: ${archive_uri}"
+    return 0
+  fi
+
+  tmp_archive="$(mktemp -d)/unit-tests.tar.zst"
+  echo "Building unit test archive → ${tmp_archive}"
+  local archive_rc=0
+  local archive_pkg_args
+  mapfile -t archive_pkg_args < <(unit_archive_package_args)
+  cargo nextest archive \
+    --cargo-profile ci-unit \
+    --build-jobs "$CARGO_BUILD_JOBS" \
+    --archive-file "$tmp_archive" \
+    "${archive_pkg_args[@]}" || archive_rc=$?
+  if [[ "$archive_rc" -ne 0 ]]; then
+    echo "error: cargo nextest archive failed (rc=${archive_rc}); sharding unavailable" >&2
+    rm -f "$tmp_archive"
+    return "$archive_rc"
+  fi
+  if [[ ! -f "$tmp_archive" ]]; then
+    echo "error: archive file not created at ${tmp_archive}; sharding unavailable" >&2
+    return 1
+  fi
+
+  echo "Uploading unit test archive → ${archive_uri}"
+  local upload_rc=0
+  gsutil -q cp "$tmp_archive" "$archive_uri" || upload_rc=$?
+  rm -f "$tmp_archive"
+  if [[ "$upload_rc" -ne 0 ]]; then
+    echo "error: gsutil upload failed (rc=${upload_rc}); sharding unavailable" >&2
+    return "$upload_rc"
+  fi
+  echo "Unit test archive uploaded: ${archive_uri}"
+}
+
+run_unit_shard() {
+  ci_section "Unit shard"
+  local bucket run_key shard_index shard_count archive_uri tmp_archive
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  shard_index="$(num_or_zero "${_TSZ_CI_UNIT_SHARD_INDEX:-0}")"
+  shard_count="$(num_or_zero "${_TSZ_CI_UNIT_SHARD_COUNT:-8}")"
+
+  echo "Unit shard $((shard_index + 1))/${shard_count}"
+
+  if [[ -z "$bucket" ]]; then
+    echo "No GCS bucket — running all unit tests without sharding"
+    run_unit_tests
+    return
+  fi
+
+  archive_uri="${bucket}/unit-archive/${run_key}.tar.zst"
+  tmp_archive="$(mktemp -d)/unit-tests.tar.zst"
+
+  echo "Downloading unit test archive: ${archive_uri}"
+  if ! gsutil -q cp "$archive_uri" "$tmp_archive"; then
+    echo "error: unit test archive not found for ${run_key} — build job must have failed to upload it" >&2
+    echo "error: refusing to fall back to full unsharded run (would defeat sharding and inflate CI cost)" >&2
+    return 1
+  fi
+
+  # Use hash partitioning instead of count partitioning so slow tests are spread
+  # by stable test identity rather than clustered by nextest's listing order.
+  cargo nextest run \
+    --archive-file "$tmp_archive" \
+    --profile ci \
+    --partition "hash:$((shard_index + 1))/${shard_count}"
+  rm -f "$tmp_archive"
+}
+
+build_test_binaries() {
+  ci_section "Build dist-fast test binaries"
+  local binaries=(
+    .target/dist-fast/tsz
+    .target/dist-fast/tsz-server
+    .target/dist-fast/tsz-conformance
+    .target/dist-fast/generate-tsc-cache
+  )
+  local missing=0
+  local bin
+  for bin in "${binaries[@]}"; do
+    if [[ ! -x "$bin" ]]; then
+      missing=1
+      break
+    fi
+  done
+  local trusted_cache=0
+  if [[ "${TSZ_CI_TRUST_DIST_FAST_CACHE:-0}" == "1" ]]; then
+    trusted_cache=1
+  elif [[ -f .ci-cache/dist-fast-cache-hit ]]; then
+    local cache_commit expected_commit
+    cache_commit="$(tr -d '[:space:]' < .ci-cache/dist-fast-cache-hit)"
+    expected_commit="${COMMIT_SHA:-${REVISION_ID:-${GITHUB_SHA:-}}}"
+    if [[ -z "$expected_commit" ]]; then
+      expected_commit="$(git rev-parse HEAD 2>/dev/null || true)"
+    fi
+    if [[ -n "$expected_commit" && "$cache_commit" == "$expected_commit" ]]; then
+      trusted_cache=1
+    fi
+  fi
+
+  if [[ "$missing" -eq 0 && "$trusted_cache" -eq 1 ]]; then
+    echo "Using cached dist-fast binaries"
+    ls -lh "${binaries[@]}"
+    mkdir -p .target/release
+    ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
+    return 0
+  fi
+
+  local heartbeat_pid heartbeat_interval cargo_rc
+  heartbeat_interval="${TSZ_CI_DIST_BUILD_HEARTBEAT_SECONDS:-60}"
+  (
+    while true; do
+      sleep "$heartbeat_interval"
+      echo "dist-fast cargo build still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    done
+  ) &
+  heartbeat_pid="$!"
+
+  set +e
+  cargo build --profile dist-fast \
+    --jobs "$CARGO_BUILD_JOBS" \
+    -p tsz-cli \
+    -p tsz-conformance \
+    --bin tsz \
+    --bin tsz-server \
+    --bin tsz-conformance \
+    --bin generate-tsc-cache
+  cargo_rc="$?"
+  set -e
+  kill "$heartbeat_pid" >/dev/null 2>&1 || true
+  wait "$heartbeat_pid" 2>/dev/null || true
+  if [[ "$cargo_rc" -ne 0 ]]; then
+    return "$cargo_rc"
+  fi
+  mkdir -p .target/release
+  ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
+  ls -lh "${binaries[@]}"
+}
+
+build_wasm() {
+  ci_section "WASM build (nodejs target)"
+  (
+    cd crates/tsz-wasm
+    CARGO_PROFILE_RELEASE_OPT_LEVEL="${TSZ_CI_WASM_OPT_LEVEL:-0}" \
+      CARGO_PROFILE_RELEASE_LTO="${TSZ_CI_WASM_LTO:-false}" \
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${TSZ_CI_WASM_CODEGEN_UNITS:-16}" \
+      CARGO_PROFILE_RELEASE_DEBUG="${TSZ_CI_WASM_DEBUG:-false}" \
+      wasm-pack build --target nodejs --out-dir ../../pkg --no-opt -- --jobs "$CARGO_BUILD_JOBS"
+  )
+  mkdir -p pkg/lib
+  cp -R TypeScript/src/lib/. pkg/lib/
+}
+
+build_wasm_web() {
+  ci_section "WASM build (web target for website playground)"
+  cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
+  (
+    cd crates/tsz-wasm
+    CARGO_PROFILE_RELEASE_OPT_LEVEL="${TSZ_CI_WASM_OPT_LEVEL:-0}" \
+      CARGO_PROFILE_RELEASE_LTO="${TSZ_CI_WASM_LTO:-false}" \
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${TSZ_CI_WASM_CODEGEN_UNITS:-16}" \
+      CARGO_PROFILE_RELEASE_DEBUG="${TSZ_CI_WASM_DEBUG:-false}" \
+      wasm-pack build --target web --out-dir ../../pkg/web --no-opt -- --jobs "$CARGO_BUILD_JOBS"
+  )
+}
+
+build_wasm_all() {
+  # Build both targets in one job so the web build reuses the nodejs build's
+  # warmed wasm target dir and wasm-bindgen CLI install instead of paying a
+  # second cold dependency/toolchain compile in another job.
+  build_wasm
+  build_wasm_web
+}
+
+prep_node_artifacts() {
+  ci_section "Prep Node harnesses"
+  (
+    cd scripts
+    if [[ ! -x node_modules/.bin/tsc ]]; then
+      npm install --silent
+    else
+      echo "Using cached scripts/node_modules"
+    fi
+    cd emit
+    npx tsc -p tsconfig.json
+  )
+  ./scripts/fourslash/run-fourslash.sh --prep-only
+}
+
+maybe_prep_node_artifacts() {
+  if [[ "${TSZ_CI_NODE_HARNESS_PREPPED:-0}" == "1" ]]; then
+    echo "info: skipping prep_node_artifacts (TSZ_CI_NODE_HARNESS_PREPPED=1)"
+    return 0
+  fi
+  prep_node_artifacts
+}
+
+read_conformance_results() {
+  local last_run_path="$1"
+  python3 - "$last_run_path" <<'PY' 2>/dev/null || echo "0 0"
+import sys
+
+passed = 0
+recorded = 0
+with open(sys.argv[1], encoding="utf-8", errors="replace") as f:
+    for line in f:
+        if line.startswith(("PASS ", "FAIL ", "XFAIL ", "CRASH ", "TIMEOUT ")):
+            recorded += 1
+        if line.startswith("PASS "):
+            passed += 1
+
+print(passed, recorded)
+PY
+}
+
+show_log_tail() {
+  local path="$1"
+  if [[ -f "$path" ]]; then
+    echo "--- tail ${path} ---" >&2
+    tail -120 "$path" >&2
+    echo "--- end tail ${path} ---" >&2
+  fi
+}
+
+show_log_tails() {
+  local dir="$1" path
+  for path in "$dir"/*.log; do
+    [[ -f "$path" ]] || continue
+    show_log_tail "$path"
+  done
+}
+
+run_with_heartbeat() {
+  local label="$1"
+  shift
+
+  local pid rc restore_errexit=0
+  case "$-" in
+    *e*) restore_errexit=1 ;;
+  esac
+
+  "$@" &
+  pid="$!"
+
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 120
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "still running: ${label} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    fi
+  done
+
+  set +e
+  wait "$pid"
+  rc="$?"
+  if [[ "$restore_errexit" == "1" ]]; then
+    set -e
+  else
+    set +e
+  fi
+  return "$rc"
+}
+
+conformance_shard_plan() {
+  local shard_index="$1" shard_count="$2" strategy="${3:-hash}" weights_file="${4:-}"
+  python3 - "$shard_index" "$shard_count" "$strategy" "$weights_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+index = int(sys.argv[1])
+count = int(sys.argv[2])
+strategy = sys.argv[3]
+weights_file = Path(sys.argv[4]) if sys.argv[4] else None
+baseline = Path("scripts/conformance/conformance-baseline.txt")
+if count < 1:
+    count = 1
+if index < 0 or index >= count:
+    raise SystemExit(f"invalid conformance shard {index}/{count}")
+
+baseline_status = {}
+for line in baseline.read_text(encoding="utf-8", errors="replace").splitlines():
+    status, _, rest = line.partition(" ")
+    if status not in {"PASS", "FAIL", "XFAIL", "CRASH", "TIMEOUT"} or not rest:
+        continue
+    path = rest.split(" | ", 1)[0]
+    baseline_status[path] = status
+
+test_dir = Path("TypeScript/tests/cases")
+files = []
+source_suffixes = {".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"}
+declaration_suffixes = (".d.ts", ".d.mts", ".d.cts")
+
+def has_skip_directive(path):
+    # Keep shard-plan totals aligned with the Rust runner, which discovers the
+    # file but excludes it from result totals when `@skip` is present.
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped.startswith("//"):
+            continue
+        directive = stripped[2:].lstrip().lower()
+        if directive.startswith("@skip") and (
+            len(directive) == len("@skip")
+            or not (
+                directive[len("@skip")].isalnum()
+                or directive[len("@skip")] == "_"
+            )
+        ):
+            return True
+    return False
+
+for path in test_dir.rglob("*"):
+    if not path.is_file():
+        continue
+    path_str = path.as_posix()
+    if path.name.startswith("._"):
+        continue
+    if path.suffix not in source_suffixes:
+        continue
+    if path_str.endswith(declaration_suffixes):
+        continue
+    if "/fourslash/" in path_str:
+        continue
+    if "APISample" in path_str or "APILibCheck" in path_str:
+        continue
+    if has_skip_directive(path):
+        continue
+    files.append(path)
+
+files.sort()
+
+def stable_shard(path):
+    rel = path.relative_to(test_dir).as_posix()
+    h = 1469598103934665603
+    for byte in rel.encode("utf-8"):
+        h ^= byte
+        h = (h * 1099511628211) & 0xffffffffffffffff
+    return h % count
+
+def stable_shard_count(path, bucket_count):
+    rel = path.relative_to(test_dir).as_posix()
+    h = 1469598103934665603
+    for byte in rel.encode("utf-8"):
+        h ^= byte
+        h = (h * 1099511628211) & 0xffffffffffffffff
+    return h % bucket_count
+
+weights = {}
+default_weight = 1.0
+hash_bucket = None
+if weights_file and weights_file.is_file():
+    try:
+        data = json.loads(weights_file.read_text(encoding="utf-8"))
+        default_weight = float(data.get("default_weight", default_weight) or default_weight)
+        weights.update({
+            str(key).replace("\\", "/"): float(value)
+            for key, value in (data.get("path_weights") or {}).items()
+            if float(value) > 0
+        })
+        for result in data.get("results") or []:
+            file = str(result.get("file") or "").replace("\\", "/")
+            value = result.get("elapsed_ms", result.get("elapsed"))
+            if file and value is not None and float(value) > 0:
+                weights[file] = float(value)
+        hb = data.get("hash_bucket_weights") or {}
+        hb_count = int(hb.get("shard_count") or 0)
+        hb_weights = [float(value) for value in hb.get("weights") or []]
+        if hb_count > 0 and len(hb_weights) >= hb_count:
+            hash_bucket = (hb_count, hb_weights)
+    except Exception as exc:
+        print(f"warning: failed to read conformance shard weights {weights_file}: {exc}", file=sys.stderr)
+
+def path_keys(path):
+    rel = path.relative_to(test_dir).as_posix()
+    return [rel, f"TypeScript/tests/cases/{rel}", path.as_posix()]
+
+def weight_for(path):
+    for key in path_keys(path):
+        if key in weights:
+            return weights[key]
+    if hash_bucket:
+        hb_count, hb_weights = hash_bucket
+        return hb_weights[stable_shard_count(path, hb_count)]
+    try:
+        return min(max(path.stat().st_size / 4096.0, 1.0), 100.0)
+    except OSError:
+        return default_weight
+
+if strategy == "weighted":
+    shards = [{"weight": 0.0, "tests": []} for _ in range(count)]
+    weighted = [(weight_for(path), path.relative_to(test_dir).as_posix(), path) for path in files]
+    weighted.sort(key=lambda item: (-item[0], item[1]))
+    for weight, _rel, path in weighted:
+        best = min(range(count), key=lambda shard: (shards[shard]["weight"], len(shards[shard]["tests"]), shard))
+        shards[best]["weight"] += weight
+        shards[best]["tests"].append(path)
+    selected_paths = sorted(shards[index]["tests"])
+    selected_weight = shards[index]["weight"]
+else:
+    selected_paths = [path for path in files if stable_shard(path) == index]
+    selected_weight = sum(weight_for(path) for path in selected_paths)
+
+selected = [path.as_posix() for path in selected_paths]
+passed = sum(1 for path in selected if baseline_status.get(path) == "PASS")
+print(passed, len(selected), int(selected_weight))
+PY
+}
+
+run_conformance() {
+  ci_section "Conformance"
+  mkdir -p "$LOG_DIR/conformance"
+  local log_file="$LOG_DIR/conformance/full.log"
+  local last_run="scripts/conformance/conformance-last-run.txt"
+  rm -f "$last_run"
+
+  local shard_index shard_count shard_offset shard_max shard_expected_passed shard_expected_total shard_expected_weight
+  local shard_weights_file timings_file
+  local conformance_args=()
+  shard_index="$(num_or_zero "$CONFORMANCE_SHARD_INDEX")"
+  shard_count="$(num_or_zero "$CONFORMANCE_SHARD_COUNT")"
+  shard_weights_file=""
+  timings_file="$METRICS_DIR/conformance-timings-${shard_index}.json"
+  if [[ "$shard_count" -lt 1 ]]; then
+    shard_count=1
+  fi
+  if [[ "$shard_count" -gt 1 ]]; then
+    if [[ "$CONFORMANCE_SHARD_STRATEGY" == "weighted" ]]; then
+      shard_weights_file="$METRICS_DIR/conformance-shard-weights.json"
+      local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+      if [[ -n "$bucket" ]] && command -v gsutil >/dev/null 2>&1 && \
+          gsutil -q cp "${bucket%/}/metrics/latest/conformance-timings.json" "$shard_weights_file" 2>/dev/null; then
+        echo "Using latest conformance timing weights from cache."
+      else
+        cp scripts/conformance/conformance-shard-weights.json "$shard_weights_file"
+        echo "Using checked-in conformance shard weights."
+      fi
+    fi
+    read -r shard_expected_passed shard_expected_total shard_expected_weight < <(
+      conformance_shard_plan "$shard_index" "$shard_count" "$CONFORMANCE_SHARD_STRATEGY" "$shard_weights_file"
+    )
+    shard_offset=0
+    shard_max=0
+    conformance_args+=(--shard "${shard_index}/${shard_count}")
+    conformance_args+=(--shard-strategy "$CONFORMANCE_SHARD_STRATEGY")
+    if [[ -n "$shard_weights_file" ]]; then
+      conformance_args+=(--shard-weights "$shard_weights_file")
+    fi
+    conformance_args+=(--timings-file "$timings_file")
+    echo "Conformance shard: ${shard_index}/${shard_count} strategy=${CONFORMANCE_SHARD_STRATEGY} expected=${shard_expected_passed}/${shard_expected_total} weight=${shard_expected_weight:-0}"
+  else
+    shard_offset=0
+    shard_max=0
+    shard_expected_passed=0
+    shard_expected_total=0
+    shard_expected_weight=0
+    conformance_args+=(--timings-file "$timings_file")
+  fi
+
+  set +e
+  run_with_heartbeat "conformance" \
+    bash -c 'log_file="$1"; shift; "$@" >"$log_file" 2>&1' bash "$log_file" \
+    ./scripts/conformance/conformance.sh run --workers "$CONFORMANCE_WORKERS" "${conformance_args[@]}"
+  local rc="$?"
+  set -e
+
+  local final_results_line
+  final_results_line="$(grep -a 'FINAL RESULTS:' "$log_file" | tail -1 || true)"
+  [[ -n "$final_results_line" ]] && echo "$final_results_line"
+
+  local total_passed=0 total_tests=0 skipped_tests=0
+  if [[ -f "$last_run" ]]; then
+    read -r total_passed total_tests < <(read_conformance_results "$last_run")
+  fi
+  skipped_tests="$(awk '/^[[:space:]]*Skipped:/ { value=$2 } END { print value + 0 }' "$log_file")"
+  skipped_tests="$(num_or_zero "$skipped_tests")"
+  if [[ "$final_results_line" =~ FINAL[[:space:]]RESULTS:[[:space:]]([0-9]+)/([0-9]+)[[:space:]]passed ]]; then
+    total_passed="${BASH_REMATCH[1]}"
+    # The runner reports evaluated tests in FINAL RESULTS and skipped tests
+    # separately. Count both toward coverage so runtime SKIP entries do not
+    # look like missing shard coverage in the aggregate job.
+    total_tests=$(( ${BASH_REMATCH[2]} + skipped_tests ))
+  fi
+  total_passed="$(num_or_zero "$total_passed")"
+  total_tests="$(num_or_zero "$total_tests")"
+
+  printf '{"rc":%s,"passed":%s,"total":%s,"skipped":%s,"workers":%s,"shard_index":%s,"shard_count":%s,"offset":%s,"max":%s,"expected_passed":%s,"expected_total":%s,"expected_weight":%s,"strategy":"%s"}\n' \
+    "$rc" "$total_passed" "$total_tests" "$skipped_tests" "$CONFORMANCE_WORKERS" \
+    "$shard_index" "$shard_count" "$shard_offset" "$shard_max" "$shard_expected_passed" "$shard_expected_total" "$(num_or_zero "$shard_expected_weight")" "$CONFORMANCE_SHARD_STRATEGY" \
+    > "$METRICS_DIR/conformance.json"
+  echo "Conformance workers: ${CONFORMANCE_WORKERS}"
+  echo "Conformance wrapper exit: ${rc}"
+  echo "Conformance aggregate: ${total_passed}/${total_tests}"
+  echo "Conformance skipped: ${skipped_tests}"
+
+  local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
+  grep -a '^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
+    | sed 's/^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
+    | sort -u > "$failures_file" 2>/dev/null || true
+
+  if [[ "$rc" -ne 0 ]]; then
+    echo "error: conformance wrapper failed" >&2
+    show_log_tail "$log_file"
+    return 1
+  fi
+
+  if [[ "$shard_count" -gt 1 ]]; then
+    # Upload shard result to GCS so the conformance-aggregate job can check the global total.
+    # Per-shard count assertions removed: baseline.txt counts go stale and cause off-by-one flakes.
+    local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+    local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+    if [[ -n "$bucket" && "$run_key" != "unknown" ]] && command -v gsutil >/dev/null 2>&1; then
+      ensure_gcs_auth
+      local up_attempt up_rc=1
+      for up_attempt in 1 2 3; do
+        if gsutil -q cp "$METRICS_DIR/conformance.json" \
+            "${bucket%/}/conformance-runs/${run_key}/shard-${shard_index}.json" 2>/dev/null; then
+          up_rc=0
+          echo "Uploaded shard result: shard-${shard_index}.json (attempt ${up_attempt})"
+          break
+        fi
+        echo "warning: upload attempt ${up_attempt}/3 failed for shard-${shard_index}.json" >&2
+        [[ "$up_attempt" -lt 3 ]] && sleep "$((up_attempt * 5))"
+      done
+      [[ "$up_rc" -ne 0 ]] && echo "warning: failed to upload shard result after 3 attempts (non-fatal)" >&2
+
+      if [[ -f "$timings_file" ]]; then
+        gsutil -q cp "$timings_file" \
+          "${bucket%/}/conformance-runs/${run_key}/timings-shard-${shard_index}.json" 2>/dev/null \
+          && echo "Uploaded shard timings: timings-shard-${shard_index}.json" \
+          || echo "warning: failed to upload shard timings (non-fatal)" >&2
+      fi
+
+      # Upload per-shard FAIL list so aggregate can show which tests regressed.
+      if [[ -s "$failures_file" ]]; then
+        gsutil -q cp "$failures_file" \
+          "${bucket%/}/conformance-runs/${run_key}/failures-shard-${shard_index}.txt" 2>/dev/null \
+          || echo "warning: failed to upload failure list (non-fatal)" >&2
+      fi
+    fi
+    return 0
+  fi
+
+  baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"
+  baseline="$(cap_positive_baseline "$baseline" "$TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR")"
+  baseline_total="$(jq -r '.summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
+  local total_tolerance=5
+  if [[ "$baseline_total" -gt 0 && "$total_tests" -lt $(( baseline_total - total_tolerance )) ]]; then
+    echo "error: conformance coverage is incomplete: ${total_tests} < ${baseline_total} (tolerance ${total_tolerance})" >&2
+    show_log_tail "$log_file"
+    return 1
+  fi
+  if [[ "$baseline" -gt 0 && "$total_passed" -lt "$baseline" ]]; then
+    echo "error: conformance regression: ${total_passed} < ${baseline}" >&2
+    show_log_tail "$log_file"
+    return 1
+  fi
+}
+
+run_conformance_aggregate() {
+  ci_section "Conformance aggregate"
+  local expected_shards="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-32}}"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local prefix=""
+  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
+    prefix="${bucket%/}/conformance-runs/${run_key}"
+  fi
+
+  # Prefer GitHub Actions artifacts (downloaded by the workflow's download-artifact step)
+  # over GCS, which requires SA key permissions that may not be available.
+  local artifacts_dir=".conformance-shards"
+  local using_artifacts=0
+  if [[ -d "$artifacts_dir" ]]; then
+    # upload-artifact@v4 preserves the full workspace-relative path inside the artifact.
+    # The file is at .ci-metrics/conformance.json in the workspace, so after download it
+    # lands at conformance-shard-N/.ci-metrics/conformance.json (not conformance-shard-N/conformance.json).
+    # Use find with maxdepth to locate the file regardless of the subdirectory depth.
+    local found=0
+    for shard_dir in "$artifacts_dir"/conformance-shard-*/; do
+      [[ -d "$shard_dir" ]] || continue
+      local json
+      json="$(find "$shard_dir" -name "conformance.json" -maxdepth 4 2>/dev/null | head -1)"
+      [[ -f "$json" ]] || continue
+      local shard_name
+      shard_name="$(basename "$shard_dir")"
+      cp "$json" "$tmp_dir/shard-${shard_name#conformance-shard-}.json"
+      local artifact_failure_list="$shard_dir/.ci-metrics/conformance-failures-${shard_name#conformance-shard-}.txt"
+      if [[ -f "$artifact_failure_list" ]]; then
+        cp "$artifact_failure_list" "$tmp_dir/failures-shard-${shard_name#conformance-shard-}.txt"
+      fi
+      found=$(( found + 1 ))
+    done
+    if [[ "$found" -gt 0 ]]; then
+      echo "Using ${found} GitHub Actions artifact shard results from ${artifacts_dir}/"
+      using_artifacts=1
+    else
+      echo "warning: ${artifacts_dir}/ exists but no conformance.json files found; falling back to GCS" >&2
+      ls -la "$artifacts_dir"/ 2>/dev/null || true
+    fi
+  fi
+
+  if [[ "$using_artifacts" -eq 0 ]]; then
+    if [[ -z "$prefix" ]]; then
+      echo "error: cannot aggregate — no artifact dir and no GCS bucket/run key available" >&2
+      return 1
+    fi
+    ensure_gcs_auth
+    echo "Downloading shard results from ${prefix}/shard-*.json ..."
+    local dl_attempt dl_rc=1
+    for dl_attempt in 1 2 3; do
+      if gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
+        dl_rc=0
+        break
+      fi
+      echo "warning: GCS download attempt ${dl_attempt}/3 failed" >&2
+      [[ "$dl_attempt" -lt 3 ]] && sleep "$((dl_attempt * 5))"
+    done
+    if [[ "$dl_rc" -ne 0 ]]; then
+      echo "error: failed to download shard results from GCS after 3 attempts" >&2
+      return 1
+    fi
+  fi
+
+  local total_passed=0 total_tests=0 shard_count=0
+  local total_expected_passed=0 total_expected_tests=0
+  for f in "$tmp_dir"/shard-*.json; do
+    [[ -f "$f" ]] || continue
+    local p t ep et
+    p="$(jq -r '.passed // 0' "$f" 2>/dev/null)"
+    t="$(jq -r '.total // 0' "$f" 2>/dev/null)"
+    ep="$(jq -r '.expected_passed // 0' "$f" 2>/dev/null)"
+    et="$(jq -r '.expected_total // 0' "$f" 2>/dev/null)"
+    total_passed=$(( total_passed + $(num_or_zero "$p") ))
+    total_tests=$(( total_tests + $(num_or_zero "$t") ))
+    total_expected_passed=$(( total_expected_passed + $(num_or_zero "$ep") ))
+    total_expected_tests=$(( total_expected_tests + $(num_or_zero "$et") ))
+    shard_count=$(( shard_count + 1 ))
+  done
+
+  echo "Conformance aggregate: ${total_passed}/${total_tests} across ${shard_count}/${expected_shards} shards"
+  if [[ "$total_expected_tests" -gt 0 ]]; then
+    echo "Conformance expected aggregate: ${total_expected_passed}/${total_expected_tests}"
+  fi
+
+  if [[ "$shard_count" -lt "$expected_shards" ]]; then
+    echo "error: only ${shard_count}/${expected_shards} shard results collected; some shards may have crashed" >&2
+    return 1
+  fi
+
+  local baseline baseline_total
+  baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"
+  baseline="$(cap_positive_baseline "$baseline" "$TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR")"
+  baseline_total="$(jq -r '.summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
+  local coverage_baseline_total="$baseline_total"
+  if [[ "$total_expected_tests" -gt 0 ]]; then
+    coverage_baseline_total="$total_expected_tests"
+  fi
+  local total_tolerance=5
+  if [[ "$coverage_baseline_total" -gt 0 && "$total_tests" -lt $(( coverage_baseline_total - total_tolerance )) ]]; then
+    echo "error: conformance coverage is incomplete: ${total_tests} < ${coverage_baseline_total} (tolerance ${total_tolerance})" >&2
+    return 1
+  fi
+  if [[ "$total_expected_passed" -gt 0 ]]; then
+    local expected_deficit=$(( total_expected_passed - total_passed ))
+    if [[ "$expected_deficit" -gt 0 ]]; then
+      if ! _check_conformance_regression_allowlist "$tmp_dir" "$prefix" "$expected_deficit"; then
+        return 1
+      fi
+    fi
+  else
+    local pass_baseline
+    pass_baseline="$(cap_positive_baseline "$baseline" "$TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR")"
+    if [[ "$pass_baseline" -gt 0 && "$total_passed" -lt "$pass_baseline" ]]; then
+      local pass_tolerance=5
+      if [[ "$total_passed" -ge $(( pass_baseline - pass_tolerance )) ]]; then
+        echo "warning: conformance aggregate below baseline within tolerance: ${total_passed} < ${pass_baseline} (tolerance ${pass_tolerance})" >&2
+      else
+        echo "error: conformance regression: ${total_passed} < ${pass_baseline}" >&2
+        _show_conformance_regressions "$tmp_dir" "$prefix" "$pass_baseline"
+        return 1
+      fi
+    fi
+  fi
+  local pass_rate
+  pass_rate="$(awk -v p="$total_passed" -v t="$total_tests" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  jq -n \
+    --arg suite "conformance" \
+    --arg pass_rate "$pass_rate" \
+    --argjson passed "$total_passed" \
+    --argjson total "$total_tests" \
+    --argjson shards "$shard_count" \
+    '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, shards:$shards}' \
+    > "$METRICS_DIR/conformance.json"
+  publish_latest_metric conformance "$METRICS_DIR/conformance.json"
+
+  if [[ -n "$prefix" ]] && gsutil -q cp "${prefix}/timings-shard-*.json" "$tmp_dir/" 2>/dev/null; then
+    jq -s '
+      {
+        summary: {
+          total: ([.[].summary.total // 0] | add),
+          elapsed_ms: ([.[].summary.elapsed_ms // 0] | max)
+        },
+        results: ([.[].results[]?] | sort_by(.file))
+      }
+    ' "$tmp_dir"/timings-shard-*.json > "$METRICS_DIR/conformance-timings.json"
+    publish_latest_metric conformance-timings "$METRICS_DIR/conformance-timings.json"
+  else
+    echo "warning: no conformance timing shards available to publish (non-fatal)" >&2
+  fi
+  echo "Conformance gate passed: ${total_passed} >= ${baseline} (baseline)"
+}
+
+# Download shard failure lists and reject any failure outside the accepted set.
+_check_conformance_regression_allowlist() {
+  local tmp_dir="$1" prefix="$2" expected_deficit="$3"
+  local allowlist="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS:-}"
+
+  if [[ -z "$allowlist" || ! -f "$allowlist" ]]; then
+    echo "error: conformance regression deficit ${expected_deficit}, but no accepted regression list found at ${allowlist:-<unset>}" >&2
+    _show_conformance_regressions "$tmp_dir" "$prefix" "$expected_deficit"
+    return 1
+  fi
+
+  if compgen -G "$tmp_dir/failures-shard-*.txt" >/dev/null; then
+    :
+  elif [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+    echo "error: conformance regression deficit ${expected_deficit}, but per-shard failure lists are unavailable" >&2
+    return 1
+  fi
+
+  local all_failures_file="$tmp_dir/all-failures.txt"
+  cat "$tmp_dir"/failures-shard-*.txt 2>/dev/null | sort -u > "$all_failures_file" || true
+
+  python3 - "$all_failures_file" "$allowlist" "$expected_deficit" <<'PYEOF'
+import os
+import sys
+
+failures_file, allowlist_file, expected_deficit = sys.argv[1], sys.argv[2], int(sys.argv[3])
+
+def normalize(path):
+    parts = path.replace("\\", "/").split("/")
+    for i, part in enumerate(parts):
+        if part == "TypeScript":
+            return "/".join(parts[i:])
+    return "/".join(parts)
+
+def read_paths(path):
+    paths = set()
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            paths.add(normalize(line))
+    return paths
+
+failing = read_paths(failures_file)
+accepted = read_paths(allowlist_file)
+unlisted = sorted(failing - accepted)
+resolved = sorted(accepted - failing)
+
+if unlisted:
+    print("error: unlisted conformance regressions:", file=sys.stderr)
+    for path in unlisted:
+        print(f"  REGRESSED: {path}", file=sys.stderr)
+    if resolved:
+        print("", file=sys.stderr)
+        print("Accepted regressions that no longer fail in this run:", file=sys.stderr)
+        for path in resolved:
+            print(f"  RESOLVED: {path}", file=sys.stderr)
+    return_code = 1
+else:
+    print(
+        f"warning: conformance aggregate below expected only for accepted regressions: "
+        f"{len(failing)}/{len(accepted)} listed tests currently failing "
+        f"(deficit {expected_deficit})",
+        file=sys.stderr,
+    )
+    if resolved:
+        print("Accepted regressions that no longer fail in this run:", file=sys.stderr)
+        for path in resolved:
+            print(f"  RESOLVED: {path}", file=sys.stderr)
+    return_code = 0
+
+sys.exit(return_code)
+PYEOF
+}
+
+# Download per-shard failure lists and show which tests are newly failing vs snapshot.
+_show_conformance_regressions() {
+  local tmp_dir="$1" prefix="$2" baseline_passed="$3"
+  local snapshot="scripts/conformance/conformance-detail.json"
+
+  # Download all per-shard failure lists (best-effort; non-fatal if missing).
+  if compgen -G "$tmp_dir/failures-shard-*.txt" >/dev/null; then
+    :
+  elif [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+    echo "(no per-shard failure lists available — upload may have been skipped)" >&2
+    return
+  fi
+
+  # Union all FAIL paths across shards.
+  local all_failures_file="$tmp_dir/all-failures.txt"
+  cat "$tmp_dir"/failures-shard-*.txt 2>/dev/null | sort -u > "$all_failures_file" || true
+  local fail_count
+  fail_count="$(wc -l < "$all_failures_file" | tr -d ' ')"
+
+  if [[ "$fail_count" -eq 0 ]]; then
+    echo "(no failure detail available)" >&2
+    return
+  fi
+
+  # Cross-reference with snapshot to identify newly failing tests.
+  if [[ -f "$snapshot" ]]; then
+    echo ""
+    echo "=== Conformance regressions (tests passing in snapshot but failing now) ==="
+    python3 - "$all_failures_file" "$snapshot" <<'PYEOF'
+import json, sys, os
+
+def normalize(path):
+    """Strip machine-specific prefix, keep TypeScript/tests/... or similar suffix."""
+    parts = path.replace("\\", "/").split("/")
+    for i, p in enumerate(parts):
+        if p == "TypeScript":
+            return "/".join(parts[i:])
+    return os.path.basename(path)
+
+raw_failing = [l for l in open(sys.argv[1]).read().splitlines() if l]
+failing_now = {normalize(p): p for p in raw_failing}
+
+with open(sys.argv[2]) as f:
+    detail = json.load(f)
+snapshot_failures = {normalize(k) for k in detail.get("failures", {}).keys()}
+
+newly_failing = sorted(k for k in failing_now if k not in snapshot_failures)
+still_failing = sorted(k for k in failing_now if k in snapshot_failures)
+
+if newly_failing:
+    print(f"\nNewly failing ({len(newly_failing)} tests):")
+    for t in newly_failing:
+        print(f"  REGRESSED: {t}")
+else:
+    print("\nNo newly failing tests found (all failures were already in snapshot).")
+
+if still_failing:
+    print(f"\nAlready failing in snapshot ({len(still_failing)} tests) — not regressions.")
+PYEOF
+    echo "==================================================================="
+  else
+    echo ""
+    echo "=== Failing tests this run (${fail_count} total) ==="
+    cat "$all_failures_file"
+    echo "==================================================================="
+  fi
+}
+
+validate_emit_aggregate_counts() {
+  local js_passed="$1" js_total="$2" js_skipped="$3" js_timeouts="$4"
+  local dts_passed="$5" dts_total="$6" dts_skipped="$7"
+  local files_count="$8" expected_shards="$9"
+
+  echo "Emit aggregate: JS ${js_passed}/${js_total} (skip=${js_skipped}, timeout=${js_timeouts}), DTS ${dts_passed}/${dts_total} across ${files_count}/${expected_shards} shards"
+
+  if [[ "$files_count" -lt "$expected_shards" ]]; then
+    echo "error: only ${files_count}/${expected_shards} emit shards collected; some shards may have crashed" >&2
+    return 1
+  fi
+  if [[ "$js_total" -eq 0 ]]; then
+    echo "error: emit aggregate has zero JS tests — something is wrong" >&2
+    return 1
+  fi
+
+  local base_js base_dts
+  base_js="$(jq -r '.summary.jsPass // 0'  scripts/emit/emit-snapshot.json)"
+  base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
+  base_dts="$(cap_positive_baseline "$base_dts" "$TSZ_CI_DTS_ACCEPTED_FLOOR")"
+  if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
+    echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
+    return 1
+  fi
+  if [[ "$base_dts" -gt 0 && "$dts_passed" -lt "$base_dts" ]]; then
+    echo "error: emit DTS regression: ${dts_passed} < ${base_dts}" >&2
+    return 1
+  fi
+  echo "Emit OK: JS ${js_passed}/${js_total}, DTS ${dts_passed}/${dts_total}"
+}
+
+run_emit_shard() {
+  ci_section "Emit shard"
+  local bucket run_key shard_index shard_count
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  shard_index="$(num_or_zero "${_TSZ_CI_EMIT_SHARD_INDEX:-0}")"
+  shard_count="$(num_or_zero "${_TSZ_CI_EMIT_SHARD_COUNT:-1}")"
+  local chunk="${EMIT_CHUNK:-2000}"
+  local offset=$(( shard_index * chunk ))
+
+  mkdir -p "$LOG_DIR/emit"
+  export TSZ_BIN="$ROOT_DIR/.target/dist-fast/tsz"
+  echo "Emit shard ${shard_index}/${shard_count}: offset=${offset} chunk=${chunk} workers=${EMIT_WORKERS} timeout_ms=${EMIT_TIMEOUT_MS}"
+
+  local detail_json="$METRICS_DIR/emit-shard-${shard_index}.json"
+  local emit_args=(
+    --skip-build
+    --concurrency="$EMIT_WORKERS"
+    --timeout="${EMIT_TIMEOUT_MS:-60000}"
+    --json-out="$detail_json"
+  )
+  # Only restrict to a chunk when actually sharding; with one shard, run everything.
+  if [[ "$shard_count" -gt 1 ]]; then
+    emit_args+=(--max="$chunk" --offset="$offset")
+  fi
+  set +e
+  ./scripts/emit/run.sh "${emit_args[@]}" \
+    >"$LOG_DIR/emit/shard-${shard_index}.log" 2>&1
+  local rc="$?"
+  set -e
+
+  local js_p js_t js_s js_to dts_p dts_t dts_s
+  js_p="$(jq -r '.summary.jsPass // 0'    "$detail_json" 2>/dev/null || echo 0)"
+  js_t="$(jq -r '.summary.jsTotal // 0'   "$detail_json" 2>/dev/null || echo 0)"
+  js_s="$(jq -r '.summary.jsSkip // 0'    "$detail_json" 2>/dev/null || echo 0)"
+  js_to="$(jq -r '.summary.jsTimeout // 0' "$detail_json" 2>/dev/null || echo 0)"
+  dts_p="$(jq -r '.summary.dtsPass // 0'  "$detail_json" 2>/dev/null || echo 0)"
+  dts_t="$(jq -r '.summary.dtsTotal // 0' "$detail_json" 2>/dev/null || echo 0)"
+  dts_s="$(jq -r '.summary.dtsSkip // 0'  "$detail_json" 2>/dev/null || echo 0)"
+  js_p="$(num_or_zero "$js_p")"
+  js_t="$(num_or_zero "$js_t")"
+  js_s="$(num_or_zero "$js_s")"
+  js_to="$(num_or_zero "$js_to")"
+  dts_p="$(num_or_zero "$dts_p")"
+  dts_t="$(num_or_zero "$dts_t")"
+  dts_s="$(num_or_zero "$dts_s")"
+
+  local result_json
+  result_json="$(printf '{"shard":%s,"rc":%s,"js_passed":%s,"js_total":%s,"js_skipped":%s,"js_timeouts":%s,"dts_passed":%s,"dts_total":%s,"dts_skipped":%s}' \
+    "$shard_index" "$rc" "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s")"
+  echo "$result_json" > "$METRICS_DIR/emit-shard-${shard_index}.json"
+  echo "EMIT_SHARD shard=${shard_index} rc=${rc} js=${js_p}/${js_t} skip=${js_s} timeout=${js_to} dts=${dts_p}/${dts_t}"
+
+  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
+    local prefix="${bucket%/}/emit-runs/${run_key}"
+    gsutil cp "$METRICS_DIR/emit-shard-${shard_index}.json" "${prefix}/shard-${shard_index}.json" \
+      && echo "Uploaded emit shard result: shard-${shard_index}.json" \
+      || echo "warning: failed to upload emit shard result (non-fatal)" >&2
+  fi
+
+  if [[ "$shard_count" -eq 1 ]]; then
+    ci_section "Emit aggregate"
+    validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1
+  fi
+  return 0
+}
+
+run_emit_aggregate() {
+  ci_section "Emit aggregate"
+  local bucket run_key
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local expected_shards="${_TSZ_CI_EMIT_SHARD_COUNT:-${TSZ_CI_EMIT_SHARDS:-4}}"
+
+  if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
+    echo "error: cannot aggregate — no bucket or run key available" >&2
+    return 1
+  fi
+
+  local prefix="${bucket%/}/emit-runs/${run_key}"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  echo "Downloading emit shard results from ${prefix}/shard-*.json ..."
+  if ! gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
+    echo "error: failed to download emit shard results from GCS" >&2
+    return 1
+  fi
+
+  local js_passed=0 js_total=0 js_skipped=0 js_timeouts=0
+  local dts_passed=0 dts_total=0 dts_skipped=0 files_count=0
+  for f in "$tmp_dir"/shard-*.json; do
+    [[ -f "$f" ]] || continue
+    files_count=$((files_count + 1))
+    local t
+    t="$(jq -r '.js_total // 0' "$f" 2>/dev/null || echo 0)"
+    [[ "$(num_or_zero "$t")" -eq 0 ]] && continue  # skip empty trailing shards (count only for files_count)
+    js_passed=$((js_passed + $(num_or_zero "$(jq -r '.js_passed'  "$f")")))
+    js_total=$((js_total   + $(num_or_zero "$(jq -r '.js_total'   "$f")")))
+    js_skipped=$((js_skipped + $(num_or_zero "$(jq -r '.js_skipped // 0' "$f")")))
+    js_timeouts=$((js_timeouts + $(num_or_zero "$(jq -r '.js_timeouts // 0' "$f")")))
+    dts_passed=$((dts_passed + $(num_or_zero "$(jq -r '.dts_passed' "$f")")))
+    dts_total=$((dts_total   + $(num_or_zero "$(jq -r '.dts_total'  "$f")")))
+    dts_skipped=$((dts_skipped + $(num_or_zero "$(jq -r '.dts_skipped // 0' "$f")")))
+  done
+
+  validate_emit_aggregate_counts "$js_passed" "$js_total" "$js_skipped" "$js_timeouts" \
+    "$dts_passed" "$dts_total" "$dts_skipped" "$files_count" "$expected_shards"
+}
+
+run_fourslash_shard() {
+  ci_section "Fourslash shard"
+  local bucket run_key shard_index shard_count
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  shard_index="$(num_or_zero "${_TSZ_CI_FOURSLASH_SHARD_INDEX:-0}")"
+  shard_count="$(num_or_zero "${_TSZ_CI_FOURSLASH_SHARD_COUNT:-8}")"
+
+  mkdir -p "$LOG_DIR/fourslash"
+  echo "Fourslash shard ${shard_index}/${shard_count}: workers=${FOURSLASH_WORKERS}"
+
+  local detail_json="$METRICS_DIR/fourslash-shard-${shard_index}.json"
+  set +e
+  run_with_heartbeat "fourslash-${shard_index}" \
+    bash -c 'log_file="$1"; shift; "$@" >"$log_file" 2>&1' bash "$LOG_DIR/fourslash/shard-${shard_index}.log" \
+    ./scripts/fourslash/run-fourslash.sh \
+    --skip-cargo-build \
+    --skip-ts-build \
+    --shard="${shard_index}/${shard_count}" \
+    --shard-strategy="${TSZ_CI_FOURSLASH_SHARD_STRATEGY:-weighted}" \
+    --workers="$FOURSLASH_WORKERS" \
+    --timeout="${TSZ_CI_FOURSLASH_TIMEOUT_MS:-15000}" \
+    --memory-limit=512 \
+    --json-out="$detail_json"
+  local rc="$?"
+  set -e
+
+  local results passed total timed_out
+  results="$(grep -a '^Results:' "$LOG_DIR/fourslash/shard-${shard_index}.log" | tail -1 || true)"
+  if [[ -f "$detail_json" ]]; then
+    passed="$(jq -r '.summary.passed // 0' "$detail_json")"
+    total="$(jq -r '.summary.total // 0' "$detail_json")"
+    timed_out="$(jq -r '.summary.timedOut // 0' "$detail_json")"
+  else
+    passed="$(echo "$results" | grep -oE 'Results:[[:space:]]*[0-9]+ passed' | grep -oE '[0-9]+' | head -1 || true)"
+    total="$(echo "$results" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+' | head -1 || true)"
+    timed_out=0
+  fi
+  passed="$(num_or_zero "$passed")"
+  total="$(num_or_zero "$total")"
+  timed_out="$(num_or_zero "$timed_out")"
+
+  if [[ -f "$detail_json" ]]; then
+    local enriched_json
+    enriched_json="${detail_json}.enriched"
+    jq \
+      --argjson shard "$shard_index" \
+      --argjson rc "$rc" \
+      --argjson passed "$passed" \
+      --argjson total "$total" \
+      --argjson timed_out "$timed_out" \
+      '. + {shard:$shard, rc:$rc, passed:$passed, total:$total, timedOut:$timed_out, slowest:(.summary.slowest // [])}' \
+      "$detail_json" >"$enriched_json"
+    mv "$enriched_json" "$detail_json"
+  else
+    printf '{"shard":%s,"rc":%s,"passed":%s,"total":%s,"timedOut":%s,"slowest":[]}\n' \
+      "$shard_index" "$rc" "$passed" "$total" "$timed_out" >"$detail_json"
+  fi
+
+  echo "FOURSLASH_SHARD shard=${shard_index} rc=${rc} passed=${passed}/${total} timeout=${timed_out}"
+  if [[ -f "$detail_json" ]]; then
+    echo "Fourslash slowest tests for shard ${shard_index}:"
+    jq -r '.slowest[:10][]? | "  \(.elapsed)ms \(.status) \(.name)"' "$detail_json" || true
+  fi
+  if [[ "$rc" -ne 0 ]]; then
+    show_log_tail "$LOG_DIR/fourslash/shard-${shard_index}.log"
+  fi
+
+  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
+    local prefix="${bucket%/}/fourslash-runs/${run_key}"
+    gsutil cp "$detail_json" "${prefix}/shard-${shard_index}.json" \
+      && echo "Uploaded fourslash shard result: shard-${shard_index}.json" \
+      || echo "warning: failed to upload fourslash shard result (non-fatal)" >&2
+  fi
+  return 0
+}
+
+run_fourslash_aggregate() {
+  ci_section "Fourslash aggregate (GCS)"
+  local bucket run_key
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local expected_shards="${_TSZ_CI_FOURSLASH_SHARD_COUNT:-${TSZ_CI_FOURSLASH_SHARDS:-8}}"
+
+  if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
+    echo "error: cannot aggregate — no bucket or run key available" >&2
+    return 1
+  fi
+
+  local prefix="${bucket%/}/fourslash-runs/${run_key}"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  echo "Downloading fourslash shard results from ${prefix}/shard-*.json ..."
+  if ! gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
+    echo "error: failed to download fourslash shard results from GCS" >&2
+    return 1
+  fi
+
+  local total_passed=0 total_tests=0 shard_count=0 failed_shards=0 timed_out=0
+  for f in "$tmp_dir"/shard-*.json; do
+    [[ -f "$f" ]] || continue
+    total_passed=$((total_passed + $(num_or_zero "$(jq -r '.passed // .summary.passed // 0' "$f")")))
+    total_tests=$((total_tests   + $(num_or_zero "$(jq -r '.total // .summary.total // 0'  "$f")")))
+    timed_out=$((timed_out + $(num_or_zero "$(jq -r '.timedOut // .summary.timedOut // 0' "$f")")))
+    if [[ "$(num_or_zero "$(jq -r '.rc // 0' "$f")")" -ne 0 ]]; then
+      failed_shards=$((failed_shards + 1))
+    fi
+    shard_count=$((shard_count + 1))
+  done
+
+  echo "Fourslash aggregate: ${total_passed}/${total_tests} across ${shard_count}/${expected_shards} shards (timeout=${timed_out}, failed_shards=${failed_shards})"
+  echo "Fourslash aggregate slowest tests:"
+  jq -s -r '[.[] | (.slowest // .summary.slowest // [])[]] | sort_by(.elapsed) | reverse | .[:10][]? | "  \(.elapsed)ms \(.status) \(.name)"' "$tmp_dir"/shard-*.json || true
+  if [[ "$failed_shards" -gt 0 ]]; then
+    echo "warning: ${failed_shards} fourslash shard(s) returned non-zero; aggregate still applies the baseline floor" >&2
+  fi
+
+  if [[ "$shard_count" -lt "$expected_shards" ]]; then
+    echo "error: only ${shard_count}/${expected_shards} fourslash shards collected; some shards may have crashed" >&2
+    return 1
+  fi
+  if [[ "$total_tests" -eq 0 ]]; then
+    echo "error: fourslash aggregate has zero tests" >&2
+    return 1
+  fi
+
+  local baseline
+  baseline="$(jq -r '.summary.passed // .passed // 0' scripts/fourslash/fourslash-snapshot.json)"
+  if [[ "$baseline" -gt 0 ]]; then
+    local tolerance floor
+    tolerance="$(awk "BEGIN {printf \"%d\", $baseline * 0.001 + 1}")"
+    floor=$((baseline - tolerance))
+    if [[ "$total_passed" -lt "$floor" ]]; then
+      echo "error: fourslash regression: ${total_passed} < ${baseline} (floor=${floor})" >&2
+      return 1
+    fi
+  fi
+  local pass_rate
+  pass_rate="$(awk -v p="$total_passed" -v t="$total_tests" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  jq -n \
+    --arg suite "fourslash" \
+    --arg pass_rate "$pass_rate" \
+    --argjson passed "$total_passed" \
+    --argjson total "$total_tests" \
+    --argjson shards "$shard_count" \
+    '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, shards:$shards}' \
+    > "$METRICS_DIR/fourslash.json"
+  publish_latest_metric fourslash "$METRICS_DIR/fourslash.json"
+  echo "Fourslash OK: ${total_passed}/${total_tests}"
+}
+
+run_emit_shards() {
+  ci_section "Emit shards"
+  mkdir -p "$LOG_DIR/emit"
+  export TSZ_BIN="$ROOT_DIR/.target/dist-fast/tsz"
+  echo "Emit shard config: shards=${SHARD_COUNT} workers_per_shard=${EMIT_WORKERS} chunk=${EMIT_CHUNK} timeout_ms=${EMIT_TIMEOUT_MS}"
+
+  for shard in $(seq 0 $((SHARD_COUNT - 1))); do
+    (
+      set +e
+      offset=$((shard * EMIT_CHUNK))
+      detail_json="$METRICS_DIR/emit-detail-${shard}.json"
+      ./scripts/emit/run.sh --skip-build --max="$EMIT_CHUNK" --offset="$offset" --concurrency="$EMIT_WORKERS" \
+        --timeout="$EMIT_TIMEOUT_MS" \
+        --json-out="$detail_json" \
+        >"$LOG_DIR/emit/shard-${shard}.log" 2>&1
+      rc="$?"
+      js_p="$(jq -r '.summary.jsPass // 0' "$detail_json" 2>/dev/null || echo 0)"
+      js_t="$(jq -r '.summary.jsTotal // 0' "$detail_json" 2>/dev/null || echo 0)"
+      js_s="$(jq -r '.summary.jsSkip // 0' "$detail_json" 2>/dev/null || echo 0)"
+      js_to="$(jq -r '.summary.jsTimeout // 0' "$detail_json" 2>/dev/null || echo 0)"
+      dts_p="$(jq -r '.summary.dtsPass // 0' "$detail_json" 2>/dev/null || echo 0)"
+      dts_t="$(jq -r '.summary.dtsTotal // 0' "$detail_json" 2>/dev/null || echo 0)"
+      dts_s="$(jq -r '.summary.dtsSkip // 0' "$detail_json" 2>/dev/null || echo 0)"
+      js_p="$(num_or_zero "$js_p")"
+      js_t="$(num_or_zero "$js_t")"
+      js_s="$(num_or_zero "$js_s")"
+      js_to="$(num_or_zero "$js_to")"
+      dts_p="$(num_or_zero "$dts_p")"
+      dts_t="$(num_or_zero "$dts_t")"
+      dts_s="$(num_or_zero "$dts_s")"
+      printf '{"shard":%s,"rc":%s,"js_passed":%s,"js_total":%s,"js_skipped":%s,"js_timeouts":%s,"dts_passed":%s,"dts_total":%s,"dts_skipped":%s}\n' \
+        "$shard" "$rc" "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" \
+        > "$METRICS_DIR/emit-shard-${shard}.json"
+      if [[ "$rc" -ne 0 ]]; then
+        show_log_tail "$LOG_DIR/emit/shard-${shard}.log"
+      fi
+      echo "EMIT_SHARD shard=${shard} rc=${rc} js=${js_p}/${js_t} skip=${js_s} timeout=${js_to} dts=${dts_p}/${dts_t} skip=${dts_s}"
+      exit 0
+    ) &
+  done
+  wait
+}
+
+aggregate_emit() {
+  ci_section "Aggregate emit"
+  local js_passed=0 js_total=0 js_skipped=0 js_timeouts=0 dts_passed=0 dts_total=0 dts_skipped=0 shard_count=0
+  for f in "$METRICS_DIR"/emit-shard-*.json; do
+    [[ -f "$f" ]] || continue
+    js_passed=$((js_passed + $(jq -r '.js_passed' "$f")))
+    js_total=$((js_total + $(jq -r '.js_total' "$f")))
+    js_skipped=$((js_skipped + $(jq -r '.js_skipped // 0' "$f")))
+    js_timeouts=$((js_timeouts + $(jq -r '.js_timeouts // 0' "$f")))
+    dts_passed=$((dts_passed + $(jq -r '.dts_passed' "$f")))
+    dts_total=$((dts_total + $(jq -r '.dts_total' "$f")))
+    dts_skipped=$((dts_skipped + $(jq -r '.dts_skipped // 0' "$f")))
+    shard_count=$((shard_count + 1))
+  done
+
+  echo "Emit shards: ${shard_count}/${SHARD_COUNT}"
+  echo "Emit aggregate: JS ${js_passed}/${js_total} (skip=${js_skipped}, timeout=${js_timeouts}), DTS ${dts_passed}/${dts_total} (skip=${dts_skipped})"
+
+  if [[ "$shard_count" -lt "$SHARD_COUNT" || "$js_total" -eq 0 ]]; then
+    echo "error: emit shard coverage is not trustworthy" >&2
+    show_log_tails "$LOG_DIR/emit"
+    return 1
+  fi
+
+  js_rate="$(awk -v p="$js_passed" -v t="$js_total" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  dts_rate="$(awk -v p="$dts_passed" -v t="$dts_total" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  jq -n \
+    --arg suite "emit" \
+    --arg js_pass_rate "$js_rate" \
+    --argjson js_passed "$js_passed" \
+    --argjson js_total "$js_total" \
+    --argjson js_skipped "$js_skipped" \
+    --argjson js_timeouts "$js_timeouts" \
+    --arg dts_pass_rate "$dts_rate" \
+    --argjson dts_passed "$dts_passed" \
+    --argjson dts_total "$dts_total" \
+    --argjson dts_skipped "$dts_skipped" \
+    '{suite:$suite, js_pass_rate:$js_pass_rate, js_passed:$js_passed, js_total:$js_total, js_skipped:$js_skipped, js_timeouts:$js_timeouts, dts_pass_rate:$dts_pass_rate, dts_passed:$dts_passed, dts_total:$dts_total, dts_skipped:$dts_skipped}' \
+    > "$METRICS_DIR/emit.json"
+
+  base_js="$(jq -r '.summary.jsPass // 0' scripts/emit/emit-snapshot.json)"
+  base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
+  base_dts="$(cap_positive_baseline "$base_dts" "$TSZ_CI_DTS_ACCEPTED_FLOOR")"
+  if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
+    echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
+    show_log_tails "$LOG_DIR/emit"
+    return 1
+  fi
+  if [[ "$base_dts" -gt 0 && "$dts_passed" -lt "$base_dts" ]]; then
+    echo "error: emit DTS regression: ${dts_passed} < ${base_dts}" >&2
+    show_log_tails "$LOG_DIR/emit"
+    return 1
+  fi
+  publish_latest_metric emit "$METRICS_DIR/emit.json"
+}
+
+run_fourslash_shards() {
+  ci_section "Fourslash shards"
+  mkdir -p "$LOG_DIR/fourslash"
+  echo "Fourslash shard config: shards=${SHARD_COUNT} workers_per_shard=${FOURSLASH_WORKERS}"
+
+  for shard in $(seq 0 $((SHARD_COUNT - 1))); do
+    (
+      set +e
+      detail_json="$METRICS_DIR/fourslash-detail-${shard}.json"
+      ./scripts/fourslash/run-fourslash.sh \
+        --skip-cargo-build \
+        --skip-ts-build \
+        --shard="${shard}/${SHARD_COUNT}" \
+        --workers="$FOURSLASH_WORKERS" --memory-limit=512 \
+        --json-out="$detail_json" \
+        >"$LOG_DIR/fourslash/shard-${shard}.log" 2>&1
+      rc="$?"
+      results="$(grep -a '^Results:' "$LOG_DIR/fourslash/shard-${shard}.log" | tail -1 || true)"
+      passed="$(echo "$results" | grep -oE 'Results:[[:space:]]*[0-9]+ passed' | grep -oE '[0-9]+' | head -1 || true)"
+      total="$(echo "$results" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+' | head -1 || true)"
+      passed="$(num_or_zero "$passed")"
+      total="$(num_or_zero "$total")"
+      printf '{"shard":%s,"rc":%s,"passed":%s,"total":%s}\n' "$shard" "$rc" "$passed" "$total" \
+        > "$METRICS_DIR/fourslash-shard-${shard}.json"
+      if [[ "$rc" -ne 0 ]]; then
+        show_log_tail "$LOG_DIR/fourslash/shard-${shard}.log"
+      fi
+      echo "FOURSLASH_SHARD shard=${shard} rc=${rc} passed=${passed} total=${total}"
+      exit 0
+    ) &
+  done
+  wait
+}
+
+aggregate_fourslash() {
+  ci_section "Aggregate fourslash"
+  local total_passed=0 total_tests=0 shard_count=0
+  for f in "$METRICS_DIR"/fourslash-shard-*.json; do
+    [[ -f "$f" ]] || continue
+    total_passed=$((total_passed + $(jq -r '.passed' "$f")))
+    total_tests=$((total_tests + $(jq -r '.total' "$f")))
+    shard_count=$((shard_count + 1))
+  done
+
+  echo "Fourslash shards: ${shard_count}/${SHARD_COUNT}"
+  echo "Fourslash aggregate: ${total_passed}/${total_tests}"
+
+  if [[ "$shard_count" -lt "$SHARD_COUNT" || "$total_tests" -eq 0 ]]; then
+    echo "error: fourslash shard coverage is not trustworthy" >&2
+    show_log_tails "$LOG_DIR/fourslash"
+    return 1
+  fi
+
+  baseline="$(jq -r '.summary.passed // .passed // 0' scripts/fourslash/fourslash-snapshot.json)"
+  if [[ "$baseline" -gt 0 ]]; then
+    tolerance="$(awk "BEGIN {printf \"%d\", $baseline * 0.001 + 1}")"
+    floor=$((baseline - tolerance))
+    if [[ "$total_passed" -lt "$floor" ]]; then
+      echo "error: fourslash regression: ${total_passed} < ${baseline} (floor=${floor})" >&2
+      show_log_tails "$LOG_DIR/fourslash"
+      return 1
+    fi
+  fi
+  local pass_rate
+  pass_rate="$(awk -v p="$total_passed" -v t="$total_tests" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  jq -n \
+    --arg suite "fourslash" \
+    --arg pass_rate "$pass_rate" \
+    --argjson passed "$total_passed" \
+    --argjson total "$total_tests" \
+    --argjson shards "$shard_count" \
+    '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, shards:$shards}' \
+    > "$METRICS_DIR/fourslash.json"
+  publish_latest_metric fourslash "$METRICS_DIR/fourslash.json"
+}
+
+run_dist_binaries() {
+  ci_section "Build dist-fast binaries"
+  timed build_test_binaries build_test_binaries
+  show_sccache_stats
+}
+
+show_sccache_stats() {
+  if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
+    sccache --show-stats 2>/dev/null || true
+  fi
+}
+
+run_unit_archive_only() {
+  ci_section "Build unit test archive"
+  timed build_unit_test_archive build_unit_test_archive
+  show_sccache_stats
+}
+
+run_node_harness_prep() {
+  ci_section "Prep node harnesses (emit + fourslash)"
+  timed prep_node_artifacts prep_node_artifacts
+}
+
+run_build() {
+  ci_section "Build dist-fast binaries (upload for parallel jobs)"
+  timed build_test_binaries build_test_binaries
+  timed build_unit_test_archive build_unit_test_archive
+  # Seed scripts/node_modules so save_caches can cache it for all parallel shard jobs.
+  # Shards all start simultaneously after build completes, so if build doesn't seed it,
+  # every shard misses the cache and reinstalls npm packages independently.
+  ci_section "Seed scripts node_modules for parallel job cache"
+  if [[ ! -x scripts/node_modules/.bin/tsc ]]; then
+    if command -v npm >/dev/null 2>&1; then
+      (cd scripts && npm install --silent)
+    else
+      echo "warn: npm not found in build image; skipping scripts/node_modules seed (shards will reinstall on cache-miss)" >&2
+    fi
+  else
+    echo "scripts/node_modules already present (cache hit)"
+  fi
+  show_sccache_stats
+}
+
+suite_needs_typescript_source() {
+  local suite="$1"
+  ci_suite_has_cache "$suite" typescript-source
+}
+
+run_common_setup() {
+  local suite="${1:-all}"
+  timed ensure_host_tools ensure_host_tools "$suite"
+  timed ensure_source_git_context ensure_source_git_context
+  if suite_needs_typescript_source "$suite"; then
+    timed init_typescript_submodule init_typescript_submodule
+  else
+    # Skipping the submodule init avoids downloading ~50 MB of source and
+    # avoids the gitlink-vs-ref-file staleness check that's only relevant
+    # when the tree is actually used.
+    echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
+  fi
+  if suite_needs_group "$suite" rust_compile; then
+    if [[ "${TSZ_CI_DISABLE_SCCACHE:-0}" == "1" ]]; then
+      echo "sccache: disabled by TSZ_CI_DISABLE_SCCACHE=1"
+    else
+      configure_sccache
+    fi
+  fi
+  if suite_needs_group "$suite" wasm; then
+    setup_wasm_pack_cache
+  fi
+}
+
+run_all_suites() {
+  timed run_lint run_lint
+  timed run_unit_tests run_unit_tests
+  timed build_test_binaries build_test_binaries
+  timed build_wasm build_wasm
+  timed build_wasm_web build_wasm_web
+  timed prep_node_artifacts prep_node_artifacts
+  timed run_conformance run_conformance
+  timed run_emit_shards run_emit_shards
+  timed aggregate_emit aggregate_emit
+  timed run_fourslash_shards run_fourslash_shards
+  timed aggregate_fourslash aggregate_fourslash
+}
+
+main() {
+  local suite="${1:-${TSZ_CI_SUITE:-all}}"
+
+  if ! ci_suite_is_known full "$suite"; then
+    echo "error: unknown CI suite '${suite}'" >&2
+    echo "valid suites: $(ci_suite_list full ', ')" >&2
+    return 2
+  fi
+
+  run_common_setup "$suite"
+
+  case "$suite" in
+    all|full)
+      run_all_suites
+      ;;
+    build)
+      run_build
+      ;;
+    dist-binaries)
+      run_dist_binaries
+      ;;
+    unit-archive)
+      run_unit_archive_only
+      ;;
+    node-harness-prep)
+      run_node_harness_prep
+      ;;
+    lint)
+      timed run_lint run_lint
+      ;;
+    unit)
+      timed run_unit_tests run_unit_tests
+      ;;
+    unit-shard)
+      timed run_unit_shard run_unit_shard
+      ;;
+    wasm)
+      timed build_wasm build_wasm
+      show_sccache_stats
+      ;;
+    wasm-web)
+      timed build_wasm_web build_wasm_web
+      show_sccache_stats
+      ;;
+    wasm-all)
+      timed build_wasm_all build_wasm_all
+      show_sccache_stats
+      ;;
+    conformance)
+      timed build_test_binaries build_test_binaries
+      timed run_conformance run_conformance
+      ;;
+    conformance-aggregate)
+      timed run_conformance_aggregate run_conformance_aggregate
+      ;;
+    emit)
+      timed build_test_binaries build_test_binaries
+      timed prep_node_artifacts prep_node_artifacts
+      timed run_emit_shards run_emit_shards
+      timed aggregate_emit aggregate_emit
+      ;;
+    fourslash)
+      timed build_test_binaries build_test_binaries
+      timed prep_node_artifacts prep_node_artifacts
+      timed run_fourslash_shards run_fourslash_shards
+      timed aggregate_fourslash aggregate_fourslash
+      ;;
+    emit-shard)
+      timed build_test_binaries build_test_binaries
+      timed maybe_prep_node_artifacts maybe_prep_node_artifacts
+      timed run_emit_shard run_emit_shard
+      ;;
+    emit-aggregate)
+      timed run_emit_aggregate run_emit_aggregate
+      ;;
+    fourslash-shard)
+      timed build_test_binaries build_test_binaries
+      timed maybe_prep_node_artifacts maybe_prep_node_artifacts
+      timed run_fourslash_shard run_fourslash_shard
+      ;;
+    fourslash-aggregate)
+      timed run_fourslash_aggregate run_fourslash_aggregate
+      ;;
+    *)
+      echo "error: unknown CI suite '${suite}'" >&2
+      echo "valid suites: $(ci_suite_list full ', ')" >&2
+      return 2
+      ;;
+  esac
+}
+
+main "$@"

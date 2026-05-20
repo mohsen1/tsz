@@ -1,0 +1,68 @@
+#!/bin/bash
+#
+# Pre-commit hook for tsz.
+#
+# Local commits should stay cheap: format staged Rust changes and leave build,
+# lint, unit, conformance, emit, and fourslash verification to CI.
+#
+# Env vars:
+#   TSZ_SKIP_HOOKS=1  Skip the entire hook
+
+set -e
+
+if [ "${TSZ_SKIP_HOOKS:-}" = "1" ]; then exit 0; fi
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+cd "$ROOT_DIR"
+
+echo "Pre-commit formatting..."
+
+SUBMODULE_CHANGES=$(git diff --cached --name-only | grep '^TypeScript/' || true)
+if [ -n "$SUBMODULE_CHANGES" ]; then
+    echo ""
+    echo "ERROR: Attempting to commit changes to TypeScript submodule!"
+    echo ""
+    echo "The TypeScript/ directory is a READ-ONLY git submodule."
+    echo "You must NOT modify, add, or commit any files in this directory."
+    echo ""
+    echo "Blocked files:"
+    echo "$SUBMODULE_CHANGES" | head -20
+    if [ "$(echo "$SUBMODULE_CHANGES" | wc -l)" -gt 20 ]; then
+        echo "... and more"
+    fi
+    echo ""
+    echo "To unstage these changes:"
+    echo "  git reset HEAD TypeScript/"
+    exit 1
+fi
+
+SUBMODULE_POINTER=$(git diff --cached --name-only | grep '^TypeScript$' || true)
+if [ -n "$SUBMODULE_POINTER" ]; then
+    echo ""
+    echo "ERROR: Attempting to change TypeScript submodule pointer!"
+    echo "To unstage: git reset HEAD TypeScript"
+    exit 1
+fi
+
+CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
+CHANGED_RS=$(echo "$CHANGED_FILES" | grep '\.rs$' || true)
+
+if [ -z "$CHANGED_RS" ]; then
+    echo "No staged Rust files changed."
+    exit 0
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "ERROR: cargo not found"
+    exit 1
+fi
+
+cargo fmt --all
+
+for file in $CHANGED_RS; do
+    if [ -f "$file" ]; then
+        git add "$file"
+    fi
+done
+
+echo "Formatting complete."

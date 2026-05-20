@@ -1,0 +1,35 @@
+type-complexity-threshold = 220
+cognitive-complexity-threshold = 20
+too-many-arguments-threshold = 8
+too-many-lines-threshold = 360
+doc-valid-idents = [
+    "CommonJS",
+    "ECMAScript",
+    "NaN",
+    "JavaScript",
+    "TypeScript",
+    "Infinity",
+    "AST",
+    "LSP",
+    "WASM",
+    "TSX",
+    "JSX",
+    "TypeId",
+    "SymbolId",
+    "DefId",
+    "FlowNodeId",
+    "TypeData",
+    "ReadonlyArray",
+    "TS",
+    "JSDoc",
+]
+disallowed-methods = [
+    "std::mem::transmute",
+]
+
+# Avoiding hidden convenience that masks missing boundary discipline.
+allow-unwrap-in-tests = false
+
+# Architecture-aligned lint posture:
+# - Solver-first and architecture-first paths should remain explicit.
+# - Any new transmutation-based bypass is treated as suspicious early.

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">tsz - a TypeScript compiler in Rust</title>
+  <desc id="desc">Open Graph image for tsz, using the project logo and tagline.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#0f141b"/>
+      <stop offset="1" stop-color="#161b22"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#2d333b" stroke-width="1" opacity="0.28"/>
+    </pattern>
+    <filter id="logo-white" color-interpolation-filters="sRGB">
+      <feColorMatrix type="matrix" values="0 0 0 0 0.941 0 0 0 0 0.965 0 0 0 0 0.988 0 0 0 1 0"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+
+  <image href="tsz_logo.svg" x="82" y="110" width="520" height="224" preserveAspectRatio="xMinYMid meet" filter="url(#logo-white)" opacity="0.94"/>
+
+  <text x="86" y="418" fill="#f0f6fc" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="58" font-weight="700" letter-spacing="0">
+    A TypeScript compiler in Rust.
+  </text>
+  <text x="88" y="486" fill="#8b949e" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="30" font-weight="500" letter-spacing="0">
+    A performance-first TypeScript type checker
+  </text>
+
+  <text x="1114" y="566" text-anchor="end" fill="#8b949e" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="26" font-weight="600">tsz.dev</text>
+</svg>

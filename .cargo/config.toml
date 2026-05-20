@@ -1,0 +1,74 @@
+# Cargo configuration for tsz - optimized for orchestrator-driven development
+#
+# Each worktree uses its own .target directory to avoid lock contention
+# when running parallel builds across multiple worktrees.
+
+[build]
+# Each worktree gets its own target directory (relative path)
+target-dir = ".target"
+
+# Enable incremental compilation for faster rebuilds
+incremental = true
+
+# Use all available cores for parallel builds
+# Jobs = number of compiler jobs to run in parallel
+jobs = 14
+
+# Faster linker configuration (Linux only - mold is fastest)
+# To use: install mold (e.g., `sudo apt install mold` or build from source)
+# For macOS: system ld is already optimized, no changes needed
+# Disabled for now since mold is not available
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "link-arg=-Wl,--threads=auto"]
+
+# [target.aarch64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold", "-C", "link-arg=-Wl,--threads=auto"]
+
+[profile.dev]
+# Faster builds for development
+opt-level = 0
+incremental = true
+codegen-units = 256
+
+[env]
+# Set larger stack size for all builds (8MB)
+# Prevents stack overflow on deeply nested TypeScript test files
+RUST_MIN_STACK = "8388608"  # 8MB in bytes
+
+# Optimizations for build speed
+CARGO_BUILD_JOBS = { value = "14", relative = false }
+CARGO_INCREMENTAL = { value = "1", relative = false }
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.orchestrator]
+# Optimized profile for orchestrator workers
+# Faster builds than dev, decent runtime performance
+inherits = "dev"
+opt-level = 0
+incremental = true
+codegen-units = 256
+lto = false
+debug = false
+strip = false
+
+[profile.orchestrator-release]
+# Release profile with incremental compilation for orchestrator
+inherits = "release"
+incremental = true
+codegen-units = 256
+lto = "thin"
+debug = false
+
+[net]
+# Faster dependency fetching
+git-fetch-with-cli = true
+
+# Nextest configuration for smarter test execution
+[target.nextest]
+# Show test execution time
+status-level = "all"
+# Disable progress bars for cleaner output
+final-status-level = "flaky"

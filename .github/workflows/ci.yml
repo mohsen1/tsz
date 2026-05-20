@@ -1,0 +1,1297 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled]
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
+  _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
+  TSZ_CI_RUNNER_LABEL: tsz-cloud-run
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.gate.outputs.should_run }}
+      full_run: ${{ steps.gate.outputs.full_run }}
+      rust_cache_refresh: ${{ steps.gate.outputs.rust_cache_refresh }}
+      required_summary: ${{ steps.gate.outputs.required_summary }}
+      bench_shell_only: ${{ steps.gate.outputs.bench_shell_only }}
+      perf_tool_only: ${{ steps.gate.outputs.perf_tool_only }}
+      arch_tool_only: ${{ steps.gate.outputs.arch_tool_only }}
+      compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
+      unit_packages: ${{ steps.gate.outputs.unit_packages }}
+    steps:
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          should_run=true
+          full_run=true
+          required_summary=true
+          rust_cache_refresh=false
+          cache_key_changed=false
+          bench_shell_only=false
+          perf_tool_only=false
+          arch_tool_only=false
+          compiler_checks_required=true
+          unit_packages=""
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # The `labeled` event triggers on every label add. We only care
+            # about the `ci-approved` label (used to opt fork PRs into CI).
+            # For any other label, this would just duplicate the existing
+            # CI run from the same SHA's open/sync events, so skip.
+            if [[ "${{ github.event.action }}" == "labeled" \
+                  && "${{ github.event.label.name }}" != "ci-approved" ]]; then
+              # Skip the actual CI work — a non-ci-approved label add just
+              # duplicates the existing CI run from the same SHA's open/sync
+              # events. But KEEP required_summary=true so the CI Summary job
+              # (the required-status-check name) still runs and passes via the
+              # `should_run=false` short-circuit. Setting required_summary=false
+              # here would rename the summary to "CI Light Summary", which
+              # branch protection does not recognize → PR stays BLOCKED until
+              # a non-label event fires.
+              echo "Label '${{ github.event.label.name }}' is not 'ci-approved' — skipping redundant run."
+              should_run=false
+            fi
+            if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
+              # Draft PRs still run the light CI suite (lint, build, unit).
+              # Heavy suites wait until the PR is marked ready for review.
+              full_run=false
+              required_summary=false
+            fi
+            # Docs-only PRs cannot affect cargo build/test/conformance, so
+            # skip CI jobs when every changed path matches
+            # one of the docs-only patterns. The gate job itself + the
+            # ubuntu-latest "CI Summary" job still run, so any
+            # required-status-checks for those names are satisfied — unlike
+            # workflow-level `paths-ignore`, which skips the entire workflow
+            # and leaves required checks pending forever (PR #1989).
+            #
+            # CI workflow files (`.github/workflows/*`), `Cargo.{toml,lock}`,
+            # scripts, and `crates/**` source are NOT classified as docs and
+            # continue to trigger the full suite. Renames are tracked via
+            # the GitHub API's `previous_filename`, so a `foo.rs` → `foo.md`
+            # rename is correctly classified as non-docs (the deleted .rs
+            # source still requires a build).
+            if [[ "$should_run" == "true" ]]; then
+              all_paths=""
+              page=1
+              while :; do
+                page_paths=$(gh api \
+                  "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100&page=${page}" \
+                  --jq '.[] | (.filename, (.previous_filename // empty))' \
+                  2>/dev/null || true)
+                if [[ -z "$page_paths" ]]; then break; fi
+                all_paths+="${page_paths}"$'\n'
+                # Stop early if we got fewer than 100 entries (last page).
+                count=$(printf '%s\n' "$page_paths" | wc -l | tr -d ' ')
+                if [[ "$count" -lt 100 ]]; then break; fi
+                page=$((page + 1))
+                # Safety bound: 30 pages = 3000 files, well past any real PR.
+                if [[ "$page" -gt 30 ]]; then break; fi
+              done
+              if [[ -n "$all_paths" ]]; then
+                non_docs=$(printf '%s\n' "$all_paths" \
+                  | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$' \
+                  || true)
+                if [[ -z "$non_docs" ]]; then
+                  echo "PR diff is docs-only — skipping CI jobs:"
+                  printf '  %s\n' $(printf '%s\n' "$all_paths" | sort -u)
+                  should_run=false
+                fi
+                compiler_paths=$(printf '%s\n' "$all_paths" \
+                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  || true)
+                if [[ -z "$compiler_paths" ]]; then
+                  compiler_checks_required=false
+                  echo "PR diff has no compiler/runtime paths; compiler suites are skipped and not required by CI Summary."
+                fi
+              fi
+            fi
+            # Bench script-only changes do not need Rust compiler CI. Keep the
+            # required CI Summary alive, but replace lint/unit/dist/wasm/heavy
+            # jobs with a cheap bash syntax smoke job below. CI workflow edits,
+            # Cargo files, Rust crates, JS helpers, and non-bench shell scripts
+            # still take the normal path.
+            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
+              bench_shell_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^scripts/bench/[^/]+\.sh$' \
+                || true)
+              non_bench_shell_paths=$(printf '%s\n' "$all_paths" \
+                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/bench/[^/]+\.sh$' \
+                || true)
+              if [[ -n "$bench_shell_paths" && -z "$non_bench_shell_paths" ]]; then
+                echo "PR diff only changes bench shell scripts/docs — running bench shell smoke only:"
+                printf '%s\n' "$bench_shell_paths" | sort -u | sed 's/^/  /'
+                should_run=false
+                full_run=false
+                bench_shell_only=true
+              fi
+            fi
+            # Perf-tool Python script-only changes do not need Rust compiler CI.
+            # Keep the required CI Summary alive, but replace lint/unit/dist/wasm
+            # jobs with a cheap Python smoke job below. CI workflow edits, Cargo
+            # files, Rust crates, shell scripts, and non-perf scripts still take
+            # the normal path.
+            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
+              perf_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^scripts/perf/[^/]+\.py$' \
+                || true)
+              non_perf_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/perf/[^/]+\.py$' \
+                || true)
+              if [[ -n "$perf_tool_paths" && -z "$non_perf_tool_paths" ]]; then
+                echo "PR diff only changes perf Python tools/docs — running perf tool smoke only:"
+                printf '%s\n' "$perf_tool_paths" | sort -u | sed 's/^/  /'
+                should_run=false
+                full_run=false
+                perf_tool_only=true
+              fi
+            fi
+            # Arch-tool Python script-only changes do not need Rust compiler CI.
+            # Keep the required CI Summary alive, but replace lint/unit/dist/wasm
+            # jobs with a cheap Python smoke job below. CI workflow edits, Cargo
+            # files, Rust crates, shell scripts, and non-arch scripts still take
+            # the normal path.
+            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
+              arch_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^scripts/arch/[^/]+\.py$' \
+                || true)
+              non_arch_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/arch/[^/]+\.py$' \
+                || true)
+              if [[ -n "$arch_tool_paths" && -z "$non_arch_tool_paths" ]]; then
+                echo "PR diff only changes arch Python tools/docs — running arch tool smoke only:"
+                printf '%s\n' "$arch_tool_paths" | sort -u | sed 's/^/  /'
+                should_run=false
+                full_run=false
+                arch_tool_only=true
+              fi
+            fi
+            # P4 — draft-phase fast-fail: narrow the unit job to the touched
+            # crates' tests when the diff is safely localized. Ready-for-review
+            # PRs always run the full unit suite (correctness gate); only draft
+            # PRs use the narrow set.
+            #
+            # Narrowing is "safe" when EVERY changed file is either:
+            #   * under `crates/<known-unit-crate>/src|tests|benches|examples/`
+            #   * a `.md`/docs path (already filtered by docs-only above)
+            # And NONE of these "blast-radius" paths is touched:
+            #   * root `Cargo.{toml,lock}`, `.cargo/`, `rust-toolchain*`
+            #   * `crates/*/Cargo.toml`, `crates/*/build.rs`
+            #   * `scripts/ci/`, `.github/workflows/`
+            #   * a non-unit-tested crate (tsz-cli, tsz-conformance, tsz-lowering,
+            #     tsz-wasm, tsz-website) — these can transitively affect unit
+            #     test behavior via integration points
+            #
+            # When a blast-radius path is touched, fall back to the full unit
+            # suite even on drafts. Lint always runs across the full workspace
+            # regardless, so compile breakage in any crate still surfaces fast.
+            if [[ "$should_run" == "true" \
+                  && "${{ github.event.pull_request.draft }}" == "true" \
+                  && -n "$all_paths" ]]; then
+              # Paths that force the full unit suite even on drafts.
+              blast_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|scripts/ci/|\.github/workflows/|crates/[^/]+/(Cargo\.toml|build\.rs))' \
+                || true)
+              # Source under crates/<X>/, excluding the blast paths above.
+              crate_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^crates/[^/]+/(src|tests|benches|examples)/' \
+                || true)
+              # Catch-all: anything else (root files, scripts/, TypeScript/, etc.)
+              # not yet classified.
+              other_paths=$(printf '%s\n' "$all_paths" \
+                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^crates/[^/]+/(src|tests|benches|examples)/|^Cargo\.(lock|toml)$|^\.cargo/|^rust-toolchain|^scripts/ci/|^\.github/workflows/|^crates/[^/]+/(Cargo\.toml|build\.rs)$' \
+                || true)
+              if [[ -z "$blast_paths" && -z "$other_paths" && -n "$crate_paths" ]]; then
+                # Extract distinct crate names from the matching paths.
+                touched_crates=$(printf '%s\n' "$crate_paths" \
+                  | sed -E 's|^crates/([^/]+)/.*|\1|' \
+                  | sort -u)
+                known_unit_crates="tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-emitter tsz-lsp tsz-core"
+                all_known=true
+                for crate in $touched_crates; do
+                  case " $known_unit_crates " in
+                    *" $crate "*) ;;
+                    *) all_known=false; break;;
+                  esac
+                done
+                if [[ "$all_known" == "true" ]]; then
+                  unit_packages=$(printf '%s' "$touched_crates" | tr '\n' ' ' | sed 's/ *$//')
+                  echo "P4 draft fast-fail: narrowing unit to: ${unit_packages}"
+                  printf '  touched: %s\n' $(printf '%s\n' "$crate_paths" | sort -u)
+                fi
+              fi
+              if [[ -z "$unit_packages" ]]; then
+                reasons=""
+                [[ -n "$blast_paths" ]] && reasons+="blast-radius paths touched; "
+                [[ -n "$other_paths" ]] && reasons+="unclassified paths touched; "
+                [[ -z "$crate_paths" && -z "$reasons" ]] && reasons="no crate source changes"
+                echo "P4 draft fast-fail: NOT narrowing (${reasons:-no eligible crates})"
+              fi
+            fi
+            if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
+              # Fork PRs cannot use self-hosted runners by default (untrusted
+              # code on shared infra). A maintainer must add the
+              # `ci-approved` label after reviewing the diff to opt the PR
+              # into full CI. Without that label, only the lightweight
+              # ubuntu-latest checks run, which means heavy regressions
+              # (e.g. conformance) cannot be caught — which is exactly how
+              # PR #1608 slipped 72 conformance regressions into main.
+              has_label=$(gh api \
+                "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
+                --jq '.labels // [] | map(.name) | index("ci-approved") // empty' \
+                2>/dev/null || true)
+              if [[ -n "$has_label" ]]; then
+                echo "Fork PR has ci-approved label — running full CI on self-hosted runners."
+              else
+                echo "Skipping self-hosted CI for fork PRs (add 'ci-approved' label to enable)."
+                should_run=false
+                required_summary=false
+              fi
+            fi
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            # Skip redundant main CI when the push is a PR merge already validated by PR CI.
+            # Saves ~40+ runner-minutes per merge (32 conformance + lint + unit + wasm + emit shards).
+            pr_number=""
+            for attempt in 1 2 3 4 5 6; do
+              pr_number=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+                --jq '.[0].number // empty' 2>/dev/null || true)
+              if [[ -n "$pr_number" ]]; then
+                if [[ "$attempt" -gt 1 ]]; then
+                  echo "Commit association for PR #${pr_number} became visible on attempt ${attempt}."
+                fi
+                break
+              fi
+              if [[ "$attempt" -lt 6 ]]; then
+                echo "Commit association for ${{ github.sha }} is not visible yet (attempt ${attempt}/6); retrying."
+                sleep 5
+              fi
+            done
+            if [[ -z "$pr_number" ]]; then
+              commit_subject=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}" \
+                --jq '.commit.message | split("\n")[0]' 2>/dev/null || true)
+              if [[ "$commit_subject" =~ \(\#([0-9]+)\) ]]; then
+                pr_number="${BASH_REMATCH[1]}"
+                echo "Commit subject references PR #${pr_number} — using it for main CI skip check"
+              fi
+            fi
+            if [[ -n "$pr_number" ]]; then
+              main_skip_allowed=true
+              pr_wip_status=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
+                --jq 'if (([.labels[]?.name | select(. == "WIP")] | length) > 0) or (.title | test("(^|[[:space:]])\\[WIP\\]([[:space:]]|$)")) then "true" else "false" end' \
+                2>/dev/null || echo "false")
+              if [[ "${pr_wip_status}" == "true" ]]; then
+                echo "Merged PR #${pr_number} still carried WIP status; running main CI instead of trusting its PR run"
+                main_skip_allowed=false
+              fi
+
+              pr_changed_paths=""
+              page=1
+              while :; do
+                page_paths=$(gh api \
+                  "repos/${{ github.repository }}/pulls/${pr_number}/files?per_page=100&page=${page}" \
+                  --jq '.[] | (.filename, (.previous_filename // empty))' \
+                  2>/dev/null || true)
+                if [[ -z "$page_paths" ]]; then break; fi
+                pr_changed_paths+="${page_paths}"$'\n'
+                cache_paths=$(printf '%s\n' "$page_paths" \
+                  | grep -E '^(Cargo\.lock|Cargo\.toml|\.cargo/config\.toml)$' \
+                  || true)
+                if [[ -n "$cache_paths" ]]; then
+                  echo "PR #${pr_number} changed CI cache-key inputs; running main CI to refresh shared Rust caches:"
+                  printf '  %s\n' $(printf '%s\n' "$cache_paths" | sort -u)
+                  cache_key_changed=true
+                  rust_cache_refresh=true
+                  break
+                fi
+                count=$(printf '%s\n' "$page_paths" | wc -l | tr -d ' ')
+                if [[ "$count" -lt 100 ]]; then break; fi
+                page=$((page + 1))
+                if [[ "$page" -gt 30 ]]; then break; fi
+              done
+            fi
+            if [[ -n "$pr_number" && "$cache_key_changed" != "true" && "${main_skip_allowed:-true}" == "true" ]]; then
+              pr_head_sha=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
+                --jq '.head.sha' 2>/dev/null || true)
+              if [[ -n "$pr_head_sha" ]]; then
+                latest_ci_run_id=""
+                latest_ci_conclusion=""
+                for attempt in 1 2 3 4 5 6; do
+                  latest_ci_run=$(gh api \
+                    "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${pr_head_sha}&event=pull_request&per_page=20" \
+                    --jq '[.workflow_runs[] | select(.status == "completed")] | sort_by(.created_at) | last | [.id, .conclusion] | @tsv' \
+                    2>/dev/null || true)
+                  latest_ci_run_id=$(printf '%s' "${latest_ci_run}" | cut -f1)
+                  latest_ci_conclusion=$(printf '%s' "${latest_ci_run}" | cut -f2)
+                  if [[ -n "${latest_ci_conclusion}" ]]; then
+                    break
+                  fi
+                  if [[ "$attempt" -lt 6 ]]; then
+                    echo "No completed CI run for PR #${pr_number} head ${pr_head_sha} is visible yet (attempt ${attempt}/6); retrying."
+                    sleep 5
+                  fi
+                done
+                if [[ "${latest_ci_conclusion}" == "success" ]]; then
+                  required_summary_passed=$(gh api \
+                    "repos/${{ github.repository }}/actions/runs/${latest_ci_run_id}/jobs?per_page=100" \
+                    --jq '[.jobs[] | select(.name == "CI Summary" and .conclusion == "success")] | length' \
+                    2>/dev/null || echo "0")
+                  if [[ "${required_summary_passed}" -gt 0 ]]; then
+                    compiler_paths_on_pr=$(printf '%s\n' "${pr_changed_paths:-}" \
+                      | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                      || true)
+                    if [[ -n "$compiler_paths_on_pr" ]]; then
+                      heavy_checks_passed=$(gh api \
+                        "repos/${{ github.repository }}/actions/runs/${latest_ci_run_id}/jobs?per_page=100" \
+                        --jq '[.jobs[] | select((.name == "conformance-snapshot-gate" or .name == "conformance-aggregate" or .name == "fourslash-aggregate" or .name == "emit") and .conclusion == "success")] | length' \
+                        2>/dev/null || echo "0")
+                      if [[ "${heavy_checks_passed}" -ge 4 ]]; then
+                        echo "Latest required PR CI summary and heavy compiler gates for #${pr_number} head ${pr_head_sha} passed — skipping redundant main CI"
+                        should_run=false
+                      else
+                        echo "Latest PR CI for #${pr_number} passed CI Summary but not all heavy compiler gates (${heavy_checks_passed}/4); running main CI"
+                      fi
+                    else
+                      echo "Latest required PR CI summary for non-compiler PR #${pr_number} head ${pr_head_sha} passed — skipping redundant main CI"
+                      should_run=false
+                    fi
+                  else
+                    echo "Latest PR CI for #${pr_number} head ${pr_head_sha} passed without a required CI Summary — running main CI"
+                  fi
+                else
+                  echo "Latest PR CI for #${pr_number} head ${pr_head_sha} is '${latest_ci_conclusion:-missing}' — running main CI"
+                fi
+              fi
+            fi
+          fi
+          if [[ "$should_run" != "true" ]]; then
+            full_run=false
+          fi
+          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
+          echo "full_run=${full_run}" >> "$GITHUB_OUTPUT"
+          echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
+          echo "required_summary=${required_summary}" >> "$GITHUB_OUTPUT"
+          echo "bench_shell_only=${bench_shell_only}" >> "$GITHUB_OUTPUT"
+          echo "perf_tool_only=${perf_tool_only}" >> "$GITHUB_OUTPUT"
+          echo "arch_tool_only=${arch_tool_only}" >> "$GITHUB_OUTPUT"
+          echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
+          echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
+
+  project-corpus-pr-body:
+    name: project-corpus-pr-body
+    needs: gate
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require project corpus impact fields for semantic PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          changed_paths=""
+          page=1
+          while :; do
+            page_paths=$(gh api \
+              "repos/${REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}" \
+              --jq '.[] | (.filename, (.previous_filename // empty))' \
+              2>/dev/null || true)
+            if [[ -z "$page_paths" ]]; then break; fi
+            changed_paths+="${page_paths}"$'\n'
+            count=$(printf '%s\n' "$page_paths" | wc -l | tr -d ' ')
+            if [[ "$count" -lt 100 ]]; then break; fi
+            page=$((page + 1))
+            if [[ "$page" -gt 30 ]]; then break; fi
+          done
+
+          node scripts/ci/check-pr-ready-state.mjs
+
+          body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
+          if ! grep -Eq '^[[:space:]]*AgentName:[[:space:]]*[^[:space:]]+' <<<"$body"; then
+            echo "Ready PRs must include a plain AgentName signature in the PR body."
+            echo "Missing field:"
+            echo "  AgentName: <stable agent name>"
+            exit 1
+          fi
+
+          semantic_paths=$(printf '%s\n' "$changed_paths" \
+            | grep -E '^(crates/(tsz-(binder|checker|cli|core|emitter|lsp|parser|scanner|solver|transforms)|tsz-website)/|scripts/(bench|ci|conformance|emit|fourslash)/|\.github/workflows/bench\.yml|\.github/workflows/ci\.yml)' \
+            || true)
+          if [[ -z "$semantic_paths" ]]; then
+            echo "Agent metadata is present. No semantic, benchmark, or dashboard paths changed; project corpus fields are optional."
+            exit 0
+          fi
+
+          missing=()
+          if ! grep -Eq '^##[[:space:]]+Project Corpus Impact[[:space:]]*$' <<<"$body"; then
+            missing+=("## Project Corpus Impact")
+          fi
+          if ! grep -Eq '^[[:space:]]*-[[:space:]]*Row:[[:space:]]*[^[:space:]]+' <<<"$body"; then
+            missing+=("- Row: <project row or n/a>")
+          fi
+          if ! grep -Eq '^[[:space:]]*-[[:space:]]*Bug family:[[:space:]]*[^[:space:]]+' <<<"$body"; then
+            missing+=("- Bug family: <family or n/a>")
+          fi
+
+          if [[ "${#missing[@]}" -gt 0 ]]; then
+            echo "Semantic/project-corpus-affecting PRs must keep Track 1 impact metadata in the PR body."
+            echo "Changed paths requiring the metadata:"
+            printf '  %s\n' $(printf '%s\n' "$semantic_paths" | sort -u)
+            echo "Missing fields:"
+            printf '  %s\n' "${missing[@]}"
+            exit 1
+          fi
+
+          echo "Agent and project corpus impact metadata are present."
+
+  project-row-drift:
+    name: project-row-drift
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Validate project row coverage across surfaces
+        run: node scripts/bench/project-row-summary.mjs
+
+  bench-script-smoke:
+    name: bench-script-smoke
+    needs: gate
+    if: needs.gate.outputs.bench_shell_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Check bench shell syntax
+        shell: bash
+        run: bash -n scripts/bench/*.sh
+
+  perf-tool-smoke:
+    name: perf-tool-smoke
+    needs: gate
+    if: needs.gate.outputs.perf_tool_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Check perf Python tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/perf/*.py
+          tests=()
+          while IFS= read -r test_file; do
+            tests+=("$test_file")
+          done < <(find scripts/perf -maxdepth 1 -type f -name 'test_*.py' | sort)
+          if [[ "${#tests[@]}" -eq 0 ]]; then
+            echo "No scripts/perf/test_*.py files found."
+            exit 0
+          fi
+          for test_file in "${tests[@]}"; do
+            python3 "$test_file"
+          done
+
+  arch-tool-smoke:
+    name: arch-tool-smoke
+    needs: gate
+    if: needs.gate.outputs.arch_tool_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Check arch Python tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/arch/*.py
+          tests=()
+          while IFS= read -r test_file; do
+            tests+=("$test_file")
+          done < <(find scripts/arch -maxdepth 1 -type f -name 'test_*.py' | sort)
+          if [[ "${#tests[@]}" -eq 0 ]]; then
+            echo "No scripts/arch/test_*.py files found."
+            exit 0
+          fi
+          for test_file in "${tests[@]}"; do
+            python3 "$test_file"
+          done
+
+  lint:
+    name: lint
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 45
+    env:
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Run lint suite
+        run: scripts/ci/github-suite.sh lint
+
+  cargo-shear:
+    name: cargo-shear
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 10
+    env:
+      CARGO_SHEAR_VERSION: "1.12.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Install cargo-shear
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v cargo-shear >/dev/null 2>&1 \
+             && cargo install --list | grep -q "^cargo-shear v${CARGO_SHEAR_VERSION}:"; then
+            echo "cargo-shear ${CARGO_SHEAR_VERSION} already installed"
+            exit 0
+          fi
+          cargo install cargo-shear --version "${CARGO_SHEAR_VERSION}" --locked
+      - name: Run cargo shear
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            while true; do
+              sleep "${TSZ_CI_CARGO_SHEAR_HEARTBEAT_SECONDS:-60}"
+              echo "cargo shear still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            done
+          ) &
+          heartbeat_pid="$!"
+          set +e
+          cargo shear
+          cargo_shear_rc="$?"
+          set -e
+          kill "$heartbeat_pid" >/dev/null 2>&1 || true
+          wait "$heartbeat_pid" 2>/dev/null || true
+          exit "$cargo_shear_rc"
+
+  cargo-deny:
+    name: cargo-deny
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 10
+    env:
+      CARGO_DENY_VERSION: "0.19.6"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Install cargo-deny
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v cargo-deny >/dev/null 2>&1 \
+             && cargo install --list | grep -q "^cargo-deny v${CARGO_DENY_VERSION}:"; then
+            echo "cargo-deny ${CARGO_DENY_VERSION} already installed"
+            exit 0
+          fi
+          cargo install cargo-deny --version "${CARGO_DENY_VERSION}" --locked
+      - name: Run cargo deny
+        run: cargo deny check
+
+  dist-binaries:
+    name: dist-binaries
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 30
+    env:
+      GITHUB_SHA: ${{ github.sha }}
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+      # The dist artifact unblocks conformance/emit/fourslash, so PRs avoid
+      # target-dir uploads. Trusted main runs publish cargo-target-deps only
+      # when Cargo.lock/profile inputs changed and the gate intentionally ran
+      # main CI to refresh the exact shared cache key.
+      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: ${{ needs.gate.outputs.rust_cache_refresh == 'true' && '1' || '0' }}
+      # Keep artifact production independent from sccache service hangs. The
+      # dist-fast build is short enough without sccache, and all harness suites
+      # are blocked until this artifact uploads.
+      TSZ_CI_DISABLE_SCCACHE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Build dist-fast binaries
+        run: scripts/ci/github-suite.sh dist-binaries
+      - name: Pack dist-fast binaries
+        run: tar -C .target/dist-fast -cf dist-fast-binaries.tar tsz tsz-server tsz-conformance generate-tsc-cache
+      - name: Upload dist-fast binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: dist-fast-binaries.tar
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 1
+
+  project-compile-guard:
+    name: project-compile-guard
+    needs: [gate, dist-binaries]
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 45
+    env:
+      npm_config_cache: ${{ github.workspace }}/.ci-cache/npm-project-compile
+      TSZ_CI_CACHE_SAVE: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
+      - name: Run project compile guard
+        run: scripts/ci/project-compile-guard.sh
+      - name: Upload project compile compatibility
+        if: always()
+        id: project_compile_compatibility_artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-compile-compatibility
+          path: |
+            .target/project-compile-guard/*.log
+            .target/project-compile-guard/project-compatibility.jsonl
+            .target/project-compile-guard/project-compatibility-summary.json
+            .target/project-compile-guard/type-challenges-readiness-pairing.json
+            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
+            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
+            .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
+            .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Summarize project compatibility artifact
+        if: always()
+        env:
+          SUMMARY_INPUT_FILE: .target/project-compile-guard/project-compatibility-summary.json
+          SUMMARY_TITLE: Project compatibility artifact
+          SUMMARY_ARTIFACT_NAME: project-compile-compatibility
+          SUMMARY_ARTIFACT_URL: ${{ steps.project_compile_compatibility_artifact.outputs.artifact-url }}
+          SUMMARY_JSONL_PATH: .target/project-compile-guard/project-compatibility.jsonl
+        run: node scripts/ci/project-compatibility.mjs format-step-summary >> "${GITHUB_STEP_SUMMARY}"
+
+  project-compile-canary:
+    name: project-compile-canary
+    needs: [gate, dist-binaries]
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 45
+    continue-on-error: true
+    env:
+      npm_config_cache: ${{ github.workspace }}/.ci-cache/npm-project-compile-canary
+      TSZ_CI_CACHE_SAVE: "0"
+      TSZ_PROJECT_COMPILE_SET: canary
+      TSZ_PROJECT_COMPILE_ALLOW_FAILURES: "1"
+      TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
+      - name: Run compile canaries
+        run: scripts/ci/project-compile-guard.sh
+      - name: Upload compile canary logs
+        if: always()
+        id: project_compile_canary_artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-compile-canary-logs
+          path: |
+            .target/project-compile-guard/*.log
+            .target/project-compile-guard/project-compatibility.jsonl
+            .target/project-compile-guard/project-compatibility-summary.json
+            .target/project-compile-guard/type-challenges-readiness-pairing.json
+            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
+            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
+            .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
+            .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
+          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 1
+      - name: Summarize compile canary compatibility artifact
+        if: always()
+        env:
+          SUMMARY_INPUT_FILE: .target/project-compile-guard/project-compatibility-summary.json
+          SUMMARY_TITLE: Compile canary compatibility artifact
+          SUMMARY_ARTIFACT_NAME: project-compile-canary-logs
+          SUMMARY_ARTIFACT_URL: ${{ steps.project_compile_canary_artifact.outputs.artifact-url }}
+          SUMMARY_JSONL_PATH: .target/project-compile-guard/project-compatibility.jsonl
+        run: node scripts/ci/project-compatibility.mjs format-step-summary >> "${GITHUB_STEP_SUMMARY}"
+
+  wasm:
+    name: wasm
+    needs: gate
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 45
+    env:
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+      # Keep sccache writes, but do not tar the wasm target dir on the job's
+      # critical path. The wasm target save was ~33s on run 25057027232.
+      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Run wasm suite (nodejs + web targets)
+        run: scripts/ci/github-suite.sh wasm-all
+      - name: Upload web WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-web
+          path: pkg/web/
+          retention-days: 30
+
+  wasm-web:
+    name: wasm-web
+    needs: [gate, wasm]
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download web WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-web
+          path: pkg/web/
+      - name: Verify web WASM artifact
+        run: test -s pkg/web/tsz_wasm_bg.wasm
+
+  node-harness-prep:
+    name: node-harness-prep
+    needs: gate
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 20
+    env:
+      GITHUB_SHA: ${{ github.sha }}
+      TSZ_CI_SKIP_DIST_RESTORE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Prep node harnesses
+        run: scripts/ci/github-suite.sh node-harness-prep
+      - name: Pack node harness
+        run: |
+          tar --create --file node-harness.tar \
+            scripts/node_modules/ \
+            scripts/emit/dist/ \
+            TypeScript/Herebyfile.mjs \
+            TypeScript/built/local \
+            TypeScript/node_modules \
+            TypeScript/tests/cases/fourslash
+      - name: Upload node harness artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-harness
+          path: node-harness.tar
+          retention-days: 1
+          if-no-files-found: warn
+          compression-level: 1
+
+  unit:
+    # Required unit context. Run on the Cloud Build private pool instead of
+    # the 8-vCPU self-hosted runner: the old local path repeatedly hit
+    # linker/process kills while the same suite passed through Cloud Build.
+    # Keep the status name as `unit` so branch protection remains stable.
+    name: unit
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Submit required unit suite to Cloud Build pool
+        # `gcloud builds submit` tars the working directory, uploads it to the
+        # default tsz-ci_cloudbuild GCS staging bucket, then triggers the
+        # private-pool build. Keep polling coarse enough that concurrent PR
+        # unit jobs do not exhaust Cloud Build get-request quota.
+        run: |
+          set -euo pipefail
+          timeout 25m gcloud builds submit \
+            --project=tsz-ci \
+            --region=us-central1 \
+            --polling-interval=10 \
+            --config=cloudbuild-unit.yaml \
+            --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
+            .
+
+  unit-cloudbuild:
+    # Compatibility status for dashboards and branch-protection rules that may
+    # still look for the experimental Cloud Build context. The Cloud Build unit
+    # suite is now executed by the required `unit` job above.
+    name: unit-cloudbuild
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Report promoted unit path
+        run: echo "Cloud Build unit suite is enforced by the required unit job."
+
+  conformance:
+    # Conformance shards consume the dist-fast binaries artifact and run the
+    # tsz-conformance harness; they do not need unit's test outputs. Each
+    # shard runs on its own self-hosted 8-vCPU runner, so concurrent fanout
+    # does not compete with the unit-archive compile for rustc capacity.
+    name: conformance-${{ matrix.shard }}
+    needs: [gate, dist-binaries]
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    env:
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+      _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
+      TSZ_CI_CONFORMANCE_SHARDS: 6
+      TSZ_CI_CONFORMANCE_SHARD_STRATEGY: weighted
+      TSZ_CI_SKIP_DIST_RESTORE: "1"
+      TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
+      TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
+      TSZ_CI_CACHE_SAVE: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
+      - name: Run conformance shard
+        run: scripts/ci/github-suite.sh conformance
+      - name: Upload conformance shard result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-shard-${{ matrix.shard }}
+          path: |
+            .ci-metrics/conformance.json
+            .ci-metrics/conformance-failures-*.txt
+          if-no-files-found: warn
+          retention-days: 1
+
+  conformance-aggregate:
+    name: conformance-aggregate
+    needs: [gate, conformance]
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 15
+    env:
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+      GITHUB_SHA: ${{ github.sha }}
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
+      TSZ_CI_CONFORMANCE_SHARDS: 6
+      TSZ_CI_CACHE_SAVE: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Wait for conformance shard artifacts to be indexed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          EXPECTED=6
+          MAX_WAIT=180
+          INTERVAL=10
+          elapsed=0
+          count=0
+          echo "Polling for all ${EXPECTED} conformance-shard-* artifacts (max ${MAX_WAIT}s)..."
+          while [ "$elapsed" -lt "$MAX_WAIT" ]; do
+            # Fetch artifact count and shard job statuses in parallel
+            api_response=$(curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
+              2>/dev/null || echo '{}')
+            count=$(echo "$api_response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('conformance-shard-'))
+          print(c)
+          " 2>/dev/null || echo 0)
+            echo "  ${count}/${EXPECTED} shard artifacts indexed (${elapsed}s elapsed)"
+            if [ "${count}" -ge "${EXPECTED}" ]; then
+              echo "All ${EXPECTED} shard artifacts indexed after ${elapsed}s."
+              break
+            fi
+            # If shard jobs have all finished but artifacts are still missing,
+            # check for failed shard jobs (runner disconnect) to fail fast.
+            jobs_response=$(curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
+              2>/dev/null || echo '{}')
+            shard_summary=$(echo "$jobs_response" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('conformance-')]
+          done = [j for j in jobs if j.get('status') == 'completed']
+          failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
+          print(f'done={len(done)} failed={len(failed)} names={failed}')
+          " 2>/dev/null || echo 'done=0 failed=0 names=[]')
+            echo "  shard jobs: ${shard_summary}"
+            # If all shards are done and we still don't have all artifacts, a shard
+            # failed without uploading (infra kill). Stop waiting and let the
+            # aggregate script report the exact shard count it collected.
+            done_count=$(echo "$shard_summary" | grep -oP 'done=\K[0-9]+' || echo 0)
+            failed_count=$(echo "$shard_summary" | grep -oP 'failed=\K[0-9]+' || echo 0)
+            if [ "${done_count}" -ge "${EXPECTED}" ] && [ "${failed_count}" -gt 0 ]; then
+              echo "warning: ${failed_count} shard job(s) failed (runner issue); artifact(s) will not appear — proceeding with ${count} available" >&2
+              break
+            fi
+            sleep "${INTERVAL}"
+            elapsed=$(( elapsed + INTERVAL ))
+          done
+          if [ "${count}" -lt "${EXPECTED}" ]; then
+            echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
+          fi
+      - name: Download conformance shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: conformance-shard-*
+          path: .conformance-shards
+          merge-multiple: false
+      - name: Aggregate conformance results
+        run: scripts/ci/github-suite.sh conformance-aggregate
+
+  conformance-snapshot-gate:
+    name: conformance-snapshot-gate
+    needs: gate
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Compare conformance snapshots with PR base
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+          python3 scripts/conformance/check-snapshot-regression.py \
+            --base-ref FETCH_HEAD \
+            --head-ref HEAD
+      - name: Skip snapshot comparison
+        if: github.event_name != 'pull_request'
+        run: echo "Conformance snapshot gate is enforced for pull_request events."
+
+  emit:
+    name: emit
+    needs: [gate, dist-binaries, node-harness-prep]
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 30
+    env:
+      _TSZ_CI_EMIT_SHARD_INDEX: 0
+      _TSZ_CI_EMIT_SHARD_COUNT: 1
+      TSZ_CI_SKIP_DIST_RESTORE: "1"
+      TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
+      TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
+      TSZ_CI_NODE_HARNESS_PREPPED: "1"
+      TSZ_CI_CACHE_SAVE: "0"
+      TSZ_CI_CACHE_RESTORE: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Restore GCS caches
+        env:
+          _TSZ_CI_SUITE: emit-shard
+        run: scripts/ci/gcp-cache.sh restore
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
+      - name: Download node harness
+        uses: actions/download-artifact@v4
+        with:
+          name: node-harness
+          path: .
+      - name: Unpack node harness
+        run: tar -xf node-harness.tar
+      - name: Run emit suite
+        run: scripts/ci/github-suite.sh emit-shard
+
+  fourslash:
+    # Each matrix shard runs on its own 8-vCPU cloud runner. Run 25058599510
+    # still tailed in fourslash-2 at 6m23, while conformance had spare
+    # capacity. Shift those two runners here; weighted snapshot timings reduce
+    # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
+    name: fourslash-${{ matrix.shard }}
+    needs: [gate, dist-binaries, node-harness-prep]
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    env:
+      _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
+      TSZ_CI_FOURSLASH_SHARD_STRATEGY: weighted
+      TSZ_CI_FOURSLASH_WORKERS: 8
+      TSZ_CI_FOURSLASH_TIMEOUT_MS: 60000
+      TSZ_CI_SKIP_DIST_RESTORE: "1"
+      TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
+      TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
+      TSZ_CI_NODE_HARNESS_PREPPED: "1"
+      TSZ_CI_CACHE_SAVE: "0"
+      TSZ_CI_CACHE_RESTORE: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Restore GCS caches
+        env:
+          _TSZ_CI_SUITE: fourslash-shard
+        run: scripts/ci/gcp-cache.sh restore
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
+      - name: Download node harness
+        uses: actions/download-artifact@v4
+        with:
+          name: node-harness
+          path: .
+      - name: Unpack node harness
+        run: tar -xf node-harness.tar
+      - name: Run fourslash shard
+        run: scripts/ci/github-suite.sh fourslash-shard
+
+  fourslash-aggregate:
+    name: fourslash-aggregate
+    needs: [gate, fourslash]
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 15
+    env:
+      GITHUB_SHA: ${{ github.sha }}
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
+      TSZ_CI_CACHE_SAVE: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Aggregate fourslash results
+        run: scripts/ci/github-suite.sh fourslash-aggregate
+
+  ci-summary:
+    name: ${{ needs.gate.outputs.required_summary == 'true' && 'CI Summary' || 'CI Light Summary' }}
+    needs:
+      - gate
+      - bench-script-smoke
+      - perf-tool-smoke
+      - arch-tool-smoke
+      - project-row-drift
+      - lint
+      - cargo-shear
+      - cargo-deny
+      - project-corpus-pr-body
+      - dist-binaries
+      - project-compile-guard
+      - wasm
+      - wasm-web
+      - node-harness-prep
+      - unit
+      - conformance-aggregate
+      - conformance-snapshot-gate
+      - emit
+      - fourslash-aggregate
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify required CI jobs
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          gate = needs["gate"]
+          should_run = gate.get("outputs", {}).get("should_run") == "true"
+          full_run = gate.get("outputs", {}).get("full_run") == "true"
+          bench_shell_only = gate.get("outputs", {}).get("bench_shell_only") == "true"
+          perf_tool_only = gate.get("outputs", {}).get("perf_tool_only") == "true"
+          arch_tool_only = gate.get("outputs", {}).get("arch_tool_only") == "true"
+          compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
+
+          gate_result = gate.get("result")
+          if gate_result != "success":
+              non_success = {
+                  name: data.get("result")
+                  for name, data in needs.items()
+                  if name != "gate" and data.get("result") not in ("success", "skipped")
+              }
+              if gate_result == "cancelled" and all(
+                  result == "cancelled" for result in non_success.values()
+              ):
+                  print(
+                      "CI run superseded by a newer push before gate completed: "
+                      f"gate cancelled and {len(non_success)} downstream job(s) "
+                      "cancelled, none failed. Treating as neutral — the "
+                      "superseding run provides the final status."
+                  )
+                  sys.exit(0)
+              print(f"gate did not pass: {gate_result}")
+              sys.exit(1)
+
+          pr_body = needs.get("project-corpus-pr-body")
+          if pr_body and pr_body.get("result") not in ("success", "skipped"):
+              print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
+              sys.exit(1)
+
+          if not should_run:
+              if bench_shell_only:
+                  bench_smoke = needs.get("bench-script-smoke", {})
+                  if bench_smoke.get("result") != "success":
+                      print(f"bench-script-smoke did not pass: {bench_smoke.get('result')}")
+                      sys.exit(1)
+                  print("Bench shell-only CI passed: bench-script-smoke.")
+                  sys.exit(0)
+              if perf_tool_only:
+                  perf_smoke = needs.get("perf-tool-smoke", {})
+                  if perf_smoke.get("result") != "success":
+                      print(f"perf-tool-smoke did not pass: {perf_smoke.get('result')}")
+                      sys.exit(1)
+                  print("Perf tool-only CI passed: perf-tool-smoke.")
+                  sys.exit(0)
+              if arch_tool_only:
+                  arch_smoke = needs.get("arch-tool-smoke", {})
+                  if arch_smoke.get("result") != "success":
+                      print(f"arch-tool-smoke did not pass: {arch_smoke.get('result')}")
+                      sys.exit(1)
+                  print("Arch tool-only CI passed: arch-tool-smoke.")
+                  sys.exit(0)
+              print("CI gated off; summary passes because jobs were intentionally skipped.")
+              sys.exit(0)
+
+          required = {"lint", "cargo-shear", "cargo-deny", "project-row-drift"}
+          if compiler_checks_required:
+              required.update({"dist-binaries", "unit"})
+          else:
+              print("Compiler checks are non-required for this non-compiler diff.")
+
+          if full_run and compiler_checks_required:
+              required.update({
+                  "project-compile-guard",
+                  "conformance-snapshot-gate",
+              })
+              required.update({
+                  "wasm",
+                  "wasm-web",
+                  "node-harness-prep",
+                  "conformance-aggregate",
+                  "emit",
+                  "fourslash-aggregate",
+              })
+
+          failures = []
+          cancelled_required = []
+          for name, data in needs.items():
+              if name == "gate" or name not in required:
+                  continue
+              result = data.get("result")
+              if result != "success":
+                  failures.append(f"{name}: {result}")
+                  if result == "cancelled":
+                      cancelled_required.append(name)
+
+          if failures:
+              # If every required-job non-success is "cancelled" and there are no
+              # actual failures or timeouts, this run was superseded by a newer push
+              # (concurrency cancel-in-progress). Exit 0 so the superseding run can
+              # provide the authoritative result without this stale run blocking merge.
+              if len(cancelled_required) == len(failures):
+                  print(
+                      f"CI run superseded by a newer push: "
+                      f"{len(cancelled_required)} required job(s) cancelled, none failed. "
+                      "Treating as neutral — the superseding run provides the final status."
+                  )
+                  sys.exit(0)
+              print("Required CI jobs did not pass:")
+              for failure in failures:
+                  print(f"  - {failure}")
+              sys.exit(1)
+
+          if full_run:
+              print("All required CI jobs passed.")
+          else:
+              print("Draft/light CI passed for all required checks.")
+          PY

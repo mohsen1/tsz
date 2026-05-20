@@ -1,0 +1,1728 @@
+//! Type guard extraction for flow-based narrowing (typeof, instanceof,
+//! discriminants, type predicates, Array.isArray, array.every).
+
+use crate::query_boundaries::common::TypeResolver;
+use tsz_common::interner::Atom;
+use tsz_parser::parser::node::CallExprData;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
+use tsz_solver::{
+    GuardSense, ParamInfo, SymbolRef, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
+    TypeofKind,
+};
+
+use crate::state::MAX_TREE_WALK_ITERATIONS;
+
+use super::FlowAnalyzer;
+use crate::query_boundaries::flow_analysis as flow_query;
+
+impl<'a> FlowAnalyzer<'a> {
+    /// Check if a reference node is a mutable variable (let/var) as opposed to const.
+    ///
+    /// This is critical for closure narrowing - mutable variables cannot preserve
+    /// narrowing from outer scope because they may be reassigned through the closure.
+    pub(crate) fn is_mutable_variable(&self, reference: NodeIndex) -> bool {
+        // Resolve the identifier reference to its symbol
+        let Some(symbol_id) = self.binder.resolve_identifier(self.arena, reference) else {
+            return false; // No symbol = not a mutable variable
+        };
+
+        // Get the symbol's value declaration to check if it's const or let/var
+        let Some(symbol) = self.binder.get_symbol(symbol_id) else {
+            return false;
+        };
+
+        let decl_id = symbol.value_declaration;
+        if decl_id == NodeIndex::NONE {
+            return false; // No value declaration = not a variable we care about
+        }
+
+        !self.arena.is_const_variable_declaration(decl_id)
+    }
+
+    /// Check if a variable is "effectively const" at the given reference point
+    /// for closure narrowing purposes.
+    ///
+    /// A variable is effectively const at a reference if:
+    /// 1. Declared with `const`, OR
+    /// 2. A parameter or catch variable where all assignments are before the
+    ///    reference point, OR
+    /// 3. A local `let` variable (not `var`, not exported, not global) where
+    ///    all assignments are before the reference point.
+    ///
+    /// This implements tsc's `isPastLastAssignment()` + `isParameterOrMutableLocalVariable()`.
+    /// `var` declarations, exported variables, and global-scope variables are excluded
+    /// because they have broader visibility and hoisting semantics.
+    pub(crate) fn is_effectively_const_for_narrowing(&self, reference: NodeIndex) -> bool {
+        let Some(symbol_id) = self.binder.resolve_identifier(self.arena, reference) else {
+            return false;
+        };
+        let Some(symbol) = self.binder.get_symbol(symbol_id) else {
+            return false;
+        };
+        let decl_id = symbol.value_declaration;
+        if decl_id == NodeIndex::NONE {
+            return false;
+        }
+
+        // If declared with const, always effectively const
+        if self.arena.is_const_variable_declaration(decl_id) {
+            return true;
+        }
+
+        // Check if the variable is eligible for "implicit const" treatment
+        let Some(decl_node) = self.arena.get(decl_id) else {
+            return false;
+        };
+
+        // Parameters and destructured parameter bindings are eligible for
+        // "implicit const" treatment.
+        //
+        // tsc also applies this to local `let` variables via `isPastLastAssignment()`:
+        // if the variable is block-scoped (let), not exported, not a `var`, and none
+        // of its assignments happen inside a nested closure relative to the declaration
+        // scope, then the variable is "effectively const" at any closure created after
+        // the last assignment.
+        //
+        // `var` declarations, exported variables, and global-scope variables are
+        // excluded because they have broader visibility and hoisting semantics.
+        //
+        // For destructured parameters like `function f({ a })`: the symbol's
+        // value_declaration points to the identifier `a`, whose parent chain is:
+        //   Identifier → BINDING_ELEMENT → OBJECT_BINDING_PATTERN → PARAMETER
+
+        // Check if this is a `let` variable eligible for "narrowing past last assignment"
+        let is_let_var = if let Some(symbol) = self.binder.get_symbol(symbol_id) {
+            use tsz_binder::{ContainerKind, symbol_flags};
+            // BLOCK_SCOPED_VARIABLE covers both `let` and `const`. Since we already
+            // handled `const` above, this branch only fires for `let`.
+            let is_block_scoped_let = (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                && (symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) == 0
+                && !symbol.is_exported;
+            if !is_block_scoped_let {
+                false
+            } else {
+                // Only apply "narrowing past last assignment" for variables declared
+                // inside a function body. Walk up the scope chain from the declaration
+                // until we hit a function boundary (eligible) or source-file/module
+                // boundary (not eligible). Block scopes that are nested inside a
+                // function are fine; block scopes at module level are not.
+                // This matches tsc's `isParameterOrMutableLocalVariable` behavior.
+                let decl_scope_id = self.binder.find_enclosing_scope(self.arena, decl_id);
+                let mut is_in_function_scope = false;
+                if let Some(mut scope_id) = decl_scope_id {
+                    for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+                        let Some(scope) = self.binder.scopes.get(scope_id.0 as usize) else {
+                            break;
+                        };
+                        match scope.kind {
+                            ContainerKind::Function => {
+                                is_in_function_scope = true;
+                                break;
+                            }
+                            ContainerKind::SourceFile | ContainerKind::Module => {
+                                // Hit module/global boundary — not a local variable
+                                break;
+                            }
+                            ContainerKind::Block | ContainerKind::Class => {
+                                // Keep walking up
+                            }
+                        }
+                        let parent = scope.parent;
+                        if parent.is_none() {
+                            break;
+                        }
+                        scope_id = parent;
+                    }
+                }
+                is_in_function_scope
+            }
+        } else {
+            false
+        };
+
+        let eligible = decl_node.kind == syntax_kind_ext::PARAMETER
+            || self.is_declaration_in_parameter(decl_id)
+            || (is_let_var
+                && !self.has_assignment_in_nested_closure(symbol_id, decl_id, reference));
+
+        if !eligible {
+            return false;
+        }
+
+        // Get the reference position in source
+        let ref_pos = self.arena.pos_at(reference).unwrap_or(0);
+
+        // Get the last assignment position for this symbol
+        let last_assign_pos = self.get_last_assignment_pos(symbol_id, reference);
+
+        // If never reassigned (0), or all reassignments are before the reference
+        // position, the variable is effectively const at this point
+        last_assign_pos == 0 || last_assign_pos < ref_pos
+    }
+
+    /// Check if a declaration node (typically an Identifier from a destructured
+    /// parameter) is part of a parameter. Walks up through the parent chain:
+    ///   Identifier → `BINDING_ELEMENT` → `OBJECT/ARRAY_BINDING_PATTERN` → PARAMETER
+    fn is_declaration_in_parameter(&self, node_idx: NodeIndex) -> bool {
+        // Start from the parent of the given node (which is typically an Identifier)
+        let mut current = node_idx;
+        for _ in 0..10 {
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.arena.get(parent_idx) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::OBJECT_BINDING_PATTERN
+                | syntax_kind_ext::ARRAY_BINDING_PATTERN
+                | syntax_kind_ext::BINDING_ELEMENT => {
+                    current = parent_idx;
+                }
+                syntax_kind_ext::PARAMETER => return true,
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Get the position of the last reassignment to a symbol.
+    /// Returns 0 if the symbol is never reassigned.
+    ///
+    /// Walks all ASSIGNMENT flow nodes in the arena to find non-initialization
+    /// assignments that target the given reference. Results are cached per SymbolId.
+    pub(crate) fn get_last_assignment_pos(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        reference: NodeIndex,
+    ) -> u32 {
+        // Check shared cache first
+        if let Some(cache) = &self.shared_symbol_last_assignment_pos
+            && let Some(&pos) = cache.borrow().get(&symbol_id)
+        {
+            return pos;
+        }
+
+        let result = self.compute_last_assignment_pos(symbol_id, reference);
+
+        // Store in shared cache
+        if let Some(cache) = &self.shared_symbol_last_assignment_pos {
+            cache.borrow_mut().insert(symbol_id, result);
+        }
+
+        result
+    }
+
+    /// Internal: walk all flow nodes to find the position of the last reassignment.
+    /// Returns 0 if no reassignment found.
+    fn compute_last_assignment_pos(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        reference: NodeIndex,
+    ) -> u32 {
+        use tsz_binder::flow_flags;
+
+        let mut last_pos: u32 = 0;
+        let flow_count = self.binder.flow_nodes.len();
+
+        for i in 0..flow_count {
+            let flow_id = tsz_binder::FlowNodeId(i as u32);
+            let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
+                continue;
+            };
+
+            // Only look at ASSIGNMENT flow nodes
+            if !flow.has_any_flags(flow_flags::ASSIGNMENT) {
+                continue;
+            }
+
+            // Skip initialization assignments (variable declarations, parameters).
+            // Only binary expression assignments (x = ...), prefix/postfix unary (++x, x--)
+            // count as reassignments.
+            let Some(node) = self.arena.get(flow.node) else {
+                continue;
+            };
+            let kind = node.kind;
+            if kind == syntax_kind_ext::VARIABLE_DECLARATION
+                || kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                || kind == syntax_kind_ext::PARAMETER
+            {
+                continue;
+            }
+
+            if self.assignment_is_known_disjoint_from_symbol(flow.node, symbol_id) {
+                continue;
+            }
+            if self.assignment_targets_reference(flow.node, reference) {
+                let pos = node.pos;
+                if pos > last_pos {
+                    last_pos = pos;
+                }
+            }
+        }
+
+        last_pos
+    }
+
+    /// Check whether any reassignment to the given symbol happens inside a nested
+    /// closure relative to `reference`.
+    ///
+    /// "Nested closure" means a function body that is lexically inside the function
+    /// that contains `reference`. If an assignment is in an inner arrow/function/class
+    /// method, the outer let binding could be mutated at an unpredictable time, so
+    /// closure narrowing is NOT safe to preserve.
+    ///
+    /// This implements the tsc `isPastLastAssignment` condition:
+    ///   "no assignment to x is in a nested function relative to the containing scope
+    ///    of the reference".
+    fn has_assignment_in_nested_closure(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        decl_id: NodeIndex,
+        reference: NodeIndex,
+    ) -> bool {
+        use tsz_binder::flow_flags;
+
+        // Find the function node that encloses the declaration (and therefore the
+        // reference, since declarations scope outward from references).
+        let decl_fn = self.find_enclosing_function_node(decl_id);
+
+        let flow_count = self.binder.flow_nodes.len();
+        for i in 0..flow_count {
+            let flow_id = tsz_binder::FlowNodeId(i as u32);
+            let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
+                continue;
+            };
+
+            if !flow.has_any_flags(flow_flags::ASSIGNMENT) {
+                continue;
+            }
+
+            // Skip initializations — only count reassignments
+            let Some(node) = self.arena.get(flow.node) else {
+                continue;
+            };
+            let kind = node.kind;
+            if kind == syntax_kind_ext::VARIABLE_DECLARATION
+                || kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                || kind == syntax_kind_ext::PARAMETER
+            {
+                continue;
+            }
+
+            if self.assignment_is_known_disjoint_from_symbol(flow.node, symbol_id) {
+                continue;
+            }
+            if self.assignment_targets_reference(flow.node, reference) {
+                let assign_fn = self.find_enclosing_function_node(flow.node);
+                // If the assignment's enclosing function is *different* from the
+                // declaration's enclosing function, the assignment is in a nested
+                // (or outer) function — closure narrowing is not safe.
+                if assign_fn != decl_fn {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn assignment_is_known_disjoint_from_symbol(
+        &self,
+        assignment_node: NodeIndex,
+        target_symbol: tsz_binder::SymbolId,
+    ) -> bool {
+        self.reference_symbol(assignment_node)
+            .is_some_and(|assignment_symbol| assignment_symbol != target_symbol)
+    }
+
+    /// Walk the parent chain from `node_idx` to find the nearest enclosing
+    /// function-like node (`FUNCTION_DECLARATION`, `FUNCTION_EXPRESSION`, `ARROW_FUNCTION`,
+    /// `METHOD_DECLARATION`, `GET_ACCESSOR`, `SET_ACCESSOR`, or CONSTRUCTOR).
+    ///
+    /// Returns `NodeIndex::NONE` if the node is at module/global scope.
+    fn find_enclosing_function_node(&self, node_idx: NodeIndex) -> NodeIndex {
+        let mut current = node_idx;
+        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+            let Some(ext) = self.arena.get_extended(current) else {
+                return NodeIndex::NONE;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return NodeIndex::NONE;
+            }
+            let Some(parent_node) = self.arena.get(parent) else {
+                return NodeIndex::NONE;
+            };
+            if parent_node.is_function_like() {
+                return parent;
+            }
+            current = parent;
+        }
+        NodeIndex::NONE
+    }
+
+    /// Check if a variable is captured from an outer scope (vs declared locally).
+    ///
+    /// Bug #1.2: Rule #42 should only apply to captured variables, not local variables.
+    /// - Variables declared INSIDE the closure should narrow normally
+    /// - Variables captured from OUTER scope reset narrowing (for let/var)
+    pub(crate) fn is_captured_variable(&self, reference: NodeIndex) -> bool {
+        use tsz_binder::ScopeId;
+
+        // Resolve the identifier reference to its symbol
+        let Some(symbol_id) = self.binder.resolve_identifier(self.arena, reference) else {
+            return false;
+        };
+
+        // Get the symbol's value declaration
+        let Some(symbol) = self.binder.get_symbol(symbol_id) else {
+            return false;
+        };
+
+        let decl_id = symbol.value_declaration;
+        if decl_id == NodeIndex::NONE {
+            return false;
+        }
+
+        let decl_fn = self.find_enclosing_function_node(decl_id);
+        let reference_fn = self.find_enclosing_function_node(reference);
+        if decl_fn.is_some() && decl_fn == reference_fn {
+            return false;
+        }
+
+        // Find the enclosing scope of the declaration
+        let Some(decl_scope_id) = self.binder.find_enclosing_scope(self.arena, decl_id) else {
+            return false;
+        };
+
+        // Find the enclosing scope of the usage site on-demand from the reference node.
+        // Previously this used `binder.current_scope_id` which is stale after binding
+        // completes -- it reflects the binder's final position, not the scope where
+        // the reference actually lives.
+        let Some(usage_scope_id) = self.binder.find_enclosing_scope(self.arena, reference) else {
+            return false;
+        };
+
+        // If declared and used in the same scope, not captured
+        if decl_scope_id == usage_scope_id {
+            return false;
+        }
+
+        // Check if declaration scope is an ancestor of usage scope
+        let mut scope_id = usage_scope_id;
+        let mut iterations = 0;
+        while scope_id.is_some() && iterations < MAX_TREE_WALK_ITERATIONS {
+            if scope_id == decl_scope_id {
+                return true;
+            }
+
+            scope_id = self
+                .binder
+                .scopes
+                .get(scope_id.0 as usize)
+                .map_or(ScopeId::NONE, |scope| scope.parent);
+
+            iterations += 1;
+        }
+
+        false
+    }
+
+    /// Extract a `TypeGuard` from a condition node.
+    ///
+    /// This method translates AST nodes into AST-agnostic `TypeGuard` enums,
+    /// which can then be passed to the Solver's `narrow_type()` method.
+    ///
+    /// Returns `Some((guard, target, is_optional))` where:
+    /// - `guard` is the extracted `TypeGuard`
+    /// - `target` is the node being narrowed
+    /// - `is_optional` is true for optional chaining calls (?.)
+    ///
+    /// Returns `None` if the expression is not a recognized guard pattern.
+    ///
+    /// # Examples
+    /// ```text
+    /// // typeof x === "string" -> Some(TypeGuard::Typeof("string"), x_node, false)
+    /// // x === null -> Some(TypeGuard::NullishEquality, x_node, false)
+    /// // x.kind === "circle" -> Some(TypeGuard::Discriminant { ... }, x_node, false)
+    /// // isString(x) -> Some(TypeGuard::Predicate { ... }, x_node, false)
+    /// // obj?.isString(x) -> Some(TypeGuard::Predicate { ... }, x_node, true)
+    /// ```
+    pub(crate) fn extract_type_guard(
+        &self,
+        condition: NodeIndex,
+    ) -> Option<(TypeGuard, NodeIndex, bool)> {
+        let cond_node = self.arena.get(condition)?;
+
+        // Check for call expression (user-defined type guards) FIRST
+        if cond_node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            return self.extract_call_type_guard(condition);
+        }
+
+        // Unwrap assignment expressions: if (flag = (x instanceof Foo)) should extract from RHS
+        // TypeScript narrows based on the assigned value, not the assignment itself
+        if cond_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(cond_node)
+            && bin.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            // Recursively extract guard from the right-hand side
+            return self.extract_type_guard(bin.right);
+        }
+
+        let bin = self.arena.get_binary_expr(cond_node)?;
+
+        // Check for instanceof operator: x instanceof MyClass
+        if bin.operator_token == SyntaxKind::InstanceOfKeyword as u16 {
+            // Target is the left side
+            let target = bin.left;
+            // Get the constructor type from the right side
+            if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
+                // For global Object/Function constructors, use the well-known TypeId
+                // so the solver's `any instanceof Object/Function` check works correctly.
+                // The lib.d.ts instance types may be Lazy references that the solver's
+                // is_object_interface/is_function_interface_structural checks don't match.
+                let ctor_expr = self.skip_parens_and_assertions(bin.right);
+                if let Some(ident) = self.arena.get_identifier_at(ctor_expr) {
+                    let name = &ident.escaped_text;
+                    if name == "Object" && self.is_builtin_global_reference(ctor_expr) {
+                        return Some((TypeGuard::Instanceof(TypeId::OBJECT, true), target, false));
+                    }
+                    if name == "Function" && self.is_builtin_global_reference(ctor_expr) {
+                        return Some((
+                            TypeGuard::Instanceof(TypeId::FUNCTION, true),
+                            target,
+                            false,
+                        ));
+                    }
+                }
+                return Some((TypeGuard::Instanceof(instance_type, false), target, false));
+            }
+            // If we can't determine the instance type (e.g., unknown constructor like
+            // `new PersonMixin()` where PersonMixin extends Function), don't create a
+            // type guard. Without knowing what the constructor produces, we can't
+            // meaningfully narrow in either branch.
+            // Note: We must NOT fall back to TypeId::OBJECT here because that would
+            // cause the false branch to incorrectly exclude all non-primitive types
+            // (treating it as `instanceof Object`).
+            return None;
+        }
+
+        // Check for in operator: "prop" in x
+        if bin.operator_token == SyntaxKind::InKeyword as u16 {
+            // Target is the right side (the object being checked)
+            let target = bin.right;
+            // Get the property name from the left side
+            if let Some((prop_name, _is_number)) = self.in_property_name(bin.left) {
+                return Some((TypeGuard::InProperty(prop_name), target, false));
+            }
+        }
+
+        // Extract the target (left or right side of the comparison)
+        let target = self.get_comparison_target(condition)?;
+
+        // Check for typeof comparison: typeof x === "string"
+        if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target)
+            && let Some(typeof_kind) = TypeofKind::parse(type_name)
+        {
+            return Some((TypeGuard::Typeof(typeof_kind), target, false));
+        }
+
+        // Check for loose equality with null/undefined: x == null, x != null, x == undefined, x != undefined
+        // TypeScript treats these as nullish equality (narrows to null | undefined)
+        let is_loose_equality = bin.operator_token == SyntaxKind::EqualsEqualsToken as u16
+            || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16;
+        if is_loose_equality
+            && let Some(_nullish_type) = self.nullish_comparison(bin.left, bin.right, target)
+        {
+            // For loose equality with null/undefined, use NullishEquality guard
+            // This narrows to null | undefined in true branch, excludes both in false
+            return Some((TypeGuard::NullishEquality, target, false));
+        }
+
+        // Check for constructor comparison: x.constructor === SomeClass
+        // Must be checked BEFORE discriminant comparison, which could incorrectly
+        // interpret `.constructor` as a discriminant property.
+        if let Some((guard, guard_target)) = self.constructor_comparison(bin) {
+            return Some((guard, guard_target, false));
+        }
+
+        // Check for discriminant comparison BEFORE nullish comparison.
+        // This is critical for cases like `u.err === undefined` where the target is a
+        // property access: discriminant narrowing should narrow the base object `u`,
+        // not just the property `u.err`. If discriminant matching fails (e.g., `x === undefined`
+        // where `x` is a simple variable), we fall through to nullish comparison.
+        if let Some((property_path, literal_type, is_optional, discriminant_base)) =
+            self.discriminant_comparison(bin.left, bin.right, target)
+        {
+            return Some((
+                TypeGuard::Discriminant {
+                    property_path,
+                    value_type: literal_type,
+                },
+                discriminant_base, // Use the BASE of the property access, not the full access
+                is_optional,
+            ));
+        }
+
+        // Check for strict nullish comparison: x === null, x !== null, x === undefined, x !== undefined
+        if let Some(nullish_type) = self.nullish_comparison(bin.left, bin.right, target) {
+            return Some((TypeGuard::LiteralEquality(nullish_type), target, false));
+        }
+
+        // Check for literal comparison: x === "foo", x === 42
+        // Loose equality (==) does not narrow non-nullish literals; x == null is already
+        // handled above as NullishEquality.
+        if !is_loose_equality
+            && let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target)
+        {
+            return Some((TypeGuard::LiteralEquality(literal_type), target, false));
+        }
+
+        None
+    }
+
+    /// Extract a `TypeGuard` from a call expression (user-defined type guard).
+    ///
+    /// Handles both simple type guards `isString(x)` and `this` guards `obj.isString()`.
+    /// Also handles optional chaining `obj?.isString(x)` by returning `is_optional = true`.
+    ///
+    /// For `asserts x` (no type annotation), returns `TypeGuard::Truthy`.
+    ///
+    /// # Examples
+    /// ```text
+    /// // isString(x) where isString returns "x is string"
+    /// // -> Some(TypeGuard::Predicate { type_id: Some(string), asserts: false }, x_node, false)
+    ///
+    /// // asserts x is T
+    /// // -> Some(TypeGuard::Predicate { type_id: Some(T), asserts: true }, x_node, false)
+    ///
+    /// // asserts x (no type)
+    /// // -> Some(TypeGuard::Truthy, x_node, false)
+    ///
+    /// // obj?.isString(x)
+    /// // -> Some(TypeGuard::Predicate { ... }, x_node, true)
+    /// ```
+    fn extract_call_type_guard(
+        &self,
+        condition: NodeIndex,
+    ) -> Option<(TypeGuard, NodeIndex, bool)> {
+        let call = self.arena.get_call_expr_at(condition)?;
+
+        // Task 10: Check for Array.isArray(x) calls
+        if let Some((guard, target)) = self.check_array_is_array(call, condition) {
+            let is_optional = self.is_optional_call(condition, call);
+            return Some((guard, target, is_optional));
+        }
+
+        // Handle ArrayBuffer.isView(x) type guard directly.
+        if let Some((guard, target)) = self.check_array_buffer_is_view(call) {
+            let is_optional = self.is_optional_call(condition, call);
+            return Some((guard, target, is_optional));
+        }
+
+        if let Some((guard, target)) = self.check_has_own_property(call) {
+            let is_optional = self.is_optional_call(condition, call);
+            return Some((guard, target, is_optional));
+        }
+
+        // Check for array.every(predicate) calls
+        if let Some((guard, target)) = self.check_array_every_predicate(call, condition) {
+            let is_optional = self.is_optional_call(condition, call);
+            return Some((guard, target, is_optional));
+        }
+
+        // 1. Check for optional chaining on the call
+        let is_optional = self.is_optional_call(condition, call);
+        if self
+            .call_type_predicates
+            .is_some_and(|calls| calls.is_invalid_assertion_call(condition.0))
+        {
+            return None;
+        }
+
+        // 2. Check for instantiated predicate from generic call resolution first.
+        // Generic functions like `isDefined<T>(value: T | undefined): value is T` need
+        // their predicates instantiated with inferred type args (e.g., T -> string).
+        if let Some(predicates) = self.call_type_predicates
+            && let Some((predicate, params)) = predicates.get(&condition.0)
+        {
+            let node_types = self.node_types?;
+            let callee_idx = self.skip_parens_and_assertions(call.expression);
+            let mut resolved_predicate = node_types
+                .get(&callee_idx.0)
+                .copied()
+                .map(|callee_type| {
+                    self.resolve_generic_predicate(predicate, params, call, callee_type, node_types)
+                })
+                .unwrap_or(*predicate);
+            if let Some(pred_ty) = resolved_predicate.type_id
+                && let Some(pred_info) = flow_query::type_param_info(self.interner, pred_ty)
+                && let Some(param_idx) = resolved_predicate.parameter_index
+                && let Some(param) = params.get(param_idx)
+                && let Some(&arg_idx) = call
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.nodes.get(param_idx))
+                && let Some(&arg_type) = node_types.get(&arg_idx.0)
+            {
+                if param.type_id == pred_ty {
+                    resolved_predicate.type_id = Some(arg_type);
+                } else if let Some(inferred) =
+                    self.infer_type_param_from_union(param.type_id, arg_type, pred_info.name)
+                {
+                    resolved_predicate.type_id = Some(inferred);
+                }
+            }
+            // When the solver infers T = ArgType (full argument type instead of the
+            // narrowed subtype), the predicate type becomes a union matching the argument.
+            // This happens when the parameter type is a type alias like `Result<T> = T | "FAILURE"`
+            // and inference maps T to the full argument (number | "FAILURE") instead of
+            // subtracting the concrete union members (yielding just number).
+            // Detect: if the original predicate was a type parameter AND the instantiated
+            // predicate type equals the argument type for the predicated parameter,
+            // the inference was trivial. Skip cache and let the fallback resolve it.
+            let should_skip_cache = if let Some(pred_ty) = resolved_predicate.type_id
+                && let Some(param_idx) = resolved_predicate.parameter_index
+            {
+                let orig_is_type_param = self
+                    .node_types
+                    .and_then(|nt| nt.get(&callee_idx.0).copied())
+                    .and_then(|callee_type| {
+                        flow_query::extract_predicate_signature(self.interner, callee_type)
+                    })
+                    .and_then(|sig| sig.predicate.type_id)
+                    .is_some_and(|orig_pred| {
+                        flow_query::type_param_info(self.interner, orig_pred).is_some()
+                    });
+                orig_is_type_param
+                    && (flow_query::union_members_for_type(self.interner, pred_ty).is_some()
+                        || call
+                            .arguments
+                            .as_ref()
+                            .and_then(|args| args.nodes.get(param_idx))
+                            .and_then(|&arg_idx| {
+                                self.node_types.and_then(|nt| nt.get(&arg_idx.0).copied())
+                            })
+                            .is_some_and(|arg_type| {
+                                if arg_type == pred_ty {
+                                    return true;
+                                }
+                                let evaluated_pred =
+                                    flow_query::evaluate_type_structure(self.interner, pred_ty);
+                                evaluated_pred == arg_type
+                                    || self.interner.is_assignable_to(arg_type, evaluated_pred)
+                            }))
+            } else {
+                false
+            };
+            if !should_skip_cache {
+                let target_node =
+                    self.predicate_target_expression(call, &resolved_predicate, params)?;
+                let guard = if let Some(type_id) = resolved_predicate.type_id {
+                    TypeGuard::Predicate {
+                        type_id: Some(type_id),
+                        asserts: resolved_predicate.asserts,
+                    }
+                } else {
+                    TypeGuard::Truthy
+                };
+                return Some((guard, target_node, is_optional));
+            }
+            // else: fall through to step 3 (callee-type-based resolution)
+        }
+
+        // 3. Resolve callee type (skip parens/assertions to handle (isString as any)(x))
+        let callee_idx = self.skip_parens_and_assertions(call.expression);
+        let callee_type = *self.node_types?.get(&callee_idx.0)?;
+
+        // 4. Get the predicate signature from the callee's type
+        let signature = self.predicate_signature_for_type(callee_type)?;
+
+        // 4. Find the target node (the argument or `this` object being narrowed)
+        let target_node =
+            self.predicate_target_expression(call, &signature.predicate, &signature.params)?;
+
+        // 5. Resolve generic predicates before constructing the guard.
+        // For `hasOwnProperty<P>(target, property: P): target is { [K in P]: unknown }`,
+        // the predicate type needs to be instantiated with inferred type args (P = "length").
+        let resolved_predicate = if let Some(node_types) = self.node_types {
+            self.resolve_generic_predicate(
+                &signature.predicate,
+                &signature.params,
+                call,
+                callee_type,
+                node_types,
+            )
+        } else {
+            signature.predicate
+        };
+
+        // 6. Construct the appropriate guard
+        let guard = if let Some(type_id) = resolved_predicate.type_id {
+            // "x is T" or "asserts x is T"
+            TypeGuard::Predicate {
+                type_id: Some(type_id),
+                asserts: resolved_predicate.asserts,
+            }
+        } else {
+            // "asserts x" (no type annotation) - narrows to truthy
+            TypeGuard::Truthy
+        };
+
+        Some((guard, target_node, is_optional))
+    }
+
+    /// Task 10: Check if a call is `Array.isArray(x)`.
+    ///
+    /// Returns `Some((guard, target))` if this is an Array.isArray call.
+    /// The `guard` will be `TypeGuard::Array`, and `target` is the argument expression.
+    fn check_array_is_array(
+        &self,
+        call: &CallExprData,
+        _condition: NodeIndex,
+    ) -> Option<(TypeGuard, NodeIndex)> {
+        // Get the callee (should be a property access: Array.isArray)
+        let callee_node = self.arena.get(call.expression)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+
+        // Check if the object of the property access is the identifier "Array"
+        let obj_text = self
+            .arena
+            .get(access.expression)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+
+        if obj_text != "Array" {
+            return None;
+        }
+        if !self.is_builtin_global_reference(access.expression) {
+            return None;
+        }
+
+        // Check if the property name is "isArray"
+        let prop_text = self
+            .arena
+            .get(access.name_or_argument)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+
+        if prop_text != "isArray" {
+            return None;
+        }
+
+        // Get the argument (first argument of Array.isArray call)
+        let arg = call.arguments.as_ref()?.nodes.first().copied()?;
+
+        Some((TypeGuard::Array, arg))
+    }
+
+    fn check_has_own_property(&self, call: &CallExprData) -> Option<(TypeGuard, NodeIndex)> {
+        let callee_node = self.arena.get(call.expression)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+        if access.question_dot_token {
+            return None;
+        }
+
+        let method = self.arena.get_identifier_at(access.name_or_argument)?;
+        if method.escaped_text != "hasOwnProperty" {
+            return None;
+        }
+
+        let args = call.arguments.as_ref()?.nodes.as_slice();
+        let &[property_arg] = args else {
+            return None;
+        };
+        let (property_name, _) = self.literal_atom_and_kind_from_node_or_type(property_arg)?;
+        Some((TypeGuard::InProperty(property_name), access.expression))
+    }
+
+    /// Resolve a `SymbolRef` to a proper `Lazy(DefId)` `TypeId` via the `TypeEnvironment`.
+    ///
+    /// The `TypeEnvironment` maintains the checker's symbol→`DefId` mapping, which
+    /// assigns sequential `DefIds` (e.g. 55, 56) different from raw `SymbolIds`.
+    /// Using `interner.reference(symbol_ref)` creates `Lazy(DefId(symbol_id))`
+    /// which is unresolvable; this method returns the correct `Lazy(DefId)`.
+    pub(crate) fn resolve_symbol_to_lazy(&self, symbol_ref: SymbolRef) -> Option<TypeId> {
+        if let Some(env) = self.type_environment.as_ref() {
+            let env_borrowed = env.borrow();
+            if let Some(def_id) = env_borrowed.symbol_to_def_id(symbol_ref) {
+                return Some(self.interner.lazy(def_id));
+            }
+        }
+
+        let ctx = self.checker_context?;
+        let def_id = ctx.get_or_create_def_id(tsz_binder::SymbolId(symbol_ref.0));
+        if def_id.is_valid() {
+            Some(self.interner.lazy(def_id))
+        } else {
+            None
+        }
+    }
+
+    /// Check if a call is `ArrayBuffer.isView(x)` and return a predicate guard.
+    fn check_array_buffer_is_view(&self, call: &CallExprData) -> Option<(TypeGuard, NodeIndex)> {
+        let callee_node = self.arena.get(call.expression)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+
+        let obj_text = self
+            .arena
+            .get(access.expression)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+        if obj_text != "ArrayBuffer" {
+            return None;
+        }
+        if !self.is_builtin_global_reference(access.expression) {
+            return None;
+        }
+
+        let prop_text = self
+            .arena
+            .get(access.name_or_argument)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+        if prop_text != "isView" {
+            return None;
+        }
+
+        let arg = call.arguments.as_ref()?.nodes.first().copied()?;
+        let callee_idx = self.skip_parens_and_assertions(call.expression);
+        let mut type_id = None;
+
+        if let Some(callee_type) = self
+            .node_types
+            .and_then(|types| types.get(&callee_idx.0).copied())
+        {
+            type_id = self
+                .predicate_signature_for_type(callee_type)
+                .and_then(|signature| signature.predicate.type_id);
+        }
+
+        // Only fall back to manual type construction if the type predicate
+        // didn't provide a resolved type. The predicate path (above) gives us
+        // a properly-resolved TypeId from the checker. For the manual path, we
+        // must look up DefIds through the TypeEnvironment (which has the checker's
+        // symbol→DefId mappings), not through the interner's `reference()` which
+        // creates Lazy(DefId(symbol_id)) — a DefId that doesn't exist in the
+        // definition store.
+        if type_id.is_none()
+            && let Some(sym_id) = self.binder.get_global_type("ArrayBufferView")
+        {
+            let symbol_ref = SymbolRef(sym_id.0);
+            let mut view_type = self.resolve_symbol_to_lazy(symbol_ref)?;
+
+            // ArrayBuffer.isView narrows to ArrayBufferView with the default
+            // type argument (`ArrayBufferLike`) in TypeScript's lib.
+            if let Some(array_buffer_like_sym) = self.binder.get_global_type("ArrayBufferLike") {
+                let array_buffer_like_ref = SymbolRef(array_buffer_like_sym.0);
+                let array_buffer_like = self.resolve_symbol_to_lazy(array_buffer_like_ref)?;
+
+                view_type = self
+                    .interner
+                    .application(view_type, vec![array_buffer_like]);
+            }
+
+            type_id = Some(view_type);
+        }
+
+        let type_id = type_id?;
+
+        Some((
+            TypeGuard::Predicate {
+                type_id: Some(type_id),
+                asserts: false,
+            },
+            arg,
+        ))
+    }
+
+    fn is_builtin_global_reference(&self, reference: NodeIndex) -> bool {
+        self.binder
+            .resolve_identifier(self.arena, reference)
+            .is_none_or(|symbol_id| self.binder.lib_symbol_ids.contains(&symbol_id))
+    }
+
+    /// Check if a call is `array.every(predicate)` where predicate has a type predicate.
+    ///
+    /// Returns `Some((guard, target))` if this is an array.every call with a type predicate.
+    /// The `guard` will narrow the array element type, and `target` is the array expression.
+    ///
+    /// # Examples
+    /// ```typescript
+    /// const arr: (number | string)[] = [];
+    /// const isString = (x: unknown): x is string => typeof x === 'string';
+    /// if (arr.every(isString)) {
+    ///   // arr is narrowed to string[]
+    /// }
+    /// ```
+    fn check_array_every_predicate(
+        &self,
+        call: &CallExprData,
+        _condition: NodeIndex,
+    ) -> Option<(TypeGuard, NodeIndex)> {
+        use tracing::trace;
+
+        trace!("check_array_every_predicate called");
+
+        // Get the callee (should be a property access: array.every)
+        let callee_node = self.arena.get(call.expression)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+
+        // Check if the property name is "every"
+        let prop_text = self
+            .arena
+            .get(access.name_or_argument)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+
+        trace!(?prop_text, "Property name");
+
+        if prop_text != "every" {
+            return None;
+        }
+
+        trace!("Found .every() call");
+
+        // Get the first argument (the callback)
+        let Some(args) = call.arguments.as_ref() else {
+            trace!("No arguments");
+            return None;
+        };
+        let Some(&callback_idx) = args.nodes.first() else {
+            trace!("No first argument");
+            return None;
+        };
+        trace!(?callback_idx, "Callback node index");
+
+        // Get the type of the callback
+        // During control flow analysis, types might not be cached yet.
+        // Try to get from cache first, but if not available, we can't extract the guard
+        // (we'd need full CheckerState to compute it, which isn't available in narrowing context).
+        let Some(node_types) = self.node_types else {
+            trace!("No node_types available");
+            return None;
+        };
+        let Some(&callback_type) = node_types.get(&callback_idx.0) else {
+            trace!("Callback type not in node_types - type not computed yet");
+            return None;
+        };
+        trace!(?callback_type, "Callback type");
+
+        // Check if the callback has a type predicate
+        let Some(signature) = self.predicate_signature_for_type(callback_type) else {
+            trace!("No predicate signature for callback type");
+            return None;
+        };
+        trace!(?signature.predicate, "Found type predicate");
+
+        // Only handle predicates with a type (x is T), not just asserts
+        let Some(predicate_type) = signature.predicate.type_id else {
+            trace!("No type_id in predicate");
+            return None;
+        };
+        trace!(?predicate_type, "Predicate type ID");
+
+        // The target is the array being called on (access.expression)
+        let array_target = access.expression;
+        trace!(?array_target, "Array target node");
+
+        // Create an ArrayElementPredicate guard that will narrow the array's element type
+        trace!("Creating ArrayElementPredicate guard");
+        Some((
+            TypeGuard::ArrayElementPredicate {
+                element_type: predicate_type,
+            },
+            array_target,
+        ))
+    }
+
+    /// Check if a call expression uses optional chaining.
+    ///
+    /// For `obj?.method(x)`, `func?.()`, or `func?.(x)`, returns `true`.
+    /// For `obj.method(x)`, returns `false`.
+    fn is_optional_call(&self, call_node_idx: NodeIndex, call: &CallExprData) -> bool {
+        // 1. Check if the call node itself has OptionalChain flag (e.g., func?.())
+        if let Some(node) = self.arena.get(call_node_idx)
+            && node.is_optional_chain()
+        {
+            return true;
+        }
+
+        // 2. Check if the callee is a property access with ?. (e.g., obj?.method())
+        if let Some(callee_node) = self.arena.get(call.expression)
+            && (callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(callee_node)
+            && access.question_dot_token
+        {
+            return true;
+        }
+
+        false
+    }
+
+    /// Get the target node being narrowed in a comparison expression.
+    ///
+    /// For `typeof x === "string"`, returns the node for `x`.
+    /// For `x === null`, returns the node for `x`.
+    fn get_comparison_target(&self, condition: NodeIndex) -> Option<NodeIndex> {
+        let bin = self.arena.get_binary_expr_at(condition)?;
+
+        // For typeof expressions, the target is the operand of typeof
+        if let Some(typeof_node) = self.get_typeof_operand(bin.left) {
+            return Some(typeof_node);
+        }
+
+        // For other comparisons, check if left side is a simple reference
+        if self.is_simple_reference(bin.left) {
+            return Some(bin.left);
+        }
+
+        // Check if right side is a simple reference
+        if self.is_simple_reference(bin.right) {
+            return Some(bin.right);
+        }
+
+        None
+    }
+
+    /// Try to infer a type predicate from a function body whose return type was
+    /// inferred (no explicit return type annotation, no explicit predicate).
+    ///
+    /// Mirrors TS 5.5+ inferred type predicates. When a function body is a
+    /// single guard expression that narrows one of the function's parameters
+    /// to a strict subtype of its declared type, return a synthesized
+    /// `TypePredicate` so callers can narrow on the function's call.
+    ///
+    /// `body_idx` is the function body (either an arrow's expression body or a
+    /// block ending in `return <expr>` with only simple prefix statements).
+    /// `params_list` is the
+    /// list of parameter declaration nodes (parallel to `params` minus any
+    /// `this` parameter). Returns `None` for any pattern outside the
+    /// well-defined inference cases.
+    pub(crate) fn try_infer_type_predicate_from_body(
+        &self,
+        body_idx: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let expr = self.find_inferable_predicate_body_expression(body_idx)?;
+        let expr = self.skip_parens_and_assertions(expr);
+        let expr = self
+            .inferable_predicate_alias_initializer(expr)
+            .unwrap_or(expr);
+
+        if let Some(predicate) = self.try_infer_logical_or_type_predicate(expr, params_list, params)
+        {
+            return Some(predicate);
+        }
+        if let Some(predicate) = self.try_infer_truthiness_type_predicate(expr, params_list, params)
+        {
+            return Some(predicate);
+        }
+        if let Some(predicate) =
+            self.try_infer_type_parameter_strict_null_inequality(expr, params_list, params)
+        {
+            return Some(predicate);
+        }
+
+        self.try_infer_type_predicate_from_guard_expression(expr, params_list, params)
+    }
+
+    fn inferable_predicate_alias_initializer(&self, expr: NodeIndex) -> Option<NodeIndex> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let (_sym, initializer) = self.const_condition_initializer(expr)?;
+        Some(self.skip_parens_and_assertions(initializer))
+    }
+
+    fn try_infer_type_parameter_strict_null_inequality(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let bin = self.arena.get_binary_expr(expr_node)?;
+        if bin.operator_token != SyntaxKind::ExclamationEqualsEqualsToken as u16 {
+            return None;
+        }
+        let target = self.get_comparison_target(expr)?;
+        if self.nullish_comparison(bin.left, bin.right, target) != Some(TypeId::NULL) {
+            return None;
+        }
+
+        let (param_idx, param_name) =
+            self.match_guard_target_to_parameter(target, params_list, params)?;
+        let param_type = params.get(param_idx)?.type_id;
+        if !crate::query_boundaries::common::is_type_parameter_like(self.interner, param_type) {
+            return None;
+        }
+
+        let empty_object = crate::query_boundaries::flow_analysis::empty_object_type(self.interner);
+        let object_or_undefined = crate::query_boundaries::flow_analysis::union_types(
+            self.interner,
+            vec![empty_object, TypeId::UNDEFINED],
+        );
+        let narrowed = crate::query_boundaries::flow_analysis::intersection_types(
+            self.interner,
+            vec![param_type, object_or_undefined],
+        );
+        if narrowed == param_type || matches!(narrowed, TypeId::NEVER | TypeId::ERROR | TypeId::ANY)
+        {
+            return None;
+        }
+
+        Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_name),
+            type_id: Some(narrowed),
+            parameter_index: Some(param_idx),
+        })
+    }
+
+    fn try_infer_type_predicate_from_guard_expression(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let (guard, mut guard_target, is_optional) = self.extract_type_guard(expr)?;
+
+        if is_optional {
+            return None;
+        }
+        if matches!(guard, TypeGuard::Predicate { asserts: true, .. }) {
+            // Inferred predicates never assert (TS 5.5+ semantics).
+            return None;
+        }
+
+        // For binary equality on a property access of a parameter (e.g.
+        // `fb.type === "foo"`), `extract_type_guard` returns
+        // `LiteralEquality(literal)` with `target = fb.type`. Promote that to a
+        // discriminant on `fb` so narrowing can refine the parameter union.
+        if let TypeGuard::LiteralEquality(_) = guard
+            && let Some((base, _path)) =
+                self.parameter_property_access_chain(guard_target, params_list)
+        {
+            guard_target = base;
+        }
+
+        // Resolve the guard target to one of the function's parameters.
+        let (param_idx, param_name) =
+            self.match_guard_target_to_parameter(guard_target, params_list, params)?;
+        let param_type = params.get(param_idx)?.type_id;
+
+        // Infer from the same full condition-narrowing path used by inline
+        // `if (<guard>)` checks. That keeps inferred predicates aligned with
+        // richer flow handling such as `instanceof` on `object`, `in` through
+        // non-null assertions, and other expression-level refinements.
+        let mut narrowed = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            guard_target,
+            true,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if narrowed == param_type
+            && matches!(param_type, TypeId::OBJECT | TypeId::UNKNOWN)
+            && let TypeGuard::Instanceof(instance_type, _) = guard
+            && !matches!(
+                instance_type,
+                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+            )
+        {
+            narrowed = instance_type;
+        }
+
+        // Only emit a predicate when the narrowed type is strictly more
+        // specific. Equal-or-wider results would not give callers useful
+        // information; `never` is excluded to avoid synthesising vacuous
+        // predicates that look like a tautology.
+        if narrowed == param_type
+            || narrowed == TypeId::NEVER
+            || narrowed == TypeId::ERROR
+            || narrowed == TypeId::ANY
+        {
+            return None;
+        }
+
+        Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_name),
+            type_id: Some(narrowed),
+            parameter_index: Some(param_idx),
+        })
+    }
+
+    fn try_infer_truthiness_type_predicate(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let target = self.double_negation_target(expr)?;
+        let (param_idx, param_name) =
+            self.match_guard_target_to_parameter(target, params_list, params)?;
+        let param_type = params.get(param_idx)?.type_id;
+        let narrowed = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            target,
+            true,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if narrowed == param_type
+            || narrowed == TypeId::NEVER
+            || narrowed == TypeId::ERROR
+            || narrowed == TypeId::ANY
+        {
+            return None;
+        }
+
+        let falsy = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            target,
+            false,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if !self.is_nullish_only_type(falsy) {
+            return None;
+        }
+
+        Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_name),
+            type_id: Some(narrowed),
+            parameter_index: Some(param_idx),
+        })
+    }
+
+    fn double_negation_target(&self, expr: NodeIndex) -> Option<NodeIndex> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+        let outer = self.arena.get_unary_expr(expr_node)?;
+        if outer.operator != SyntaxKind::ExclamationToken as u16 {
+            return None;
+        }
+        let inner_idx = self.skip_parens_and_assertions(outer.operand);
+        let inner_node = self.arena.get(inner_idx)?;
+        if inner_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+        let inner = self.arena.get_unary_expr(inner_node)?;
+        if inner.operator != SyntaxKind::ExclamationToken as u16 {
+            return None;
+        }
+        let target = self.skip_parens_and_assertions(inner.operand);
+        let target_node = self.arena.get(target)?;
+        if target_node.kind == SyntaxKind::Identifier as u16 {
+            Some(target)
+        } else {
+            None
+        }
+    }
+
+    fn is_nullish_only_type(&self, type_id: TypeId) -> bool {
+        if matches!(type_id, TypeId::NEVER | TypeId::NULL | TypeId::UNDEFINED) {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.interner, type_id)
+        {
+            return !members.is_empty()
+                && members
+                    .iter()
+                    .all(|member| matches!(*member, TypeId::NULL | TypeId::UNDEFINED));
+        }
+        false
+    }
+
+    fn try_infer_logical_or_type_predicate(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<TypePredicate> {
+        let expr_node = self.arena.get(expr)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let bin = self.arena.get_binary_expr(expr_node)?;
+        if bin.operator_token != SyntaxKind::BarBarToken as u16 {
+            return None;
+        }
+
+        let left = self.skip_parens_and_assertions(bin.left);
+        let right = self.skip_parens_and_assertions(bin.right);
+        let left_target = self.inferable_guard_target(left, params_list)?;
+        let right_target = self.inferable_guard_target(right, params_list)?;
+
+        let (param_idx, param_name) =
+            self.match_guard_target_to_parameter(left_target, params_list, params)?;
+        let (right_param_idx, _) =
+            self.match_guard_target_to_parameter(right_target, params_list, params)?;
+        if right_param_idx != param_idx {
+            return None;
+        }
+
+        let param_type = params.get(param_idx)?.type_id;
+        let narrowed = self.narrow_type_by_condition(
+            param_type,
+            expr,
+            left_target,
+            true,
+            tsz_binder::FlowNodeId::NONE,
+        );
+        if narrowed == param_type
+            || narrowed == TypeId::NEVER
+            || narrowed == TypeId::ERROR
+            || narrowed == TypeId::ANY
+        {
+            return None;
+        }
+
+        Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_name),
+            type_id: Some(narrowed),
+            parameter_index: Some(param_idx),
+        })
+    }
+
+    fn inferable_guard_target(
+        &self,
+        expr: NodeIndex,
+        params_list: &[NodeIndex],
+    ) -> Option<NodeIndex> {
+        let (guard, mut guard_target, is_optional) = self.extract_type_guard(expr)?;
+        if is_optional || matches!(guard, TypeGuard::Predicate { asserts: true, .. }) {
+            return None;
+        }
+
+        if let TypeGuard::LiteralEquality(_) = guard
+            && let Some((base, _path)) =
+                self.parameter_property_access_chain(guard_target, params_list)
+        {
+            guard_target = base;
+        }
+
+        Some(guard_target)
+    }
+
+    /// Locate the single guard expression in an inferable function body.
+    ///
+    /// Returns the expression node when:
+    ///   * the body is itself an expression (arrow function expression body),
+    ///   * the body is a `{ return <expr>; }` block,
+    ///   * the body is a block with simple non-control-flow statements before
+    ///     the final `return <expr>`.
+    ///
+    /// Anything else (missing return value, earlier control-flow statements, or
+    /// non-final returns) is rejected so we never infer a predicate from a body
+    /// that may also produce alternative paths.
+    fn find_inferable_predicate_body_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body = self.arena.get(body_idx)?;
+        if body.kind != syntax_kind_ext::BLOCK {
+            return Some(body_idx);
+        }
+        let block = self.arena.get_block(body)?;
+        let (&stmt_idx, prefix_statements) = block.statements.nodes.split_last()?;
+        for &prefix_stmt_idx in prefix_statements {
+            if !self.is_inferable_predicate_prefix_statement(prefix_stmt_idx) {
+                return None;
+            }
+        }
+        let stmt = self.arena.get(stmt_idx)?;
+        if stmt.kind != syntax_kind_ext::RETURN_STATEMENT {
+            return None;
+        }
+        let ret = self.arena.get_return_statement(stmt)?;
+        if ret.expression.is_none() {
+            return None;
+        }
+        Some(ret.expression)
+    }
+
+    fn is_inferable_predicate_prefix_statement(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        match stmt.kind {
+            syntax_kind_ext::EMPTY_STATEMENT
+            | syntax_kind_ext::DEBUGGER_STATEMENT
+            | syntax_kind_ext::VARIABLE_STATEMENT => true,
+            syntax_kind_ext::EXPRESSION_STATEMENT => {
+                let Some(expr_stmt) = self.arena.get_expression_statement(stmt) else {
+                    return false;
+                };
+                let Some(expr) = self.arena.get(expr_stmt.expression) else {
+                    return false;
+                };
+                !matches!(
+                    expr.kind,
+                    syntax_kind_ext::BINARY_EXPRESSION
+                        | syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                        | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+                )
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                let Some(if_stmt) = self.arena.get_if_statement(stmt) else {
+                    return false;
+                };
+                if if_stmt.else_statement.is_some() {
+                    return false;
+                }
+                self.statement_always_throws_for_predicate_prefix(if_stmt.then_statement)
+            }
+            _ => false,
+        }
+    }
+
+    fn statement_always_throws_for_predicate_prefix(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        match stmt.kind {
+            syntax_kind_ext::THROW_STATEMENT => true,
+            syntax_kind_ext::BLOCK => {
+                let Some(block) = self.arena.get_block(stmt) else {
+                    return false;
+                };
+                block
+                    .statements
+                    .nodes
+                    .iter()
+                    .any(|&child| self.statement_always_throws_for_predicate_prefix(child))
+            }
+            _ => false,
+        }
+    }
+
+    /// If `node` is a property-access chain rooted at one of the parameters
+    /// (e.g. `fb.kind` or `fb.payload.type` where `fb` is a parameter),
+    /// returns `(parameter_name_node, property_path)`. Optional-chain links
+    /// (`fb?.kind`) disqualify the chain because their narrowing semantics
+    /// cannot be expressed via a non-optional discriminant predicate.
+    fn parameter_property_access_chain(
+        &self,
+        node: NodeIndex,
+        params_list: &[NodeIndex],
+    ) -> Option<(NodeIndex, Vec<Atom>)> {
+        let mut path: Vec<Atom> = Vec::new();
+        let mut current = self.skip_parenthesized(node);
+        loop {
+            let cur_node = self.arena.get(current)?;
+            if cur_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && cur_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                break;
+            }
+            let access = self.arena.get_access_expr(cur_node)?;
+            if access.question_dot_token {
+                return None;
+            }
+            let prop_name = if cur_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let ident = self.arena.get_identifier_at(access.name_or_argument)?;
+                self.interner.intern_string(&ident.escaped_text)
+            } else {
+                self.literal_atom_from_node_or_type(access.name_or_argument)?
+            };
+            path.push(prop_name);
+            current = self.skip_parenthesized(access.expression);
+        }
+        if path.is_empty() {
+            return None;
+        }
+        // `current` is now the base of the chain. It must resolve to one of
+        // the function's parameter symbols.
+        let cur_node = self.arena.get(current)?;
+        if cur_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let base_sym = self.binder.resolve_identifier(self.arena, current)?;
+        if !params_list
+            .iter()
+            .any(|&p_idx| self.parameter_owns_symbol(p_idx, base_sym))
+        {
+            return None;
+        }
+        path.reverse();
+        Some((current, path))
+    }
+
+    /// Find the parameter whose declaration owns the symbol referenced by
+    /// `target`. Returns `(index, name)` on a match. Identifiers that don't
+    /// resolve, that resolve to a non-parameter, or whose symbol does not match
+    /// any of the supplied parameter declarations are rejected.
+    fn match_guard_target_to_parameter(
+        &self,
+        target: NodeIndex,
+        params_list: &[NodeIndex],
+        params: &[ParamInfo],
+    ) -> Option<(usize, Atom)> {
+        let target = self.skip_parenthesized(target);
+        let target_node = self.arena.get(target)?;
+        if target_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym = self.binder.resolve_identifier(self.arena, target)?;
+        // `params_list` includes every parameter declaration (including a
+        // `this` parameter when present); `params` excludes the synthetic
+        // `this` parameter. Walk both in lockstep, advancing the `params`
+        // cursor only for non-`this` declarations so the returned index always
+        // refers to the correct `ParamInfo`.
+        let mut info_idx = 0usize;
+        for &param_idx in params_list {
+            if self.is_this_parameter_decl(param_idx) {
+                continue;
+            }
+            if self.parameter_owns_symbol(param_idx, sym)
+                && let Some(name) = params.get(info_idx).and_then(|p| p.name)
+            {
+                return Some((info_idx, name));
+            }
+            info_idx += 1;
+        }
+        None
+    }
+
+    /// Returns true if `param_idx` is a `this` parameter declaration
+    /// (`function f(this: T, ...)`). `this` parameters appear in the AST
+    /// parameter list but are excluded from `ParamInfo` collections.
+    fn is_this_parameter_decl(&self, param_idx: NodeIndex) -> bool {
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(param.name) else {
+            return false;
+        };
+        name_node.kind == SyntaxKind::ThisKeyword as u16
+    }
+
+    /// Returns true when the parameter declaration node owns `sym` — either by
+    /// `value_declaration` pointing back at the parameter node, or by the
+    /// parameter's name node resolving to that symbol. Both directions are
+    /// needed because destructuring parameters and parameter properties have
+    /// slightly different value-declaration shapes.
+    fn parameter_owns_symbol(&self, param_idx: NodeIndex, sym: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.binder.get_symbol(sym) else {
+            return false;
+        };
+        if symbol.value_declaration == param_idx {
+            return true;
+        }
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(param.name) else {
+            return false;
+        };
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        self.binder.get_node_symbol(param.name) == Some(sym)
+    }
+
+    /// Run the solver's narrowing primitive against `param_type` for the
+    /// truthy branch of `guard`. Wires up the type environment when present so
+    /// `Lazy(DefId)` parameter types resolve correctly during narrowing.
+    fn narrow_with_inferred_predicate_guard(
+        &self,
+        param_type: TypeId,
+        guard: &TypeGuard,
+    ) -> TypeId {
+        if let Some(env) = &self.type_environment {
+            let env_borrow = env.borrow();
+            let narrowing = self.make_narrowing_context().with_resolver(&*env_borrow);
+            narrowing.narrow_type(param_type, guard, GuardSense::Positive)
+        } else {
+            self.make_narrowing_context()
+                .narrow_type(param_type, guard, GuardSense::Positive)
+        }
+    }
+
+    /// Check if a node is a simple reference (identifier or property access).
+    fn is_simple_reference(&self, node: NodeIndex) -> bool {
+        // Skip parentheses and comma expressions to get the actual reference
+        let node = self.skip_parenthesized(node);
+        if let Some(node_data) = self.arena.get(node) {
+            node_data.kind == SyntaxKind::Identifier as u16
+                || matches!(
+                    node_data.kind,
+                    syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                )
+        } else {
+            false
+        }
+    }
+
+    /// Get the operand of a typeof expression.
+    pub(crate) fn get_typeof_operand(&self, node: NodeIndex) -> Option<NodeIndex> {
+        let node_data = self.arena.get(node)?;
+        if node_data.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+
+        let unary = self.arena.get_unary_expr(node_data)?;
+        if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
+            return None;
+        }
+
+        // Skip parentheses and comma expressions in typeof operand
+        // This handles cases like: typeof (a, b).prop
+        Some(self.skip_parenthesized(unary.operand))
+    }
+
+    /// Detect `x.constructor === SomeClass` or `SomeClass === x.constructor`.
+    ///
+    /// Returns `(TypeGuard::Constructor(instance_type), base_expr)` where
+    /// `base_expr` is the object whose `.constructor` is being checked.
+    fn constructor_comparison(
+        &self,
+        bin: &tsz_parser::parser::node::BinaryExprData,
+    ) -> Option<(TypeGuard, NodeIndex)> {
+        let is_equality = bin.operator_token == SyntaxKind::EqualsEqualsEqualsToken as u16
+            || bin.operator_token == SyntaxKind::EqualsEqualsToken as u16
+            || bin.operator_token == SyntaxKind::ExclamationEqualsEqualsToken as u16
+            || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16;
+        if !is_equality {
+            return None;
+        }
+
+        // Try left.constructor === right
+        if let Some(base) = self.get_constructor_property_base(bin.left)
+            && let Some(instance_type) = self.instance_type_from_constructor(bin.right)
+        {
+            return Some((TypeGuard::Constructor(instance_type), base));
+        }
+        // Try left === right.constructor
+        if let Some(base) = self.get_constructor_property_base(bin.right)
+            && let Some(instance_type) = self.instance_type_from_constructor(bin.left)
+        {
+            return Some((TypeGuard::Constructor(instance_type), base));
+        }
+        None
+    }
+}

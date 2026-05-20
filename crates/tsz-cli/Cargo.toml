@@ -1,0 +1,83 @@
+[package]
+name = "tsz-cli"
+description = "CLI binaries for the tsz TypeScript compiler"
+version.workspace = true
+edition.workspace = true
+autotests = false
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[[bin]]
+name = "tsz"
+path = "src/bin/tsz.rs"
+
+[[bin]]
+name = "tsz-lsp"
+path = "src/bin/tsz_lsp.rs"
+
+[[bin]]
+name = "tsz-server"
+path = "src/bin/tsz_server/main.rs"
+
+[[bin]]
+name = "audit-unsoundness"
+path = "src/bin/audit_unsoundness.rs"
+
+[features]
+default = []
+# Perf-tools build: enables internal-only flags used by the bench harness.
+# - `--diagnostics-json <path>` (`PERFORMANCE_PLAN.md` §4.T0.2)
+# - `--perf-counters-json <path>` (`PERFORMANCE_PLAN.md` §4.T0.3)
+# Pulls in `tsz-common/perf-counters-timing` so the interner lock-wait
+# histogram is wired in attribution-mode bench runs. Default release
+# builds MUST NOT enable this; the flags are invisible in `--help` and
+# the timing hooks compile out entirely.
+perf-tools = ["tsz-common/perf-counters-timing"]
+
+[dependencies]
+tsz = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mimalloc = { version = "0.1", default-features = false }
+tsz-common = { workspace = true }
+tsz-scanner = { workspace = true }
+tsz-parser = { workspace = true }
+tsz-binder = { workspace = true }
+tsz-solver = { workspace = true }
+tsz-checker = { workspace = true }
+tsz-emitter = { workspace = true }
+tsz-lsp = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+dashmap = { workspace = true }
+globset = { workspace = true }
+notify = { workspace = true }
+rustc-hash = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+walkdir = { workspace = true }
+rayon = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-tree = { workspace = true }
+
+[build-dependencies]
+serde_json = { workspace = true }
+
+[[test]]
+name = "tsc_compat_tests"
+path = "tests/tsc_compat_tests.rs"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false

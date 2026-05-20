@@ -1,0 +1,42 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build tsz-lsp",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "build",
+        "-p",
+        "tsz-cli",
+        "--bin",
+        "tsz-lsp"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "build tsz vscode client",
+      "type": "shell",
+      "command": "npm",
+      "args": [
+        "run",
+        "compile"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/scripts/vscode-tsz-lsp"
+      },
+      "group": "build",
+      "problemMatcher": [
+        "$tsc"
+      ]
+    },
+    {
+      "label": "prepare tsz vscode demo",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "build tsz-lsp",
+        "build tsz vscode client"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2879 @@
+use super::{
+    LineMap, Server, TsServerRequest, parse_identifier_call_expression, positions_overlap,
+};
+use crate::handlers_code_fixes_utils::reorder_import_candidates_for_package_roots;
+use crate::{CheckOptions, LogConfig, LogLevel, ServerMode};
+use rustc_hash::FxHashMap;
+use std::path::PathBuf;
+use tsz::checker::diagnostics::DiagnosticCategory;
+use tsz::lsp::code_actions::ImportCandidate;
+use tsz::parser::ParserState;
+
+fn make_server() -> Server {
+    Server {
+        completion_import_module_specifier_ending: None,
+        import_module_specifier_preference: None,
+        organize_imports_type_order: None,
+        organize_imports_ignore_case: false,
+        auto_import_file_exclude_patterns: Vec::new(),
+        lib_dir: PathBuf::from("/nonexistent"),
+        tests_lib_dir: PathBuf::from("/nonexistent"),
+        lib_cache: FxHashMap::default(),
+        unified_lib_cache: None,
+        checks_completed: 0,
+        response_seq: 0,
+        open_files: FxHashMap::default(),
+        external_project_files: FxHashMap::default(),
+        _server_mode: ServerMode::Semantic,
+        _log_config: LogConfig {
+            level: LogLevel::Off,
+            file: None,
+            trace_to_console: false,
+        },
+        enable_telemetry: false,
+        allow_importing_ts_extensions: false,
+        inferred_check_options: CheckOptions::default(),
+        inferred_projectinfo_options: None,
+        auto_imports_allowed_for_inferred_projects: true,
+        inferred_module_is_none_for_projects: false,
+        auto_import_specifier_exclude_regexes: Vec::new(),
+        include_completions_with_class_member_snippets: false,
+        include_inlay_parameter_name_hints: None,
+        generate_return_in_doc_template: None,
+        new_line_character: None,
+        plugin_configs: FxHashMap::default(),
+        native_ts_worker: None,
+        pending_events: Vec::new(),
+    }
+}
+
+/// Issue #3848: tsserver does NOT inject filename-gated `inferFromUsage`
+/// placeholders for JSDoc `@type {function(...)}` annotations — the same
+/// source under any other file name returns just the
+/// `Annotate with type from JSDoc` fix. Verify tsz-server now matches that
+/// invariant: the response must contain the annotate fix and must NOT carry
+/// any empty-changes `inferFromUsage` actions.
+#[test]
+fn get_code_fixes_jsdoc_does_not_emit_filename_gated_placeholders() {
+    let mut server = make_server();
+    let file = "/annotateWithTypeFromJSDoc16.ts";
+    let content = "/** @type {function(*, ...number, ...boolean): void} */\nvar x = (x, ys, ...zs) => { x; ys; zs; };\n";
+
+    server
+        .open_files
+        .insert(file.to_string(), content.to_string());
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": file,
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 1,
+            "errorCodes": [80004]
+        }),
+    };
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed for {file}");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    let any_annotate = actions.iter().any(|action| {
+        action
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            == Some("Annotate with type from JSDoc")
+    });
+    assert!(
+        any_annotate,
+        "expected an 'Annotate with type from JSDoc' action for {file}, got {actions:?}"
+    );
+    let any_infer_placeholder = actions.iter().any(|action| {
+        action.get("fixId").and_then(serde_json::Value::as_str) == Some("inferFromUsage")
+    });
+    assert!(
+        !any_infer_placeholder,
+        "tsserver does not emit `inferFromUsage` for JSDoc @type function annotations; got {actions:?}"
+    );
+}
+
+#[test]
+fn fix_missing_imports_combines_sequential_import_merges() {
+    let src = "import { Test1, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n";
+    let candidates = vec![
+        ImportCandidate::named(
+            "./file1".to_string(),
+            "Test2".to_string(),
+            "Test2".to_string(),
+        ),
+        ImportCandidate::named(
+            "./file1".to_string(),
+            "Test3".to_string(),
+            "Test3".to_string(),
+        ),
+    ];
+
+    let updated = Server::apply_missing_imports_fix_all("file2.ts", src, &candidates)
+        .expect("expected missing import fix-all to produce an edit");
+
+    assert_eq!(
+        updated,
+        "import { Test1, Test2, Test3, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n"
+    );
+}
+
+#[test]
+fn fix_missing_imports_uses_require_for_commonjs_js_files() {
+    let src = "exports.dedupeLines = data => {\n  variants\n}\n";
+    let candidates = vec![ImportCandidate::named(
+        "./matrix.js".to_string(),
+        "variants".to_string(),
+        "variants".to_string(),
+    )];
+
+    let updated = Server::apply_missing_imports_fix_all("main.js", src, &candidates)
+        .expect("expected commonjs missing import to produce an edit");
+
+    assert_eq!(
+        updated,
+        "const { variants } = require(\"./matrix\")\n\nexports.dedupeLines = data => {\n  variants\n}\n"
+    );
+}
+
+#[test]
+fn synthetic_missing_name_detects_commonjs_export_candidates() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/matrix.js".to_string(),
+        "exports.variants = [];".to_string(),
+    );
+    let main = "exports.dedupeLines = data => {\n  variants\n}\n".to_string();
+    server
+        .open_files
+        .insert("/main.js".to_string(), main.clone());
+
+    let mut parser = ParserState::new("/main.js".to_string(), main.clone());
+    let root = parser.parse_source_file();
+    let arena = parser.into_arena();
+    let mut binder = tsz::binder::BinderState::new();
+    binder.bind_source_file(&arena, root);
+
+    let diagnostics =
+        server.synthetic_missing_name_expression_diagnostics("/main.js", &main, &binder);
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                && diag.message_text.contains("variants")
+        }),
+        "expected synthetic missing-name diagnostic for 'variants', got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn rewrite_single_import_to_commonjs_require_converts_named_import() {
+    let rewritten = Server::rewrite_single_import_to_commonjs_require(
+        "import { variants } from \"./matrix.js\";\n",
+    )
+    .expect("expected named import rewrite");
+    assert_eq!(rewritten, "const { variants } = require(\"./matrix\")\n");
+}
+
+#[test]
+fn collect_import_candidates_normalizes_commonjs_js_specifiers() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/matrix.js".to_string(),
+        "exports.variants = [];".to_string(),
+    );
+    server.open_files.insert(
+        "/totally-irrelevant-no-way-this-changes-things-right.js".to_string(),
+        "export default 0;".to_string(),
+    );
+    let main = "exports.dedupeLines = data => {\n  variants\n}\n".to_string();
+    server.open_files.insert("/main.js".to_string(), main);
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(1, 2),
+            tsz::lsp::position::Position::new(1, 10),
+        ),
+        message: "Cannot find name 'variants'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates =
+        server.collect_import_candidates("/main.js", &diagnostics, &[], &[], None, None);
+    let module_specifiers: Vec<String> = candidates
+        .into_iter()
+        .map(|candidate| candidate.module_specifier)
+        .collect();
+
+    assert!(
+        module_specifiers.iter().any(|spec| spec == "./matrix"),
+        "expected normalized './matrix' specifier, got {module_specifiers:?}"
+    );
+    assert!(
+        module_specifiers
+            .iter()
+            .all(|spec| spec != "./totally-irrelevant-no-way-this-changes-things-right"),
+        "did not expect unrelated default export candidate, got {module_specifiers:?}"
+    );
+}
+
+#[test]
+fn get_code_fixes_unresolved_function_call_offers_missing_function_declaration() {
+    // Plain unresolved call expression `foo(1);` must produce a
+    // `fixMissingFunctionDeclaration` action, not an empty
+    // `Add all missing imports` action. Regression for
+    // https://github.com/mohsen1/tsz/issues/3806.
+    let mut server = make_server();
+    let content = "foo(1);\n";
+    server
+        .open_files
+        .insert("/a.ts".to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/a.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 4,
+            "errorCodes": [2304]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success);
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+
+    let fix_names: Vec<&str> = actions
+        .iter()
+        .filter_map(|a| a.get("fixName").and_then(serde_json::Value::as_str))
+        .collect();
+    assert!(
+        fix_names.contains(&"fixMissingFunctionDeclaration"),
+        "expected fixMissingFunctionDeclaration in {fix_names:?}"
+    );
+    assert!(
+        !fix_names.contains(&"quickfix"),
+        "empty fixMissingImport quickfix must not appear, got {actions:?}"
+    );
+
+    let fix = actions
+        .iter()
+        .find(|a| {
+            a.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixMissingFunctionDeclaration")
+        })
+        .expect("missing the function-declaration fix");
+    let description = fix
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    assert_eq!(
+        description, "Add missing function declaration 'foo'",
+        "unexpected description: {description}"
+    );
+    let new_text = fix
+        .get("changes")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("textChanges"))
+        .and_then(|t| t.get(0))
+        .and_then(|t| t.get("newText"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    assert!(
+        new_text.contains("function foo("),
+        "expected function declaration in newText, got {new_text:?}"
+    );
+}
+
+#[test]
+fn get_code_fixes_does_not_offer_spelling_for_plain_missing_property_2339() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/declarations.d.ts".to_string(),
+        "interface Response {}\n".to_string(),
+    );
+    let content = "import './declarations.d.ts'\ndeclare const resp: Response\nresp.test()\n";
+    server
+        .open_files
+        .insert("/foo.ts".to_string(), content.to_string());
+
+    let line_map = LineMap::build(content);
+    let start = content.find("test").expect("expected test property access") as u32;
+    let end = start + "test".len() as u32;
+    let start_pos = line_map.offset_to_position(start, content);
+    let end_pos = line_map.offset_to_position(end, content);
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/foo.ts",
+            "startLine": start_pos.line + 1,
+            "startOffset": start_pos.character + 1,
+            "endLine": end_pos.line + 1,
+            "endOffset": end_pos.character + 1,
+            "errorCodes": [2339]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    let descriptions: Vec<_> = actions
+        .iter()
+        .filter_map(|action| {
+            action
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+        })
+        .collect();
+
+    assert_eq!(
+        descriptions,
+        vec![
+            "Declare method 'test'",
+            "Declare property 'test'",
+            "Add index signature for property 'test'",
+        ],
+        "unexpected codefix list for plain TS2339 missing property: {actions:?}"
+    );
+
+    for action in actions {
+        let changes = action
+            .get("changes")
+            .and_then(serde_json::Value::as_array)
+            .expect("missing-member fix should include changes");
+        assert_eq!(changes.len(), 1, "expected one file change: {action:?}");
+        assert_eq!(
+            changes[0]
+                .get("fileName")
+                .and_then(serde_json::Value::as_str),
+            Some("/declarations.d.ts")
+        );
+        let text_changes = changes[0]
+            .get("textChanges")
+            .and_then(serde_json::Value::as_array)
+            .expect("missing textChanges");
+        assert_eq!(
+            text_changes.len(),
+            1,
+            "expected one insertion edit: {action:?}"
+        );
+        assert_eq!(
+            text_changes[0].get("start"),
+            text_changes[0].get("end"),
+            "missing-member fix should insert into the target interface"
+        );
+        assert!(
+            text_changes[0]
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| text.contains("unknown")
+                    && (text.contains("test") || text.contains("[x: string]"))),
+            "missing-member edit should declare the requested member: {action:?}"
+        );
+    }
+}
+
+#[test]
+fn collect_import_candidates_uses_external_project_files() {
+    let mut server = make_server();
+    let temp_dir = std::env::temp_dir().join(format!(
+        "tsz_external_project_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let main_path = temp_dir.join("main.ts");
+    let dep_path = temp_dir.join("dep.ts");
+    std::fs::write(&main_path, "externalValue;").expect("write main file");
+    std::fs::write(&dep_path, "export const externalValue = 1;").expect("write dep file");
+    let main_path = main_path.to_string_lossy().to_string();
+    let dep_path = dep_path.to_string_lossy().to_string();
+
+    server
+        .open_files
+        .insert(main_path.clone(), "externalValue;".to_string());
+    server.external_project_files.insert(
+        "/tsconfig.json".to_string(),
+        vec![main_path.clone(), dep_path],
+    );
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 13),
+        ),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        source: Some("tsc-rust".to_string()),
+        message: "Cannot find name 'externalValue'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates =
+        server.collect_import_candidates(&main_path, &diagnostics, &[], &[], None, None);
+    assert!(
+        candidates.iter().any(|candidate| {
+            candidate.local_name == "externalValue" && candidate.module_specifier == "./dep"
+        }),
+        "expected import candidate from external project files, got: {candidates:?}"
+    );
+}
+
+#[test]
+fn has_potential_auto_import_symbol_scans_external_project_files() {
+    let mut server = make_server();
+    let temp_dir = std::env::temp_dir().join(format!(
+        "tsz_external_symbol_scan_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos()
+    ));
+    let dep_dir = temp_dir.join("node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist");
+    std::fs::create_dir_all(&dep_dir).expect("create dep dir");
+    let current_path = temp_dir.join("index.ts");
+    let dep_path = dep_dir.join("mobx.d.ts");
+    std::fs::write(&current_path, "autorun").expect("write index.ts");
+    std::fs::write(&dep_path, "export declare function autorun(): void;").expect("write mobx.d.ts");
+
+    let current_path = current_path.to_string_lossy().to_string();
+    let dep_path = dep_path.to_string_lossy().to_string();
+    server
+        .open_files
+        .insert(current_path.clone(), "autorun".to_string());
+    server.external_project_files.insert(
+        "/tsconfig.json".to_string(),
+        vec![current_path.clone(), dep_path],
+    );
+
+    assert!(
+        server.has_potential_auto_import_symbol(&current_path, "autorun"),
+        "expected external project declaration file to be considered for auto-import probe"
+    );
+}
+
+#[test]
+fn collect_import_candidates_falls_back_to_side_effect_import_specifier() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "autorun".to_string());
+    server
+        .open_files
+        .insert("/utils.ts".to_string(), "import \"mobx\";".to_string());
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 7),
+        ),
+        message: "Cannot find name 'autorun'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates =
+        server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None, None);
+    assert!(
+        candidates.iter().any(|candidate| {
+            candidate.local_name == "autorun" && candidate.module_specifier == "mobx"
+        }),
+        "expected fallback candidate from side-effect import, got {candidates:?}"
+    );
+}
+
+#[test]
+fn collect_import_candidates_falls_back_to_external_project_node_modules_paths() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "autorun".to_string());
+    server.external_project_files.insert(
+        "/tsconfig.json".to_string(),
+        vec![
+            "/index.ts".to_string(),
+            "/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist/mobx.d.ts".to_string(),
+        ],
+    );
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 7),
+        ),
+        message: "Cannot find name 'autorun'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates =
+        server.collect_import_candidates("/index.ts", &diagnostics, &[], &[], None, None);
+    assert!(
+        candidates.iter().any(|candidate| {
+            candidate.local_name == "autorun" && candidate.module_specifier == "mobx"
+        }),
+        "expected fallback candidate from external project path, got {candidates:?}"
+    );
+}
+
+#[test]
+fn module_specifier_from_node_modules_path_normalizes_pnpm_types_entry() {
+    let mut existing = rustc_hash::FxHashSet::default();
+    existing.insert("mobx".to_string());
+    let spec = Server::module_specifier_from_node_modules_path(
+        "/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist/mobx.d.ts",
+        &existing,
+    );
+    assert_eq!(spec.as_deref(), Some("mobx"));
+}
+
+#[test]
+fn module_specifier_from_node_modules_path_preserves_case_sensitive_subpath() {
+    let mut existing = rustc_hash::FxHashSet::default();
+    existing.insert("MobX/Foo".to_string());
+    let spec = Server::module_specifier_from_node_modules_path(
+        "/node_modules/.pnpm/mobx@6.0.4/node_modules/MobX/Foo.d.ts",
+        &existing,
+    );
+    assert_eq!(spec.as_deref(), Some("MobX/Foo"));
+}
+
+#[test]
+fn collect_import_candidates_prefers_package_root_specifier_before_subpath() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/pkg/package.json".to_string(),
+        r#"{
+    "name": "pkg",
+    "version": "1.0.0",
+    "exports": {
+        ".": "./index.js",
+        "./utils": "./utils.js"
+    }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pkg/utils.d.ts".to_string(),
+        "export function add(a: number, b: number) {}".to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pkg/index.d.ts".to_string(),
+        "export * from \"./utils\";".to_string(),
+    );
+    server
+        .open_files
+        .insert("/src/index.ts".to_string(), "add".to_string());
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 3),
+        ),
+        message: "Cannot find name 'add'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates =
+        server.collect_import_candidates("/src/index.ts", &diagnostics, &[], &[], None, None);
+    let module_specifiers: Vec<String> = candidates
+        .into_iter()
+        .filter(|candidate| candidate.local_name == "add")
+        .map(|candidate| candidate.module_specifier)
+        .collect();
+
+    assert_eq!(
+        module_specifiers,
+        vec!["pkg".to_string(), "pkg/utils".to_string()]
+    );
+}
+
+#[test]
+fn reorder_import_candidates_prefers_shallower_relative_specifier_for_same_symbol() {
+    let mut candidates = vec![
+        ImportCandidate::named(
+            "./lib/components/button/Button".to_string(),
+            "Button".to_string(),
+            "Button".to_string(),
+        ),
+        ImportCandidate::named(
+            "./lib/main".to_string(),
+            "Button".to_string(),
+            "Button".to_string(),
+        ),
+    ];
+
+    reorder_import_candidates_for_package_roots(&mut candidates);
+    let module_specifiers: Vec<String> = candidates
+        .iter()
+        .map(|candidate| candidate.module_specifier.clone())
+        .collect();
+
+    assert_eq!(
+        module_specifiers,
+        vec![
+            "./lib/main".to_string(),
+            "./lib/components/button/Button".to_string()
+        ]
+    );
+}
+
+#[test]
+fn collect_import_candidates_excludes_index_shorthand_specifiers_for_codefixes() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/lib/components/button/Button.ts".to_string(),
+        "export function Button() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/components/button/index.ts".to_string(),
+        "export * from \"./Button\";\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/components/index.ts".to_string(),
+        "export * from \"./button\";\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/main.ts".to_string(),
+        "export { Button } from \"./components\";\n".to_string(),
+    );
+    server.open_files.insert(
+        "/lib/index.ts".to_string(),
+        "export * from \"./main\";\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/i-hate-index-files.ts".to_string(), "Button\n".to_string());
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 6),
+        ),
+        message: "Cannot find name 'Button'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates = server.collect_import_candidates(
+        "/i-hate-index-files.ts",
+        &diagnostics,
+        &["/**/index.*".to_string()],
+        &[],
+        None,
+        None,
+    );
+    let module_specifiers: Vec<String> = candidates
+        .into_iter()
+        .filter(|candidate| candidate.local_name == "Button")
+        .map(|candidate| candidate.module_specifier)
+        .collect();
+
+    assert_eq!(
+        module_specifiers,
+        vec![
+            "./lib/main".to_string(),
+            "./lib/components/button/Button".to_string()
+        ]
+    );
+}
+
+#[test]
+fn collect_import_candidates_respects_node_next_package_exports_root_only() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/pack/package.json".to_string(),
+        r#"{
+    "name": "pack",
+    "version": "1.0.0",
+    "exports": {
+        ".": "./main.mjs"
+    }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pack/main.d.mts".to_string(),
+        "import {} from \"./unreachable.mjs\";\nexport const fromMain = 0;".to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pack/unreachable.d.mts".to_string(),
+        "export const fromUnreachable = 0;".to_string(),
+    );
+    server.open_files.insert(
+        "/index.mts".to_string(),
+        "import { fromMain } from \"pack\";\nfromUnreachable".to_string(),
+    );
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(1, 0),
+            tsz::lsp::position::Position::new(1, 15),
+        ),
+        message: "Cannot find name 'fromUnreachable'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates =
+        server.collect_import_candidates("/index.mts", &diagnostics, &[], &[], None, None);
+    assert!(
+        candidates.is_empty(),
+        "expected no import candidates for unreachable node-next subpath export, got {candidates:?}"
+    );
+}
+
+#[test]
+fn collect_import_candidates_prefers_paths_mapping_over_node_modules_package_specifier() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "module": "amd",
+    "moduleResolution": "node",
+    "rootDir": "ts",
+    "baseUrl": ".",
+    "paths": {
+      "*": ["node_modules/@woltlab/wcf/ts/*"]
+    }
+  },
+  "include": ["ts", "node_modules/@woltlab/wcf/ts"]
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "node_modules/@woltlab/wcf/ts/WoltLabSuite/Core/Component/Dialog.ts".to_string(),
+        "export class Dialog {}".to_string(),
+    );
+    server
+        .open_files
+        .insert("ts/main.ts".to_string(), "Dialog".to_string());
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 6),
+        ),
+        message: "Cannot find name 'Dialog'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates =
+        server.collect_import_candidates("ts/main.ts", &diagnostics, &[], &[], None, None);
+    let module_specifiers: Vec<String> = candidates
+        .into_iter()
+        .filter(|candidate| candidate.local_name == "Dialog")
+        .map(|candidate| candidate.module_specifier)
+        .collect();
+
+    assert_eq!(
+        module_specifiers,
+        vec!["WoltLabSuite/Core/Component/Dialog".to_string()]
+    );
+}
+
+#[test]
+fn get_code_fixes_prefers_paths_mapping_module_specifier_for_node_modules_target() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "module": "amd",
+    "moduleResolution": "node",
+    "rootDir": "ts",
+    "baseUrl": ".",
+    "paths": {
+      "*": ["node_modules/@woltlab/wcf/ts/*"]
+    }
+  },
+  "include": ["ts", "node_modules/@woltlab/wcf/ts"]
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "node_modules/@woltlab/wcf/ts/WoltLabSuite/Core/Component/Dialog.ts".to_string(),
+        "export class Dialog {}".to_string(),
+    );
+    server
+        .open_files
+        .insert("ts/main.ts".to_string(), "Dialog".to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "ts/main.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 7,
+            "errorCodes": [2304],
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let module_specifiers: Vec<String> = fixes
+        .iter()
+        .filter(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .flat_map(|fix| {
+            fix.get("changes")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .flat_map(|change| {
+            change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|text_change| {
+            text_change
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+        })
+        .filter_map(extract_module_specifier_from_import_change)
+        .collect();
+
+    assert_eq!(
+        module_specifiers,
+        vec!["WoltLabSuite/Core/Component/Dialog".to_string()]
+    );
+}
+
+#[test]
+fn get_code_fixes_auto_import_package_root_path_type_module_prefers_main_subpath() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/pkg/package.json".to_string(),
+        r#"{
+    "name": "pkg",
+    "version": "1.0.0",
+    "main": "lib",
+    "type": "module"
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pkg/lib/index.js".to_string(),
+        "export function foo() {}".to_string(),
+    );
+    server.open_files.insert(
+        "/package.json".to_string(),
+        r#"{
+    "dependencies": {
+       "pkg": "*"
+    }
+}"#
+        .to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "foo".to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 4,
+            "errorCodes": [2304],
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "includeCompletionsWithInsertText": true
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let module_specifiers: Vec<String> = fixes
+        .iter()
+        .filter(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .flat_map(|fix| {
+            fix.get("changes")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .flat_map(|change| {
+            change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|text_change| {
+            text_change
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+        })
+        .filter_map(extract_module_specifier_from_import_change)
+        .collect();
+
+    assert_eq!(module_specifiers, vec!["pkg/lib".to_string()]);
+}
+
+#[test]
+fn get_code_fixes_prefers_package_import_map_specifier_for_non_relative_preference() {
+    let mut server = make_server();
+    server.allow_importing_ts_extensions = true;
+    server.open_files.insert(
+        "/package.json".to_string(),
+        r##"{
+  "type": "module",
+  "imports": {
+    "#src/*": "./SRC/*"
+  }
+}"##
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/src/add.ts".to_string(),
+        "export function add(a: number, b: number) {}".to_string(),
+    );
+    server
+        .open_files
+        .insert("/src/index.ts".to_string(), "add;\n".to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/src/index.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 4,
+            "errorCodes": [2304],
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "includeCompletionsWithInsertText": true,
+                "importModuleSpecifierPreference": "non-relative"
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let module_specifiers: Vec<String> = fixes
+        .iter()
+        .filter(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .flat_map(|fix| {
+            fix.get("changes")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .flat_map(|change| {
+            change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(|text_change| {
+            text_change
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+        })
+        .filter_map(extract_module_specifier_from_import_change)
+        .collect();
+
+    assert_eq!(module_specifiers, vec!["#src/add.ts".to_string()]);
+}
+
+fn extract_module_specifier_from_import_change(new_text: &str) -> Option<String> {
+    let (prefix_len, open_char) = if let Some(idx) = new_text.find("from \"") {
+        (idx + "from ".len(), '"')
+    } else if let Some(idx) = new_text.find("from '") {
+        (idx + "from ".len(), '\'')
+    } else if let Some(idx) = new_text.find("require(\"") {
+        (idx + "require(".len(), '"')
+    } else {
+        let idx = new_text.find("require('")?;
+        (idx + "require(".len(), '\'')
+    };
+
+    let rest = &new_text[prefix_len..];
+    if !rest.starts_with(open_char) {
+        return None;
+    }
+
+    let value = &rest[1..];
+    let end = value.find(open_char)?;
+    Some(value[..end].to_string())
+}
+
+#[test]
+fn handle_get_combined_code_fix_fix_missing_import_merges_all_missing_names() {
+    let mut server = make_server();
+    let file1 = "/tests/cases/fourslash/file1.ts".to_string();
+    let file2 = "/tests/cases/fourslash/file2.ts".to_string();
+    server.open_files.insert(
+        file1,
+        "export interface Test1 {}\nexport interface Test2 {}\nexport interface Test3 {}\nexport interface Test4 {}\n".to_string(),
+    );
+    let original_file2 = "import { Test1, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n";
+    server
+        .open_files
+        .insert(file2.clone(), original_file2.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCombinedCodeFix".to_string(),
+        arguments: serde_json::json!({
+            "scope": { "type": "file", "args": { "file": file2 } },
+            "fixId": "fixMissingImport",
+            "preferences": {}
+        }),
+    };
+    let resp = server.handle_get_combined_code_fix(1, &req);
+    assert!(resp.success, "expected getCombinedCodeFix to succeed");
+
+    let changes = resp
+        .body
+        .as_ref()
+        .and_then(|body| body.get("changes"))
+        .and_then(serde_json::Value::as_array)
+        .expect("missing changes array");
+    assert_eq!(changes.len(), 1, "expected one file change");
+    let text_changes = changes[0]
+        .get("textChanges")
+        .and_then(serde_json::Value::as_array)
+        .expect("missing textChanges");
+    assert_eq!(
+        text_changes.len(),
+        1,
+        "expected one consolidated text change"
+    );
+
+    let change = &text_changes[0];
+    let start_line = change["start"]["line"].as_u64().expect("start line") as u32;
+    let start_offset = change["start"]["offset"].as_u64().expect("start offset") as u32;
+    let end_line = change["end"]["line"].as_u64().expect("end line") as u32;
+    let end_offset = change["end"]["offset"].as_u64().expect("end offset") as u32;
+    let new_text = change["newText"].as_str().expect("newText");
+
+    let updated = Server::apply_change(
+        original_file2,
+        start_line,
+        start_offset,
+        end_line,
+        end_offset,
+        new_text,
+    );
+
+    assert_eq!(
+        updated,
+        "import { Test1, Test2, Test3, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n"
+    );
+}
+
+#[test]
+fn handle_get_combined_code_fix_fix_missing_import_in_declaration_file_keeps_value_and_type_split()
+{
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export class A {}\nexport class B {}\n".to_string(),
+    );
+    let original = "new A();\nlet x: B;\n";
+    server
+        .open_files
+        .insert("/d.ts".to_string(), original.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCombinedCodeFix".to_string(),
+        arguments: serde_json::json!({
+            "scope": { "type": "file", "args": { "file": "/d.ts" } },
+            "fixId": "fixMissingImport",
+            "preferences": {
+                "preferTypeOnlyAutoImports": true
+            }
+        }),
+    };
+
+    let resp = server.handle_get_combined_code_fix(1, &req);
+    assert!(resp.success, "expected getCombinedCodeFix to succeed");
+
+    let changes = resp
+        .body
+        .as_ref()
+        .and_then(|body| body.get("changes"))
+        .and_then(serde_json::Value::as_array)
+        .expect("missing changes array");
+    assert_eq!(changes.len(), 1, "expected one file change");
+    let text_changes = changes[0]
+        .get("textChanges")
+        .and_then(serde_json::Value::as_array)
+        .expect("missing textChanges");
+    assert_eq!(
+        text_changes.len(),
+        1,
+        "expected one consolidated text change"
+    );
+
+    let change = &text_changes[0];
+    let start_line = change["start"]["line"].as_u64().expect("start line") as u32;
+    let start_offset = change["start"]["offset"].as_u64().expect("start offset") as u32;
+    let end_line = change["end"]["line"].as_u64().expect("end line") as u32;
+    let end_offset = change["end"]["offset"].as_u64().expect("end offset") as u32;
+    let new_text = change["newText"].as_str().expect("newText");
+
+    let updated = Server::apply_change(
+        original,
+        start_line,
+        start_offset,
+        end_line,
+        end_offset,
+        new_text,
+    );
+
+    assert_eq!(
+        updated,
+        "import { A, type B } from \"./a\";\n\nnew A();\nlet x: B;\n"
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_missing_namespace_type_only_default_import() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/tsconfig.json".to_string(),
+        "{\n  \"compilerOptions\": {\n    \"module\": \"esnext\",\n    \"moduleResolution\": \"bundler\"\n  }\n}\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "export class A {}\n".to_string());
+    server.open_files.insert(
+        "/ns.ts".to_string(),
+        "export * as default from \"./a\";\n".to_string(),
+    );
+    let original = "let x: ns.A;\n";
+    server
+        .open_files
+        .insert("/e.ts".to_string(), original.to_string());
+
+    let diag_req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "semanticDiagnosticsSync".to_string(),
+        arguments: serde_json::json!({
+            "file": "/e.ts",
+            "includeLinePosition": true
+        }),
+    };
+    let diag_resp = server.handle_semantic_diagnostics_sync(1, &diag_req);
+    assert!(
+        diag_resp.success,
+        "expected semanticDiagnosticsSync to succeed"
+    );
+
+    let namespace_diag = diag_resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .and_then(|diags| {
+            diags.iter().find(|diag| {
+                diag.get("code")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|code| code as u32)
+                    == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAMESPACE)
+            })
+        })
+        .cloned()
+        .expect("expected cannot-find-namespace diagnostic");
+
+    let (start_line, start_offset, end_line, end_offset) =
+        if let (Some(start_line), Some(start_offset), Some(end_line), Some(end_offset)) = (
+            namespace_diag
+                .get("start")
+                .and_then(|start| start.get("line"))
+                .and_then(serde_json::Value::as_u64),
+            namespace_diag
+                .get("start")
+                .and_then(|start| start.get("offset"))
+                .and_then(serde_json::Value::as_u64),
+            namespace_diag
+                .get("end")
+                .and_then(|end| end.get("line"))
+                .and_then(serde_json::Value::as_u64),
+            namespace_diag
+                .get("end")
+                .and_then(|end| end.get("offset"))
+                .and_then(serde_json::Value::as_u64),
+        ) {
+            (
+                start_line as u32,
+                start_offset as u32,
+                end_line as u32,
+                end_offset as u32,
+            )
+        } else {
+            let line_map = super::LineMap::build(original);
+            let start_off = namespace_diag
+                .get("start")
+                .and_then(serde_json::Value::as_u64)
+                .expect("diagnostic start offset") as u32;
+            let length = namespace_diag
+                .get("length")
+                .and_then(serde_json::Value::as_u64)
+                .expect("diagnostic length") as u32;
+            let start = line_map.offset_to_position(start_off, original);
+            let end = line_map.offset_to_position(start_off + length, original);
+            (
+                start.line + 1,
+                start.character + 1,
+                end.line + 1,
+                end.character + 1,
+            )
+        };
+
+    let req = TsServerRequest {
+        seq: 2,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/e.ts",
+            "startLine": start_line,
+            "startOffset": start_offset,
+            "endLine": end_line,
+            "endOffset": end_offset,
+            "errorCodes": [tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAMESPACE],
+            "preferences": {
+                "preferTypeOnlyAutoImports": true
+            }
+        }),
+    };
+    let resp = server.handle_get_code_fixes(2, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected actions array");
+    let import_text = actions
+        .iter()
+        .find(|action| action.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .and_then(|action| action.get("changes"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|changes| changes.first())
+        .and_then(|change| change.get("textChanges"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|text_changes| text_changes.first())
+        .and_then(|text_change| text_change.get("newText"))
+        .and_then(serde_json::Value::as_str)
+        .expect("expected import code fix text change");
+
+    assert!(
+        import_text.contains("import type ns from \"./ns\";"),
+        "expected type-only default namespace import edit, got: {import_text}"
+    );
+
+    // Fourslash `importFixAtPosition` probes a point location; ensure we
+    // still surface the namespace import fix when no explicit error code is supplied.
+    let point_req = TsServerRequest {
+        seq: 3,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/e.ts",
+            "startLine": start_line,
+            "startOffset": start_offset,
+            "endLine": start_line,
+            "endOffset": start_offset,
+            "preferences": {
+                "preferTypeOnlyAutoImports": true
+            }
+        }),
+    };
+    let point_resp = server.handle_get_code_fixes(3, &point_req);
+    assert!(point_resp.success, "expected point getCodeFixes to succeed");
+    let point_actions = point_resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected point actions array");
+    let point_import_actions: Vec<&serde_json::Value> = point_actions
+        .iter()
+        .filter(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str) == Some("import")
+        })
+        .collect();
+    assert_eq!(
+        point_import_actions.len(),
+        1,
+        "expected one point-position import fix, got: {point_actions:?}"
+    );
+    let point_import_text = point_import_actions
+        .first()
+        .and_then(|action| action.get("changes"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|changes| changes.first())
+        .and_then(|change| change.get("textChanges"))
+        .and_then(serde_json::Value::as_array)
+        .and_then(|text_changes| text_changes.first())
+        .and_then(|text_change| text_change.get("newText"))
+        .and_then(serde_json::Value::as_str)
+        .expect("expected point import code fix text change");
+    assert!(
+        point_import_text.contains("import type ns from \"./ns\";"),
+        "expected point-position request to return default type-only namespace import, got: {point_actions:?}"
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_omits_registry_only_placeholders() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/tsconfig.json".to_string(),
+        "{\n  \"compilerOptions\": {\n    \"target\": \"esnext\",\n    \"strict\": true,\n    \"lib\": [\"es2015\"]\n  }\n}\n".to_string(),
+    );
+    let content = "const p4: Promise<number> = new Promise(resolve => resolve());\n";
+    server
+        .open_files
+        .insert("/a.ts".to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/a.ts",
+            "startLine": 1,
+            "startOffset": 52,
+            "endLine": 1,
+            "endOffset": 59,
+            "errorCodes": [2554]
+        }),
+    };
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected actions array");
+    assert!(
+        actions.is_empty(),
+        "expected no codefixes for unsupported TS2554 case, got: {actions:?}"
+    );
+}
+
+#[test]
+fn synthetic_missing_name_skips_qualified_type_names() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/a.ts".to_string(), "export class A {}\n".to_string());
+    server.open_files.insert(
+        "/ns.ts".to_string(),
+        "export * as default from \"./a\";\n".to_string(),
+    );
+    let content = "let x: ns.A;\n".to_string();
+    server
+        .open_files
+        .insert("/e.ts".to_string(), content.clone());
+
+    let (_, binder, _, _) = server
+        .parse_and_bind_file("/e.ts")
+        .expect("expected parse_and_bind_file for /e.ts");
+    let synthetic =
+        server.synthetic_missing_name_expression_diagnostics("/e.ts", &content, &binder);
+
+    assert!(
+        synthetic.is_empty(),
+        "expected no synthetic missing-name diagnostics for qualified type names, got {synthetic:?}"
+    );
+}
+
+#[test]
+fn synthetic_missing_name_skips_import_type_queries() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo/types/types.ts".to_string(),
+        "export type Full = { prop: string; };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/foo/types/index.ts".to_string(),
+        "import * as foo from './types';\nexport { foo };\n".to_string(),
+    );
+    let content = "import { foo } from './foo/types';\nexport type fullType = foo.Full;\ntype namespaceImport = typeof import('./foo/types');\ntype fullType2 = import('./foo/types').foo.Full;\n".to_string();
+    server
+        .open_files
+        .insert("/app.ts".to_string(), content.clone());
+
+    let (_, binder, _, _) = server
+        .parse_and_bind_file("/app.ts")
+        .expect("expected parse_and_bind_file for /app.ts");
+    let synthetic =
+        server.synthetic_missing_name_expression_diagnostics("/app.ts", &content, &binder);
+
+    assert!(
+        synthetic.is_empty(),
+        "expected no synthetic missing-name diagnostics for import type queries, got {synthetic:?}"
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_jsdoc_import_returns_single_missing_import_fix() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/foo.ts".to_string(),
+        "export const A = 1;\nexport type B = { x: number };\nexport type C = 1;\nexport class D { y: string }\n".to_string(),
+    );
+    let test_js = "/**\n * @import { A, D, C } from \"./foo\"\n */\n\n/**\n * @param { typeof A } a\n * @param { B | C } b\n * @param { C } c\n * @param { D } d\n */\nexport function f(a, b, c, d) { }\n";
+    server
+        .open_files
+        .insert("/test.js".to_string(), test_js.to_string());
+
+    let diag_req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "semanticDiagnosticsSync".to_string(),
+        arguments: serde_json::json!({
+            "file": "/test.js",
+            "includeLinePosition": true
+        }),
+    };
+    let diag_resp = server.handle_semantic_diagnostics_sync(1, &diag_req);
+    assert!(
+        diag_resp.success,
+        "expected semanticDiagnosticsSync to succeed"
+    );
+    let missing_name_diags: Vec<serde_json::Value> = diag_resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected diagnostics array")
+        .iter()
+        .filter(|diag| {
+            diag.get("code")
+                .and_then(serde_json::Value::as_u64)
+                .map(|code| code as u32)
+                == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+        })
+        .cloned()
+        .collect();
+    assert_eq!(
+        missing_name_diags.len(),
+        1,
+        "expected one cannot-find-name diagnostic in diagnostics flow, got {missing_name_diags:?}"
+    );
+
+    let mut import_fix_texts = Vec::new();
+    for diag in &missing_name_diags {
+        let code = diag
+            .get("code")
+            .and_then(serde_json::Value::as_u64)
+            .expect("diagnostic code") as u32;
+        let (start, end) =
+            if let (Some(start_line), Some(start_offset), Some(end_line), Some(end_offset)) = (
+                diag.get("start")
+                    .and_then(|start| start.get("line"))
+                    .and_then(serde_json::Value::as_u64),
+                diag.get("start")
+                    .and_then(|start| start.get("offset"))
+                    .and_then(serde_json::Value::as_u64),
+                diag.get("end")
+                    .and_then(|end| end.get("line"))
+                    .and_then(serde_json::Value::as_u64),
+                diag.get("end")
+                    .and_then(|end| end.get("offset"))
+                    .and_then(serde_json::Value::as_u64),
+            ) {
+                (
+                    tsz::lsp::position::Position::new(
+                        (start_line as u32).saturating_sub(1),
+                        (start_offset as u32).saturating_sub(1),
+                    ),
+                    tsz::lsp::position::Position::new(
+                        (end_line as u32).saturating_sub(1),
+                        (end_offset as u32).saturating_sub(1),
+                    ),
+                )
+            } else {
+                let start_off = diag
+                    .get("start")
+                    .and_then(serde_json::Value::as_u64)
+                    .expect("diagnostic start offset") as u32;
+                let length = diag
+                    .get("length")
+                    .and_then(serde_json::Value::as_u64)
+                    .expect("diagnostic length") as u32;
+                let line_map = super::LineMap::build(test_js);
+                (
+                    line_map.offset_to_position(start_off, test_js),
+                    line_map.offset_to_position(start_off + length, test_js),
+                )
+            };
+        let req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "getCodeFixes".to_string(),
+            arguments: serde_json::json!({
+                "file": "/test.js",
+                "startLine": start.line + 1,
+                "startOffset": start.character + 1,
+                "endLine": end.line + 1,
+                "endOffset": end.character + 1,
+                "errorCodes": [code],
+                "preferences": {
+                    "preferTypeOnlyAutoImports": true
+                }
+            }),
+        };
+        let resp = server.handle_get_code_fixes(1, &req);
+        assert!(resp.success, "expected getCodeFixes to succeed");
+        let actions = resp
+            .body
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .expect("expected getCodeFixes actions");
+        for action in actions {
+            if action.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+                continue;
+            }
+            let Some(changes) = action.get("changes").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+            let Some(file_change) = changes.first() else {
+                continue;
+            };
+            let Some(text_changes) = file_change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            let Some(new_text) = text_changes
+                .first()
+                .and_then(|change| change.get("newText"))
+                .and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            import_fix_texts.push(new_text.to_string());
+        }
+    }
+
+    assert_eq!(
+        import_fix_texts.len(),
+        1,
+        "expected one import fix from diagnostics flow, got {import_fix_texts:?}"
+    );
+    assert!(
+        import_fix_texts[0].contains("@import { A, D, C, B } from \"./foo\""),
+        "expected JSDoc @import merge edit, got {:?}",
+        import_fix_texts[0]
+    );
+}
+
+#[test]
+fn get_code_fixes_adds_missing_value_import_with_existing_type_only_import() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/react/index.d.ts".to_string(),
+        "export interface ComponentType {}\nexport interface ComponentProps {}\nexport declare function useState<T>(initialState: T): [T, (newState: T) => void];\nexport declare function useEffect(callback: () => void, deps: any[]): void;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/main.ts".to_string(),
+        "import type { ComponentType } from \"react\";\nimport { useState } from \"react\";\n\nexport function Component({ prop } : { prop: ComponentType }) {\n    const codeIsUnimportant = useState(1);\n    useEffect(() => {}, []);\n}\n".to_string(),
+    );
+
+    let content = server
+        .open_files
+        .get("/main.ts")
+        .expect("missing main.ts")
+        .clone();
+    let line_map = LineMap::build(&content);
+    let (_, binder, _, _) = server
+        .parse_and_bind_file("/main.ts")
+        .expect("expected parse_and_bind_file for /main.ts");
+    let synthetic =
+        server.synthetic_missing_name_expression_diagnostics("/main.ts", &content, &binder);
+    assert!(
+        synthetic.iter().any(|diag| {
+            diag.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                && diag.message_text.contains("useEffect")
+                && {
+                    let start = line_map.offset_to_position(diag.start, &content);
+                    let end = line_map.offset_to_position(diag.start + diag.length, &content);
+                    positions_overlap(
+                        tsz::lsp::position::Position::new(5, 4),
+                        tsz::lsp::position::Position::new(5, 13),
+                        start,
+                        end,
+                    )
+                }
+        }),
+        "expected synthetic cannot-find-name diagnostic for useEffect, got {synthetic:?}"
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/main.ts",
+            "startLine": 6,
+            "startOffset": 5,
+            "endLine": 6,
+            "endOffset": 14,
+            "errorCodes": [2304]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let mut import_fix_texts = Vec::new();
+    for fix in fixes {
+        if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+            continue;
+        }
+        let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for change in changes {
+            let Some(text_changes) = change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            for text_change in text_changes {
+                if let Some(new_text) = text_change
+                    .get("newText")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    import_fix_texts.push(new_text.to_string());
+                }
+            }
+        }
+    }
+
+    assert!(
+        import_fix_texts
+            .iter()
+            .any(|text| text.contains("useEffect")),
+        "expected import fix text to include useEffect, got {import_fix_texts:?}"
+    );
+}
+
+#[test]
+fn get_code_fixes_prefers_merging_type_only_import_into_type_clause() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/react/index.d.ts".to_string(),
+        "export interface ComponentType {}\nexport interface ComponentProps {}\nexport declare function useState<T>(initialState: T): [T, (newState: T) => void];\n".to_string(),
+    );
+    server.open_files.insert(
+        "/main2.ts".to_string(),
+        "import { useState } from \"react\";\nimport type { ComponentType } from \"react\";\n\ntype _ = ComponentProps;\n".to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/main2.ts",
+            "startLine": 4,
+            "startOffset": 10,
+            "endLine": 4,
+            "endOffset": 24,
+            "errorCodes": [2304]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let mut first_import_changes: Option<Vec<serde_json::Value>> = None;
+    for fix in fixes {
+        if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+            continue;
+        }
+        let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for change in changes {
+            let Some(text_changes) = change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            first_import_changes = Some(text_changes.clone());
+            break;
+        }
+        if first_import_changes.is_some() {
+            break;
+        }
+    }
+
+    let mut updated = server
+        .open_files
+        .get("/main2.ts")
+        .expect("missing main2.ts")
+        .clone();
+    let mut edits = first_import_changes.expect("expected at least one import fix");
+    edits.sort_by(|a, b| {
+        let a_line = a["start"]["line"].as_u64().unwrap_or(0);
+        let a_offset = a["start"]["offset"].as_u64().unwrap_or(0);
+        let b_line = b["start"]["line"].as_u64().unwrap_or(0);
+        let b_offset = b["start"]["offset"].as_u64().unwrap_or(0);
+        (b_line, b_offset).cmp(&(a_line, a_offset))
+    });
+    for edit in edits {
+        updated = Server::apply_change(
+            &updated,
+            edit["start"]["line"].as_u64().expect("start line") as u32,
+            edit["start"]["offset"].as_u64().expect("start offset") as u32,
+            edit["end"]["line"].as_u64().expect("end line") as u32,
+            edit["end"]["offset"].as_u64().expect("end offset") as u32,
+            edit["newText"].as_str().expect("new text"),
+        );
+    }
+    assert!(
+        updated.contains("import type { ComponentProps, ComponentType } from \"react\";"),
+        "expected merged type-only import, got {updated:?}"
+    );
+}
+
+#[test]
+fn get_code_fixes_prefers_merging_type_only_import_into_type_clause_at_point() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/react/index.d.ts".to_string(),
+        "export interface ComponentType {}\nexport interface ComponentProps {}\nexport declare function useState<T>(initialState: T): [T, (newState: T) => void];\n".to_string(),
+    );
+    server.open_files.insert(
+        "/main2.ts".to_string(),
+        "import { useState } from \"react\";\nimport type { ComponentType } from \"react\";\n\ntype _ = ComponentProps;\n".to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/main2.ts",
+            "startLine": 4,
+            "startOffset": 24,
+            "endLine": 4,
+            "endOffset": 24,
+            "preferences": {
+                "preferTypeOnlyAutoImports": true
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected point getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let import_fix = fixes
+        .iter()
+        .find(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .expect("expected import fix");
+    let edits = import_fix["changes"][0]["textChanges"]
+        .as_array()
+        .expect("expected text changes");
+
+    let mut updated = server
+        .open_files
+        .get("/main2.ts")
+        .expect("missing main2.ts")
+        .clone();
+    let mut edits = edits.clone();
+    edits.sort_by(|a, b| {
+        let a_line = a["start"]["line"].as_u64().unwrap_or(0);
+        let a_offset = a["start"]["offset"].as_u64().unwrap_or(0);
+        let b_line = b["start"]["line"].as_u64().unwrap_or(0);
+        let b_offset = b["start"]["offset"].as_u64().unwrap_or(0);
+        (b_line, b_offset).cmp(&(a_line, a_offset))
+    });
+    for edit in edits {
+        updated = Server::apply_change(
+            &updated,
+            edit["start"]["line"].as_u64().expect("start line") as u32,
+            edit["start"]["offset"].as_u64().expect("start offset") as u32,
+            edit["end"]["line"].as_u64().expect("end line") as u32,
+            edit["end"]["offset"].as_u64().expect("end offset") as u32,
+            edit["newText"].as_str().expect("new text"),
+        );
+    }
+
+    assert!(
+        updated.contains("import type { ComponentProps, ComponentType } from \"react\";"),
+        "expected merged type-only import for point request, got {updated:?}"
+    );
+}
+
+#[test]
+fn get_code_fixes_returns_type_only_import_for_type_annotation_point_request() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/exports1.ts".to_string(),
+        "export const a = 0;\nexport const A = 1;\nexport type x = 6;\nexport const X = 7;\nexport type y = 8;\nexport const Y = 9;\nexport const Z = 10;\n".to_string(),
+    );
+    server.open_files.insert(
+        "/index0.ts".to_string(),
+        "import { type X, type Y, type Z } from \"./exports1\";\nconst foo: x;\nconst bar: y;\n"
+            .to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index0.ts",
+            "startLine": 2,
+            "startOffset": 13,
+            "endLine": 2,
+            "endOffset": 13,
+            "preferences": {
+                "organizeImportsTypeOrder": "last"
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected point getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let import_fix = fixes
+        .iter()
+        .find(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .expect("expected import fix");
+    let new_text = import_fix["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected import text change");
+    assert_eq!(new_text, ", type x");
+}
+
+#[test]
+fn get_code_fixes_returns_type_only_import_for_function_parameter_point_request() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/exports.ts".to_string(),
+        "class SomeClass {}\nexport type { SomeClass };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "import {} from \"./exports.js\";\nfunction takeSomeClass(c: SomeClass)\n".to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/a.ts",
+            "startLine": 2,
+            "startOffset": 36,
+            "endLine": 2,
+            "endOffset": 36
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected point getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let fixes = body.as_array().expect("expected array response");
+    let import_fix = fixes
+        .iter()
+        .find(|fix| fix.get("fixName").and_then(serde_json::Value::as_str) == Some("import"))
+        .expect("expected import fix");
+    let new_text = import_fix["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected import text change");
+    assert!(new_text.contains("type SomeClass"));
+}
+
+#[test]
+fn handle_get_code_fixes_returns_pnpm_import_fix_for_missing_name() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/tsconfig.json".to_string(),
+        r#"{ "compilerOptions": { "module": "commonjs" } }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/package.json".to_string(),
+        r#"{ "types": "dist/mobx.d.ts" }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/.pnpm/mobx@6.0.4/node_modules/mobx/dist/mobx.d.ts".to_string(),
+        "export declare function autorun(): void;".to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "autorun".to_string());
+    server
+        .open_files
+        .insert("/utils.ts".to_string(), "import \"mobx\";".to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 8,
+            "errorCodes": [tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let fixes = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions");
+    let mut import_texts = Vec::new();
+    for fix in fixes {
+        if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+            continue;
+        }
+        let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for change in changes {
+            let Some(text_changes) = change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            for text_change in text_changes {
+                if let Some(new_text) = text_change
+                    .get("newText")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    import_texts.push(new_text.to_string());
+                }
+            }
+        }
+    }
+
+    assert!(
+        import_texts
+            .iter()
+            .any(|text| text.contains("import { autorun } from \"mobx\";")),
+        "expected pnpm missing-name import fix, got {import_texts:?}"
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_uses_side_effect_import_when_dependency_content_missing() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "autorun".to_string());
+    server
+        .open_files
+        .insert("/utils.ts".to_string(), "import \"mobx\";".to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 8,
+            "errorCodes": [tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let fixes = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions");
+    let mut import_texts = Vec::new();
+    for fix in fixes {
+        if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+            continue;
+        }
+        let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for change in changes {
+            let Some(text_changes) = change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            for text_change in text_changes {
+                if let Some(new_text) = text_change
+                    .get("newText")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    import_texts.push(new_text.to_string());
+                }
+            }
+        }
+    }
+
+    assert!(
+        import_texts
+            .iter()
+            .any(|text| text.contains("import { autorun } from \"mobx\";")),
+        "expected missing-name import fix from side-effect import fallback, got {import_texts:?}"
+    );
+}
+
+#[test]
+fn semantic_diagnostics_sync_adds_synthetic_missing_name_for_bare_identifier() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/index.ts".to_string(), "autorun".to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "semanticDiagnosticsSync".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "includeLinePosition": true
+        }),
+    };
+
+    let resp = server.handle_semantic_diagnostics_sync(1, &req);
+    assert!(resp.success, "expected semanticDiagnosticsSync to succeed");
+    let diagnostics = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected diagnostics array");
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.get("code").and_then(serde_json::Value::as_u64)
+                == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME as u64)
+        }),
+        "expected synthetic cannot-find-name diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn semantic_diagnostics_sync_does_not_add_missing_name_for_class_method_declaration() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "class Foo {\n    constructor() { }\n    constructor() { }\n    fn() { }\n}\n".to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "semanticDiagnosticsSync".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "includeLinePosition": true
+        }),
+    };
+
+    let resp = server.handle_semantic_diagnostics_sync(1, &req);
+    assert!(resp.success, "expected semanticDiagnosticsSync to succeed");
+    let diagnostics = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected diagnostics array");
+
+    let fn_missing_name_count = diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.get("code").and_then(serde_json::Value::as_u64)
+                == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME as u64)
+                && diag
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|msg| msg.contains("'fn'"))
+        })
+        .count();
+    assert_eq!(
+        fn_missing_name_count, 0,
+        "did not expect synthetic missing-name diagnostics for class method declarations: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn parse_identifier_call_expression_ignores_keywords() {
+    assert_eq!(
+        parse_identifier_call_expression("useEffect(() => {})"),
+        Some((0, "useEffect"))
+    );
+    assert_eq!(parse_identifier_call_expression("if (cond)"), None);
+    assert_eq!(parse_identifier_call_expression("fn() { }"), None);
+    assert_eq!(
+        parse_identifier_call_expression("fn(): number { return 1; }"),
+        None
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_implement_interface_excludes_reexport_file_from_auto_import_patterns() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/src/vs/test.ts".to_string(),
+        "import { Parts } from './parts';\nexport class Extended implements Parts {\n}\n"
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/src/vs/parts.ts".to_string(),
+        "import { Event } from '../thing';\nexport interface Parts {\n    readonly options: Event;\n}\n"
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/src/event/event.ts".to_string(),
+        "export interface Event {\n    (): string;\n}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/src/thing.ts".to_string(),
+        "import { Event } from './event/event';\nexport { Event };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/src/a.ts".to_string(),
+        "import './thing';\ndeclare module './thing' {\n    interface Event {\n        c: string;\n    }\n}\n"
+            .to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/src/vs/test.ts",
+            "startLine": 2,
+            "startOffset": 14,
+            "endLine": 2,
+            "endOffset": 22,
+            "errorCodes": [2420],
+            "preferences": {
+                "autoImportFileExcludePatterns": ["src/thing.ts"]
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .expect("expected implement-interface codefix");
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+
+    assert_eq!(
+        new_text,
+        "import { Event } from '../event/event';\nimport { Parts } from './parts';\nexport class Extended implements Parts {\n    options: Event;\n}\n"
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_implement_interface_skips_unusable_reexport_chain() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/src/vs/test.ts".to_string(),
+        "import { Parts } from './parts';\nexport class Extended implements Parts {\n}\n"
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/src/vs/parts.ts".to_string(),
+        "import { Event } from '../thing';\nexport interface Parts {\n    readonly options: Event;\n}\n"
+            .to_string(),
+    );
+    server.open_files.insert(
+        "/src/event/event.ts".to_string(),
+        "export interface Event {\n    (): string;\n}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/src/thing.ts".to_string(),
+        "import { Event } from '../event/event';\nexport { Event };\n".to_string(),
+    );
+    server.open_files.insert(
+        "/src/a.ts".to_string(),
+        "import './thing';\ndeclare module './thing' {\n    interface Event {\n        c: string;\n    }\n}\n"
+            .to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/src/vs/test.ts",
+            "startLine": 2,
+            "startOffset": 14,
+            "endLine": 2,
+            "endOffset": 22,
+            "errorCodes": [2420],
+            "preferences": {
+                "autoImportFileExcludePatterns": ["src/thing.ts"]
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .expect("expected implement-interface codefix");
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+
+    assert_eq!(
+        new_text,
+        "import { Parts } from './parts';\nexport class Extended implements Parts {\n    options: Event;\n}\n"
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_implements_same_file_interface_with_negative_literal_union() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/index.ts".to_string(),
+        "interface X { value: -1 | 0 | 1; }\nclass Y implements X { }".to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "startLine": 2,
+            "startOffset": 7,
+            "endLine": 2,
+            "endOffset": 8,
+            "errorCodes": [2420],
+            "formatOptions": {
+                "indentSize": 4,
+                "tabSize": 4,
+                "convertTabsToSpaces": true,
+                "newLineCharacter": "\n"
+            }
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let actions = body
+        .as_array()
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .expect("expected implement-interface codefix for same-file interface");
+    assert_eq!(
+        action
+            .get("description")
+            .and_then(serde_json::Value::as_str),
+        Some("Implement interface 'X'")
+    );
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("value: -1 | 0 | 1;"),
+        "expected generated member text in codefix, got: {new_text}"
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_prefers_add_missing_async_for_promise_assignability() {
+    let mut server = make_server();
+    let content = "interface Stuff {\n    b: () => Promise<string>;\n}\n\nfunction foo(): Stuff | Date {\n    return {\n        b: () => \"hello\",\n    }\n}\n";
+    server
+        .open_files
+        .insert("/index.ts".to_string(), content.to_string());
+
+    let line_map = LineMap::build(content);
+    let start = content
+        .find("hello")
+        .expect("expected marker text for async fix") as u32;
+    let end = start + "hello".len() as u32;
+    let start_pos = line_map.offset_to_position(start, content);
+    let end_pos = line_map.offset_to_position(end, content);
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "startLine": start_pos.line + 1,
+            "startOffset": start_pos.character + 1,
+            "endLine": end_pos.line + 1,
+            "endOffset": end_pos.character + 1,
+            "errorCodes": [2322]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    let first = actions
+        .first()
+        .expect("expected at least one codefix action for assignability mismatch");
+    assert_eq!(
+        first.get("fixId").and_then(serde_json::Value::as_str),
+        Some("addMissingAsync"),
+        "expected addMissingAsync to be prioritized, got: {actions:?}"
+    );
+    assert_eq!(
+        first.get("description").and_then(serde_json::Value::as_str),
+        Some("Add async modifier to containing function")
+    );
+    let new_text = first["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("b: async () => \"hello\""),
+        "expected async arrow update, got: {new_text}"
+    );
+}
+
+#[test]
+fn handle_get_code_fixes_prefers_add_missing_async_for_underscore_arrow_parameter() {
+    let mut server = make_server();
+    let content = "interface Stuff {\n    b: () => Promise<string>;\n}\n\nfunction foo(): Stuff | Date {\n    return {\n        b: _ => \"hello\",\n    }\n}\n";
+    server
+        .open_files
+        .insert("/index.ts".to_string(), content.to_string());
+
+    let line_map = LineMap::build(content);
+    let start = content
+        .find("hello")
+        .expect("expected marker text for async fix") as u32;
+    let end = start + "hello".len() as u32;
+    let start_pos = line_map.offset_to_position(start, content);
+    let end_pos = line_map.offset_to_position(end, content);
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/index.ts",
+            "startLine": start_pos.line + 1,
+            "startOffset": start_pos.character + 1,
+            "endLine": end_pos.line + 1,
+            "endOffset": end_pos.character + 1,
+            "errorCodes": [2322]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    let first = actions
+        .first()
+        .expect("expected at least one codefix action for assignability mismatch");
+    assert_eq!(
+        first.get("fixId").and_then(serde_json::Value::as_str),
+        Some("addMissingAsync"),
+        "expected addMissingAsync to be prioritized, got: {actions:?}"
+    );
+    let new_text = first["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("b: async (_) => \"hello\""),
+        "expected async underscored-parameter arrow update, got: {new_text}"
+    );
+}
+
+// Issue #3832: getCodeFixes should return an empty body when the requested
+// span does not overlap any matching diagnostic (no fallback to all matching
+// diagnostics in the file).
+#[test]
+fn get_code_fixes_returns_empty_when_span_misses_diagnostic() {
+    let mut server = make_server();
+    let file = "/missing_name_outside_span.ts";
+    let content = "missingName = 1;\nconst ok = 1;\n";
+
+    server
+        .open_files
+        .insert(file.to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": file,
+            "startLine": 2,
+            "startOffset": 1,
+            "endLine": 2,
+            "endOffset": 1,
+            "errorCodes": [2304]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+    assert!(
+        actions.is_empty(),
+        "expected no code fixes when request span misses the diagnostic, got: {actions:?}"
+    );
+}
+
+// Issue #3938: implement-interface codefix should generate stubs for method
+// signatures, not just property signatures. tsc emits a method body that
+// throws "Method not implemented." for each missing method.
+#[test]
+fn handle_get_code_fixes_implement_interface_method_signature() {
+    let mut server = make_server();
+    let content = "interface I { m(): void; }\nclass C implements I {}\n";
+    server
+        .open_files
+        .insert("/method_iface.ts".to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/method_iface.ts",
+            "startLine": 2,
+            "startOffset": 7,
+            "endLine": 2,
+            "endOffset": 8,
+            "errorCodes": [2420],
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let actions = body
+        .as_array()
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .unwrap_or_else(|| {
+            panic!("expected implement-interface codefix for method signature, got: {actions:?}")
+        });
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("m(): void {"),
+        "expected method stub for missing method, got: {new_text}"
+    );
+    assert!(
+        new_text.contains("throw new Error(\"Method not implemented.\");"),
+        "expected throw stub in method body, got: {new_text}"
+    );
+}
+
+// Issue #3938: a property whose type is a function type (e.g.
+// `m: () => void;`) must continue to be rendered as a property assignment,
+// not as a method stub. The method-signature parse path must only fire when
+// the member name is followed directly by `(` or `<`, not by `:`.
+#[test]
+fn handle_get_code_fixes_implement_interface_function_typed_property() {
+    let mut server = make_server();
+    let content = "interface I { m: () => void; }\nclass C implements I {}\n";
+    server
+        .open_files
+        .insert("/fn_prop_iface.ts".to_string(), content.to_string());
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": "/fn_prop_iface.ts",
+            "startLine": 2,
+            "startOffset": 7,
+            "endLine": 2,
+            "endOffset": 8,
+            "errorCodes": [2420],
+        }),
+    };
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let body = resp.body.expect("expected getCodeFixes body");
+    let actions = body
+        .as_array()
+        .expect("expected getCodeFixes actions array");
+    let action = actions
+        .iter()
+        .find(|action| {
+            action.get("fixName").and_then(serde_json::Value::as_str)
+                == Some("fixClassIncorrectlyImplementsInterface")
+        })
+        .expect("expected implement-interface codefix for function-typed property");
+    let new_text = action["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("expected replacement text");
+    assert!(
+        new_text.contains("m: () => void;"),
+        "expected property assignment for function-typed property, got: {new_text}"
+    );
+    assert!(
+        !new_text.contains("Method not implemented."),
+        "function-typed properties should not be rendered as throwing methods, got: {new_text}"
+    );
+}
+
+// ── fixMissingTypeAnnotationOnExports (TS9010) ───────────────────────────────
+//
+// These tests exercise `apply_isolated_decl_type_annotation_fix` and
+// `infer_type_for_isolated_decl_initializer` directly, using a synthetic
+// TS9010 diagnostic at the variable-name position. The structural rule:
+//
+//   When an exported variable's initializer is any JSX expression
+//   (`JsxElement`, `JsxSelfClosingElement`, or `JsxFragment`), the correct
+//   annotation type is `JSX.Element`. The two tests use distinct variable names
+//   and distinct JSX node shapes to confirm the fix is keyed on the node kind,
+//   not on any specific spelling.
+
+fn make_ts9010_diagnostic(
+    file: &str,
+    start: u32,
+    length: u32,
+) -> tsz::checker::diagnostics::Diagnostic {
+    tsz::checker::diagnostics::Diagnostic {
+        category: DiagnosticCategory::Error,
+        code: 9010,
+        file: file.to_string(),
+        start,
+        length,
+        message_text: "Variable must have an explicit type annotation with --isolatedDeclarations."
+            .to_string(),
+        related_information: Vec::new(),
+    }
+}
+
+fn parse_to_arena(file: &str, content: &str) -> tsz::parser::node::NodeArena {
+    let mut parser = ParserState::new(file.to_string(), content.to_string());
+    parser.parse_source_file();
+    parser.into_arena()
+}
+
+/// `JsxSelfClosingElement` initializer, variable named `element`.
+/// Rule: any self-closing JSX expression → annotation `JSX.Element`.
+#[test]
+fn fix_missing_type_annotation_jsx_self_closing() {
+    // offset 13: "element" (after "export const ")
+    let content = "export const element = <div/>;";
+    let file = "/fix_missing_jsx_self_closing.tsx";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+
+    let diag = make_ts9010_diagnostic(file, 13, 7 /* "element" */);
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[diag],
+        &[9010],
+        None,
+    );
+
+    assert_eq!(fixes.len(), 2, "expected exactly two fix variants");
+
+    let direct_text = fixes[0]["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("direct annotation newText");
+    assert_eq!(
+        direct_text, ": JSX.Element",
+        "direct annotation should insert `: JSX.Element`"
+    );
+
+    let satisfies_text = fixes[1]["changes"][0]["textChanges"][1]["newText"]
+        .as_str()
+        .expect("satisfies+cast newText");
+    assert!(
+        satisfies_text.contains("JSX.Element"),
+        "satisfies+cast should reference JSX.Element, got: {satisfies_text}"
+    );
+
+    // Both fixes must carry the canonical fixId for the client to batch them.
+    for fix in &fixes {
+        assert_eq!(
+            fix["fixId"].as_str(),
+            Some(super::FIX_MISSING_TYPE_ANNOTATION_FIX_ID),
+            "fixId mismatch"
+        );
+    }
+
+    // Confirm the fix inserts after the name, not at the start of the line.
+    let insert_offset = fixes[0]["changes"][0]["textChanges"][0]["start"]["offset"]
+        .as_u64()
+        .expect("start offset");
+    assert!(
+        insert_offset > 13,
+        "annotation must be inserted after the variable name"
+    );
+}
+
+/// `JsxElement` (open/close tags) initializer, variable named `wrapper`.
+/// Rule: any JSX element expression → annotation `JSX.Element`, regardless
+/// of variable name or tag choice.
+#[test]
+fn fix_missing_type_annotation_jsx_element() {
+    // offset 13: "wrapper" (after "export const ")
+    let content = "export const wrapper = <span><b/></span>;";
+    let file = "/fix_missing_jsx_element.tsx";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+
+    let diag = make_ts9010_diagnostic(file, 13, 7 /* "wrapper" */);
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[diag],
+        &[9010],
+        None,
+    );
+
+    assert_eq!(
+        fixes.len(),
+        2,
+        "expected exactly two fix variants for JsxElement"
+    );
+
+    let direct_text = fixes[0]["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("direct annotation newText");
+    assert_eq!(direct_text, ": JSX.Element");
+
+    let satisfies_text = fixes[1]["changes"][0]["textChanges"][1]["newText"]
+        .as_str()
+        .expect("satisfies+cast close newText");
+    assert!(
+        satisfies_text.contains("JSX.Element"),
+        "satisfies+cast should reference JSX.Element, got: {satisfies_text}"
+    );
+}
+
+/// `JsxFragment` initializer (`<>...</>`), variable named `items`.
+/// Rule: JSX fragment is also a JSX expression → annotation `JSX.Element`.
+#[test]
+fn fix_missing_type_annotation_jsx_fragment() {
+    // offset 13: "items" (after "export const ")
+    let content = "export const items = <><li/></>;";
+    let file = "/fix_missing_jsx_fragment.tsx";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+
+    let diag = make_ts9010_diagnostic(file, 13, 5 /* "items" */);
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[diag],
+        &[9010],
+        None,
+    );
+
+    assert_eq!(fixes.len(), 2, "expected two fix variants for JsxFragment");
+    let direct_text = fixes[0]["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("newText");
+    assert_eq!(direct_text, ": JSX.Element");
+}
+
+/// Non-JSX initializer (numeric literal) must produce no fixes — the
+/// function only handles the JSX class of shapes; other cases fall back
+/// to the full checker-backed path.
+#[test]
+fn fix_missing_type_annotation_non_jsx_produces_no_fixes() {
+    let content = "export const count = 42;";
+    let file = "/fix_missing_non_jsx.ts";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+
+    let diag = make_ts9010_diagnostic(file, 13, 5 /* "count" */);
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[diag],
+        &[9010],
+        None,
+    );
+
+    assert!(
+        fixes.is_empty(),
+        "non-JSX initializer should produce no fixes from the AST-structural path"
+    );
+}
+
+/// Calling with `error_codes` that do NOT include 9010 must return nothing
+/// even when a TS9010 diagnostic is present — the guard is on the request,
+/// not the diagnostic bag.
+#[test]
+fn fix_missing_type_annotation_wrong_error_code_returns_empty() {
+    let content = "export const el = <div/>;";
+    let file = "/fix_missing_wrong_code.tsx";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+
+    let diag = make_ts9010_diagnostic(file, 13, 2 /* "el" */);
+    // Client only asked about TS2304 — should not get 9010 fixes.
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[diag],
+        &[2304],
+        None,
+    );
+
+    assert!(
+        fixes.is_empty(),
+        "should not produce fixes when error_codes does not include 9010"
+    );
+}

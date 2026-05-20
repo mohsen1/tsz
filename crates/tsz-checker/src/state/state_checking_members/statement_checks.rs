@@ -1,0 +1,576 @@
+//! Statement validation helpers used by statement callbacks.
+
+use crate::state::CheckerState;
+use crate::statements::StatementCheckCallbacks;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::syntax_kind_ext;
+
+impl<'a> CheckerState<'a> {
+    pub(crate) fn check_declare_modifiers_in_ambient_body(&mut self, body_idx: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+
+        if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+            return;
+        }
+
+        let Some(block) = self.ctx.arena.get_module_block(body_node) else {
+            return;
+        };
+
+        let Some(ref statements) = block.statements else {
+            return;
+        };
+
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            // Check different declaration types for 'declare' modifier
+            let modifiers = match stmt_node.kind {
+                syntax_kind_ext::FUNCTION_DECLARATION => {
+                    self.ctx.arena.get_function(stmt_node).map(|f| &f.modifiers)
+                }
+                syntax_kind_ext::VARIABLE_STATEMENT => {
+                    self.ctx.arena.get_variable(stmt_node).map(|v| &v.modifiers)
+                }
+                syntax_kind_ext::CLASS_DECLARATION => {
+                    self.ctx.arena.get_class(stmt_node).map(|c| &c.modifiers)
+                }
+                syntax_kind_ext::INTERFACE_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_interface(stmt_node)
+                    .map(|i| &i.modifiers),
+                syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_type_alias(stmt_node)
+                    .map(|t| &t.modifiers),
+                syntax_kind_ext::ENUM_DECLARATION => {
+                    self.ctx.arena.get_enum(stmt_node).map(|e| &e.modifiers)
+                }
+                syntax_kind_ext::MODULE_DECLARATION => {
+                    self.ctx.arena.get_module(stmt_node).map(|m| &m.modifiers)
+                }
+                syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::IMPORT_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_import_decl(stmt_node)
+                    .map(|i| &i.modifiers),
+                _ => None,
+            };
+
+            if let Some(mods) = modifiers
+                && let Some(declare_mod) = self.get_declare_modifier(mods)
+            {
+                self.error_at_node(
+                        declare_mod,
+                        "A 'declare' modifier cannot be used in an already ambient context.",
+                        diagnostic_codes::A_DECLARE_MODIFIER_CANNOT_BE_USED_IN_AN_ALREADY_AMBIENT_CONTEXT,
+                    );
+            }
+        }
+    }
+
+    /// TS1039: Check for variable initializers in ambient contexts.
+    /// This is checked even when we skip full type checking of ambient module bodies.
+    pub(crate) fn check_initializers_in_ambient_body(&mut self, body_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+
+        if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+            return;
+        }
+
+        let Some(block) = self.ctx.arena.get_module_block(body_node) else {
+            return;
+        };
+
+        let Some(ref statements) = block.statements else {
+            return;
+        };
+
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            // Get the actual variable statement - it might be wrapped in an export declaration
+            // For example: export var x = 1; is parsed as EXPORT_DECLARATION with export_clause pointing to VARIABLE_STATEMENT
+            let var_stmt_node = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                if let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) {
+                    if export_decl.export_clause.is_none() {
+                        continue;
+                    }
+                    let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) else {
+                        continue;
+                    };
+                    clause_node
+                } else {
+                    continue;
+                }
+            } else if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                stmt_node
+            } else {
+                continue;
+            };
+
+            // Check variable statements for initializers
+            if var_stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && let Some(var_stmt) = self.ctx.arena.get_variable(var_stmt_node)
+            {
+                // var_stmt.declarations.nodes contains VariableDeclarationList nodes
+                // We need to get each list and then iterate its declarations
+                for &list_idx in &var_stmt.declarations.nodes {
+                    let Some(list_node) = self.ctx.arena.get(list_idx) else {
+                        continue;
+                    };
+                    let Some(decl_list) = self.ctx.arena.get_variable(list_node) else {
+                        continue;
+                    };
+                    use tsz_parser::parser::node_flags;
+                    let is_const = (list_node.flags & node_flags::CONST as u16) != 0;
+
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                            continue;
+                        };
+                        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                        else {
+                            continue;
+                        };
+                        if var_decl.initializer.is_none() {
+                            continue;
+                        }
+                        if is_const && var_decl.type_annotation.is_none() {
+                            // const without type annotation: only string/numeric literals allowed
+                            // TS1254 if initializer is not a valid literal
+                            if !self.is_valid_const_initializer(var_decl.initializer) {
+                                self.error_at_node(
+                                    var_decl.initializer,
+                                    diagnostic_messages::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                                    diagnostic_codes::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                                );
+                            }
+                            // else: valid literal initializer, no error
+                        } else {
+                            // Non-const or const with type annotation: TS1039
+                            self.error_at_node(
+                                var_decl.initializer,
+                                diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                                diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Recursively check nested modules/namespaces
+            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.ctx.arena.get_module(stmt_node)
+                && module.body.is_some()
+            {
+                self.check_initializers_in_ambient_body(module.body);
+            }
+        }
+    }
+
+    /// Check if a node is a valid const initializer in an ambient context.
+    /// Valid initializers are string literals, numeric literals, or negative numeric literals.
+    fn is_valid_const_initializer(&self, init_idx: NodeIndex) -> bool {
+        self.is_valid_ambient_const_initializer(init_idx)
+    }
+
+    /// Check a break statement for validity.
+    /// Check a with statement and emit TS2410.
+    /// The 'with' statement is not supported in TypeScript.
+    pub(crate) fn check_with_statement(&mut self, stmt_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if !self.is_js_file() || self.ctx.js_strict_mode_diagnostics_enabled() {
+            self.error_at_node(
+                stmt_idx,
+                diagnostic_messages::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
+                diagnostic_codes::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
+            );
+        }
+
+        if self.ctx.in_async_context() {
+            self.error_at_node(
+                stmt_idx,
+                diagnostic_messages::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_AN_ASYNC_FUNCTION_BLOCK,
+                diagnostic_codes::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_AN_ASYNC_FUNCTION_BLOCK,
+            );
+        }
+
+        // TSC's grammarErrorOnNode suppresses TS1101 when hasParseDiagnostics is true.
+        // Scope the suppression to THIS statement's span: an unrelated parse
+        // error elsewhere in the file (including the parser's own TS1101 emitted
+        // for a `with` inside a class/module) must not silence the strict-mode
+        // diagnostic for an unrelated `with` (e.g., a top-level one under
+        // `--alwaysStrict`).
+        if !self.node_span_contains_parse_error(stmt_idx)
+            && self.is_with_statement_in_strict_mode_context(stmt_idx)
+        {
+            self.error_at_node(
+                stmt_idx,
+                diagnostic_messages::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+                diagnostic_codes::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+            );
+        }
+
+        // Type-check the with-expression for name resolution (TS2304).
+        // Also walk the body to surface TS1101 on nested `with` statements.
+        // tsc's checker doesn't recurse into `with` bodies, so TS1300 and TS2410
+        // remain anchored at the outermost `with`. TS1101, however, comes from the
+        // binder's strict-mode pass which visits every `with` node, so we need a
+        // dedicated walk here to keep parity.
+        let body_idx = self
+            .ctx
+            .arena
+            .get(stmt_idx)
+            .and_then(|node| self.ctx.arena.get_with_statement(node))
+            .map(|with_data| {
+                self.get_type_of_node(with_data.expression);
+                with_data.then_statement
+            });
+        if let Some(body_idx) = body_idx
+            && !self.has_syntax_parse_errors()
+        {
+            self.report_strict_mode_with_in_subtree(body_idx);
+        }
+    }
+
+    /// Walk `root_idx` and its descendants emitting TS1101 for every nested
+    /// `with` statement that sits in a strict-mode context. The walk stops at
+    /// function/class boundaries because those introduce their own strict-mode
+    /// scope and are visited via the normal statement dispatcher.
+    fn report_strict_mode_with_in_subtree(&mut self, root_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if root_idx.is_none() {
+            return;
+        }
+
+        let mut stack: Vec<NodeIndex> = vec![root_idx];
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+
+            // Don't cross function-like or class boundaries; they get their own
+            // strict-mode pass via the normal dispatcher.
+            if matches!(
+                node.kind,
+                syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::CONSTRUCTOR
+                    | syntax_kind_ext::GET_ACCESSOR
+                    | syntax_kind_ext::SET_ACCESSOR
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                    | syntax_kind_ext::MODULE_DECLARATION
+            ) {
+                continue;
+            }
+
+            if node.kind == syntax_kind_ext::WITH_STATEMENT
+                && self.is_with_statement_in_strict_mode_context(node_idx)
+            {
+                self.error_at_node(
+                    node_idx,
+                    diagnostic_messages::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+                    diagnostic_codes::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+                );
+            }
+
+            stack.extend(self.ctx.arena.get_children(node_idx));
+        }
+    }
+
+    fn is_with_statement_in_strict_mode_context(&self, stmt_idx: NodeIndex) -> bool {
+        if self.ctx.compiler_options.always_strict {
+            return true;
+        }
+
+        let mut current = stmt_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.is_class_like()
+                || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || parent_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
+                || parent_node.kind == syntax_kind_ext::CONSTRUCTOR
+                || parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            {
+                return true;
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
+    /// TS1105: A 'break' statement can only be used within an enclosing iteration statement or switch statement.
+    /// TS1107: Jump target cannot cross function boundary.
+    /// TS1116: A 'break' statement can only jump to a label of an enclosing statement.
+    pub(crate) fn check_break_statement(&mut self, stmt_idx: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+
+        // In .d.ts files, TS1036 is emitted instead of TS1105
+        if self.ctx.is_in_ambient_declaration_file {
+            return;
+        }
+
+        if self.node_span_contains_parse_error(stmt_idx) {
+            return;
+        }
+        // Suppress when a parse error sits immediately before the break —
+        // the statement is a parser-recovery artifact, not user code (e.g.
+        // `public break;` is parsed as a TS1128 invalid token followed by a
+        // recovered `break`, and tsc does NOT additionally emit TS1105).
+        if self.node_has_nearby_parse_error(stmt_idx) {
+            return;
+        }
+
+        // Get the label if any
+        let label_name = self
+            .ctx
+            .arena
+            .get(stmt_idx)
+            .and_then(|node| self.ctx.arena.get_jump_data(node))
+            .and_then(|jump_data| {
+                if jump_data.label.is_none() {
+                    None
+                } else {
+                    self.get_node_text(jump_data.label)
+                }
+            });
+
+        if let Some(label) = label_name {
+            // Labeled break - look up the label
+            if let Some(label_info) = self.find_label(&label) {
+                // Check if the label crosses a function boundary
+                if label_info.function_depth < self.ctx.function_depth {
+                    self.error_at_node(
+                        stmt_idx,
+                        "Jump target cannot cross function boundary.",
+                        diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
+                    );
+                }
+                // Mark the label as referenced (for TS7028 unused label detection)
+                self.mark_label_used(&label);
+            } else {
+                // Label not found - emit TS1116
+                if self.ctx.function_depth > 0 || self.find_enclosing_function(stmt_idx).is_some() {
+                    self.error_at_node(
+                        stmt_idx,
+                        "Jump target cannot cross function boundary.",
+                        diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
+                    );
+                } else {
+                    self.error_at_node(
+                        stmt_idx,
+                        "A 'break' statement can only jump to a label of an enclosing statement.",
+                        diagnostic_codes::A_BREAK_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_STATEMENT,
+                    );
+                }
+            }
+        } else {
+            // Unlabeled break - must be inside iteration or switch
+            if self.ctx.iteration_depth == 0 && self.ctx.switch_depth == 0 {
+                // Check if we're inside any function body.
+                // TSC emits TS1107 when break appears inside any function body
+                // with no enclosing loop/switch, regardless of outer context.
+                if self.ctx.function_depth > 0 {
+                    self.error_at_node(
+                        stmt_idx,
+                        "Jump target cannot cross function boundary.",
+                        diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
+                    );
+                } else {
+                    self.error_at_node(
+                        stmt_idx,
+                        "A 'break' statement can only be used within an enclosing iteration or switch statement.",
+                        diagnostic_codes::A_BREAK_STATEMENT_CAN_ONLY_BE_USED_WITHIN_AN_ENCLOSING_ITERATION_OR_SWITCH_STATE,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Check a continue statement for validity.
+    /// TS1104: A 'continue' statement can only be used within an enclosing iteration statement.
+    /// TS1107: Jump target cannot cross function boundary.
+    /// TS1116: A 'continue' statement can only jump to a label of an enclosing iteration statement.
+    pub(crate) fn check_continue_statement(&mut self, stmt_idx: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+
+        // In .d.ts files, TS1036 is emitted instead of TS1104
+        if self.ctx.is_in_ambient_declaration_file {
+            return;
+        }
+
+        if self.node_span_contains_parse_error(stmt_idx) {
+            return;
+        }
+
+        // Get the label if any
+        let label_name = self
+            .ctx
+            .arena
+            .get(stmt_idx)
+            .and_then(|node| self.ctx.arena.get_jump_data(node))
+            .and_then(|jump_data| {
+                if jump_data.label.is_none() {
+                    None
+                } else {
+                    self.get_node_text(jump_data.label)
+                }
+            });
+
+        if let Some(label) = label_name {
+            // Labeled continue - look up the label
+            if let Some(label_info) = self.find_label(&label) {
+                // Check if the label crosses a function boundary
+                if label_info.function_depth < self.ctx.function_depth {
+                    self.error_at_node(
+                        stmt_idx,
+                        "Jump target cannot cross function boundary.",
+                        diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
+                    );
+                } else if !label_info.is_iteration {
+                    // Continue can only target iteration labels (label found but not on loop) - TS1115
+                    self.error_at_node(
+                        stmt_idx,
+                        "A 'continue' statement can only jump to a label of an enclosing iteration statement.",
+                        diagnostic_codes::A_CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_ITERATION_STATEMEN,
+                    );
+                }
+                // Mark the label as referenced (for TS7028 unused label detection)
+                self.mark_label_used(&label);
+            } else {
+                // Label not found - emit TS1115 (same as when label exists but not on iteration)
+                self.error_at_node(
+                    stmt_idx,
+                    "A 'continue' statement can only jump to a label of an enclosing iteration statement.",
+                    diagnostic_codes::A_CONTINUE_STATEMENT_CAN_ONLY_JUMP_TO_A_LABEL_OF_AN_ENCLOSING_ITERATION_STATEMEN,
+                );
+            }
+        } else {
+            // Unlabeled continue - must be inside iteration
+            if self.ctx.iteration_depth == 0 {
+                // Check if we're inside a function body (any function creates a boundary).
+                // TSC emits TS1107 when continue/break appears inside any function body
+                // with no enclosing loop in that function, regardless of whether there's
+                // an outer loop. The function boundary itself is the issue.
+                if self.ctx.function_depth > 0 {
+                    self.error_at_node(
+                        stmt_idx,
+                        "Jump target cannot cross function boundary.",
+                        diagnostic_codes::JUMP_TARGET_CANNOT_CROSS_FUNCTION_BOUNDARY,
+                    );
+                } else {
+                    self.error_at_node(
+                        stmt_idx,
+                        "A 'continue' statement can only be used within an enclosing iteration statement.",
+                        diagnostic_codes::A_CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_AN_ENCLOSING_ITERATION_STATEMENT,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Find a label in the label stack by name.
+    fn find_label(&self, name: &str) -> Option<&crate::context::LabelInfo> {
+        self.ctx
+            .label_stack
+            .iter()
+            .rev()
+            .find(|info| info.name == name)
+    }
+
+    /// Mark a label as referenced (targeted by break/continue).
+    fn mark_label_used(&mut self, name: &str) {
+        if let Some(info) = self
+            .ctx
+            .label_stack
+            .iter_mut()
+            .rev()
+            .find(|i| i.name == name)
+        {
+            info.referenced = true;
+        }
+    }
+
+    /// TS1540: A 'namespace' declaration should not be declared using the 'module' keyword.
+    /// Emits on every module declaration that uses the `module` keyword (i.e., lacks the
+    /// NAMESPACE node flag) and has an identifier name (not a string literal).
+    pub(crate) fn check_module_keyword_deprecated(&mut self, module_idx: NodeIndex) {
+        // Suppress when file has parse errors (tsc's grammarErrorOnNode pattern).
+        if self.has_syntax_parse_errors() {
+            return;
+        }
+
+        let Some(node) = self.ctx.arena.get(module_idx) else {
+            return;
+        };
+
+        if node.has_namespace_flag() || node.is_global_augmentation() {
+            return;
+        }
+
+        let Some(module) = self.ctx.arena.get_module(node) else {
+            return;
+        };
+
+        // Only emit for identifier names — not string literals (`declare module "foo"`),
+        // template literals, anonymous modules (`module { }`), or `declare global`.
+        if let Some(name_node) = self.ctx.arena.get(module.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            // Skip `declare global` augmentations (name text is "global")
+            // and anonymous modules (empty name, already reported as TS1437)
+            if ident.escaped_text == "global" || ident.escaped_text.is_empty() {
+                return;
+            }
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                module.name,
+                diagnostic_messages::A_NAMESPACE_DECLARATION_SHOULD_NOT_BE_DECLARED_USING_THE_MODULE_KEYWORD_PLEASE_U,
+                diagnostic_codes::A_NAMESPACE_DECLARATION_SHOULD_NOT_BE_DECLARED_USING_THE_MODULE_KEYWORD_PLEASE_U,
+            );
+        }
+
+        // For dotted module names (module A.B.C {}), the body is a nested MODULE_DECLARATION.
+        // Walk into it to emit TS1540 on each segment.
+        if let Some(body_node) = self.ctx.arena.get(module.body)
+            && body_node.kind == syntax_kind_ext::MODULE_DECLARATION
+        {
+            self.check_module_keyword_deprecated(module.body);
+        }
+    }
+}

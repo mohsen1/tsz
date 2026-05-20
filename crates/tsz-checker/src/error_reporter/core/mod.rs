@@ -1,0 +1,14 @@
+//! Core error emission helpers and type formatting utilities.
+//!
+//! Split into submodules for maintainability:
+//! - `type_display`: type normalization, formatting, and display helpers
+//! - `diagnostic_source`: diagnostic source/target expression analysis
+
+mod annotation_literal_display;
+mod annotation_text;
+mod declared_intersection_display;
+mod diagnostic_source;
+mod excess_display;
+mod identifier_source_display;
+mod intersection_optional_display;
+mod type_display;

@@ -1,0 +1,2872 @@
+//! Generic type instantiation and substitution.
+//!
+//! This module implements type parameter substitution for generic types.
+//! When a generic function/type is instantiated, we replace type parameters
+//! with concrete types throughout the type structure.
+//!
+//! Key features:
+//! - Type substitution map (type parameter name -> `TypeId`)
+//! - Deep recursive substitution through nested types
+//! - Handling of constraints and defaults
+
+use crate::TypeDatabase;
+use crate::caches::db::QueryDatabase;
+use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
+#[cfg(test)]
+use crate::types::*;
+use crate::types::{
+    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, IntrinsicKind,
+    LiteralValue, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
+    TypeData, TypeId, TypeParamInfo, TypePredicate,
+};
+use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
+use std::cell::RefCell;
+use tsz_common::interner::Atom;
+
+// Reusable scratch `FxHashSet<TypeId>` for the recursive DFS used by
+// `instantiate_type_params_to_constraints`. Mirrors the pool pattern from
+// #4722 / #4790 / #4801.
+thread_local! {
+    static CONSTRAINT_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_constraint_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = CONSTRAINT_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    CONSTRAINT_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
+
+/// Mode bit: `substitute_infer = true`.
+const MODE_SUBSTITUTE_INFER: u8 = 0b001;
+/// Mode bit: `preserve_meta_types = true`.
+const MODE_PRESERVE_META: u8 = 0b010;
+/// Mode bit: `preserve_unsubstituted_type_params = true`.
+const MODE_PRESERVE_UNSUBSTITUTED: u8 = 0b100;
+/// Mode bit: `shallow_this_only = true`.
+const MODE_SHALLOW_THIS_ONLY: u8 = 0b1000;
+
+/// Build the canonical-substitution component of an `InstantiationCacheKey`.
+///
+/// Returns the empty marker for an empty `TypeSubstitution` so cache lookups
+/// for `substitute_this_type` (which always passes an empty substitution but
+/// carries a non-empty `this_type`) hit the same slot deterministically.
+#[inline]
+fn canonical_subst_for(substitution: &TypeSubstitution) -> CanonicalSubst {
+    if substitution.is_empty() {
+        CanonicalSubst::empty()
+    } else {
+        CanonicalSubst::from_pairs(substitution.canonical_pairs())
+    }
+}
+
+/// Maximum depth for recursive type instantiation.
+pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
+const MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS: usize = 8192;
+
+/// A substitution map from type parameter names to concrete types.
+#[derive(Clone, Debug, Default)]
+pub struct TypeSubstitution {
+    /// Maps type parameter names to their substituted types
+    map: FxHashMap<Atom, TypeId>,
+}
+
+impl TypeSubstitution {
+    /// Create an empty substitution.
+    pub fn new() -> Self {
+        Self {
+            map: FxHashMap::default(),
+        }
+    }
+
+    /// Create a substitution containing a single `name -> type_id` binding.
+    /// Equivalent to `let mut s = TypeSubstitution::new(); s.insert(name, type_id);`.
+    pub fn single(name: Atom, type_id: TypeId) -> Self {
+        let mut map = FxHashMap::with_capacity_and_hasher(1, Default::default());
+        map.insert(name, type_id);
+        Self { map }
+    }
+
+    /// Clear the substitution for reuse, preserving allocated capacity.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.map.clear();
+    }
+
+    /// Create a substitution from type parameters and arguments.
+    ///
+    /// `type_params` - The declared type parameters (e.g., `<T, U>`)
+    /// `type_args` - The provided type arguments (e.g., `<string, number>`)
+    ///
+    /// When `type_args` has fewer elements than `type_params`, default values
+    /// from the type parameters are used for the remaining parameters.
+    ///
+    /// IMPORTANT: Defaults may reference earlier type parameters, so they need
+    /// to be instantiated with the substitution built so far.
+    pub fn from_args(
+        interner: &dyn TypeDatabase,
+        type_params: &[TypeParamInfo],
+        type_args: &[TypeId],
+    ) -> Self {
+        let mut map = FxHashMap::with_capacity_and_hasher(type_params.len(), Default::default());
+
+        // Phase 1: Insert explicitly-provided type arguments.
+        for (i, param) in type_params.iter().enumerate() {
+            if i < type_args.len() {
+                map.insert(param.name, type_args[i]);
+            }
+        }
+
+        // Phase 2: Pre-fill unsupplied type parameters with `any` so that
+        // circular and forward references in defaults become any-like instead
+        // of leaking unresolved placeholders into the instantiated type.
+        for (i, param) in type_params.iter().enumerate() {
+            if i >= type_args.len() {
+                map.insert(param.name, TypeId::ANY);
+            }
+        }
+
+        // Phase 3: Process defaults in declaration order. Each default is
+        // instantiated with the substitution built so far (which includes
+        // explicitly provided args, already-resolved defaults, and `any` for
+        // not-yet-resolved params). This means a forward reference like `U = V`
+        // where V hasn't been processed yet resolves to an any-like type.
+        for (i, param) in type_params.iter().enumerate() {
+            if i < type_args.len() {
+                continue; // already provided explicitly
+            }
+            match param.default {
+                Some(default) => {
+                    let subst = Self { map: map.clone() };
+                    let resolved = instantiate_type(interner, default, &subst);
+                    // When the instantiated default is a conditional type whose check_type
+                    // and extends_type are both concrete (no remaining type parameters),
+                    // evaluate it immediately. This ensures that defaults like
+                    // `K extends string ? Map<K, V> : Map<string, V>` (with K=string, V=number)
+                    // become `Map<string, number>` in the substitution rather than remaining
+                    // as a deferred conditional, which would later compare as a different
+                    // TypeId from the inferred Map<string, number>.
+                    let resolved = maybe_evaluate_concrete_conditional(interner, resolved);
+                    // Circular default detection: if the resolved default is (or
+                    // contains) the type parameter itself, fall back to `any`.
+                    // This matches tsc behavior for `type T<X extends C = X>`.
+                    let final_type = if type_references_param(interner, resolved, param.name) {
+                        TypeId::ANY
+                    } else {
+                        resolved
+                    };
+                    map.insert(param.name, final_type);
+                }
+                None => {
+                    // No default and no argument - remove the error placeholder
+                    // so this parameter remains unsubstituted.
+                    map.remove(&param.name);
+                }
+            }
+        }
+
+        Self { map }
+    }
+
+    /// Add a single substitution.
+    pub fn insert(&mut self, name: Atom, type_id: TypeId) {
+        self.map.insert(name, type_id);
+    }
+
+    /// Remove a single substitution.
+    pub fn remove(&mut self, name: Atom) -> Option<TypeId> {
+        self.map.remove(&name)
+    }
+
+    /// Look up a substitution.
+    pub fn get(&self, name: Atom) -> Option<TypeId> {
+        self.map.get(&name).copied()
+    }
+
+    /// Check if substitution is empty.
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    /// Number of substitutions.
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Check if this substitution is an identity mapping (every type parameter maps to itself).
+    ///
+    /// **WARNING**: This check only verifies name equality, which is insufficient when
+    /// different type parameters share the same name (e.g., alias `T` vs function
+    /// `T extends object`). Callers that have access to the original `TypeParamInfo`
+    /// (like `instantiate_generic`) should use `is_identity_for` instead.
+    pub fn is_identity(&self, interner: &dyn TypeDatabase) -> bool {
+        self.map.iter().all(|(&name, &type_id)| {
+            // Check that the substitution maps a name to the UNCONSTRAINED
+            // TypeParameter with that name. If the target has a constraint or
+            // default, it may differ from the TypeParameter in the body being
+            // instantiated, so the substitution is NOT identity.
+            //
+            // This prevents false identity when a type alias's unconstrained `T`
+            // (the body) would be substituted with a constrained `T extends C`
+            // (from the caller). Without this check, `{ "T" → T_constrained }`
+            // would be treated as identity, leaving the body's unconstrained T
+            // unsubstituted.
+            if let Some(TypeData::TypeParameter(info)) = interner.lookup(type_id) {
+                info.name == name && info.constraint.is_none() && info.default.is_none()
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Check if this substitution is an identity mapping against specific type parameters.
+    ///
+    /// Unlike `is_identity`, this correctly handles same-name type parameters by
+    /// comparing the interned TypeId of each declared type parameter against the
+    /// substituted value. This is the only correct identity check when the body
+    /// being instantiated may use different type parameters than the substitution source.
+    pub fn is_identity_for(
+        &self,
+        interner: &dyn TypeDatabase,
+        type_params: &[TypeParamInfo],
+    ) -> bool {
+        type_params.iter().all(|param| {
+            match self.map.get(&param.name) {
+                Some(&type_id) => interner.type_param(*param) == type_id,
+                None => true, // unmapped params don't change anything
+            }
+        })
+    }
+
+    /// Get a reference to the internal substitution map.
+    ///
+    /// This is useful for building new substitutions based on existing ones.
+    pub const fn map(&self) -> &FxHashMap<Atom, TypeId> {
+        &self.map
+    }
+
+    /// Produce the canonical, content-hashable form of this substitution.
+    ///
+    /// Returns a `SmallVec` of `(name, type_id)` pairs sorted by `Atom`.
+    /// Sorting removes insertion-order dependence — the underlying
+    /// `FxHashMap` does not iterate in a deterministic order, so two maps
+    /// with the same contents but different insertion sequences would
+    /// otherwise produce different iteration shapes.
+    ///
+    /// The returned form is the substitution component of
+    /// `InstantiationCacheKey`. Substitution *interning* (for example, a
+    /// global `u32` handle) intentionally does not live here: the cache
+    /// lifetime is owned by `QueryCache`, not the global `TypeInterner`.
+    ///
+    /// Most substitutions have 1-4 entries (matching the shape of the
+    /// existing `application_eval_cache`), so the `SmallVec<[_; 4]>`
+    /// inline buffer avoids a heap allocation for the common case.
+    #[must_use]
+    pub fn canonical_pairs(&self) -> SmallVec<[(Atom, TypeId); 4]> {
+        let mut pairs: SmallVec<[(Atom, TypeId); 4]> = self
+            .map
+            .iter()
+            .map(|(&name, &type_id)| (name, type_id))
+            .collect();
+        // Keys are unique (`FxHashMap`), so sorting by `Atom` alone is
+        // enough to canonicalize. `Atom` is `Ord` (u32 newtype).
+        pairs.sort_unstable_by_key(|(name, _)| *name);
+        pairs
+    }
+}
+
+/// Instantiator for applying type substitutions.
+pub struct TypeInstantiator<'a> {
+    interner: &'a dyn TypeDatabase,
+    substitution: &'a TypeSubstitution,
+    /// Track visited types to handle cycles
+    visiting: FxHashMap<TypeId, TypeId>,
+    /// Type parameter names that are shadowed in the current scope.
+    shadowed: Vec<Atom>,
+    /// Freshly-instantiated local type parameters for the current nested generic scope.
+    local_type_params: Vec<(Atom, TypeId)>,
+    substitute_infer: bool,
+    preserve_meta_types: bool,
+    preserve_unsubstituted_type_params: bool,
+    /// When set, substitutes `ThisType` with this concrete type.
+    pub this_type: Option<TypeId>,
+    /// When set with `this_type`, ONLY substitute `ThisType` references at
+    /// type-combinator positions (Intersection / Union / `IndexAccess` / `KeyOf` /
+    /// Conditional, etc.). Skip recursion into Object, Function, and Callable
+    /// internals so their stored method bodies' `this` references remain
+    /// polymorphic for property-access-time rebinding.
+    ///
+    /// Required for `apply_this_substitution_to_call_return`: when a method
+    /// returns `this & T` and the receiver is `Label`, we want
+    /// `Label & T_inferred`, NOT a re-baked `Label_obj_with_this_substituted`.
+    /// Re-baking poisons subsequent intersection wrapping (the chained
+    /// `extend({a}).extend({b})` pattern in `intersectionThisTypes.ts`).
+    ///
+    /// MUST stay false for class-specialization paths (heritage merge,
+    /// `instantiate_type_with_this`) where the substitution legitimately
+    /// means "specialize this method body for this class".
+    pub shallow_this_only: bool,
+    depth: u32,
+    max_depth: u32,
+    depth_exceeded: bool,
+}
+
+impl<'a> TypeInstantiator<'a> {
+    /// Create a new instantiator.
+    pub fn new(interner: &'a dyn TypeDatabase, substitution: &'a TypeSubstitution) -> Self {
+        TypeInstantiator {
+            interner,
+            substitution,
+            visiting: FxHashMap::default(),
+            shadowed: Vec::new(),
+            local_type_params: Vec::new(),
+            substitute_infer: false,
+            preserve_meta_types: false,
+            preserve_unsubstituted_type_params: false,
+            this_type: None,
+            shallow_this_only: false,
+            depth: 0,
+            max_depth: MAX_INSTANTIATION_DEPTH,
+            depth_exceeded: false,
+        }
+    }
+
+    fn is_shadowed(&self, name: Atom) -> bool {
+        self.shadowed.contains(&name)
+    }
+
+    /// Extract the element type from an array-like type (Array, ReadonlyType(Array),
+    /// or ReadonlyArray as `ObjectWithIndex`). Returns None if not array-like.
+    fn extract_array_element(interner: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+        match interner.lookup(type_id) {
+            Some(TypeData::Array(element_type)) => Some(element_type),
+            Some(TypeData::ReadonlyType(inner)) => {
+                let inner_resolved = crate::evaluation::evaluate::evaluate_type(interner, inner);
+                if let Some(TypeData::Array(element_type)) = interner.lookup(inner_resolved) {
+                    Some(element_type)
+                } else {
+                    None
+                }
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = interner.object_shape(shape_id);
+                shape
+                    .number_index
+                    .as_ref()
+                    .filter(|idx| idx.readonly)
+                    .map(|idx| idx.value_type)
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if a type is array-or-tuple-like, handling:
+    /// - Direct Array types
+    /// - Tuple types
+    /// - `ReadonlyType` wrapping Array or Tuple
+    /// - Union types where ALL members are array-or-tuple-like
+    ///   (e.g., `readonly unknown[] | []` from Promise.all's T constraint)
+    fn is_array_or_tuple_like(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        let evaluated = crate::evaluation::evaluate::evaluate_type(interner, type_id);
+        match interner.lookup(evaluated) {
+            Some(TypeData::Array(_)) | Some(TypeData::Tuple(_)) => true,
+            Some(TypeData::ReadonlyType(inner)) => {
+                let inner_eval = crate::evaluation::evaluate::evaluate_type(interner, inner);
+                matches!(
+                    interner.lookup(inner_eval),
+                    Some(TypeData::Array(_) | TypeData::Tuple(_))
+                )
+            }
+            Some(TypeData::Union(members)) => {
+                let members = interner.type_list(members);
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|m| Self::is_array_or_tuple_like(interner, *m))
+            }
+            _ => Self::extract_array_element(interner, evaluated).is_some(),
+        }
+    }
+
+    fn is_primitive_or_primitive_union(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        if crate::visitors::visitor_predicates::is_primitive_type(interner, type_id) {
+            return true;
+        }
+        let Some(TypeData::Union(members)) = interner.lookup(type_id) else {
+            return false;
+        };
+        interner
+            .type_list(members)
+            .iter()
+            .all(|&member| crate::visitors::visitor_predicates::is_primitive_type(interner, member))
+    }
+
+    /// Check whether a mapped template actually depends on the source object's
+    /// indexed member type `source_obj[K]`. Array/tuple preservation is only
+    /// valid for these homomorphic-style templates; unrelated templates like
+    /// `Obj[K]` must degrade to ordinary object expansion.
+    fn mapped_template_uses_source_index(
+        interner: &dyn TypeDatabase,
+        template: TypeId,
+        source_obj: TypeId,
+        param_name: Atom,
+    ) -> bool {
+        crate::visitor::collect_all_types(interner, template)
+            .into_iter()
+            .any(|candidate| {
+                if candidate.is_intrinsic() {
+                    return false;
+                }
+                match interner.lookup(candidate) {
+                    Some(TypeData::IndexAccess(obj, idx)) if obj == source_obj => {
+                        !idx.is_intrinsic()
+                            && matches!(
+                                interner.lookup(idx),
+                                Some(TypeData::TypeParameter(info)) if info.name == param_name
+                            )
+                    }
+                    _ => false,
+                }
+            })
+    }
+
+    /// Instantiate a slice of properties by substituting type IDs.
+    fn instantiate_properties_if_changed(
+        &mut self,
+        properties: &[PropertyInfo],
+    ) -> Option<Vec<PropertyInfo>> {
+        let mut instantiated: Option<Vec<PropertyInfo>> = None;
+        for (index, property) in properties.iter().enumerate() {
+            let type_id = self.instantiate(property.type_id);
+            let write_type = self.instantiate(property.write_type);
+            if let Some(instantiated) = &mut instantiated {
+                let mut property = property.clone();
+                property.type_id = type_id;
+                property.write_type = write_type;
+                instantiated.push(property);
+            } else if type_id != property.type_id || write_type != property.write_type {
+                let mut changed = Vec::with_capacity(properties.len());
+                changed.extend_from_slice(&properties[..index]);
+                let mut property = property.clone();
+                property.type_id = type_id;
+                property.write_type = write_type;
+                changed.push(property);
+                instantiated = Some(changed);
+            }
+        }
+        instantiated
+    }
+
+    /// Instantiate an optional index signature.
+    fn instantiate_index_signature_if_changed(
+        &mut self,
+        idx: &IndexSignature,
+    ) -> Option<IndexSignature> {
+        let key_type = self.instantiate(idx.key_type);
+        let value_type = self.instantiate(idx.value_type);
+        (key_type != idx.key_type || value_type != idx.value_type).then_some(IndexSignature {
+            key_type,
+            value_type,
+            readonly: idx.readonly,
+            param_name: idx.param_name,
+        })
+    }
+
+    /// Instantiate type parameter constraints and defaults.
+    fn instantiate_type_params_if_changed(
+        &mut self,
+        type_params: &[TypeParamInfo],
+    ) -> Option<Vec<TypeParamInfo>> {
+        let saved_preserve_unsubstituted = self.preserve_unsubstituted_type_params;
+        self.preserve_unsubstituted_type_params = true;
+
+        let mut instantiated: Option<Vec<TypeParamInfo>> = None;
+        for (index, type_param) in type_params.iter().enumerate() {
+            let constraint = type_param.constraint.map(|c| self.instantiate(c));
+            let default = type_param.default.map(|d| self.instantiate(d));
+            let new_type_param = TypeParamInfo {
+                is_const: false,
+                name: type_param.name,
+                constraint,
+                default,
+            };
+            if let Some(instantiated) = &mut instantiated {
+                instantiated.push(new_type_param);
+            } else if new_type_param != *type_param {
+                let mut changed = Vec::with_capacity(type_params.len());
+                changed.extend_from_slice(&type_params[..index]);
+                changed.push(new_type_param);
+                instantiated = Some(changed);
+            }
+        }
+
+        self.preserve_unsubstituted_type_params = saved_preserve_unsubstituted;
+        instantiated
+    }
+
+    /// Instantiate function/signature parameters.
+    fn instantiate_params_if_changed(&mut self, params: &[ParamInfo]) -> Option<Vec<ParamInfo>> {
+        let mut instantiated: Option<Vec<ParamInfo>> = None;
+        for (index, param) in params.iter().enumerate() {
+            let type_id = self.instantiate(param.type_id);
+            let original = *param;
+            let param = ParamInfo {
+                type_id,
+                ..original
+            };
+            if let Some(instantiated) = &mut instantiated {
+                instantiated.push(param);
+            } else if param != original {
+                let mut changed = Vec::with_capacity(params.len());
+                changed.extend_from_slice(&params[..index]);
+                changed.push(param);
+                instantiated = Some(changed);
+            }
+        }
+        instantiated
+    }
+
+    /// Enter a shadowing scope for type parameters.
+    ///
+    /// Returns `(saved_shadowed_len, saved_visiting)` for restoring via
+    /// [`exit_shadowing_scope`].
+    fn enter_shadowing_scope(
+        &mut self,
+        type_params: &[TypeParamInfo],
+    ) -> (usize, Option<FxHashMap<TypeId, TypeId>>) {
+        let shadowed_len = self.shadowed.len();
+        let saved_visiting = if type_params.is_empty() {
+            None
+        } else if self.visiting.is_empty() {
+            // PERF: When visiting map is empty (common for top-level generic
+            // instantiation), no clone needed — just remove the type params
+            // (which are no-ops on an empty map) and return an empty map
+            // as the "saved" state.
+            Some(FxHashMap::default())
+        } else {
+            let saved = self.visiting.clone();
+            for tp in type_params {
+                let tp_id = self.interner.type_param(*tp);
+                self.visiting.remove(&tp_id);
+            }
+            Some(saved)
+        };
+        self.shadowed.extend(type_params.iter().map(|tp| tp.name));
+        (shadowed_len, saved_visiting)
+    }
+
+    /// Exit a shadowing scope, restoring the previous state.
+    fn exit_shadowing_scope(
+        &mut self,
+        shadowed_len: usize,
+        saved_visiting: Option<FxHashMap<TypeId, TypeId>>,
+    ) {
+        self.shadowed.truncate(shadowed_len);
+        if let Some(saved) = saved_visiting {
+            self.visiting = saved;
+        }
+    }
+
+    fn lookup_local_type_param(&self, name: Atom) -> Option<TypeId> {
+        self.local_type_params
+            .iter()
+            .rev()
+            .find_map(|(bound_name, type_id)| (*bound_name == name).then_some(*type_id))
+    }
+
+    /// Apply the substitution to a type, returning the instantiated type.
+    ///
+    /// Wrapped with `stacker::maybe_grow()` to handle deeply nested generic
+    /// instantiation chains that would otherwise overflow the stack.
+    pub fn instantiate(&mut self, type_id: TypeId) -> TypeId {
+        let _span =
+            tracing::trace_span!("instantiate", ty = type_id.0, depth = self.depth,).entered();
+
+        // Fast path: intrinsic types don't need instantiation
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
+        if self.depth_exceeded {
+            return TypeId::ERROR;
+        }
+
+        if self.depth >= self.max_depth {
+            self.depth_exceeded = true;
+            return TypeId::ERROR;
+        }
+
+        self.depth += 1;
+        let result = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.instantiate_inner(type_id)
+        });
+        self.depth -= 1;
+        result
+    }
+
+    fn instantiate_inner(&mut self, type_id: TypeId) -> TypeId {
+        // Check if we're already processing this type (cycle detection)
+        if let Some(&cached) = self.visiting.get(&type_id) {
+            if cached != type_id
+                || matches!(
+                    self.interner.lookup(type_id),
+                    Some(TypeData::TypeParameter(_))
+                )
+            {
+                tracing::trace!(
+                    type_id = type_id.0,
+                    cached = cached.0,
+                    key = ?self.interner.lookup(type_id),
+                    "instantiate_inner: VISITING CACHE HIT"
+                );
+            }
+            return cached;
+        }
+
+        // Look up the type structure
+        let key = match self.interner.lookup(type_id) {
+            Some(k) => k,
+            None => return type_id,
+        };
+
+        if Self::is_instantiation_leaf(&key) {
+            return type_id;
+        }
+
+        // Mark as visiting (with original ID as placeholder for cycles)
+        self.visiting.insert(type_id, type_id);
+
+        let result = self.instantiate_key(type_id, &key);
+
+        // Update the cache with the actual result
+        self.visiting.insert(type_id, result);
+
+        result
+    }
+
+    fn instantiate_type_predicate_if_changed(
+        &mut self,
+        predicate: &TypePredicate,
+    ) -> Option<TypePredicate> {
+        let type_id = predicate.type_id.map(|type_id| self.instantiate(type_id));
+        (type_id != predicate.type_id).then_some(TypePredicate {
+            type_id,
+            ..*predicate
+        })
+    }
+
+    #[inline]
+    const fn is_instantiation_leaf(key: &TypeData) -> bool {
+        matches!(
+            key,
+            TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::UnresolvedTypeName(_)
+                | TypeData::Error
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::BoundParameter(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ModuleNamespace(_)
+        )
+    }
+
+    /// Instantiate a call signature.
+    fn instantiate_call_signature_if_changed(
+        &mut self,
+        sig: &CallSignature,
+    ) -> Option<CallSignature> {
+        let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&sig.type_params);
+
+        let type_params = self.instantiate_type_params_if_changed(&sig.type_params);
+        let local_start = self.local_type_params.len();
+        for type_param in type_params.as_deref().unwrap_or(&sig.type_params) {
+            self.local_type_params
+                .push((type_param.name, self.interner.type_param(*type_param)));
+        }
+        let type_predicate = sig
+            .type_predicate
+            .as_ref()
+            .and_then(|predicate| self.instantiate_type_predicate_if_changed(predicate));
+        let this_type = sig.this_type.map(|type_id| self.instantiate(type_id));
+        let params = self.instantiate_params_if_changed(&sig.params);
+        let return_type = self.instantiate(sig.return_type);
+        self.local_type_params.truncate(local_start);
+
+        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+        let this_changed = this_type != sig.this_type;
+        let return_changed = return_type != sig.return_type;
+        if type_params.is_none()
+            && params.is_none()
+            && type_predicate.is_none()
+            && !this_changed
+            && !return_changed
+        {
+            return None;
+        }
+
+        Some(CallSignature {
+            type_params: type_params.unwrap_or_else(|| sig.type_params.clone()),
+            params: params.unwrap_or_else(|| sig.params.clone()),
+            this_type,
+            return_type,
+            type_predicate: type_predicate.or(sig.type_predicate),
+            is_method: sig.is_method,
+        })
+    }
+
+    fn instantiate_call_signatures_if_changed(
+        &mut self,
+        signatures: &[CallSignature],
+    ) -> Option<Vec<CallSignature>> {
+        let mut instantiated: Option<Vec<CallSignature>> = None;
+        for (index, signature) in signatures.iter().enumerate() {
+            let signature = self.instantiate_call_signature_if_changed(signature);
+            if let Some(instantiated) = &mut instantiated {
+                instantiated.push(signature.unwrap_or_else(|| signatures[index].clone()));
+            } else if let Some(signature) = signature {
+                let mut changed = Vec::with_capacity(signatures.len());
+                changed.extend_from_slice(&signatures[..index]);
+                changed.push(signature);
+                instantiated = Some(changed);
+            }
+        }
+        instantiated
+    }
+
+    /// Instantiate a `TypeData`.
+    fn instantiate_key(&mut self, type_id: TypeId, key: &TypeData) -> TypeId {
+        match key {
+            // Type parameters get substituted
+            TypeData::TypeParameter(info) => {
+                if let Some(local_type_param) = self.lookup_local_type_param(info.name) {
+                    return local_type_param;
+                }
+                if self.is_shadowed(info.name) {
+                    tracing::trace!(
+                        name = ?self.interner.resolve_atom_ref(info.name),
+                        shadowed = ?self.shadowed.iter().map(|a| self.interner.resolve_atom_ref(*a)).collect::<Vec<_>>(),
+                        "instantiate TypeParameter: SHADOWED"
+                    );
+                    return self.interner.intern(*key);
+                }
+                if let Some(substituted) = self.substitution.get(info.name) {
+                    tracing::trace!(
+                        name = ?self.interner.resolve_atom_ref(info.name),
+                        substituted = substituted.0,
+                        "instantiate TypeParameter: SUBSTITUTED"
+                    );
+                    substituted
+                } else {
+                    if !self.preserve_unsubstituted_type_params {
+                        // No direct substitution found. If the type parameter has a constraint
+                        // that references substituted type parameters, instantiate the constraint.
+                        // Example: Actions extends ActionsObject<State>, with {State: number}
+                        // → use ActionsObject<number> instead of Actions.
+                        //
+                        // This fallback is intentionally disabled while instantiating
+                        // type-parameter declarations themselves so self-references like
+                        // `Exclude<keyof P, ...>` stay anchored to `P` instead of collapsing
+                        // into an error/constraint expansion.
+                        if let Some(constraint) = info.constraint {
+                            let instantiated_constraint = self.instantiate(constraint);
+                            // Only use the constraint if instantiation changed it
+                            if instantiated_constraint != constraint {
+                                return instantiated_constraint;
+                            }
+                        }
+                    }
+                    // No substitution and no instantiated constraint, return original
+                    self.interner.intern(*key)
+                }
+            }
+
+            // Intrinsics don't change
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::UnresolvedTypeName(_)
+            | TypeData::Error
+            // Lazy types might resolve to something that needs substitution
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_) => self.interner.intern(*key),
+
+            // Enum types: instantiate the member type (structural part)
+            // The DefId (nominal identity) stays the same
+            TypeData::Enum(def_id, member_type) => {
+                let instantiated_member = self.instantiate(*member_type);
+                self.interner.enum_type(*def_id, instantiated_member)
+            }
+
+            // Application: instantiate base and args
+            TypeData::Application(app_id) => {
+                let app = self.interner.type_application(*app_id);
+                let base = self.instantiate(app.base);
+                let args: Vec<TypeId> = app.args.iter().map(|&arg| self.instantiate(arg)).collect();
+                self.interner.application(base, args)
+            }
+
+            // This type: substitute with concrete this_type if provided
+            TypeData::ThisType => {
+                if let Some(this_type) = self.this_type {
+                    this_type
+                } else {
+                    self.interner.intern(*key)
+                }
+            }
+
+            // Union: instantiate all members, skip re-intern if nothing changed
+            TypeData::Union(members) => {
+                let canonical_members = self.interner.type_list(*members);
+                let origin_members = self.interner.get_union_origin(type_id);
+                let members = origin_members
+                    .as_deref()
+                    .map_or(canonical_members.as_ref(), Vec::as_slice);
+                let mut changed = false;
+                let instantiated: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| {
+                        let inst = self.instantiate(m);
+                        if inst != m {
+                            changed = true;
+                        }
+                        inst
+                    })
+                    .collect();
+                if changed {
+                    let result = self.interner.union(instantiated.clone());
+                    self.interner.store_union_origin(result, instantiated);
+                    result
+                } else {
+                    self.interner.intern(*key)
+                }
+            }
+
+            // Intersection: instantiate all members, skip re-intern if nothing changed
+            TypeData::Intersection(members) => {
+                let members = self.interner.type_list(*members);
+                let mut changed = false;
+                let instantiated: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| {
+                        let inst = self.instantiate(m);
+                        if inst != m {
+                            changed = true;
+                        }
+                        inst
+                    })
+                    .collect();
+                if changed {
+                    let result = self.interner.intersection(instantiated);
+                    // Propagate display properties from original members to the result.
+                    self.propagate_display_properties_for_intersection(members.as_ref(), result);
+                    result
+                } else {
+                    self.interner.intern(*key)
+                }
+            }
+
+            // Array: instantiate element type
+            TypeData::Array(elem) => {
+                let instantiated_elem = self.instantiate(*elem);
+                self.interner.array(instantiated_elem)
+            }
+
+            // Tuple: instantiate all elements, flattening variadic spreads.
+            // When a rest element `...T` is instantiated and T resolves to a
+            // tuple type `[A, B, C]`, the spread is flattened into individual
+            // elements `A, B, C` (matching tsc's instantiateMappedTupleType
+            // behavior for variadic tuple types).
+            TypeData::Tuple(elements) => {
+                use tsz_common::limits::MAX_REPRESENTABLE_TUPLE_LENGTH;
+                let elements = self.interner.tuple_list(*elements);
+                let mut instantiated: Vec<TupleElement> = Vec::with_capacity(elements.len());
+                // Tracks the semantic (represented) cardinality — sum of each
+                // spread arm's inner element count, not the physical slot count.
+                // Needed to catch the case where a large spread is kept as a
+                // single physical rest element by the soft gate but the total
+                // represented length still exceeds `MAX_REPRESENTABLE_TUPLE_LENGTH`.
+                let mut represented_len: usize = 0;
+                for e in elements.iter() {
+                    let inst_type = self.instantiate(e.type_id);
+                    if e.rest {
+                        // Check if the instantiated type is a tuple — if so,
+                        // flatten its elements into the parent tuple.
+                        if let Some(TypeData::Tuple(inner_elems)) = self.interner.lookup(inst_type)
+                        {
+                            let inner = self.interner.tuple_list(inner_elems);
+                            let represented_after =
+                                represented_len.saturating_add(inner.len());
+                            // Hard gate: refuse to materialize tuples wider than
+                            // MAX_REPRESENTABLE_TUPLE_LENGTH. Fires before the soft gate
+                            // so the unbounded Vec is never allocated.
+                            if represented_after > MAX_REPRESENTABLE_TUPLE_LENGTH {
+                                self.interner.mark_tuple_too_large();
+                                return TypeId::ERROR;
+                            }
+                            // Soft gate: keep very large spreads as a single rest
+                            // element to avoid exponential physical slot growth.
+                            if represented_after > MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS {
+                                instantiated.push(TupleElement {
+                                    type_id: inst_type,
+                                    name: e.name,
+                                    optional: e.optional,
+                                    rest: true,
+                                });
+                            } else {
+                                for ie in inner.iter() {
+                                    instantiated.push(TupleElement {
+                                        type_id: ie.type_id,
+                                        name: ie.name,
+                                        optional: ie.optional,
+                                        rest: ie.rest,
+                                    });
+                                }
+                            }
+                            represented_len = represented_after;
+                        } else {
+                            instantiated.push(TupleElement {
+                                type_id: inst_type,
+                                name: e.name,
+                                optional: e.optional,
+                                rest: true,
+                            });
+                            represented_len = represented_len.saturating_add(1);
+                        }
+                    } else {
+                        instantiated.push(TupleElement {
+                            type_id: inst_type,
+                            name: e.name,
+                            optional: e.optional,
+                            rest: false,
+                        });
+                        represented_len = represented_len.saturating_add(1);
+                    }
+                }
+                self.interner.tuple(instantiated)
+            }
+
+            // Object: instantiate all property types
+            TypeData::Object(shape_id) => {
+                let shape = self.interner.object_shape(*shape_id);
+                // Shallow-this mode: don't walk into Object internals when the
+                // Object has a backing symbol (named interface / class). Such
+                // types own a polymorphic `this` scope that must stay raw for
+                // property-access-time rebinding when the Object becomes part
+                // of an intersection. Anonymous Object literals (no symbol)
+                // share the outer `this` scope.
+                if self.shallow_this_only && shape.symbol.is_some() {
+                    return self.interner.intern(*key);
+                }
+                if let Some(instantiated) =
+                    self.instantiate_properties_if_changed(&shape.properties)
+                {
+                    self.interner
+                        .object_with_flags_and_symbol(instantiated, shape.flags, shape.symbol)
+                } else {
+                    self.interner.intern(*key)
+                }
+            }
+
+            // Object with index signatures: instantiate all types
+            TypeData::ObjectWithIndex(shape_id) => {
+                let shape = self.interner.object_shape(*shape_id);
+                if self.shallow_this_only && shape.symbol.is_some() {
+                    return self.interner.intern(*key);
+                }
+                let instantiated_props =
+                    self.instantiate_properties_if_changed(&shape.properties);
+                let instantiated_string_idx = shape
+                    .string_index
+                    .as_ref()
+                    .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
+                let instantiated_number_idx = shape
+                    .number_index
+                    .as_ref()
+                    .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
+                if instantiated_props.is_some()
+                    || instantiated_string_idx.is_some()
+                    || instantiated_number_idx.is_some()
+                {
+                    self.interner.object_with_index(ObjectShape {
+                        flags: shape.flags,
+                        properties: instantiated_props.unwrap_or_else(|| shape.properties.clone()),
+                        string_index: instantiated_string_idx.or(shape.string_index),
+                        number_index: instantiated_number_idx.or(shape.number_index),
+                        symbol: shape.symbol,
+                    })
+                } else {
+                    self.interner.intern(*key)
+                }
+            }
+
+            // Function: instantiate params and return type
+            // Note: Type params in the function create a new scope - don't substitute those
+            TypeData::Function(shape_id) => {
+                let shape = self.interner.function_shape(*shape_id);
+                // Shallow-this mode: substitute `this:` parameter slot,
+                // and substitute params/return_type only when they ARE the
+                // top-level `ThisType` (no nesting). Don't recurse into
+                // composite types like `this & T` — those carry the
+                // polymorphic `this` scope that must stay raw for
+                // intersection rebinding (chained `extend({a}).extend({b})`
+                // pattern). Top-level `this` substitution is needed for
+                // ordinary `(p: this) => this` shapes.
+                if self.shallow_this_only {
+                    let target_this = self.this_type.unwrap_or(TypeId::ERROR);
+                    let sub_top_level = |id: TypeId| -> TypeId {
+                        if matches!(self.interner.lookup(id), Some(TypeData::ThisType)) {
+                            target_this
+                        } else {
+                            id
+                        }
+                    };
+                    let new_this_slot = shape.this_type.map(sub_top_level);
+                    let new_return_type = sub_top_level(shape.return_type);
+                    let mut new_params = Vec::with_capacity(shape.params.len());
+                    let mut params_changed = false;
+                    for p in shape.params.iter() {
+                        let new_t = sub_top_level(p.type_id);
+                        if new_t != p.type_id {
+                            params_changed = true;
+                            let mut np = *p;
+                            np.type_id = new_t;
+                            new_params.push(np);
+                        } else {
+                            new_params.push(*p);
+                        }
+                    }
+                    let this_changed = match (shape.this_type, new_this_slot) {
+                        (Some(a), Some(b)) => a != b,
+                        (None, None) => false,
+                        _ => true,
+                    };
+                    if params_changed || this_changed || new_return_type != shape.return_type {
+                        return self.interner.function(FunctionShape {
+                            type_params: shape.type_params.clone(),
+                            params: new_params,
+                            this_type: new_this_slot,
+                            return_type: new_return_type,
+                            type_predicate: shape.type_predicate,
+                            is_constructor: shape.is_constructor,
+                            is_method: shape.is_method,
+                        });
+                    }
+                    return self.interner.intern(*key);
+                }
+                let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&shape.type_params);
+
+                let instantiated_type_params =
+                    self.instantiate_type_params_if_changed(&shape.type_params);
+                let local_start = self.local_type_params.len();
+                for type_param in instantiated_type_params
+                    .as_deref()
+                    .unwrap_or(&shape.type_params)
+                {
+                    self.local_type_params
+                        .push((type_param.name, self.interner.type_param(*type_param)));
+                }
+                let type_predicate = shape
+                    .type_predicate
+                    .as_ref()
+                    .and_then(|predicate| self.instantiate_type_predicate_if_changed(predicate));
+                let this_type = shape.this_type.map(|type_id| self.instantiate(type_id));
+                let instantiated_params = self.instantiate_params_if_changed(&shape.params);
+                let instantiated_return = self.instantiate(shape.return_type);
+                self.local_type_params.truncate(local_start);
+
+                self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                let this_changed = this_type != shape.this_type;
+                let return_changed = instantiated_return != shape.return_type;
+                if instantiated_type_params.is_some()
+                    || instantiated_params.is_some()
+                    || type_predicate.is_some()
+                    || this_changed
+                    || return_changed
+                {
+                    self.interner.function(FunctionShape {
+                        type_params: instantiated_type_params
+                            .unwrap_or_else(|| shape.type_params.clone()),
+                        params: instantiated_params.unwrap_or_else(|| shape.params.clone()),
+                        this_type,
+                        return_type: instantiated_return,
+                        type_predicate: type_predicate.or(shape.type_predicate),
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    })
+                } else {
+                    self.interner.intern(*key)
+                }
+            }
+
+            // Callable: instantiate all signatures and properties
+            TypeData::Callable(shape_id) => {
+                let shape = self.interner.callable_shape(*shape_id);
+                // Shallow-this mode: substitute the `this:` slot and
+                // top-level `ThisType` references in params / return_type;
+                // leave deeper composite types alone so polymorphic `this`
+                // in method bodies stays raw for intersection rebinding.
+                if self.shallow_this_only {
+                    let target_this = self.this_type.unwrap_or(TypeId::ERROR);
+                    let sub_top_level = |id: TypeId| -> TypeId {
+                        if matches!(self.interner.lookup(id), Some(TypeData::ThisType)) {
+                            target_this
+                        } else {
+                            id
+                        }
+                    };
+                    let rewrite_sig = |sig: &CallSignature| -> (CallSignature, bool) {
+                        let mut changed = false;
+                        let new_this_slot = sig.this_type.map(|s| {
+                            let n = sub_top_level(s);
+                            if n != s {
+                                changed = true;
+                            }
+                            n
+                        });
+                        let new_return = sub_top_level(sig.return_type);
+                        if new_return != sig.return_type {
+                            changed = true;
+                        }
+                        let mut new_params = Vec::with_capacity(sig.params.len());
+                        for p in sig.params.iter() {
+                            let new_t = sub_top_level(p.type_id);
+                            if new_t != p.type_id {
+                                changed = true;
+                                let mut np = *p;
+                                np.type_id = new_t;
+                                new_params.push(np);
+                            } else {
+                                new_params.push(*p);
+                            }
+                        }
+                        let mut new_sig = sig.clone();
+                        new_sig.this_type = new_this_slot;
+                        new_sig.return_type = new_return;
+                        new_sig.params = new_params;
+                        (new_sig, changed)
+                    };
+
+                    let mut updated_call = Vec::with_capacity(shape.call_signatures.len());
+                    let mut any_changed = false;
+                    for sig in shape.call_signatures.iter() {
+                        let (new_sig, changed) = rewrite_sig(sig);
+                        any_changed |= changed;
+                        updated_call.push(new_sig);
+                    }
+                    let mut updated_construct = Vec::with_capacity(shape.construct_signatures.len());
+                    for sig in shape.construct_signatures.iter() {
+                        let (new_sig, changed) = rewrite_sig(sig);
+                        any_changed |= changed;
+                        updated_construct.push(new_sig);
+                    }
+                    if any_changed {
+                        return self.interner.callable(CallableShape {
+                            call_signatures: updated_call,
+                            construct_signatures: updated_construct,
+                            properties: shape.properties.clone(),
+                            string_index: shape.string_index,
+                            number_index: shape.number_index,
+                            symbol: shape.symbol,
+                            is_abstract: shape.is_abstract,
+                        });
+                    }
+                    return self.interner.intern(*key);
+                }
+                let instantiated_call =
+                    self.instantiate_call_signatures_if_changed(&shape.call_signatures);
+                let instantiated_construct =
+                    self.instantiate_call_signatures_if_changed(&shape.construct_signatures);
+                let instantiated_props =
+                    self.instantiate_properties_if_changed(&shape.properties);
+                let instantiated_string_idx = shape
+                    .string_index
+                    .as_ref()
+                    .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
+                let instantiated_number_idx = shape
+                    .number_index
+                    .as_ref()
+                    .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
+
+                if instantiated_call.is_some()
+                    || instantiated_construct.is_some()
+                    || instantiated_props.is_some()
+                    || instantiated_string_idx.is_some()
+                    || instantiated_number_idx.is_some()
+                {
+                    self.interner.callable(CallableShape {
+                        call_signatures: instantiated_call
+                            .unwrap_or_else(|| shape.call_signatures.clone()),
+                        construct_signatures: instantiated_construct
+                            .unwrap_or_else(|| shape.construct_signatures.clone()),
+                        properties: instantiated_props.unwrap_or_else(|| shape.properties.clone()),
+                        string_index: instantiated_string_idx.or(shape.string_index),
+                        number_index: instantiated_number_idx.or(shape.number_index),
+                        symbol: shape.symbol,
+                        is_abstract: shape.is_abstract,
+                    })
+                } else {
+                    self.interner.intern(*key)
+                }
+            }
+
+            // Conditional: instantiate all parts
+            TypeData::Conditional(cond_id) => {
+                let cond = self.interner.get_conditional(*cond_id);
+                if cond.is_distributive
+                    && let Some(TypeData::TypeParameter(info)) =
+                        self.interner.lookup(cond.check_type)
+                    && !self.is_shadowed(info.name)
+                    && let Some(substituted) = self.substitution.get(info.name)
+                {
+                    // When substituting with `never`, the result is `never`
+                    if substituted == crate::types::TypeId::NEVER {
+                        return substituted;
+                    }
+                    // For `any`, we need to let evaluation handle it properly
+                    // so it can distribute to both branches
+                    // TypeScript treats `boolean` as `true | false` for distributive conditionals
+                    if substituted == TypeId::BOOLEAN {
+                        let cond_type = self.interner.conditional(cond);
+                        let mut results = Vec::with_capacity(2);
+                        for &member in &[TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE] {
+                            if self.depth_exceeded {
+                                return TypeId::ERROR;
+                            }
+                            let mut member_subst = self.substitution.clone();
+                            member_subst.insert(info.name, member);
+                            let instantiated = if self.preserve_unsubstituted_type_params {
+                                instantiate_type_preserving(self.interner, cond_type, &member_subst)
+                            } else {
+                                instantiate_type(self.interner, cond_type, &member_subst)
+                            };
+                            if instantiated == TypeId::ERROR {
+                                self.depth_exceeded = true;
+                                return TypeId::ERROR;
+                            }
+                            let evaluated = crate::evaluation::evaluate::evaluate_type(
+                                self.interner,
+                                instantiated,
+                            );
+                            if evaluated == TypeId::ERROR {
+                                self.depth_exceeded = true;
+                                return TypeId::ERROR;
+                            }
+                            results.push(evaluated);
+                        }
+                        return self.interner.union(results);
+                    }
+                    let distribution_source = match self.interner.lookup(substituted) {
+                        Some(TypeData::Union(_)) => substituted,
+                        _ => crate::evaluation::evaluate::evaluate_type(
+                            self.interner,
+                            substituted,
+                        ),
+                    };
+                    if let Some(TypeData::Union(members)) =
+                        self.interner.lookup(distribution_source)
+                    {
+                        let members = self.interner.type_list(members);
+                        // Limit distribution to prevent OOM with large unions
+                        // (e.g., string literal unions with thousands of members)
+                        const MAX_DISTRIBUTION_SIZE: usize = 100;
+                        if members.len() > MAX_DISTRIBUTION_SIZE {
+                            self.depth_exceeded = true;
+                            return TypeId::ERROR;
+                        }
+                        let cond_type = self.interner.conditional(cond);
+                        let mut results = Vec::with_capacity(members.len());
+                        for &member in members.iter() {
+                            // Check depth before each distribution step
+                            if self.depth_exceeded {
+                                return TypeId::ERROR;
+                            }
+                            let mut member_subst = self.substitution.clone();
+                            member_subst.insert(info.name, member);
+                            let instantiated = if self.preserve_unsubstituted_type_params {
+                                instantiate_type_preserving(self.interner, cond_type, &member_subst)
+                            } else {
+                                instantiate_type(self.interner, cond_type, &member_subst)
+                            };
+                            // Check if instantiation hit depth limit
+                            if instantiated == TypeId::ERROR {
+                                self.depth_exceeded = true;
+                                return TypeId::ERROR;
+                            }
+                            // Don't evaluate here — the instantiator lacks a TypeResolver,
+                            // so evaluate_type (with NoopResolver) can't resolve Lazy types
+                            // in the conditional's check/extends positions. Instead, return
+                            // the unevaluated conditionals and let the caller's evaluator
+                            // (which has a proper resolver) handle evaluation.
+                            results.push(instantiated);
+                        }
+                        return self.interner.union(results);
+                    }
+                }
+                let instantiated = ConditionalType {
+                    check_type: self.instantiate(cond.check_type),
+                    extends_type: self.instantiate(cond.extends_type),
+                    true_type: self.instantiate(cond.true_type),
+                    false_type: self.instantiate(cond.false_type),
+                    is_distributive: cond.is_distributive,
+                };
+                self.interner.conditional(instantiated)
+            }
+
+            // Mapped: instantiate constraint and template
+            TypeData::Mapped(mapped_id) => {
+                let mapped = self.interner.get_mapped(*mapped_id);
+                let tp_slice = std::slice::from_ref(&mapped.type_param);
+                let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(tp_slice);
+
+                // HOMOMORPHIC ARRAY/TUPLE: Check if this is `{ [K in keyof T]: Template }`
+                // where T is being substituted with an array-like type. If so, produce
+                // an array result directly, matching tsc's instantiateMappedArrayType.
+                // This must be done BEFORE standard instantiation because instantiating
+                // `keyof T` eagerly evaluates it to a flat union, losing the homomorphic
+                // structure needed for array/tuple preservation.
+                let has_identity_name_type = mapped.name_type.is_some_and(|name_type| {
+                    matches!(
+                        self.interner.lookup(name_type),
+                        Some(TypeData::TypeParameter(info)) if info.name == mapped.type_param.name
+                    )
+                });
+
+                // HOMOMORPHIC UNION DISTRIBUTION (tsc: instantiateMappedType → mapTypeWithAlias)
+                // Excluded: array/tuple-like unions are handled by the blocks below.
+                if let Some(TypeData::KeyOf(keyof_source)) = self.interner.lookup(mapped.constraint)
+                    && let Some(TypeData::TypeParameter(tp_info)) =
+                        self.interner.lookup(keyof_source)
+                    && !self.is_shadowed(tp_info.name)
+                    && let Some(substituted) = self.substitution.get(tp_info.name)
+                {
+                    let resolved =
+                        crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
+                    if let Some(TypeData::Union(list_id)) = self.interner.lookup(resolved)
+                        && !Self::is_array_or_tuple_like(self.interner, resolved)
+                    {
+                        let members: Vec<TypeId> =
+                            self.interner.type_list(list_id).to_vec();
+                        let mut results = Vec::with_capacity(members.len());
+                        // The iteration variable is a fresh local of this
+                        // mapped type; without shadowing it during per-member
+                        // splicing, the constraint-resolution fallback in
+                        // `instantiate_key` rewrites `K` to its instantiated
+                        // constraint and produces `<member>[keyof <member>]`
+                        // where the source said `<member>[K]`.
+                        let iter_var_shadow = [mapped.type_param.name];
+                        for &member in &members {
+                            if crate::visitors::visitor_predicates::is_primitive_type(
+                                self.interner,
+                                member,
+                            ) {
+                                results.push(member);
+                                continue;
+                            }
+                            let mut member_subst = self.substitution.clone();
+                            member_subst.insert(tp_info.name, member);
+                            let inst = |t| {
+                                instantiate_type_with_shadowed(
+                                    self.interner,
+                                    t,
+                                    &member_subst,
+                                    &iter_var_shadow,
+                                )
+                            };
+                            results.push(self.interner.mapped(MappedType {
+                                constraint: inst(mapped.constraint),
+                                template: inst(mapped.template),
+                                name_type: mapped.name_type.map(&inst),
+                                type_param: TypeParamInfo {
+                                    constraint: mapped.type_param.constraint.map(&inst),
+                                    default: mapped.type_param.default.map(&inst),
+                                    ..mapped.type_param
+                                },
+                                ..mapped
+                            }));
+                        }
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+                        return self.interner.union(results);
+                    }
+                }
+
+                // tsc's `instantiateMappedType`: when the homomorphic source T
+                // resolves to `any` and T is constrained to array/tuple types,
+                // the result is an array shape — independent of whether the
+                // template references T[K]. Templates that DO reference T[K]
+                // are still handled by the main array-preservation block below
+                // (which mirrors tsc's full instantiateMappedArrayType path).
+                if (mapped.name_type.is_none() || has_identity_name_type)
+                    && let Some(TypeData::KeyOf(keyof_source)) =
+                        self.interner.lookup(mapped.constraint)
+                    && let Some(TypeData::TypeParameter(tp_info)) =
+                        self.interner.lookup(keyof_source)
+                    && !self.is_shadowed(tp_info.name)
+                    && let Some(substituted) = self.substitution.get(tp_info.name)
+                    && !Self::mapped_template_uses_source_index(
+                        self.interner,
+                        mapped.template,
+                        keyof_source,
+                        mapped.type_param.name,
+                    )
+                    && crate::evaluation::evaluate::evaluate_type(self.interner, substituted)
+                        == TypeId::ANY
+                    && tp_info.constraint.is_some_and(|c| {
+                        let ec = crate::evaluation::evaluate::evaluate_type(self.interner, c);
+                        Self::is_array_or_tuple_like(self.interner, ec)
+                    })
+                {
+                    // Substitute T → any in the template, then K → number, then
+                    // wrap in Array (matching tsc's instantiateMappedArrayType).
+                    let new_template = self.instantiate(mapped.template);
+                    self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                    let subst =
+                        TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
+                    let mapped_element = crate::evaluation::evaluate::evaluate_type(
+                        self.interner,
+                        instantiate_type(self.interner, new_template, &subst),
+                    );
+
+                    let final_element = if matches!(
+                        mapped.optional_modifier,
+                        Some(crate::types::MappedModifier::Add)
+                    ) {
+                        self.interner.union2(mapped_element, TypeId::UNDEFINED)
+                    } else {
+                        mapped_element
+                    };
+
+                    let array_type = self.interner.array(final_element);
+                    return if matches!(
+                        mapped.readonly_modifier,
+                        Some(crate::types::MappedModifier::Add)
+                    ) {
+                        self.interner.readonly_type(array_type)
+                    } else {
+                        array_type
+                    };
+                }
+
+                if (mapped.name_type.is_none() || has_identity_name_type)
+                    && let Some(TypeData::KeyOf(keyof_source)) =
+                        self.interner.lookup(mapped.constraint)
+                    && let Some(TypeData::TypeParameter(tp_info)) =
+                        self.interner.lookup(keyof_source)
+                    && Self::mapped_template_uses_source_index(
+                        self.interner,
+                        mapped.template,
+                        keyof_source,
+                        mapped.type_param.name,
+                    )
+                    && !self.is_shadowed(tp_info.name)
+                    && let Some(substituted) = self.substitution.get(tp_info.name)
+                {
+                    let resolved =
+                        crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
+
+                    // tsc: When a homomorphic mapped type's source type parameter
+                    // is instantiated with `any`, the result depends on the type
+                    // parameter's constraint:
+                    //   - Array/tuple constraint → produce array result
+                    //   - Non-array constraint → fall through to standard mapped
+                    //     type instantiation (produces `{ [x: string]: ... }`)
+                    // We must NOT unconditionally return TypeId::ANY because that
+                    // makes `Objectish<any>` assignable to `any[]`, which is wrong.
+                    if resolved == TypeId::ANY {
+                        let constraint_is_array_like = tp_info.constraint.is_some_and(|c| {
+                            let ec = crate::evaluation::evaluate::evaluate_type(self.interner, c);
+                            Self::is_array_or_tuple_like(self.interner, ec)
+                        });
+
+                        if constraint_is_array_like {
+                            // Array/tuple-constrained T with any: produce array.
+                            // Substitute K → number in the template.
+                            let new_template = self.instantiate(mapped.template);
+                            self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                            let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
+                            let mapped_element = crate::evaluation::evaluate::evaluate_type(
+                                self.interner,
+                                instantiate_type(self.interner, new_template, &subst),
+                            );
+
+                            let final_element = if matches!(
+                                mapped.optional_modifier,
+                                Some(crate::types::MappedModifier::Add)
+                            ) {
+                                self.interner.union2(mapped_element, TypeId::UNDEFINED)
+                            } else {
+                                mapped_element
+                            };
+
+                            let array_type = self.interner.array(final_element);
+                            return if matches!(
+                                mapped.readonly_modifier,
+                                Some(crate::types::MappedModifier::Add)
+                            ) {
+                                self.interner.readonly_type(array_type)
+                            } else {
+                                array_type
+                            };
+                        }
+                        // IDENTITY homomorphic mapped type with `any`: return any.
+                        // tsc returns `any` ONLY for identity templates (`T[K]`), not
+                        // for non-identity templates like `Box<T[K]>`.
+                        // For non-identity templates, we fall through to standard
+                        // instantiation which produces `{ [x: string]: Box<any> }`.
+                        let is_identity_template =
+                            crate::index_access_parts(self.interner, mapped.template).is_some_and(
+                                |(obj, key)| {
+                                    obj == keyof_source
+                                        && matches!(
+                                            self.interner.lookup(key),
+                                            Some(TypeData::TypeParameter(kp))
+                                                if kp.name == mapped.type_param.name
+                                        )
+                                },
+                            );
+                        if is_identity_template {
+                            self.exit_shadowing_scope(shadowed_len, saved_visiting);
+                            return TypeId::ANY;
+                        }
+                        // Non-identity template: fall through to standard instantiation
+                    }
+
+                    // Check for Tuple first (tsc: instantiateMappedTupleType)
+                    // Must also handle ReadonlyType wrapping Tuple
+                    let tuple_source = if resolved.is_intrinsic() {
+                        None
+                    } else {
+                        match self.interner.lookup(resolved) {
+                            Some(TypeData::Tuple(tid)) => Some(tid),
+                            Some(TypeData::ReadonlyType(inner)) => {
+                                let ir = crate::evaluation::evaluate::evaluate_type(
+                                    self.interner,
+                                    inner,
+                                );
+                                if ir.is_intrinsic() {
+                                    None
+                                } else {
+                                    match self.interner.lookup(ir) {
+                                        Some(TypeData::Tuple(tid)) => Some(tid),
+                                        _ => None,
+                                    }
+                                }
+                            }
+                            _ => None,
+                        }
+                    };
+                    if let Some(tuple_id) = tuple_source {
+                        let elements = self.interner.tuple_list(tuple_id);
+                        // Instantiate template first (substitutes T, keeps K shadowed)
+                        let new_template = self.instantiate(mapped.template);
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                        let mut new_elements = Vec::with_capacity(elements.len());
+                        for (i, elem) in elements.iter().enumerate() {
+                            let key_type = self.interner.literal_string(&i.to_string());
+                            let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
+                            let mapped_type = crate::evaluation::evaluate::evaluate_type(
+                                self.interner,
+                                instantiate_type(self.interner, new_template, &subst),
+                            );
+
+                            let final_type = if matches!(
+                                mapped.optional_modifier,
+                                Some(crate::types::MappedModifier::Add)
+                            ) {
+                                self.interner.union2(mapped_type, TypeId::UNDEFINED)
+                            } else {
+                                mapped_type
+                            };
+
+                            new_elements.push(crate::types::TupleElement {
+                                type_id: final_type,
+                                name: elem.name,
+                                optional: elem.optional,
+                                rest: elem.rest,
+                            });
+                        }
+
+                        let tuple_type = self.interner.tuple(new_elements);
+                        return if matches!(
+                            mapped.readonly_modifier,
+                            Some(crate::types::MappedModifier::Add)
+                        ) {
+                            self.interner.readonly_type(tuple_type)
+                        } else {
+                            tuple_type
+                        };
+                    }
+
+                    // Then check for Array (tsc: instantiateMappedArrayType)
+                    let array_element = Self::extract_array_element(self.interner, resolved);
+                    if let Some(_element_type) = array_element {
+                        // Produce array result: substitute K → number in the template
+                        let new_template = self.instantiate(mapped.template);
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                        let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
+                        let mapped_element = crate::evaluation::evaluate::evaluate_type(
+                            self.interner,
+                            crate::instantiation::instantiate::instantiate_type(
+                                self.interner,
+                                new_template,
+                                &subst,
+                            ),
+                        );
+
+                        // Apply mapped type modifiers
+                        let final_element = if matches!(
+                            mapped.optional_modifier,
+                            Some(crate::types::MappedModifier::Add)
+                        ) {
+                            self.interner.union2(mapped_element, TypeId::UNDEFINED)
+                        } else {
+                            mapped_element
+                        };
+
+                        let array_type = self.interner.array(final_element);
+                        return if matches!(
+                            mapped.readonly_modifier,
+                            Some(crate::types::MappedModifier::Add)
+                        ) {
+                            self.interner.readonly_type(array_type)
+                        } else {
+                            array_type
+                        };
+                    }
+
+                    // PRIMITIVE PASSTHROUGH: tsc's instantiateMappedType returns the
+                    // source type unchanged when it is a primitive (null, undefined,
+                    // string, number, boolean, etc.). This matches the evaluate_application
+                    // passthrough but also covers mapped types that appear nested inside
+                    // unions or other compound types (not just at the top level of a type
+                    // alias body). Without this, `{ [K in keyof null]: null[K] }` inside
+                    // a union evaluates to `{}` instead of `null`.
+                    if Self::is_primitive_or_primitive_union(self.interner, resolved) {
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+                        return resolved;
+                    }
+                }
+
+                tracing::trace!(
+                    tp_name = ?self.interner.resolve_atom_ref(mapped.type_param.name),
+                    constraint = mapped.constraint.0,
+                    constraint_key = ?self.interner.lookup(mapped.constraint),
+                    shadowed = ?self.shadowed.iter().map(|a| self.interner.resolve_atom_ref(*a)).collect::<Vec<_>>(),
+                    subst = ?self.substitution.map.iter().map(|(k, v)| (self.interner.resolve_atom_ref(*k), v.0)).collect::<Vec<_>>(),
+                    "instantiate Mapped: about to instantiate constraint"
+                );
+                let saved_preserve_unsubstituted = self.preserve_unsubstituted_type_params;
+                self.preserve_unsubstituted_type_params = true;
+
+                let new_constraint = self.instantiate(mapped.constraint);
+                let new_template = self.instantiate(mapped.template);
+                let new_name_type = mapped.name_type.map(|t| self.instantiate(t));
+                let new_param_constraint =
+                    mapped.type_param.constraint.map(|c| self.instantiate(c));
+                let new_param_default = mapped.type_param.default.map(|d| self.instantiate(d));
+
+                self.preserve_unsubstituted_type_params = saved_preserve_unsubstituted;
+
+                self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                tracing::trace!(
+                    old_constraint = mapped.constraint.0,
+                    new_constraint = new_constraint.0,
+                    new_constraint_key = ?self.interner.lookup(new_constraint),
+                    old_template = mapped.template.0,
+                    new_template = new_template.0,
+                    "instantiate Mapped: result"
+                );
+
+                // If the mapped type is unchanged after substitution (e.g., because
+                // the mapped type's own type parameter shadowed the outer substitution),
+                // return the original to avoid eager evaluation that would collapse it.
+                let unchanged = new_constraint == mapped.constraint
+                    && new_template == mapped.template
+                    && new_name_type == mapped.name_type
+                    && new_param_constraint == mapped.type_param.constraint
+                    && new_param_default == mapped.type_param.default;
+
+                if unchanged {
+                    tracing::trace!("instantiate Mapped: UNCHANGED, returning original");
+                    return self.interner.mapped(mapped);
+                }
+
+                let instantiated = MappedType {
+                    type_param: TypeParamInfo {
+                        is_const: false,
+                        name: mapped.type_param.name,
+                        constraint: new_param_constraint,
+                        default: new_param_default,
+                    },
+                    constraint: new_constraint,
+                    name_type: new_name_type,
+                    template: new_template,
+                    readonly_modifier: mapped.readonly_modifier,
+                    optional_modifier: mapped.optional_modifier,
+                };
+
+                // Trigger evaluation immediately for changed mapped types.
+                // This converts MappedType { constraint: "host"|"port", ... }
+                // into Object { host?: string, port?: number }
+                // Without this, the MappedType is returned unevaluated, causing subtype checks to fail.
+                //
+                // However, skip eager evaluation when the template is a Conditional whose
+                // extends_type is directly a Lazy(DefId) reference. This pattern occurs in
+                // mapped type key filters like `T[K] extends Function ? never : K`, where
+                // `Function` is a global lib interface referenced as Lazy(DefId). The
+                // instantiator's NoopResolver can't resolve these references, causing the
+                // conditional's subtype check to always fail and incorrectly accept all keys.
+                // The checker will re-evaluate later with a proper resolver.
+                //
+                // We check for direct Lazy (not contained-in) to avoid matching cases like
+                // `undefined extends T[P] ? never : P` where the extends_type is an
+                // IndexAccess that may contain Lazy internally but can be evaluated.
+                let mapped_type = self.interner.mapped(instantiated);
+                let has_lazy_conditional_boundary = if let Some(cond) =
+                    crate::type_queries::get_conditional_type(self.interner, new_template)
+                {
+                    matches!(
+                        self.interner.lookup(cond.extends_type),
+                        Some(crate::types::TypeData::Lazy(_))
+                    ) || matches!(
+                        self.interner.lookup(cond.check_type),
+                        Some(crate::types::TypeData::Lazy(_))
+                    )
+                } else {
+                    false
+                };
+                // Also skip eager evaluation when the template contains Application
+                // types whose base is a Lazy(DefId) reference (e.g. recursive type
+                // aliases like `Spec<T[P]>`).  The instantiator's NoopResolver cannot
+                // resolve these references, so the evaluator would silently drop
+                // unresolvable union members.  Deferring lets the outer evaluator
+                // (which has a proper TypeResolver) handle the full expansion.
+                let has_lazy_application =
+                    template_has_lazy_application_in_composite(self.interner, new_template);
+                // Same hazard for the `as` clause: a Lazy alias application in
+                // `name_type` collapses to `never` under NoopResolver eager
+                // evaluation, filtering out every key.
+                let name_type_has_lazy_application = new_name_type
+                    .is_some_and(|nt| type_contains_lazy_application(self.interner, nt));
+                let resolver_dependent_constraint =
+                    mapped_constraint_needs_resolver(self.interner, new_constraint);
+                if self.preserve_meta_types
+                    || has_lazy_conditional_boundary
+                    || has_lazy_application
+                    || name_type_has_lazy_application
+                    || resolver_dependent_constraint
+                {
+                    mapped_type
+                } else if crate::visitor::contains_type_parameters(self.interner, new_constraint) {
+                    // Don't eagerly evaluate when the constraint still contains type
+                    // parameters (e.g., `keyof __infer_0` during generic call inference).
+                    // Premature evaluation would resolve `keyof T` through T's constraint
+                    // (e.g., `keyof Record<string, string>` → `string`), destroying the
+                    // homomorphic `keyof T` pattern needed for reverse-mapped inference.
+                    // The constraint collection and post-inference check will evaluate
+                    // the mapped type after inference resolves the type parameters.
+                    mapped_type
+                } else {
+                    crate::evaluation::evaluate::evaluate_type(self.interner, mapped_type)
+                }
+            }
+
+            // Index access: instantiate both parts and evaluate immediately
+            // Task #46: Meta-type reduction for O(1) equality
+            TypeData::IndexAccess(obj, idx) => {
+                let inst_obj = self.instantiate(*obj);
+                let inst_idx = self.instantiate(*idx);
+                // Don't eagerly evaluate if either part still contains type parameters.
+                // This prevents premature evaluation of `T[K]` or `T[keyof T]` where T
+                // is an inference placeholder, which would resolve through the constraint
+                // instead of waiting for the actual inferred type.
+                if crate::visitor::contains_type_parameters(self.interner, inst_obj)
+                    || crate::visitor::contains_type_parameters(self.interner, inst_idx)
+                {
+                    return self.interner.index_access(inst_obj, inst_idx);
+                }
+                if self.preserve_meta_types
+                    || index_access_operand_needs_resolver(self.interner, inst_obj)
+                    || index_access_operand_needs_resolver(self.interner, inst_idx)
+                {
+                    return self.interner.index_access(inst_obj, inst_idx);
+                }
+                // Evaluate immediately to achieve O(1) equality
+                crate::evaluation::evaluate::evaluate_index_access(
+                    self.interner,
+                    inst_obj,
+                    inst_idx,
+                )
+            }
+
+            // KeyOf: instantiate the operand and evaluate immediately
+            // Task #46: Meta-type reduction for O(1) equality
+            TypeData::KeyOf(operand) => {
+                tracing::trace!(
+                    operand = operand.0,
+                    operand_key = ?self.interner.lookup(*operand),
+                    subst = ?self.substitution.map.iter().map(|(k, v)| (self.interner.resolve_atom_ref(*k), v.0)).collect::<Vec<_>>(),
+                    "instantiate KeyOf: about to instantiate operand"
+                );
+                let inst_operand = self.instantiate(*operand);
+                tracing::trace!(
+                    operand = operand.0,
+                    inst_operand = inst_operand.0,
+                    inst_operand_key = ?self.interner.lookup(inst_operand),
+                    has_type_params = crate::visitor::contains_type_parameters(self.interner, inst_operand),
+                    "instantiate KeyOf: result"
+                );
+                // Don't eagerly evaluate if the operand still contains type parameters.
+                // This prevents premature evaluation of `keyof T` where T is an inference
+                // placeholder (e.g. during compute_contextual_types), which would resolve
+                // to `keyof <constraint>` instead of waiting for T to be inferred.
+                // Without this, mapped types like `{ [P in keyof T]: ... }` collapse to `{}`
+                // because `keyof object` = `never`.
+                if crate::visitor::contains_type_parameters(self.interner, inst_operand) {
+                    return self.interner.keyof(inst_operand);
+                }
+                if self.preserve_meta_types {
+                    return self.interner.keyof(inst_operand);
+                }
+                if matches!(
+                    self.interner.lookup(inst_operand),
+                    Some(
+                        TypeData::TypeQuery(_)
+                            | TypeData::Lazy(_)
+                            | TypeData::Application(_)
+                            | TypeData::IndexAccess(_, _)
+                    )
+                ) {
+                    return self.interner.keyof(inst_operand);
+                }
+                // Evaluate immediately to expand keyof { a: 1 } -> "a"
+                let result =
+                    crate::evaluation::evaluate::evaluate_keyof(self.interner, inst_operand);
+
+                // Store display alias so the formatter shows "keyof Shape" instead
+                // of the expanded union. Only store when the result is non-trivial
+                // and the operand is a named type (has a def-store mapping via the
+                // Object/Callable shape → def reverse lookup in the formatter).
+                if result != TypeId::NEVER && !result.is_intrinsic() {
+                    let keyof_type = self.interner.keyof(inst_operand);
+                    if result != keyof_type {
+                        self.interner.store_display_alias(result, keyof_type);
+                    }
+                }
+
+                result
+            }
+
+            // ReadonlyType: instantiate the operand
+            TypeData::ReadonlyType(operand) => {
+                let inst_operand = self.instantiate(*operand);
+                self.interner.readonly_type(inst_operand)
+            }
+
+            // NoInfer: preserve wrapper, instantiate inner
+            TypeData::NoInfer(inner) => {
+                let inst_inner = self.instantiate(*inner);
+                self.interner.no_infer(inst_inner)
+            }
+
+            // Template literal: instantiate embedded types
+            // After substitution, if any type span becomes a union of string literals,
+            // we trigger evaluation to expand the template literal into a union of strings.
+            TypeData::TemplateLiteral(spans) => {
+                let spans = self.interner.template_list(*spans);
+                let mut instantiated: Vec<TemplateSpan> = Vec::with_capacity(spans.len());
+                let mut needs_evaluation = false;
+
+                for span in spans.iter() {
+                    match span {
+                        TemplateSpan::Text(t) => instantiated.push(TemplateSpan::Text(*t)),
+                        TemplateSpan::Type(t) => {
+                            let inst_type = self.instantiate(*t);
+                            // Check if this type became something that can be evaluated:
+                            // - A union of string literals
+                            // - A single string literal
+                            // - The string intrinsic type
+                            if let Some(
+                                TypeData::Union(_)
+                                | TypeData::Literal(
+                                    LiteralValue::String(_)
+                                    | LiteralValue::Number(_)
+                                    | LiteralValue::Boolean(_),
+                                )
+                                | TypeData::Intrinsic(
+                                    IntrinsicKind::String
+                                    | IntrinsicKind::Number
+                                    | IntrinsicKind::Boolean,
+                                ),
+                            ) = self.interner.lookup(inst_type)
+                            {
+                                needs_evaluation = true;
+                            }
+                            instantiated.push(TemplateSpan::Type(inst_type));
+                        }
+                    }
+                }
+
+                let template_type = self.interner.template_literal(instantiated);
+
+                // If we detected types that can be evaluated, trigger evaluation
+                // to potentially expand the template literal to a union of string literals
+                if needs_evaluation {
+                    crate::evaluation::evaluate::evaluate_type(self.interner, template_type)
+                } else {
+                    template_type
+                }
+            }
+
+            // StringIntrinsic: instantiate the type argument
+            // After substitution, if the type argument becomes a concrete type that can
+            // be evaluated (like a string literal or union), trigger evaluation.
+            TypeData::StringIntrinsic { kind, type_arg } => {
+                let inst_arg = self.instantiate(*type_arg);
+                let string_intrinsic = self.interner.string_intrinsic(*kind, inst_arg);
+
+                // Check if we can evaluate the result
+                if let Some(key) = self.interner.lookup(inst_arg) {
+                    match key {
+                        TypeData::Union(_)
+                        | TypeData::Literal(LiteralValue::String(_))
+                        | TypeData::TemplateLiteral(_)
+                        | TypeData::Intrinsic(IntrinsicKind::String) => {
+                            crate::evaluation::evaluate::evaluate_type(
+                                self.interner,
+                                string_intrinsic,
+                            )
+                        }
+                        _ => string_intrinsic,
+                    }
+                } else {
+                    string_intrinsic
+                }
+            }
+
+            // Infer: keep as-is unless explicitly substituting inference variables
+            TypeData::Infer(info) => {
+                if self.substitute_infer
+                    && !self.is_shadowed(info.name)
+                    && let Some(substituted) = self.substitution.get(info.name)
+                {
+                    return substituted;
+                }
+                // Instantiate the constraint if it references type parameters being substituted.
+                // e.g., `infer A extends keyof T` when T is being substituted with Obj
+                // needs the constraint updated to `keyof Obj`.
+                let new_info = if let Some(constraint) = info.constraint {
+                    let new_constraint = self.instantiate(constraint);
+                    if new_constraint != constraint {
+                        TypeParamInfo {
+                            constraint: Some(new_constraint),
+                            ..*info
+                        }
+                    } else {
+                        *info
+                    }
+                } else {
+                    *info
+                };
+                self.interner.infer(new_info)
+            }
+        }
+    }
+
+    /// Propagate display properties from intersection members to the result.
+    #[allow(dead_code)]
+    fn propagate_display_properties_for_intersection(
+        &self,
+        original_members: &[TypeId],
+        result: TypeId,
+    ) {
+        let display_vec = crate::types::merge_display_properties_for_intersection(
+            self.interner,
+            original_members,
+        );
+        if !display_vec.is_empty() {
+            self.interner.store_display_properties(result, display_vec);
+        }
+    }
+}
+
+/// Convenience function for instantiating a type with a substitution.
+///
+/// Cache-aware overload of [`instantiate_type`]. When the caller provides a
+/// `&dyn QueryDatabase`, the cross-call instantiation cache on `QueryCache`
+/// is consulted before recursive walking and populated afterwards. Existing
+/// callers that pass `&dyn TypeDatabase` (i.e. the no-cache path) continue
+/// to work unchanged via [`instantiate_type`].
+#[inline]
+pub fn instantiate_type(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> TypeId {
+    instantiate_type_cached(interner, None, type_id, substitution)
+}
+
+/// Like [`instantiate_type`], but treats `shadowed_params` as locally bound.
+/// Type parameters in that list are returned unchanged even when their
+/// constraints reference substituted outer type parameters, so a fresh local
+/// binding such as a mapped type's iteration variable cannot be rewritten
+/// into its constraint by the forward-reference fallback in `instantiate_key`.
+pub(crate) fn instantiate_type_with_shadowed(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+    shadowed_params: &[Atom],
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    if substitution.is_empty() || substitution.is_identity(interner) {
+        return type_id;
+    }
+    let mut instantiator = TypeInstantiator::new(interner, substitution);
+    instantiator.shadowed.extend_from_slice(shadowed_params);
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        return TypeId::ERROR;
+    }
+    result
+}
+
+/// Cache-aware variant of [`instantiate_type`].
+///
+/// `query_db = Some(db)` enables the cross-call instantiation cache on
+/// `QueryCache`.
+///
+/// The leaf fast paths (`TypeParameter` direct hit, `IndexAccess(T, P)`) run
+/// BEFORE any cache-key construction so they remain allocation-free.
+#[inline]
+pub fn instantiate_type_cached(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> TypeId {
+    // Fast path: intrinsic types never need instantiation
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    match interner.lookup(type_id) {
+        // Fast path: TypeParameter directly in the substitution — return immediately.
+        // This is the most common leaf case in mapped type template instantiation.
+        // MUST run BEFORE any CanonicalSubst construction so we don't pay
+        // hash/alloc for trivial leaf substitutions.
+        Some(TypeData::TypeParameter(info)) => {
+            if let Some(result) = substitution.get(info.name) {
+                return result;
+            }
+        }
+        // Fast path: IndexAccess(T, P) — the most common mapped type template pattern.
+        // Recursively instantiate obj and idx without creating a TypeInstantiator.
+        // Same reasoning as above: cache-key construction MUST NOT happen for this case.
+        Some(TypeData::IndexAccess(obj, idx)) => {
+            let new_obj = instantiate_type_cached(interner, query_db, obj, substitution);
+            let new_idx = instantiate_type_cached(interner, query_db, idx, substitution);
+            if new_obj == obj && new_idx == idx {
+                return type_id;
+            }
+            return interner.index_access(new_obj, new_idx);
+        }
+        _ => {}
+    }
+
+    // Empty/identity short-circuit — no cache key construction needed.
+    if substitution.is_empty() || substitution.is_identity(interner) {
+        return type_id;
+    }
+
+    // Cache probe (only when an explicit `QueryDatabase` is provided).
+    if let Some(db) = query_db {
+        let key = InstantiationCacheKey::new(
+            type_id,
+            canonical_subst_for(substitution),
+            0, // default mode bits for `instantiate_type`
+            None,
+        );
+        if let Some(cached) = db.lookup_instantiation_cache(&key) {
+            return cached;
+        }
+        let mut instantiator = TypeInstantiator::new(interner, substitution);
+        let result = instantiator.instantiate(type_id);
+        if instantiator.depth_exceeded {
+            return TypeId::ERROR;
+        }
+        db.insert_instantiation_cache(key, result);
+        return result;
+    }
+
+    instantiate_type_with_depth_status(interner, type_id, substitution).0
+}
+
+/// Instantiate every type parameter reachable from `type_id` to its constraint.
+///
+/// This is used as an error-recovery surface after failed overload resolution:
+/// tsc keeps the constructor/call fallback type, but the fallback should expose
+/// constrained key types like `object` rather than raw, unresolved parameters
+/// such as `T` or `K`.
+pub fn instantiate_type_params_to_constraints(db: &dyn QueryDatabase, type_id: TypeId) -> TypeId {
+    let mut substitution = TypeSubstitution::new();
+    with_constraint_visited(|visited| {
+        collect_type_param_constraint_substitutions(
+            db.as_type_database(),
+            type_id,
+            &mut substitution,
+            visited,
+        );
+    });
+    if substitution.is_empty() {
+        type_id
+    } else {
+        instantiate_type_cached(db.as_type_database(), Some(db), type_id, &substitution)
+    }
+}
+
+fn collect_type_param_constraint_substitutions(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &mut TypeSubstitution,
+    visited: &mut FxHashSet<TypeId>,
+) {
+    if type_id.is_intrinsic() || !visited.insert(type_id) {
+        return;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+            if let Some(constraint) = info.constraint {
+                substitution.insert(info.name, constraint);
+                collect_type_param_constraint_substitutions(db, constraint, substitution, visited);
+            }
+            if let Some(default) = info.default {
+                collect_type_param_constraint_substitutions(db, default, substitution, visited);
+            }
+        }
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            collect_type_param_constraint_substitutions(db, app.base, substitution, visited);
+            for &arg in &app.args {
+                collect_type_param_constraint_substitutions(db, arg, substitution, visited);
+            }
+        }
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            for member in db.type_list(list_id).iter().copied() {
+                collect_type_param_constraint_substitutions(db, member, substitution, visited);
+            }
+        }
+        Some(
+            TypeData::Array(element) | TypeData::ReadonlyType(element) | TypeData::KeyOf(element),
+        ) => {
+            collect_type_param_constraint_substitutions(db, element, substitution, visited);
+        }
+        Some(TypeData::IndexAccess(object, index)) => {
+            collect_type_param_constraint_substitutions(db, object, substitution, visited);
+            collect_type_param_constraint_substitutions(db, index, substitution, visited);
+        }
+        _ => {}
+    }
+}
+
+/// Instantiate a type while preserving unsubstituted type parameters.
+///
+/// Unlike `instantiate_type`, this does NOT fall back to replacing type
+/// parameters with their instantiated constraints when they are not in the
+/// substitution map. This is needed when instantiating mapped type bodies
+/// (constraint + template) with the outer type arguments, so that the mapped
+/// key parameter (e.g., `P` from `[P in keyof T]: T[P]`) stays as a type
+/// parameter instead of being collapsed to its constraint.
+pub fn instantiate_type_preserving(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> TypeId {
+    instantiate_type_preserving_cached(interner, None, type_id, substitution)
+}
+
+/// Cache-aware variant of [`instantiate_type_preserving`].
+pub fn instantiate_type_preserving_cached(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    if substitution.is_empty() || substitution.is_identity(interner) {
+        return type_id;
+    }
+    if let Some(db) = query_db {
+        let key = InstantiationCacheKey::new(
+            type_id,
+            canonical_subst_for(substitution),
+            MODE_PRESERVE_UNSUBSTITUTED,
+            None,
+        );
+        if let Some(cached) = db.lookup_instantiation_cache(&key) {
+            return cached;
+        }
+        let mut instantiator = TypeInstantiator::new(interner, substitution);
+        instantiator.preserve_unsubstituted_type_params = true;
+        let result = instantiator.instantiate(type_id);
+        if instantiator.depth_exceeded {
+            return TypeId::ERROR;
+        }
+        db.insert_instantiation_cache(key, result);
+        return result;
+    }
+    let mut instantiator = TypeInstantiator::new(interner, substitution);
+    instantiator.preserve_unsubstituted_type_params = true;
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
+}
+
+/// Instantiate a type and report whether instantiation depth overflowed.
+///
+/// This variant is intentionally NOT cached (the cross-call cache lives on
+/// the five public entry points; this primitive is also used internally by
+/// recursion-sensitive paths that need the depth-overflow signal).
+pub fn instantiate_type_with_depth_status(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> (TypeId, bool) {
+    // Fast path: intrinsic types never need instantiation (no type-parameter
+    // occurrences, no recursion). Skip the substitution probe AND the
+    // `TypeInstantiator` construction. Mirrors the leaf fast path in
+    // `instantiate_type_cached` / `instantiate_type_preserving_cached`.
+    if type_id.is_intrinsic() {
+        return (type_id, false);
+    }
+    if substitution.is_empty() || substitution.is_identity(interner) {
+        return (type_id, false);
+    }
+    let mut instantiator = TypeInstantiator::new(interner, substitution);
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        (TypeId::ERROR, true)
+    } else {
+        (result, false)
+    }
+}
+
+/// Convenience function for instantiating a type while preserving meta-type
+/// structure such as `keyof`, index access, and mapped types.
+///
+/// This is used when callers need to inspect whether an instantiated type still
+/// structurally depends on a nominal symbol before a later evaluation pass can
+/// safely reduce it.
+pub fn instantiate_type_preserving_meta(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> TypeId {
+    instantiate_type_preserving_meta_cached(interner, None, type_id, substitution)
+}
+
+/// Cache-aware variant of [`instantiate_type_preserving_meta`].
+pub fn instantiate_type_preserving_meta_cached(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> TypeId {
+    // Fast path: intrinsic types never need instantiation. Skip the
+    // substitution probe, the cache-key construction, and the
+    // `TypeInstantiator` setup. Mirrors `instantiate_type_cached` and
+    // `instantiate_type_preserving_cached`.
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    if substitution.is_empty() || substitution.is_identity(interner) {
+        return type_id;
+    }
+    if let Some(db) = query_db {
+        let key = InstantiationCacheKey::new(
+            type_id,
+            canonical_subst_for(substitution),
+            MODE_PRESERVE_META,
+            None,
+        );
+        if let Some(cached) = db.lookup_instantiation_cache(&key) {
+            return cached;
+        }
+        let mut instantiator = TypeInstantiator::new(interner, substitution);
+        instantiator.preserve_meta_types = true;
+        let result = instantiator.instantiate(type_id);
+        if instantiator.depth_exceeded {
+            return TypeId::ERROR;
+        }
+        db.insert_instantiation_cache(key, result);
+        return result;
+    }
+    let mut instantiator = TypeInstantiator::new(interner, substitution);
+    instantiator.preserve_meta_types = true;
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
+}
+
+/// Convenience function for instantiating a type while substituting infer variables.
+pub fn instantiate_type_with_infer(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> TypeId {
+    instantiate_type_with_infer_cached(interner, None, type_id, substitution)
+}
+
+/// Cache-aware variant of [`instantiate_type_with_infer`].
+pub fn instantiate_type_with_infer_cached(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+) -> TypeId {
+    // Fast path: intrinsic types have no `Infer(_)` occurrences, so an
+    // infer-substituting walk produces the input unchanged. Skip the
+    // substitution probe, the cache-key construction, and the
+    // `TypeInstantiator` setup.
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    if substitution.is_empty() || substitution.is_identity(interner) {
+        return type_id;
+    }
+    if let Some(db) = query_db {
+        let key = InstantiationCacheKey::new(
+            type_id,
+            canonical_subst_for(substitution),
+            MODE_SUBSTITUTE_INFER,
+            None,
+        );
+        if let Some(cached) = db.lookup_instantiation_cache(&key) {
+            return cached;
+        }
+        let mut instantiator = TypeInstantiator::new(interner, substitution);
+        instantiator.substitute_infer = true;
+        let result = instantiator.instantiate(type_id);
+        if instantiator.depth_exceeded {
+            return TypeId::ERROR;
+        }
+        db.insert_instantiation_cache(key, result);
+        return result;
+    }
+    let mut instantiator = TypeInstantiator::new(interner, substitution);
+    instantiator.substitute_infer = true;
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
+}
+
+/// Convenience function for instantiating a generic type with type arguments.
+///
+/// Fill in type parameter defaults for an application's args when fewer args
+/// are provided than parameters exist. Returns `None` if any missing arg has
+/// no default. Defaults that reference earlier type parameters are properly
+/// instantiated via `TypeSubstitution::from_args`.
+///
+/// Example: `Generator<T>` with params `[T, TReturn=any, TNext=unknown]`
+/// returns `Some([T, any, unknown])`.
+pub fn fill_application_defaults(
+    interner: &dyn TypeDatabase,
+    args: &[TypeId],
+    type_params: &[TypeParamInfo],
+) -> Option<Vec<TypeId>> {
+    if args.len() >= type_params.len() {
+        return Some(args[..type_params.len()].to_vec());
+    }
+    let subst = TypeSubstitution::from_args(interner, type_params, args);
+    let mut result = Vec::with_capacity(type_params.len());
+    for (i, param) in type_params.iter().enumerate() {
+        if i < args.len() {
+            result.push(args[i]);
+        } else {
+            let resolved = subst.get(param.name)?;
+            result.push(resolved);
+        }
+    }
+    Some(result)
+}
+
+/// Uses `is_identity_for` instead of the name-only `is_identity` check to
+/// correctly handle same-name type parameters from different scopes (e.g.,
+/// alias `T` vs function `T extends object`).
+pub fn instantiate_generic(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    type_params: &[TypeParamInfo],
+    type_args: &[TypeId],
+) -> TypeId {
+    if type_params.is_empty() || type_args.is_empty() {
+        return type_id;
+    }
+    let substitution = TypeSubstitution::from_args(interner, type_params, type_args);
+    if substitution.is_empty() || substitution.is_identity_for(interner, type_params) {
+        return type_id;
+    }
+    let mut instantiator = TypeInstantiator::new(interner, &substitution);
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
+}
+
+/// Substitute `ThisType` with a concrete type throughout a type.
+///
+/// Used for method call return types where `this` refers to the receiver's type.
+/// For example, in a fluent builder pattern:
+/// ```typescript
+/// class Builder { setName(n: string): this { ... } }
+/// const b: Builder = new Builder().setName("foo"); // this → Builder
+/// ```
+pub fn substitute_this_type(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    this_type: TypeId,
+) -> TypeId {
+    substitute_this_type_cached(interner, None, type_id, this_type)
+}
+
+/// Cache-aware variant of [`substitute_this_type`].
+///
+/// We DO probe the cache here even though the substitution is empty, because
+/// `this_type.is_some()` makes the `(type_id, this_type)` tuple a meaningful
+/// cache key.
+pub fn substitute_this_type_cached(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    type_id: TypeId,
+    this_type: TypeId,
+) -> TypeId {
+    // Quick check: if the type is intrinsic, no substitution needed
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    if let Some(db) = query_db {
+        let key = InstantiationCacheKey::new(
+            type_id,
+            CanonicalSubst::empty(),
+            MODE_PRESERVE_UNSUBSTITUTED,
+            Some(this_type),
+        );
+        if let Some(cached) = db.lookup_instantiation_cache(&key) {
+            return cached;
+        }
+        let empty_subst = TypeSubstitution::new();
+        let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
+        instantiator.this_type = Some(this_type);
+        instantiator.preserve_unsubstituted_type_params = true;
+        let result = instantiator.instantiate(type_id);
+        if instantiator.depth_exceeded {
+            return TypeId::ERROR;
+        }
+        db.insert_instantiation_cache(key, result);
+        return result;
+    }
+    let empty_subst = TypeSubstitution::new();
+    let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
+    instantiator.this_type = Some(this_type);
+    // Preserve type parameters during this-only substitution. Without this,
+    // the instantiator's constraint fallback would collapse type parameters
+    // to their constraints when the constraint contains ThisType.
+    // Example: T extends A where A has self(): this — substitute_this_type(T, T)
+    // would walk into T's constraint A, find ThisType, replace it, and return
+    // the modified constraint instead of T.
+    instantiator.preserve_unsubstituted_type_params = true;
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
+}
+
+/// Shallow variant of [`substitute_this_type`] for call-return-position use.
+///
+/// When a method declared as `<T>(...): this & T` is called on a receiver,
+/// the call-return-type substitution should replace `ThisType` references at
+/// the structural level of the return type (Intersection / Union /
+/// `IndexAccess` / `KeyOf` / Conditional / Application / etc.) but NOT recurse
+/// into named Object/ObjectWithIndex internals.
+///
+/// Named Object types (interfaces, classes — those with a backing symbol)
+/// own a polymorphic `this` scope. Their stored method bodies' `this`
+/// references must stay raw so that property access on the post-substitution
+/// type (typically an intersection wrapping the receiver) can rebind `this`
+/// to the actual intersection at call site, not lock it to a single member.
+///
+/// Counter-example: `instantiate_type_with_this` for class-inheritance
+/// specialization needs the **deep** [`substitute_this_type`] entry which
+/// walks Object internals. The two forms split here.
+///
+/// This fixes the chained `extend({a}).extend({b})` pattern in
+/// `intersectionThisTypes.ts`.
+pub fn substitute_this_type_at_return_position(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    type_id: TypeId,
+    this_type: TypeId,
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    if let Some(db) = query_db {
+        let key = InstantiationCacheKey::new(
+            type_id,
+            CanonicalSubst::empty(),
+            MODE_PRESERVE_UNSUBSTITUTED | MODE_SHALLOW_THIS_ONLY,
+            Some(this_type),
+        );
+        if let Some(cached) = db.lookup_instantiation_cache(&key) {
+            return cached;
+        }
+        let empty_subst = TypeSubstitution::new();
+        let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
+        instantiator.this_type = Some(this_type);
+        instantiator.preserve_unsubstituted_type_params = true;
+        instantiator.shallow_this_only = true;
+        let result = instantiator.instantiate(type_id);
+        if instantiator.depth_exceeded {
+            return TypeId::ERROR;
+        }
+        db.insert_instantiation_cache(key, result);
+        return result;
+    }
+    let empty_subst = TypeSubstitution::new();
+    let mut instantiator = TypeInstantiator::new(interner, &empty_subst);
+    instantiator.this_type = Some(this_type);
+    instantiator.preserve_unsubstituted_type_params = true;
+    instantiator.shallow_this_only = true;
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
+}
+
+/// Check whether a mapped-type template is a **union or intersection** that
+/// contains an `Application` type whose base is a `Lazy(DefId)` reference.
+///
+/// This pattern occurs in recursive mapped types like:
+///   `Spec<T> = { [P in keyof T]: Func<T[P]> | Spec<T[P]> }`
+/// where the template union includes a self-referential type alias application.
+///
+/// The instantiator's eager `evaluate_type` uses `NoopResolver`, which cannot
+/// resolve `Lazy` references.  When a union member is an unresolvable
+/// application, the mapped type evaluator produces an incomplete object that
+/// silently drops that member.  Deferring lets the outer evaluator (which has
+/// a proper `TypeResolver`) handle the full expansion.
+///
+/// We intentionally do NOT match a top-level Application (e.g. `Selector<S, T[K]>`)
+/// because the evaluator correctly passes those through as-is.  Only unions/
+/// intersections are at risk of member loss.
+fn type_is_lazy_application(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+
+    let Some(TypeData::Application(app_id)) = interner.lookup(type_id) else {
+        return false;
+    };
+    let app = interner.type_application(app_id);
+    !app.base.is_intrinsic() && matches!(interner.lookup(app.base), Some(TypeData::Lazy(..)))
+}
+
+/// Check whether `type_id` is a lazy application, or a union/intersection whose
+/// immediate members contain one.
+///
+/// This intentionally does not recursively inspect arbitrary nested types.
+/// Eager evaluation only loses members for the immediate mapped-template shape;
+/// recursive matching also catches unrelated implementation details and can
+/// change assignability/display behavior for conditionals that should still be
+/// evaluated in place.
+fn template_has_lazy_application_in_composite(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    let Some(data) = interner.lookup(type_id) else {
+        return false;
+    };
+    match data {
+        TypeData::Union(members) | TypeData::Intersection(members) => {
+            let list = interner.type_list(members);
+            list.iter().any(|&m| type_is_lazy_application(interner, m))
+        }
+        TypeData::Conditional(cond_id) => {
+            let cond = interner.get_conditional(cond_id);
+            template_has_lazy_application_in_composite(interner, cond.true_type)
+                || template_has_lazy_application_in_composite(interner, cond.false_type)
+        }
+        _ => false,
+    }
+}
+
+/// Check whether `type_id` reaches an `Application(Lazy(_), _)` anywhere in
+/// its structure.
+///
+/// `NoopResolver` cannot expand `Lazy` alias bodies, so eagerly evaluating
+/// a type that contains such an application silently folds it into `never`.
+/// Callers defer evaluation to an outer evaluator with a real resolver.
+fn type_contains_lazy_application(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::visitors::visitor_predicates::contains_type_matching(interner, type_id, |key| {
+        let TypeData::Application(app_id) = key else {
+            return false;
+        };
+        let app = interner.type_application(*app_id);
+        matches!(interner.lookup(app.base), Some(TypeData::Lazy(_)))
+    })
+}
+
+/// Check whether a mapped constraint needs a real resolver before it can be
+/// evaluated without losing key information.
+///
+/// The instantiator runs with `NoopResolver`, so eagerly evaluating
+/// `keyof Application(...)` here can collapse a mapped type before the actual
+/// alias/application body is available. Deferring lets the outer evaluator,
+/// which has a real `TypeResolver`, materialize the correct key set later.
+fn mapped_constraint_needs_resolver(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    let key = match interner.lookup(type_id) {
+        Some(key) => key,
+        None => return false,
+    };
+
+    match key {
+        TypeData::KeyOf(operand) => matches!(
+            interner.lookup(operand),
+            Some(TypeData::Application(_) | TypeData::Lazy(_) | TypeData::TypeQuery(_))
+        ),
+        TypeData::Application(_) | TypeData::Lazy(_) | TypeData::TypeQuery(_) => true,
+        _ => false,
+    }
+}
+
+/// Check whether an instantiated indexed-access operand should be evaluated by
+/// the outer evaluator instead of the instantiator's `NoopResolver`.
+///
+/// Eagerly reducing `T[K]` is useful for simple concrete keys, but resolver-backed
+/// meta-types inside either operand can still need alias expansion. For example,
+/// `{ 1: T; 0: U }[Length<I> extends N ? 1 : 0]` must let the real evaluator
+/// resolve `Length<I>` after `I` and `N` are substituted; reducing it here can
+/// take the false branch because `Length` is still an unresolvable application.
+fn index_access_operand_needs_resolver(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::visitors::visitor_predicates::contains_type_matching(interner, type_id, |key| {
+        matches!(
+            key,
+            TypeData::Application(_)
+                | TypeData::Lazy(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_)
+                | TypeData::Mapped(_)
+        )
+    })
+}
+
+/// Evaluate a conditional type immediately if its `check_type` and `extends_type`
+/// are both concrete (contain no type parameters and no infer types).
+///
+/// When a generic default like `K extends string ? Map<K, V> : Map<string, V>`
+/// is instantiated with K=string, V=number, the result is a `ConditionalType`
+/// `string extends string ? Map<string,number> : Map<string,number>`. Since
+/// both sides are concrete, we can pick the branch directly without evaluating
+/// it, preserving the `Application` `TypeId` identity of the branch. Returning
+/// the branch unevaluated ensures that the substitution carries the same interned
+/// `Map<string,number>` `Application` `TypeId` that the checker produces for the
+/// source expression, so the subtype comparison succeeds without structural expansion.
+fn maybe_evaluate_concrete_conditional(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    let Some(TypeData::Conditional(cond_id)) = interner.lookup(type_id) else {
+        return type_id;
+    };
+    let cond = interner.get_conditional(cond_id);
+    // Only pick a branch when neither side contains type parameters or infer types.
+    if crate::visitor::contains_type_parameters(interner, cond.check_type)
+        || crate::visitor::contains_type_parameters(interner, cond.extends_type)
+        || crate::type_queries::contains_infer_types_db(interner, cond.extends_type)
+        || crate::type_queries::contains_infer_types_db(interner, cond.true_type)
+        || crate::type_queries::contains_infer_types_db(interner, cond.false_type)
+    {
+        return type_id;
+    }
+    // For distributive conditionals where check_type is a union, distributing
+    // would produce a union of branch results which requires the full evaluator.
+    if cond.is_distributive && matches!(interner.lookup(cond.check_type), Some(TypeData::Union(_)))
+    {
+        return type_id;
+    }
+    // Both check and extends are concrete. Use a subtype check to pick the branch
+    // and return it DIRECTLY (not evaluated) so Application TypeIds are preserved.
+    let branch = if crate::relations::subtype::core::is_subtype_of(
+        interner,
+        cond.check_type,
+        cond.extends_type,
+    ) {
+        cond.true_type
+    } else {
+        cond.false_type
+    };
+    tracing::trace!(
+        type_id = type_id.0,
+        check = cond.check_type.0,
+        extends = cond.extends_type.0,
+        true_type = cond.true_type.0,
+        false_type = cond.false_type.0,
+        branch = branch.0,
+        "maybe_evaluate_concrete_conditional: picked branch"
+    );
+    branch
+}
+
+/// Check whether `type_id` references a type parameter with the given `name`.
+///
+/// Used to detect circular type parameter defaults. When a default resolves
+/// to (or contains) the parameter it is defaulting, tsc falls back to `any`.
+/// This is a shallow check: it handles the direct self-reference case
+/// (`type T<X extends C = X>`) and union/intersection wrappers.
+fn type_references_param(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    param_name: tsz_common::interner::Atom,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match interner.lookup(type_id) {
+        Some(TypeData::TypeParameter(info)) => info.name == param_name,
+        Some(TypeData::Union(members_id)) | Some(TypeData::Intersection(members_id)) => {
+            let members = interner.type_list(members_id);
+            members
+                .iter()
+                .any(|&m| type_references_param(interner, m, param_name))
+        }
+        _ => false,
+    }
+}
+
+/// Instantiate a generic function type with explicit type arguments.
+///
+/// Takes a function type and type arguments, applies the substitution to all
+/// parts of the function shape (parameters, return type, `this_type`, predicate),
+/// and returns a new non-generic function type.
+///
+/// Returns `None` if the input is not a function type or has no type parameters.
+///
+/// This is used for JSX components with explicit type arguments like:
+/// ```typescript
+/// declare function Comp<T>(props: { data: T }): JSX.Element;
+/// <Comp<number> data={42} />  // Comp instantiated with T = number
+/// ```
+pub fn instantiate_function_with_type_args(
+    interner: &dyn TypeDatabase,
+    func_type: TypeId,
+    type_args: &[TypeId],
+) -> Option<TypeId> {
+    use crate::visitors::visitor::function_shape_id;
+
+    let shape_id = function_shape_id(interner, func_type)?;
+    let shape = interner.function_shape(shape_id);
+
+    if shape.type_params.is_empty() || type_args.is_empty() {
+        return None;
+    }
+
+    // Only allow partial instantiation if we have enough args
+    if type_args.len() > shape.type_params.len() {
+        return None;
+    }
+
+    let subst = TypeSubstitution::from_args(interner, &shape.type_params, type_args);
+
+    let new_params: Vec<_> = shape
+        .params
+        .iter()
+        .map(|p| {
+            let (new_ty, _) = instantiate_type_with_depth_status(interner, p.type_id, &subst);
+            ParamInfo {
+                name: p.name,
+                type_id: new_ty,
+                optional: p.optional,
+                rest: p.rest,
+            }
+        })
+        .collect();
+
+    let (new_return, _) = instantiate_type_with_depth_status(interner, shape.return_type, &subst);
+
+    let new_this = shape
+        .this_type
+        .map(|t| instantiate_type_with_depth_status(interner, t, &subst).0);
+
+    let new_predicate = shape.type_predicate.map(|tp| TypePredicate {
+        type_id: tp
+            .type_id
+            .map(|t| instantiate_type_with_depth_status(interner, t, &subst).0),
+        ..tp
+    });
+
+    Some(interner.function(FunctionShape {
+        type_params: vec![],
+        params: new_params,
+        this_type: new_this,
+        return_type: new_return,
+        type_predicate: new_predicate,
+        is_constructor: shape.is_constructor,
+        is_method: shape.is_method,
+    }))
+}
+
+#[cfg(test)]
+#[path = "../../tests/instantiate_tests.rs"]
+mod tests;

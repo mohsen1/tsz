@@ -1,0 +1,197 @@
+[package]
+name = "tsz-emitter"
+description = "TypeScript-to-JavaScript emitter and transforms for the tsz compiler"
+version.workspace = true
+edition.workspace = true
+autotests = false
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["dts"]
+dts = []
+
+[dependencies]
+tsz-common = { workspace = true }
+tsz-scanner = { workspace = true }
+tsz-parser = { workspace = true }
+tsz-binder = { workspace = true }
+tsz-solver = { workspace = true }
+rustc-hash = { workspace = true }
+memchr = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[[test]]
+name = "comment_tests"
+path = "tests/comment_tests.rs"
+
+[[test]]
+name = "variable_declaration_emit_tests"
+path = "tests/variable_declaration_emit_tests.rs"
+
+[[test]]
+name = "optional_chaining_tests"
+path = "tests/optional_chaining_tests.rs"
+
+[[test]]
+name = "computed_property_es5_tests"
+path = "tests/computed_property_es5_tests.rs"
+
+[[test]]
+name = "jsx_spread_tests"
+path = "tests/jsx_spread_tests.rs"
+
+[[test]]
+name = "parenthesized_iife_tests"
+path = "tests/parenthesized_iife_tests.rs"
+
+[[test]]
+name = "export_equals_type_only_namespace"
+path = "tests/export_equals_type_only_namespace.rs"
+
+[[test]]
+name = "cjs_hoisted_var_position_tests"
+path = "tests/cjs_hoisted_var_position_tests.rs"
+
+[[test]]
+name = "object_literal_recovery_tests"
+path = "tests/object_literal_recovery_tests.rs"
+
+[[test]]
+name = "prefix_unary_recovery_tests"
+path = "tests/prefix_unary_recovery_tests.rs"
+
+[[test]]
+name = "comma_expression_recovery_tests"
+path = "tests/comma_expression_recovery_tests.rs"
+
+[[test]]
+name = "property_access_recovery_tests"
+path = "tests/property_access_recovery_tests.rs"
+
+[[test]]
+name = "duplicate_extends_recovery_tests"
+path = "tests/duplicate_extends_recovery_tests.rs"
+
+[[test]]
+name = "debugger_namespace_recovery_tests"
+path = "tests/debugger_namespace_recovery_tests.rs"
+
+[[test]]
+name = "class_member_recovery_tests"
+path = "tests/class_member_recovery_tests.rs"
+
+[[test]]
+name = "expression_with_type_arguments_tests"
+path = "tests/expression_with_type_arguments_tests.rs"
+
+[[test]]
+name = "system_using_es_decorator_default_tests"
+path = "tests/system_using_es_decorator_default_tests.rs"
+
+[[test]]
+name = "system_using_default_tracker_tests"
+path = "tests/system_using_default_tracker_tests.rs"
+
+[[test]]
+name = "parenthesized_type_erasure_tests"
+path = "tests/parenthesized_type_erasure_tests.rs"
+
+[[test]]
+name = "cjs_arbitrary_module_namespace_identifier_tests"
+path = "tests/cjs_arbitrary_module_namespace_identifier_tests.rs"
+
+[[test]]
+name = "cjs_import_equals_export_tests"
+path = "tests/cjs_import_equals_export_tests.rs"
+
+[[test]]
+name = "import_use_before_decl_3597_tests"
+path = "tests/import_use_before_decl_3597_tests.rs"
+
+[[test]]
+name = "cjs_destructuring_export_inline_tests"
+path = "tests/cjs_destructuring_export_inline_tests.rs"
+
+[[test]]
+name = "cjs_clause_export_live_binding_tests"
+path = "tests/cjs_clause_export_live_binding_tests.rs"
+
+[[test]]
+name = "destructuring_es5_array_nested_order_tests"
+path = "tests/destructuring_es5_array_nested_order_tests.rs"
+
+[[test]]
+name = "destructuring_downlevel_iteration_read_tests"
+path = "tests/destructuring_downlevel_iteration_read_tests.rs"
+
+[[test]]
+name = "destructuring_control_flow_recovery_tests"
+path = "tests/destructuring_control_flow_recovery_tests.rs"
+
+[[test]]
+name = "tc39_named_class_expression_set_function_name_tests"
+path = "tests/tc39_named_class_expression_set_function_name_tests.rs"
+
+[[test]]
+name = "loop_capture_labeled_var_recovery_tests"
+path = "tests/loop_capture_labeled_var_recovery_tests.rs"
+
+[[test]]
+name = "loop_capture_continue_control_tests"
+path = "tests/loop_capture_continue_control_tests.rs"
+
+[[test]]
+name = "tagged_template_escape_emit_tests"
+path = "tests/tagged_template_escape_emit_tests.rs"
+
+[[test]]
+name = "script_mode_import_equals_interface_alias_tests"
+path = "tests/script_mode_import_equals_interface_alias_tests.rs"
+
+[[test]]
+name = "enum_constant_value_emit_tests"
+path = "tests/enum_constant_value_emit_tests.rs"
+
+[[test]]
+name = "for_statement_recovery_tests"
+path = "tests/for_statement_recovery_tests.rs"
+
+[[test]]
+name = "try_statement_recovery_tests"
+path = "tests/try_statement_recovery_tests.rs"
+
+[[test]]
+name = "system_top_level_using_env_position_tests"
+path = "tests/system_top_level_using_env_position_tests.rs"
+
+[[test]]
+name = "using_force_strict_mode_3516_tests"
+path = "tests/using_force_strict_mode_3516_tests.rs"
+
+[[test]]
+name = "jsx_cjs_runtime_collision_tests"
+path = "tests/jsx_cjs_runtime_collision_tests.rs"
+
+[[test]]
+name = "async_arrow_default_param_3758_tests"
+path = "tests/async_arrow_default_param_3758_tests.rs"
+
+[[test]]
+name = "arrow_parameter_prologue_tests"
+path = "tests/arrow_parameter_prologue_tests.rs"
+
+[[test]]
+name = "while_loop_body_capture_tests"
+path = "tests/while_loop_body_capture_tests.rs"
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false

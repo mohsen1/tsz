@@ -1,0 +1,620 @@
+//! Incremental Compilation Support
+//!
+//! This module implements TypeScript's incremental compilation feature, which enables:
+//! - Faster rebuilds by caching compilation results
+//! - .tsbuildinfo file persistence for cross-session caching
+//! - Smart dependency tracking for minimal recompilation
+//!
+//! # Build Info Format
+//!
+//! The .tsbuildinfo file stores:
+//! - Version information for cache invalidation
+//! - File hashes for change detection
+//! - Dependency graphs between files
+//! - Emitted file signatures for output caching
+
+use anyhow::{Context, Result};
+use rustc_hash::FxHashSet;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+/// Version of the build info format
+pub const BUILD_INFO_VERSION: &str = "0.1.0";
+
+/// Build information persisted between compilations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildInfo {
+    /// Version of the build info format
+    pub version: String,
+    /// Compiler version that created this build info
+    pub compiler_version: String,
+    /// Root files that were compiled
+    pub root_files: Vec<String>,
+    /// Information about each compiled file
+    pub file_infos: BTreeMap<String, FileInfo>,
+    /// Dependency graph: file -> files it imports
+    pub dependencies: BTreeMap<String, Vec<String>>,
+    /// Semantic diagnostics for files (cached from previous builds)
+    #[serde(default)]
+    pub semantic_diagnostics_per_file: BTreeMap<String, Vec<CachedDiagnostic>>,
+    /// Emit output signatures (for output file caching)
+    pub emit_signatures: BTreeMap<String, EmitSignature>,
+    /// Path to the most recently changed .d.ts file
+    /// Used by project references for fast invalidation checking
+    #[serde(
+        rename = "latestChangedDtsFile",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub latest_changed_dts_file: Option<String>,
+    /// Options that affect compilation
+    #[serde(default)]
+    pub options: BuildInfoOptions,
+    /// Timestamp of when the build was completed
+    pub build_time: u64,
+}
+
+/// Information about a single compiled file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileInfo {
+    /// File version (content hash or modification time)
+    pub version: String,
+    /// Signature of the file's exports (for dependency tracking)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Whether this file has changed since last build
+    #[serde(default)]
+    pub affected_files_pending_emit: bool,
+    /// The file's import dependencies
+    #[serde(default)]
+    pub implied_format: Option<String>,
+}
+
+/// Emit output signature for caching
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmitSignature {
+    /// Hash of the emitted JavaScript
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub js: Option<String>,
+    /// Hash of the emitted declaration file
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dts: Option<String>,
+    /// Hash of the emitted source map
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub map: Option<String>,
+}
+
+/// Compiler options that affect build caching
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildInfoOptions {
+    /// Target ECMAScript version
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Module system
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+    /// Whether to emit declarations
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declaration: Option<bool>,
+    /// Strict mode enabled
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
+}
+
+/// Cached diagnostic information for incremental builds
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedDiagnostic {
+    pub file: String,
+    pub start: u32,
+    pub length: u32,
+    pub message_text: String,
+    pub category: u8,
+    pub code: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub related_information: Vec<CachedRelatedInformation>,
+}
+
+/// Cached related information for diagnostics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedRelatedInformation {
+    pub file: String,
+    pub start: u32,
+    pub length: u32,
+    pub message_text: String,
+    pub category: u8,
+    pub code: u32,
+}
+
+impl Default for BuildInfo {
+    fn default() -> Self {
+        Self {
+            version: BUILD_INFO_VERSION.to_string(),
+            compiler_version: env!("CARGO_PKG_VERSION").to_string(),
+            root_files: Vec::new(),
+            file_infos: BTreeMap::new(),
+            dependencies: BTreeMap::new(),
+            semantic_diagnostics_per_file: BTreeMap::new(),
+            emit_signatures: BTreeMap::new(),
+            latest_changed_dts_file: None,
+            options: BuildInfoOptions::default(),
+            build_time: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        }
+    }
+}
+
+impl BuildInfo {
+    /// Create a new empty build info
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Load build info from a file
+    /// Returns Ok(None) if the file exists but is incompatible (version mismatch)
+    /// Returns `Ok(Some(build_info))` if the file is valid and compatible
+    pub fn load(path: &Path) -> Result<Option<Self>> {
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read build info: {}", path.display()))?;
+
+        let build_info: Self = serde_json::from_str(&content)
+            .with_context(|| format!("failed to parse build info: {}", path.display()))?;
+
+        // Validate version compatibility (Format version)
+        if build_info.version != BUILD_INFO_VERSION {
+            return Ok(None);
+        }
+
+        // Validate compiler version compatibility
+        // This ensures changes in hashing algorithms or internal logic trigger a rebuild
+        if build_info.compiler_version != env!("CARGO_PKG_VERSION") {
+            return Ok(None);
+        }
+
+        Ok(Some(build_info))
+    }
+
+    /// Save build info to a file
+    pub fn save(&self, path: &Path) -> Result<()> {
+        // Create parent directories if needed
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+        }
+
+        let content =
+            serde_json::to_string_pretty(self).context("failed to serialize build info")?;
+
+        std::fs::write(path, content)
+            .with_context(|| format!("failed to write build info: {}", path.display()))?;
+
+        Ok(())
+    }
+
+    /// Add or update file info
+    pub fn set_file_info(&mut self, path: &str, info: FileInfo) {
+        self.file_infos.insert(path.to_string(), info);
+    }
+
+    /// Get file info
+    pub fn get_file_info(&self, path: &str) -> Option<&FileInfo> {
+        self.file_infos.get(path)
+    }
+
+    /// Set dependencies for a file
+    pub fn set_dependencies(&mut self, path: &str, deps: Vec<String>) {
+        self.dependencies.insert(path.to_string(), deps);
+    }
+
+    /// Get dependencies for a file
+    pub fn get_dependencies(&self, path: &str) -> Option<&[String]> {
+        self.dependencies.get(path).map(std::vec::Vec::as_slice)
+    }
+
+    /// Set emit signature for a file
+    pub fn set_emit_signature(&mut self, path: &str, signature: EmitSignature) {
+        self.emit_signatures.insert(path.to_string(), signature);
+    }
+
+    /// Check if a file has changed since last build
+    pub fn has_file_changed(&self, path: &str, current_version: &str) -> bool {
+        match self.file_infos.get(path) {
+            Some(info) => info.version != current_version,
+            None => true, // New file
+        }
+    }
+
+    /// Get all files that depend on a given file
+    pub fn get_dependents(&self, path: &str) -> Vec<String> {
+        self.dependencies
+            .iter()
+            .filter(|(_, deps)| deps.iter().any(|d| d == path))
+            .map(|(file, _)| file.clone())
+            .collect()
+    }
+}
+
+/// Tracks changes between builds
+#[derive(Debug, Default)]
+pub struct ChangeTracker {
+    /// Files that have been modified
+    changed_files: FxHashSet<PathBuf>,
+    /// Files that need to be recompiled (changed + dependents)
+    affected_files: FxHashSet<PathBuf>,
+    /// Files that are new since last build
+    new_files: FxHashSet<PathBuf>,
+    /// Files that have been deleted
+    deleted_files: FxHashSet<PathBuf>,
+}
+
+impl ChangeTracker {
+    /// Create a new change tracker
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Compute changes by comparing current files with build info
+    pub fn compute_changes(
+        &mut self,
+        build_info: &BuildInfo,
+        current_files: &[PathBuf],
+    ) -> Result<()> {
+        let current_set: FxHashSet<_> = current_files.iter().collect();
+
+        // Find new files
+        for file in current_files {
+            let path_str = file.to_string_lossy();
+            if !build_info.file_infos.contains_key(path_str.as_ref()) {
+                self.new_files.insert(file.clone());
+                self.affected_files.insert(file.clone());
+            }
+        }
+
+        // Find deleted files
+        for path_str in build_info.file_infos.keys() {
+            let path = PathBuf::from(path_str);
+            if !current_set.contains(&path) {
+                self.deleted_files.insert(path);
+            }
+        }
+
+        // Check for modified files
+        for file in current_files {
+            if self.new_files.contains(file) {
+                continue;
+            }
+
+            let current_version = compute_file_version(file)?;
+            let path_str = file.to_string_lossy();
+
+            if build_info.has_file_changed(&path_str, &current_version) {
+                self.changed_files.insert(file.clone());
+                self.affected_files.insert(file.clone());
+            }
+        }
+
+        // Add dependents of changed files
+        let mut dependents_to_add = Vec::new();
+        for changed in &self.changed_files {
+            let path_str = changed.to_string_lossy();
+            for dep in build_info.get_dependents(&path_str) {
+                dependents_to_add.push(PathBuf::from(dep));
+            }
+        }
+
+        // Also handle deleted file dependents
+        for deleted in &self.deleted_files {
+            let path_str = deleted.to_string_lossy();
+            for dep in build_info.get_dependents(&path_str) {
+                dependents_to_add.push(PathBuf::from(dep));
+            }
+        }
+
+        for dep in dependents_to_add {
+            if current_set.contains(&dep) {
+                self.affected_files.insert(dep);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Compute changes with absolute file paths
+    /// Automatically normalizes paths relative to `base_dir` for comparison with `BuildInfo`
+    pub fn compute_changes_with_base(
+        &mut self,
+        build_info: &BuildInfo,
+        current_files: &[PathBuf],
+        base_dir: &Path,
+    ) -> Result<()> {
+        // Normalize absolute paths to relative paths for BuildInfo comparison
+        let current_files_relative: Vec<PathBuf> = current_files
+            .iter()
+            .filter_map(|path| {
+                path.strip_prefix(base_dir)
+                    .ok()
+                    .map(std::path::Path::to_path_buf)
+            })
+            .collect();
+
+        // Compute changes using relative paths, but store absolute paths in results
+        let current_set: FxHashSet<_> = current_files_relative.iter().collect();
+
+        // Find new files
+        for (i, file_rel) in current_files_relative.iter().enumerate() {
+            let path_str = file_rel.to_string_lossy();
+            if !build_info.file_infos.contains_key(path_str.as_ref()) {
+                let abs_path = &current_files[i];
+                self.new_files.insert(abs_path.clone());
+                self.affected_files.insert(abs_path.clone());
+            }
+        }
+
+        // Find deleted files
+        for path_str in build_info.file_infos.keys() {
+            let path = PathBuf::from(path_str);
+            if !current_set.contains(&path) {
+                self.deleted_files.insert(path);
+            }
+        }
+
+        // Check for modified files
+        for (i, file_rel) in current_files_relative.iter().enumerate() {
+            let abs_path = &current_files[i];
+            if self.new_files.contains(abs_path) {
+                continue;
+            }
+
+            let current_version = compute_file_version(abs_path)?;
+            let path_str = file_rel.to_string_lossy();
+
+            if build_info.has_file_changed(&path_str, &current_version) {
+                self.changed_files.insert(abs_path.clone());
+                self.affected_files.insert(abs_path.clone());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get files that have changed
+    pub const fn changed_files(&self) -> &FxHashSet<PathBuf> {
+        &self.changed_files
+    }
+
+    /// Get all files that need to be recompiled
+    pub const fn affected_files(&self) -> &FxHashSet<PathBuf> {
+        &self.affected_files
+    }
+
+    /// Get new files
+    pub const fn new_files(&self) -> &FxHashSet<PathBuf> {
+        &self.new_files
+    }
+
+    /// Get deleted files
+    pub const fn deleted_files(&self) -> &FxHashSet<PathBuf> {
+        &self.deleted_files
+    }
+
+    /// Check if any files have changed
+    pub fn has_changes(&self) -> bool {
+        !self.changed_files.is_empty()
+            || !self.new_files.is_empty()
+            || !self.deleted_files.is_empty()
+    }
+}
+
+/// Compute a version string for a file (content hash)
+pub fn compute_file_version(path: &Path) -> Result<String> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let content =
+        std::fs::read(path).with_context(|| format!("failed to read file: {}", path.display()))?;
+
+    let mut hasher = DefaultHasher::new();
+    content.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    Ok(format!("{hash:016x}"))
+}
+
+/// Compute a signature for a file's exports (for dependency tracking)
+pub fn compute_export_signature(exports: &[String]) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    for export in exports {
+        export.hash(&mut hasher);
+    }
+
+    format!("{:016x}", hasher.finish())
+}
+
+/// Builder for creating build info incrementally
+pub struct BuildInfoBuilder {
+    build_info: BuildInfo,
+    base_dir: PathBuf,
+}
+
+impl BuildInfoBuilder {
+    /// Create a new builder
+    pub fn new(base_dir: PathBuf) -> Self {
+        Self {
+            build_info: BuildInfo::new(),
+            base_dir,
+        }
+    }
+
+    /// Set root files
+    pub fn set_root_files(&mut self, files: Vec<String>) -> &mut Self {
+        self.build_info.root_files = files;
+        self
+    }
+
+    /// Add a file to the build info
+    pub fn add_file(&mut self, path: &Path, exports: &[String]) -> Result<&mut Self> {
+        let relative_path = self.relative_path(path);
+        let version = compute_file_version(path)?;
+        let signature = if exports.is_empty() {
+            None
+        } else {
+            Some(compute_export_signature(exports))
+        };
+
+        self.build_info.set_file_info(
+            &relative_path,
+            FileInfo {
+                version,
+                signature,
+                affected_files_pending_emit: false,
+                implied_format: None,
+            },
+        );
+
+        Ok(self)
+    }
+
+    /// Set dependencies for a file
+    pub fn set_file_dependencies(&mut self, path: &Path, deps: Vec<PathBuf>) -> &mut Self {
+        let relative_path = self.relative_path(path);
+        let relative_deps: Vec<String> = deps.iter().map(|d| self.relative_path(d)).collect();
+
+        self.build_info
+            .set_dependencies(&relative_path, relative_deps);
+        self
+    }
+
+    /// Set compiler options
+    pub fn set_options(&mut self, options: BuildInfoOptions) -> &mut Self {
+        self.build_info.options = options;
+        self
+    }
+
+    /// Build the final build info
+    pub fn build(mut self) -> BuildInfo {
+        self.build_info.build_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.build_info
+    }
+
+    /// Get a relative path from the base directory
+    fn relative_path(&self, path: &Path) -> String {
+        path.strip_prefix(&self.base_dir)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+}
+
+/// Determine the default .tsbuildinfo path based on configuration.
+///
+/// Mirrors `tsc`'s `getTsBuildInfoEmitOutputFilePath`:
+/// - With `outDir` and `rootDir`: resolve `outDir + relative(rootDir, configExtless)`.
+///   When the config file sits outside `rootDir` (the common case — `tsconfig.json`
+///   at the project root, sources under `rootDir: "src"`), the relative path begins
+///   with `..` and the resolved path collapses back outside `outDir`.
+/// - With `outDir` only: `outDir/<config-name>.tsbuildinfo`.
+/// - With neither: alongside the config file.
+pub fn default_build_info_path(
+    config_path: &Path,
+    out_dir: Option<&Path>,
+    root_dir: Option<&Path>,
+) -> PathBuf {
+    let config_extless = strip_json_extension(config_path);
+
+    let extless = match (out_dir, root_dir) {
+        (Some(out), Some(root)) => {
+            let rel = diff_paths(&config_extless, root).unwrap_or_else(|| config_extless.clone());
+            normalize_path(&out.join(rel))
+        }
+        (Some(out), None) => {
+            let base = config_extless
+                .file_name()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("tsconfig"));
+            out.join(base)
+        }
+        (None, _) => config_extless,
+    };
+
+    let mut result = extless.into_os_string();
+    result.push(".tsbuildinfo");
+    PathBuf::from(result)
+}
+
+/// Strip a trailing `.json` extension from a config path.
+/// Returns the path with the extension removed (e.g. `/proj/tsconfig.json` -> `/proj/tsconfig`).
+fn strip_json_extension(config_path: &Path) -> PathBuf {
+    let is_json = config_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    if is_json {
+        config_path.with_extension("")
+    } else {
+        config_path.to_path_buf()
+    }
+}
+
+/// Compute a relative path from `base` to `path`, collapsing common prefix
+/// components and emitting `..` for each remaining component of `base`.
+fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let path_components: Vec<Component<'_>> = path.components().collect();
+    let base_components: Vec<Component<'_>> = base.components().collect();
+    let common_len = path_components
+        .iter()
+        .zip(base_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    if common_len == 0 && path.is_absolute() != base.is_absolute() {
+        return None;
+    }
+    let mut result = PathBuf::new();
+    for _ in common_len..base_components.len() {
+        result.push("..");
+    }
+    for component in &path_components[common_len..] {
+        result.push(component);
+    }
+    Some(result)
+}
+
+/// Collapse `..` and `.` components syntactically (no filesystem access).
+fn normalize_path(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            Component::ParentDir => {
+                let popped = out.pop();
+                if !popped {
+                    out.push("..");
+                }
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    out
+}
+
+#[cfg(test)]
+#[path = "../incremental_tests.rs"]
+mod tests;

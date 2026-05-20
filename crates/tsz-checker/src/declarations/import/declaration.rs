@@ -1,0 +1,3056 @@
+//! Import declaration validation (`import { X } from "y"`), re-export chain
+//! cycle detection, and import resolution helpers.
+//!
+//! Import-equals validation (`import X = require("y")` / `import X = Namespace`)
+//! lives in the sibling `equals` module.
+
+use crate::context::is_declaration_file_name;
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use rustc_hash::FxHashSet;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+
+use super::declaration_helpers::{imported_types_package_target, is_node_builtin_module};
+pub(crate) use super::declaration_helpers::{should_rewrite_module_specifier, ts_extension_suffix};
+
+impl<'a> CheckerState<'a> {
+    fn source_file_has_syntactic_module_indicator(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt.kind {
+                syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                | syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
+    fn source_file_has_top_level_global_augmentation(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            if !stmt.is_global_augmentation() {
+                continue;
+            }
+            let Some(module) = arena.get_module(stmt) else {
+                continue;
+            };
+            let Some(name_node) = arena.get(module.name) else {
+                continue;
+            };
+            if name_node.kind == SyntaxKind::GlobalKeyword as u16
+                || arena
+                    .get_identifier(name_node)
+                    .is_some_and(|ident| ident.escaped_text == "global")
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a source file contains a module augmentation (not global augmentation).
+    /// A module augmentation is a `declare module "X" { ... }` statement that extends
+    /// an existing module's type definitions. Files with only module augmentations
+    /// (and no regular exports) should not trigger TS2307 because they serve a valid
+    /// purpose in the type system.
+    fn source_file_has_module_augmentation(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            // Must NOT be a global augmentation
+            if stmt.is_global_augmentation() {
+                continue;
+            }
+            let Some(module) = arena.get_module(stmt) else {
+                continue;
+            };
+            let Some(name_node) = arena.get(module.name) else {
+                continue;
+            };
+            // Module augmentation has a string literal name (not "global" keyword)
+            if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    // =========================================================================
+    // Import Declaration Validation
+    // =========================================================================
+
+    fn maybe_emit_imported_global_augmentation_errors(&mut self, target_idx: usize) {
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return;
+        };
+        if self.source_file_has_syntactic_module_indicator(arena, source_file) {
+            return;
+        }
+        // Collect positions first to avoid borrowing arena and self simultaneously
+        let mut error_positions: Vec<(u32, u32)> = Vec::new();
+        let file_name = source_file.file_name.clone();
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            if !stmt.is_global_augmentation() {
+                continue;
+            }
+            let Some(module) = arena.get_module(stmt) else {
+                continue;
+            };
+            let Some(name_node) = arena.get(module.name) else {
+                continue;
+            };
+            let is_global = name_node.kind == SyntaxKind::GlobalKeyword as u16
+                || arena
+                    .get_identifier(name_node)
+                    .is_some_and(|ident| ident.escaped_text == "global");
+            if !is_global {
+                continue;
+            }
+
+            error_positions.push((name_node.pos, name_node.end.saturating_sub(name_node.pos)));
+        }
+
+        for (start, length) in error_positions {
+            self.error_at_position_in_file(
+                file_name.clone(),
+                start,
+                length,
+                diagnostic_messages::AUGMENTATIONS_FOR_THE_GLOBAL_SCOPE_CAN_ONLY_BE_DIRECTLY_NESTED_IN_EXTERNAL_MODUL,
+                diagnostic_codes::AUGMENTATIONS_FOR_THE_GLOBAL_SCOPE_CAN_ONLY_BE_DIRECTLY_NESTED_IN_EXTERNAL_MODUL,
+            );
+        }
+    }
+
+    /// TS1214: Check import binding names for strict-mode reserved words.
+    /// Import declarations make the file a module (always strict mode), so TS1214 applies.
+    /// Matches tsc's binder: `checkContextualIdentifier` is guarded by
+    /// `!file.parseDiagnostics.length`, so strict-mode checks are skipped
+    /// entirely when the file has any parser errors.
+    fn check_import_binding_reserved_words(&mut self, import_clause_idx: NodeIndex) {
+        // Skip when there are parser errors (matches tsc binder behavior)
+        if self.ctx.has_parse_errors {
+            return;
+        }
+
+        use crate::state_checking::is_strict_mode_reserved_name;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(clause_node) = self.ctx.arena.get(import_clause_idx) else {
+            return;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return;
+        };
+
+        // Check default import name: `import package from "./mod"`
+        if clause.name.is_some()
+            && let Some(name_node) = self.ctx.arena.get(clause.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && is_strict_mode_reserved_name(&ident.escaped_text)
+        {
+            self.emit_module_strict_mode_reserved_word_error(clause.name, &ident.escaped_text);
+        }
+
+        // Check named bindings (namespace import or named imports)
+        if clause.named_bindings.is_none() {
+            return;
+        }
+        let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) else {
+            return;
+        };
+
+        if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+            // `import * as package from "./mod"` — check the alias name
+            if let Some(ns_data) = self.ctx.arena.get_named_imports(bindings_node)
+                && ns_data.name.is_some()
+                && let Some(name_node) = self.ctx.arena.get(ns_data.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && is_strict_mode_reserved_name(&ident.escaped_text)
+            {
+                self.emit_module_strict_mode_reserved_word_error(ns_data.name, &ident.escaped_text);
+            }
+        } else if bindings_node.kind == syntax_kind_ext::NAMED_IMPORTS {
+            // `import { foo as package } from "./mod"` — check each specifier's local name
+            if let Some(named_data) = self.ctx.arena.get_named_imports(bindings_node) {
+                let elements: Vec<_> = named_data.elements.nodes.to_vec();
+                for elem_idx in elements {
+                    let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    let Some(spec) = self.ctx.arena.get_specifier(elem_node) else {
+                        continue;
+                    };
+                    // The local binding name is `spec.name`
+                    let name_to_check = spec.name;
+                    if let Some(name_node) = self.ctx.arena.get(name_to_check)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        && is_strict_mode_reserved_name(&ident.escaped_text)
+                    {
+                        self.emit_module_strict_mode_reserved_word_error(
+                            name_to_check,
+                            &ident.escaped_text,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// TS18058/TS18059: Check that deferred imports only use namespace binding.
+    /// Deferred imports (`import defer ...`) must use `* as ns` form.
+    /// Default imports and named imports are not allowed.
+    pub(crate) fn check_deferred_import_restrictions(&mut self, import_clause_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(clause_node) = self.ctx.arena.get(import_clause_idx) else {
+            return;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return;
+        };
+
+        if !clause.is_deferred {
+            return;
+        }
+
+        // The import clause node starts at the `defer` keyword position.
+        // Use that as the error location (matching TSC behavior).
+        let defer_pos = clause_node.pos;
+        let defer_len = 5u32; // length of "defer"
+
+        // TS18058: Default imports are not allowed in a deferred import.
+        if clause.name.is_some() {
+            self.error_at_position(
+                defer_pos,
+                defer_len,
+                diagnostic_messages::DEFAULT_IMPORTS_ARE_NOT_ALLOWED_IN_A_DEFERRED_IMPORT,
+                diagnostic_codes::DEFAULT_IMPORTS_ARE_NOT_ALLOWED_IN_A_DEFERRED_IMPORT,
+            );
+        }
+
+        // TS18059: Named imports are not allowed in a deferred import.
+        if let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings)
+            && bindings_node.kind == syntax_kind_ext::NAMED_IMPORTS
+        {
+            self.error_at_position(
+                defer_pos,
+                defer_len,
+                diagnostic_messages::NAMED_IMPORTS_ARE_NOT_ALLOWED_IN_A_DEFERRED_IMPORT,
+                diagnostic_codes::NAMED_IMPORTS_ARE_NOT_ALLOWED_IN_A_DEFERRED_IMPORT,
+            );
+        }
+    }
+
+    /// TS2880: Check that `assert` keyword is not used (deprecated in favor of `with`).
+    pub(crate) fn check_import_attributes_deprecated_assert(&mut self, attributes_idx: NodeIndex) {
+        if attributes_idx.is_none() {
+            return;
+        }
+
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+
+        let Some(attrs_data) = self.ctx.arena.get_import_attributes_data(attr_node) else {
+            return;
+        };
+
+        // token stores the SyntaxKind of the keyword used (AssertKeyword vs WithKeyword)
+        // Route through the capability boundary to check ignore_deprecations.
+        if attrs_data.token == tsz_scanner::SyntaxKind::AssertKeyword as u16
+            && self
+                .ctx
+                .capabilities
+                .check_import_assert_deprecated()
+                .is_some()
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            // Error spans the `assert` keyword (6 characters), positioned at the node start
+            self.error_at_position(
+                attr_node.pos,
+                6, // length of "assert"
+                diagnostic_messages::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+                diagnostic_codes::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+            );
+        }
+    }
+
+    /// TS2823: Check that import attributes are only used with supported module options.
+    ///
+    /// Routes through the environment capability boundary (`check_feature_gate`)
+    /// to determine whether a diagnostic should be emitted.
+    pub(crate) fn check_import_attributes_module_option(
+        &mut self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) {
+        if attributes_idx.is_none() {
+            return;
+        }
+
+        use crate::query_boundaries::capabilities::FeatureGate;
+        if self
+            .ctx
+            .capabilities
+            .check_feature_gate(FeatureGate::ImportAttributes)
+            .is_some()
+            && !self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only)
+            && let Some(attr_node) = self.ctx.arena.get(attributes_idx)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_position(
+                attr_node.pos,
+                attr_node.end.saturating_sub(attr_node.pos),
+                diagnostic_messages::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
+                diagnostic_codes::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
+            );
+        }
+    }
+
+    pub(crate) fn check_import_attributes_commonjs_or_type_only(
+        &mut self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) {
+        if attributes_idx.is_none() {
+            return;
+        }
+
+        if self.resolution_mode_override_is_effective(attributes_idx, declaration_is_type_only) {
+            return;
+        }
+
+        use crate::query_boundaries::capabilities::FeatureGate;
+        if self
+            .ctx
+            .capabilities
+            .check_feature_gate(FeatureGate::ImportAttributes)
+            .is_some()
+        {
+            return;
+        }
+
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+
+        if declaration_is_type_only {
+            self.error_at_position(
+                attr_node.pos,
+                attr_node.end.saturating_sub(attr_node.pos),
+                diagnostic_messages::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+                diagnostic_codes::IMPORT_ATTRIBUTES_CANNOT_BE_USED_WITH_TYPE_ONLY_IMPORTS_OR_EXPORTS,
+            );
+            return;
+        }
+
+        if self.import_declaration_emits_commonjs() {
+            self.error_at_position(
+                attr_node.pos,
+                attr_node.end.saturating_sub(attr_node.pos),
+                diagnostic_messages::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+                diagnostic_codes::IMPORT_ATTRIBUTES_ARE_NOT_ALLOWED_ON_STATEMENTS_THAT_COMPILE_TO_COMMONJS_REQUIRE,
+            );
+        }
+    }
+
+    fn import_declaration_emits_commonjs(&self) -> bool {
+        use tsz_common::common::ModuleKind;
+
+        match self.ctx.compiler_options.module {
+            ModuleKind::Node16 | ModuleKind::Node18 | ModuleKind::Node20 | ModuleKind::NodeNext => {
+                let current_file = self.ctx.file_name.as_str();
+                if current_file.ends_with(".cts") || current_file.ends_with(".cjs") {
+                    return true;
+                }
+                if current_file.ends_with(".mts") || current_file.ends_with(".mjs") {
+                    return false;
+                }
+                self.ctx.file_is_esm.is_some_and(|is_esm| !is_esm)
+            }
+            ModuleKind::CommonJS => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn current_file_uses_esm_import_syntax(&self) -> bool {
+        match self.ctx.compiler_options.module {
+            tsz_common::common::ModuleKind::Node16
+            | tsz_common::common::ModuleKind::Node18
+            | tsz_common::common::ModuleKind::Node20
+            | tsz_common::common::ModuleKind::NodeNext => {
+                let current_file = self.ctx.file_name.as_str();
+                if current_file.ends_with(".cts") || current_file.ends_with(".cjs") {
+                    return false;
+                }
+                if current_file.ends_with(".mts") || current_file.ends_with(".mjs") {
+                    return true;
+                }
+                self.ctx.file_is_esm.unwrap_or(false)
+            }
+            module => module.is_es_module(),
+        }
+    }
+
+    pub(crate) const fn module_kind_display_name(&self) -> &'static str {
+        match self.ctx.compiler_options.module {
+            tsz_common::common::ModuleKind::Node16 => "Node16",
+            tsz_common::common::ModuleKind::Node18 => "Node18",
+            tsz_common::common::ModuleKind::Node20 => "Node20",
+            tsz_common::common::ModuleKind::NodeNext => "NodeNext",
+            tsz_common::common::ModuleKind::ESNext => "ESNext",
+            tsz_common::common::ModuleKind::Preserve => "Preserve",
+            tsz_common::common::ModuleKind::CommonJS => "CommonJS",
+            tsz_common::common::ModuleKind::AMD => "AMD",
+            tsz_common::common::ModuleKind::UMD => "UMD",
+            tsz_common::common::ModuleKind::System => "System",
+            tsz_common::common::ModuleKind::ES2015 => "ES2015",
+            tsz_common::common::ModuleKind::ES2020 => "ES2020",
+            tsz_common::common::ModuleKind::ES2022 => "ES2022",
+            tsz_common::common::ModuleKind::None => "None",
+        }
+    }
+
+    pub(crate) fn import_has_type_json_attribute(&self, attributes_idx: NodeIndex) -> bool {
+        if attributes_idx.is_none() {
+            return false;
+        }
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return false;
+        };
+        let Some(attrs_data) = self.ctx.arena.get_import_attributes_data(attr_node) else {
+            return false;
+        };
+
+        attrs_data.elements.nodes.iter().any(|&elem_idx| {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                return false;
+            };
+            let Some(attr_data) = self.ctx.arena.get_import_attribute_data(elem_node) else {
+                return false;
+            };
+            let name_is_type = self
+                .ctx
+                .arena
+                .get_literal_text(attr_data.name)
+                .map(|name| name.trim_matches('"').trim_matches('\'') == "type")
+                .or_else(|| {
+                    self.ctx
+                        .arena
+                        .get(attr_data.name)
+                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                        .map(|ident| ident.escaped_text.as_str() == "type")
+                })
+                .unwrap_or(false);
+            let value_is_json = self
+                .ctx
+                .arena
+                .get_literal_text(attr_data.value)
+                .is_some_and(|value| value.trim_matches('"').trim_matches('\'') == "json");
+            name_is_type && value_is_json
+        })
+    }
+
+    pub(crate) fn import_attributes_enable_json_module(&self, attributes_idx: NodeIndex) -> bool {
+        self.import_has_type_json_attribute(attributes_idx)
+            && matches!(
+                self.ctx.compiler_options.module,
+                tsz_common::common::ModuleKind::Node18
+                    | tsz_common::common::ModuleKind::Node20
+                    | tsz_common::common::ModuleKind::NodeNext
+            )
+            && self.current_file_uses_esm_import_syntax()
+    }
+
+    fn maybe_emit_json_esm_import_attribute_required(
+        &mut self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+        target_idx: usize,
+        spec_start: u32,
+        spec_length: u32,
+        is_type_only_import: bool,
+    ) {
+        if is_type_only_import
+            || !matches!(
+                self.ctx.compiler_options.module,
+                tsz_common::common::ModuleKind::Node18
+                    | tsz_common::common::ModuleKind::Node20
+                    | tsz_common::common::ModuleKind::NodeNext
+            )
+            || !self.current_file_uses_esm_import_syntax()
+            || self.import_has_type_json_attribute(import.attributes)
+        {
+            return;
+        }
+
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = target_arena.source_files.first() else {
+            return;
+        };
+        let file_name = source_file.file_name.as_str();
+        if !file_name.ends_with(".json") && !file_name.ends_with(".d.json.ts") {
+            return;
+        }
+
+        let Some(clause_node) = self.ctx.arena.get(import.import_clause) else {
+            return;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return;
+        };
+        // Emit TS1543 for default imports (`import x from "./f.json"`) and namespace imports
+        // (`import * as x from "./f.json"`). Named imports are handled separately by TS1544
+        // in import_members.rs, and side-effect imports have no import clause.
+        let has_default_binding = clause.name.is_some();
+        let has_namespace_binding = self
+            .ctx
+            .arena
+            .get(clause.named_bindings)
+            .is_some_and(|bindings_node| bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT);
+        if !has_default_binding && !has_namespace_binding {
+            return;
+        }
+
+        let module_kind = self.module_kind_display_name();
+        let message = crate::diagnostics::format_message(
+            diagnostic_messages::IMPORTING_A_JSON_FILE_INTO_AN_ECMASCRIPT_MODULE_REQUIRES_A_TYPE_JSON_IMPORT_ATTR,
+            &[module_kind],
+        );
+        self.error_at_position(
+            spec_start,
+            spec_length,
+            &message,
+            diagnostic_codes::IMPORTING_A_JSON_FILE_INTO_AN_ECMASCRIPT_MODULE_REQUIRES_A_TYPE_JSON_IMPORT_ATTR,
+        );
+    }
+
+    /// TS2322: Check that import attribute values are assignable to the global `ImportAttributes`
+    /// interface.
+    ///
+    /// For `import ... with { type: "json" }`, builds an object type from the attribute
+    /// entries and checks it against the global `ImportAttributes` interface. If the user
+    /// has augmented `ImportAttributes` (e.g., `interface ImportAttributes { type: "json" }`),
+    /// mismatched values will produce TS2322.
+    pub(crate) fn check_import_attributes_assignability(&mut self, attributes_idx: NodeIndex) {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_solver::TypeId;
+
+        if attributes_idx.is_none() {
+            return;
+        }
+
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+
+        let Some(attrs_data) = self.ctx.arena.get_import_attributes_data(attr_node) else {
+            return;
+        };
+
+        let elements: Vec<NodeIndex> = attrs_data.elements.nodes.clone();
+
+        if elements.is_empty() {
+            return;
+        }
+
+        // Resolve the global ImportAttributes interface type (including user augmentations).
+        let Some(import_attributes_type) = self.resolve_lib_type_by_name("ImportAttributes") else {
+            return;
+        };
+
+        // Build an object type from the import attribute entries
+        let mut properties = Vec::new();
+        for &elem_idx in &elements {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind != syntax_kind_ext::IMPORT_ATTRIBUTE {
+                continue;
+            }
+            let Some(attr_data) = self.ctx.arena.get_import_attribute_data(elem_node) else {
+                continue;
+            };
+
+            // Get the attribute name (identifier or string literal)
+            let name = if let Some(name_node) = self.ctx.arena.get(attr_data.name) {
+                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    Some(ident.escaped_text.clone())
+                } else {
+                    self.ctx
+                        .arena
+                        .get_literal(name_node)
+                        .map(|lit| lit.text.clone())
+                }
+            } else {
+                None
+            };
+
+            let Some(name) = name else {
+                continue;
+            };
+
+            // TS2858: import attribute values must be string literal expressions.
+            // For TS2322 display parity, keep top-level literal primitives (e.g. `0`)
+            // but widen nested object-literal members (e.g. `{ a: 0 }` -> `{ a: number }`).
+            let value_type = if let Some(val_node) = self.ctx.arena.get(attr_data.value) {
+                if val_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+                    if let Some(lit) = self.ctx.arena.get_literal(val_node) {
+                        self.ctx.types.factory().literal_string(&lit.text)
+                    } else {
+                        self.get_type_of_node(attr_data.value)
+                    }
+                } else {
+                    self.error_at_position(
+                        val_node.pos,
+                        val_node.end.saturating_sub(val_node.pos),
+                        crate::diagnostics::diagnostic_messages::IMPORT_ATTRIBUTE_VALUES_MUST_BE_STRING_LITERAL_EXPRESSIONS,
+                        crate::diagnostics::diagnostic_codes::IMPORT_ATTRIBUTE_VALUES_MUST_BE_STRING_LITERAL_EXPRESSIONS,
+                    );
+                    if val_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                        let object_type = self.get_type_of_node(attr_data.value);
+                        let widened_object = crate::query_boundaries::common::widen_type(
+                            self.ctx.types,
+                            object_type,
+                        );
+                        if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            widened_object,
+                        ) {
+                            self.ctx
+                                .types
+                                .store_display_properties(widened_object, shape.properties.clone());
+                        }
+                        widened_object
+                    } else if let Some(literal_type) =
+                        self.literal_type_from_initializer(attr_data.value)
+                    {
+                        literal_type
+                    } else {
+                        self.get_type_of_node(attr_data.value)
+                    }
+                }
+            } else {
+                self.get_type_of_node(attr_data.value)
+            };
+
+            let name_atom = self.ctx.types.intern_string(&name);
+            properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+        }
+
+        if properties.is_empty() {
+            return;
+        }
+
+        let source_type = self.ctx.types.factory().object(properties);
+
+        // Don't check if source or target are any/error
+        if source_type == TypeId::ANY
+            || source_type == TypeId::ERROR
+            || import_attributes_type == TypeId::ANY
+            || import_attributes_type == TypeId::ERROR
+        {
+            return;
+        }
+
+        // Emit top-level TS2322 at the attributes object (matching tsc fingerprint
+        // parity for import attribute shape mismatches).
+        if !self.is_assignable_to(source_type, import_attributes_type) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let source_str = self.format_type(source_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, "ImportAttributes"],
+            );
+            self.error_at_node(
+                attributes_idx,
+                &message,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
+    }
+
+    /// TS1453/TS1455/TS1456/TS1463/TS1464: validate type-only `resolution-mode`
+    /// import attributes before the regular module-option and assignability checks.
+    ///
+    /// This mirrors tsc's `getResolutionModeOverride(..., grammarErrorOnNode)` path:
+    /// whole-declaration type-only imports get extra grammar validation for the
+    /// `resolution-mode` attribute shape, key, and literal value.
+    pub(crate) fn check_type_only_resolution_mode_attribute_grammar(
+        &mut self,
+        attributes_idx: NodeIndex,
+        declaration_is_type_only: bool,
+    ) {
+        if attributes_idx.is_none() || !declaration_is_type_only {
+            return;
+        }
+
+        // In tsc, the resolution-mode attribute check only applies when using
+        // Node16/NodeNext module resolution. For other module modes (es2015,
+        // esnext, bundler, etc.), type-only imports can have any attributes
+        // without triggering TS1463/TS1453.
+        if !self.ctx.compiler_options.module.is_node_module() {
+            return;
+        }
+
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+        let Some(attrs_data) = self.ctx.arena.get_import_attributes_data(attr_node) else {
+            return;
+        };
+
+        let uses_with_keyword = attrs_data.token == SyntaxKind::WithKeyword as u16;
+        let (invalid_key_message, invalid_key_code, invalid_shape_message, invalid_shape_code) =
+            if uses_with_keyword {
+                (
+                    diagnostic_messages::RESOLUTION_MODE_IS_THE_ONLY_VALID_KEY_FOR_TYPE_IMPORT_ATTRIBUTES,
+                    diagnostic_codes::RESOLUTION_MODE_IS_THE_ONLY_VALID_KEY_FOR_TYPE_IMPORT_ATTRIBUTES,
+                    diagnostic_messages::TYPE_IMPORT_ATTRIBUTES_SHOULD_HAVE_EXACTLY_ONE_KEY_RESOLUTION_MODE_WITH_VALUE_IM,
+                    diagnostic_codes::TYPE_IMPORT_ATTRIBUTES_SHOULD_HAVE_EXACTLY_ONE_KEY_RESOLUTION_MODE_WITH_VALUE_IM,
+                )
+            } else {
+                (
+                    diagnostic_messages::RESOLUTION_MODE_IS_THE_ONLY_VALID_KEY_FOR_TYPE_IMPORT_ASSERTIONS,
+                    diagnostic_codes::RESOLUTION_MODE_IS_THE_ONLY_VALID_KEY_FOR_TYPE_IMPORT_ASSERTIONS,
+                    diagnostic_messages::TYPE_IMPORT_ASSERTIONS_SHOULD_HAVE_EXACTLY_ONE_KEY_RESOLUTION_MODE_WITH_VALUE_IM,
+                    diagnostic_codes::TYPE_IMPORT_ASSERTIONS_SHOULD_HAVE_EXACTLY_ONE_KEY_RESOLUTION_MODE_WITH_VALUE_IM,
+                )
+            };
+
+        if attrs_data.elements.nodes.len() != 1 {
+            self.error_at_node(attributes_idx, invalid_shape_message, invalid_shape_code);
+            return;
+        }
+
+        let elem_idx = attrs_data.elements.nodes[0];
+        let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+            return;
+        };
+        let Some(attr_data) = self.ctx.arena.get_import_attribute_data(elem_node) else {
+            return;
+        };
+
+        let name = if let Some(name_node) = self.ctx.arena.get(attr_data.name) {
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                Some(ident.escaped_text.as_str())
+            } else {
+                self.ctx
+                    .arena
+                    .get_literal_text(attr_data.name)
+                    .map(|lit| lit.trim_matches('"').trim_matches('\''))
+            }
+        } else {
+            None
+        };
+
+        if name != Some("resolution-mode") {
+            let is_json_type_attribute = name == Some("type")
+                && self
+                    .ctx
+                    .arena
+                    .get_literal_text(attr_data.value)
+                    .is_some_and(|value| value.trim_matches('"').trim_matches('\'') == "json");
+            if is_json_type_attribute {
+                return;
+            }
+            self.error_at_node(attr_data.name, invalid_key_message, invalid_key_code);
+            return;
+        }
+
+        let Some(value_text) = self.ctx.arena.get_literal_text(attr_data.value) else {
+            return;
+        };
+        let value_text = value_text.trim_matches('"').trim_matches('\'');
+        if value_text != "import" && value_text != "require" {
+            self.error_at_node(
+                attr_data.value,
+                diagnostic_messages::RESOLUTION_MODE_SHOULD_BE_EITHER_REQUIRE_OR_IMPORT,
+                diagnostic_codes::RESOLUTION_MODE_SHOULD_BE_EITHER_REQUIRE_OR_IMPORT,
+            );
+        }
+    }
+
+    /// Check an import declaration for unresolved modules and missing exports.
+    pub(crate) fn check_import_declaration(&mut self, stmt_idx: NodeIndex) {
+        use crate::diagnostics::diagnostic_codes;
+
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        let Some(import) = self.ctx.arena.get_import_decl(node) else {
+            return;
+        };
+        let request_kind = crate::context::ResolutionRequestKind::EsmImport;
+        let request_resolution_mode = self.ctx.resolution_mode_for_request(
+            request_kind,
+            self.get_resolution_mode_override(import.attributes),
+        );
+
+        let is_type_only_import = self
+            .ctx
+            .arena
+            .get(import.import_clause)
+            .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
+            .is_some_and(|clause| clause.is_type_only);
+
+        // Suppress semantic diagnostics (TS2307, TS2823, TS2322) when the import
+        // statement has parse errors. A wrong module-element context is a grammar
+        // diagnostic, not a reason to skip module/member validation: tsc still
+        // reports missing modules and missing named exports for imports in a bare
+        // block after TS1232.
+        let in_wrong_context = self.is_in_non_module_element_context(stmt_idx);
+        let wrong_context_allows_module_semantics = in_wrong_context
+            && !self.is_inside_function_body(stmt_idx)
+            && !self.is_inside_namespace_declaration(stmt_idx);
+        let has_parse_errors = node.this_or_subtree_has_error()
+            || (self.ctx.has_real_syntax_errors && !wrong_context_allows_module_semantics);
+        if in_wrong_context && self.is_inside_function_body(stmt_idx) {
+            return;
+        }
+
+        // TS18058/TS18059: Validate deferred import binding restrictions.
+        // Deferred imports only allow namespace imports: `import defer * as ns from "..."`
+        self.check_deferred_import_restrictions(import.import_clause);
+
+        // TS1363: A type-only import can specify a default import or named bindings, but not both.
+        // e.g., `import type A, { B } from '...'` is invalid.
+        if let Some(clause_node) = self.ctx.arena.get(import.import_clause)
+            && let Some(clause) = self.ctx.arena.get_import_clause(clause_node)
+            && clause.is_type_only
+            && clause.name.is_some()
+            && clause.named_bindings.is_some()
+        {
+            self.error_at_node(
+                        import.import_clause,
+                        "A type-only import can specify a default import or named bindings, but not both.",
+                        diagnostic_codes::A_TYPE_ONLY_IMPORT_CAN_SPECIFY_A_DEFAULT_IMPORT_OR_NAMED_BINDINGS_BUT_NOT_BOTH,
+                    );
+        }
+
+        // TS2880: Warn about deprecated `assert` keyword
+        self.check_import_attributes_deprecated_assert(import.attributes);
+
+        if !has_parse_errors {
+            self.check_type_only_resolution_mode_attribute_grammar(
+                import.attributes,
+                is_type_only_import,
+            );
+
+            // TS2823: Import attributes require specific module options
+            self.check_import_attributes_module_option(import.attributes, is_type_only_import);
+
+            // TS2322: Check import attribute values against global ImportAttributes interface
+            self.check_import_attributes_assignability(import.attributes);
+
+            self.check_import_attributes_commonjs_or_type_only(
+                import.attributes,
+                is_type_only_import,
+            );
+        }
+
+        // TS1214/TS1212: Check import binding names for strict mode reserved words.
+        // Import declarations make the file a module, so it's always strict mode → TS1214.
+        self.check_import_binding_reserved_words(import.import_clause);
+
+        if import.import_clause.is_some() {
+            self.check_import_declaration_conflicts(stmt_idx, import.import_clause);
+        }
+
+        // Skip semantic import diagnostics when the import has parse errors.
+        if has_parse_errors {
+            return;
+        }
+
+        // Extract module specifier data eagerly so direct import diagnostics like
+        // TS6137 can run even when unresolved-import reporting is disabled.
+        let module_specifier_idx = import.module_specifier;
+        let import_clause_idx = import.import_clause;
+
+        let Some(spec_node) = self.ctx.arena.get(module_specifier_idx) else {
+            return;
+        };
+        let spec_start = spec_node.pos;
+        let spec_length = spec_node.end.saturating_sub(spec_node.pos);
+
+        let Some(literal) = self.ctx.arena.get_literal(spec_node) else {
+            return;
+        };
+
+        let module_name = &literal.text;
+        // tsc emits TS2307 independently per import declaration, even when multiple
+        // imports reference the same module.  Clear the per-module dedup entry so
+        // this declaration gets its own chance to report a module-not-found error.
+        // The within-declaration dedup (resolution-error path vs fallback path)
+        // is preserved because both paths insert the key before returning.
+        self.ctx
+            .modules_with_ts2307_emitted
+            .remove(module_name.as_str());
+        let has_import_clause = self.ctx.arena.get(import_clause_idx).is_some();
+        let is_side_effect_import = !has_import_clause;
+        // Note: side-effect imports may return early in the resolution error check below
+        // when no_unchecked_side_effect_imports=false (silently ignoring unresolved modules).
+        if !is_type_only_import && let Some(suggested) = imported_types_package_target(module_name)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::CANNOT_IMPORT_TYPE_DECLARATION_FILES_CONSIDER_IMPORTING_INSTEAD_OF,
+                &[&suggested, module_name],
+            );
+            self.error_at_position(
+                spec_start,
+                spec_length,
+                &message,
+                diagnostic_codes::CANNOT_IMPORT_TYPE_DECLARATION_FILES_CONSIDER_IMPORTING_INSTEAD_OF,
+            );
+            return;
+        }
+
+        // Most import semantics still need to run for already-resolved modules even when
+        // unresolved-import reporting is disabled (the lightweight multi-file harness
+        // uses this mode). Only skip entirely when the module also can't be resolved.
+        if !self.ctx.report_unresolved_imports {
+            let resolution_mode = request_resolution_mode;
+            self.check_js_type_only_imports_after_import_validation(import, module_name);
+            let module_resolves = self
+                .ctx
+                .resolve_import_target_from_file_with_mode(
+                    self.ctx.current_file_idx,
+                    module_name,
+                    resolution_mode,
+                )
+                .or_else(|| {
+                    self.ctx
+                        .resolve_import_target_from_file(self.ctx.current_file_idx, module_name)
+                })
+                .or_else(|| self.ctx.resolve_import_target(module_name))
+                .is_some()
+                || self
+                    .ctx
+                    .module_exports_contains_module(self.ctx.binder, module_name);
+            if !module_resolves {
+                return;
+            }
+        }
+        // Side-effect imports (bare `import "module"`) are silently ignored when
+        // noUncheckedSideEffectImports is disabled (the default). tsc suppresses
+        // ALL resolution failures for these imports regardless of the error code.
+        // Check early to avoid any error emission path below.
+        if is_side_effect_import && !self.ctx.compiler_options.no_unchecked_side_effect_imports {
+            return;
+        }
+        // Track whether TS2846/TS5097 extension diagnostics were emitted.
+        // When these fire, TS2307 from module resolution should be suppressed
+        // (tsc prioritizes extension-specific diagnostics over "cannot find module").
+        let mut emitted_extension_diagnostic = false;
+
+        let dts_ext = if module_name.ends_with(".d.ts") {
+            Some((".d.ts", ".ts", ".js"))
+        } else if module_name.ends_with(".d.mts") {
+            Some((".d.mts", ".mts", ".mjs"))
+        } else if module_name.ends_with(".d.cts") {
+            Some((".d.cts", ".cts", ".cjs"))
+        } else {
+            None
+        };
+        // tsc only emits TS2846 when the .d.ts module actually resolves; if
+        // the file doesn't exist, TS2307 (cannot find module) takes priority.
+        // Without this guard we emit both TS5097/TS2846 AND tsc's TS2307,
+        // producing extra diagnostics on missing imports.
+        let module_resolves_dts = self
+            .ctx
+            .resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                request_resolution_mode,
+            )
+            .is_some()
+            || self
+                .ctx
+                .module_exports_contains_module(self.ctx.binder, module_name);
+        if let Some((dts_suffix, ts_ext, js_ext)) = dts_ext
+            && !is_type_only_import
+            && module_resolves_dts
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let base = module_name.trim_end_matches(dts_suffix);
+            let suggested = if self.ctx.compiler_options.allow_importing_ts_extensions {
+                format!("{base}{ts_ext}")
+            } else {
+                // For CommonJS-like module kinds, extensionless imports are valid.
+                // For ESM-like module kinds, append .js/.mjs/.cjs extension.
+                use tsz_common::common::ModuleKind;
+                match self.ctx.compiler_options.module {
+                    ModuleKind::CommonJS
+                    | ModuleKind::AMD
+                    | ModuleKind::UMD
+                    | ModuleKind::System
+                    | ModuleKind::None => base.to_string(),
+                    _ => format!("{base}{js_ext}"),
+                }
+            };
+            let message = format_message(
+                diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+                &[&suggested],
+            );
+            self.error_at_position(
+                spec_start,
+                spec_length,
+                &message,
+                diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+            );
+            emitted_extension_diagnostic = true;
+        }
+
+        // TS5097: Check for .ts/.tsx/.mts/.cts extensions when allowImportingTsExtensions is disabled.
+        // rewriteRelativeImportExtensions also suppresses this error (tsc utilities.ts:9045).
+        // tsc does not emit TS5097 inside declaration files (.d.ts).
+        // When the resolver reports TS6142 (jsx not set), tsc does not also emit TS5097.
+        let has_jsx_not_set_error = self
+            .ctx
+            .get_resolution_error_for_request(module_name, request_resolution_mode, request_kind)
+            .is_some_and(|e| {
+                e.code
+                    == crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
+            });
+        // tsc only emits TS5097 when the module actually resolves (so the .ts
+        // extension is the user's mistake on a real file). When the module
+        // doesn't resolve at all, tsc emits TS2307 ('cannot find module')
+        // instead — emitting both produces a misleading double-diagnostic.
+        if !self.ctx.compiler_options.allow_importing_ts_extensions
+            && !self.ctx.compiler_options.rewrite_relative_import_extensions
+            && !is_type_only_import
+            && !self.ctx.is_declaration_file()
+            && !has_jsx_not_set_error
+            && self.module_target_is_typescript_input_file(module_name)
+            && let Some(ext) = ts_extension_suffix(module_name)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                    diagnostic_messages::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
+                    &[ext],
+                );
+            self.error_at_position(
+                    spec_start,
+                    spec_length,
+                    &message,
+                    diagnostic_codes::AN_IMPORT_PATH_CAN_ONLY_END_WITH_A_EXTENSION_WHEN_ALLOWIMPORTINGTSEXTENSIONS_IS,
+                );
+            emitted_extension_diagnostic = true;
+        }
+
+        // TS2876: rewriteRelativeImportExtensions — specifier looks like a file name
+        // (e.g. `./foo.ts`) but actually resolves to a directory index file
+        // (e.g. `./foo.ts/index.ts`), making extension rewriting unsafe.
+        // tsc checks `!resolvedModule.resolvedUsingTsExtension && shouldRewrite`.
+        if !emitted_extension_diagnostic
+            && self.ctx.compiler_options.rewrite_relative_import_extensions
+            && !is_type_only_import
+            && !self.ctx.is_declaration_file()
+            && should_rewrite_module_specifier(module_name)
+            && self.resolved_via_directory_index(module_name)
+        {
+            let resolved_display = self.resolved_file_display_path(module_name);
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
+                &[&resolved_display],
+            );
+            self.error_at_position(
+                spec_start,
+                spec_length,
+                &message,
+                diagnostic_codes::THIS_RELATIVE_IMPORT_PATH_IS_UNSAFE_TO_REWRITE_BECAUSE_IT_LOOKS_LIKE_A_FILE_NAME,
+            );
+            emitted_extension_diagnostic = true;
+        }
+
+        // TS2877: rewriteRelativeImportExtensions — non-relative imports with
+        // a TypeScript extension that resolve to an input TypeScript file are not
+        // rewritten during emit.
+        //
+        // Suppress when the resolver consumed the `.ts` via a literal
+        // package.json `exports`/`imports` key (e.g. `"./*.ts": "./*.js"` or
+        // `"#foo.ts": ...`). In those cases the package author has explicitly
+        // opted into the `.ts`→`.js` mapping at runtime, so the import will
+        // resolve correctly without rewriting. This mirrors tsc's
+        // `resolvedUsingTsExtension` gate.
+        if !emitted_extension_diagnostic
+            && self.ctx.compiler_options.rewrite_relative_import_extensions
+            && !is_type_only_import
+            && !self.ctx.is_declaration_file()
+            && !should_rewrite_module_specifier(module_name)
+            && !self.resolved_via_directory_index(module_name)
+            && self.module_target_is_typescript_input_file(module_name)
+            && !self.resolved_module_is_from_node_modules(module_name)
+            && !self.ctx.import_resolved_using_ts_extension(module_name)
+            && let Some(ext) = ts_extension_suffix(module_name)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::THIS_IMPORT_USES_A_EXTENSION_TO_RESOLVE_TO_AN_INPUT_TYPESCRIPT_FILE_BUT_WILL_NOT,
+                &[ext],
+            );
+            self.error_at_position(
+                spec_start,
+                spec_length,
+                &message,
+                diagnostic_codes::THIS_IMPORT_USES_A_EXTENSION_TO_RESOLVE_TO_AN_INPUT_TYPESCRIPT_FILE_BUT_WILL_NOT,
+            );
+            emitted_extension_diagnostic = true;
+        }
+
+        if self.would_create_cycle(module_name) {
+            tracing::trace!(%module_name, "check_import_declaration: cycle detected");
+            let cycle_path: Vec<&str> = self
+                .ctx
+                .import_resolution_stack
+                .iter()
+                .map(std::string::String::as_str)
+                .chain(std::iter::once(module_name.as_str()))
+                .collect();
+            let cycle_str = cycle_path.join(" -> ");
+            let message = format!("Circular import detected: {cycle_str}");
+
+            // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
+            let module_key = module_name.to_string();
+            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                self.ctx.modules_with_ts2307_emitted.insert(module_key);
+                self.error_at_position(
+                    spec_start,
+                    spec_length,
+                    &message,
+                    diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
+                );
+            }
+            return;
+        }
+
+        self.ctx.import_resolution_stack.push(module_name.clone());
+
+        // Node.js built-in modules (e.g. "fs", "path", "node:fs") should not
+        // trigger TS2307/TS2882 when using Node module resolution. TSC resolves
+        // these via @types/node; our single-file checker lacks this, so we
+        // suppress resolution errors for known built-in names.
+        let is_node_builtin = self.ctx.compiler_options.module.is_node_module()
+            && is_node_builtin_module(module_name);
+
+        // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
+        // This must be checked before resolved_modules to catch extensionless import errors
+        let module_key = module_name.to_string();
+        if let Some(error) = self.ctx.get_resolution_error_for_request(
+            module_name,
+            request_resolution_mode,
+            request_kind,
+        ) {
+            // Extract error values before mutable borrow
+            let mut error_code = error.code;
+            let mut error_message = error.message.clone();
+            if error_code
+                == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+                || error_code == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O
+            {
+                // When TS2846 or TS5097 was already emitted for this import,
+                // suppress TS2307/TS2792. tsc prioritizes extension-specific
+                // diagnostics over "cannot find module" errors.
+                // Also suppress TS2307 for .d.ts type-only imports — tsc does
+                // not validate module existence for `import type` from .d.ts.
+                if emitted_extension_diagnostic || (is_type_only_import && dts_ext.is_some()) {
+                    self.ctx.import_resolution_stack.pop();
+                    return;
+                }
+                // A resolved triple-slash type reference can introduce ambient
+                // wildcard modules for non-TS assets (for example Vite's
+                // `vite/client` declarations). Those declarations should
+                // suppress the resolver's missing-file diagnostic.
+                if self.wildcard_ambient_module_declared(module_name) {
+                    self.check_imported_members(import, module_name);
+                    self.ctx.import_resolution_stack.pop();
+                    return;
+                }
+                // Node.js built-in modules: suppress TS2307/TS2882 entirely,
+                // UNLESS noTypesAndSymbols is set — in that case @types/node
+                // won't be auto-loaded, so tsc emits TS2591 instead.
+                if is_node_builtin {
+                    if self.ctx.compiler_options.no_types_and_symbols {
+                        let (msg, code) = self.module_not_found_diagnostic_for_site(
+                            module_name,
+                            crate::import::core::ModuleNotFoundSite::Import,
+                        );
+                        if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                            self.ctx
+                                .modules_with_ts2307_emitted
+                                .insert(module_key);
+                            self.error_at_position(spec_start, spec_length, &msg, code);
+                        }
+                    }
+                    self.ctx.import_resolution_stack.pop();
+                    return;
+                }
+
+                // AMD/System/classic-resolution: tsc only emits the secondary
+                // missing-module diagnostic when TS5107 deprecation is silenced
+                // via `ignoreDeprecations` — issue #3077.
+                if self.deprecated_mode_suppresses_module_not_found() {
+                    self.ctx.import_resolution_stack.pop();
+                    return;
+                }
+
+                // Side-effect imports use TS2882 instead of TS2307/TS2792,
+                // but only when noUncheckedSideEffectImports is enabled.
+                // When disabled (default), tsc silently ignores all resolution failures.
+                if is_side_effect_import {
+                    if !self.ctx.compiler_options.no_unchecked_side_effect_imports {
+                        self.ctx.import_resolution_stack.pop();
+                        return;
+                    }
+                    // noUncheckedSideEffectImports is enabled — convert to TS2882
+                    if error_code
+                        == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+                        || error_code
+                            == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O
+                    {
+                        use crate::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+                        error_code = diagnostic_codes::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF;
+                        error_message = format_message(
+                            diagnostic_messages::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF,
+                            &[module_name],
+                        );
+                    }
+                } else {
+                    let (fallback_message, fallback_code) = self.module_not_found_diagnostic(module_name);
+                    error_code = fallback_code;
+                    error_message = fallback_message;
+                }
+            }
+            tracing::trace!(%module_name, error_code, "check_import_declaration: resolution error found");
+            if error_code == 6504 {
+                self.error_program_level(error_message, error_code);
+                self.ctx.import_resolution_stack.pop();
+                return;
+            }
+            // Side-effect imports: suppress ALL resolution errors when
+            // noUncheckedSideEffectImports is disabled (the default).
+            // The check inside the CANNOT_FIND_MODULE block above handles
+            // TS2307/TS2792, but other error codes (e.g., TS2882 from the
+            // conformance runner) can bypass that path. This catch-all
+            // ensures no resolution error leaks for bare `import "module"`.
+            if is_side_effect_import && !self.ctx.compiler_options.no_unchecked_side_effect_imports
+            {
+                self.ctx.import_resolution_stack.pop();
+                return;
+            }
+            // Check if we've already emitted an error for this module (prevents duplicate emissions)
+            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                self.ctx
+                    .modules_with_ts2307_emitted
+                    .insert(module_key.clone());
+                self.error_at_position(spec_start, spec_length, &error_message, error_code);
+            }
+            if error_code
+                != crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
+                && error_code
+                    != crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_ALLOWARBITRARYEXTENSIONS_IS_NOT_SET
+            {
+                self.ctx.import_resolution_stack.pop();
+                return;
+            }
+        }
+
+        // Ambient module declarations still suppress TS2307 when the driver
+        // did not report a concrete resolution failure for this import.
+        if self.is_ambient_module_match(module_name) {
+            tracing::trace!(%module_name, "check_import_declaration: ambient module match, returning");
+            // Keep JS-mode type-only import diagnostics (TS18042) for ambient modules.
+            self.check_imported_members(import, module_name);
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        // Use global declared modules index for O(1) lookup
+        {
+            let found = if let Some(declared) = &self.ctx.global_declared_modules {
+                let normalized = module_name.trim_matches('"').trim_matches('\'');
+                declared.exact.contains(normalized)
+            } else if let Some(binders) = &self.ctx.all_binders {
+                binders.iter().any(|binder| {
+                    binder.declared_modules.contains(module_name)
+                        || binder.shorthand_ambient_modules.contains(module_name)
+                })
+            } else {
+                false
+            };
+            if found {
+                tracing::trace!(%module_name, "check_import_declaration: found in declared/shorthand modules, returning");
+                // Keep JS-mode type-only import diagnostics (TS18042) for ambient modules.
+                self.check_imported_members(import, module_name);
+                self.ctx.import_resolution_stack.pop();
+                return;
+            }
+        }
+
+        // For side-effect imports (import "module") in default mode (no_unchecked_side_effect_imports=false),
+        // we only check resolution errors (TS2882 above). Skip member/export validation which
+        // requires import bindings. If we reach here, the module resolved successfully.
+        if is_side_effect_import && !self.ctx.compiler_options.no_unchecked_side_effect_imports {
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        // Check if module was successfully resolved
+        if self.resolved_module_set_contains_specifier(module_name) {
+            if let Some(target_idx) = self
+                .ctx
+                .resolve_import_target_from_file_for_request(
+                    self.ctx.current_file_idx,
+                    module_name,
+                    request_resolution_mode,
+                    request_kind,
+                )
+                .or_else(|| self.ctx.resolve_import_target(module_name))
+            {
+                let has_typed_export_surface = self
+                    .resolve_effective_module_exports_with_mode(
+                        module_name,
+                        self.requested_resolution_mode(import.attributes, is_type_only_import),
+                    )
+                    .is_some();
+                // When a module was successfully resolved to a target file, do NOT
+                // emit TS2307 regardless of its export surface. TS2307 means the
+                // module file cannot be found at all. A file with no exports (e.g.,
+                // `export {}`, `declare global`, or only side-effect imports) is
+                // still a valid module — tsc never emits TS2307 for it. Specific
+                // import errors (TS2305, TS2459) will be caught later during
+                // member validation.
+                let mut skip_export_checks = false;
+                // Extract data we need before any mutable borrows
+                let (_target_is_declaration_file, file_info) = {
+                    let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                    if let Some(source_file) = arena.source_files.first() {
+                        let file_name = source_file.file_name.as_str();
+                        let is_js_like = file_name.ends_with(".js")
+                            || file_name.ends_with(".jsx")
+                            || file_name.ends_with(".mjs")
+                            || file_name.ends_with(".cjs");
+                        let skip_exports = is_js_like
+                            && !source_file.is_declaration_file
+                            && !has_typed_export_surface;
+                        // Determine if target file is ESM. .mjs/.mts are always ESM.
+                        // For .js/.ts targets, also check package.json "type" field via
+                        // file_is_esm_map. TSC does not emit TS1479 when a .js source file
+                        // imports a .js ESM target — only when the target is .mjs/.mts
+                        // (unambiguously ESM). However, .cjs files are unambiguously CJS,
+                        // so they DO get TS1479 when importing .js ESM targets.
+                        // JSON files are data, not modules — they can always be
+                        // require()'d and never count as ESM for TS1479.
+                        let target_is_json = file_name.ends_with(".json");
+                        let target_ext_is_esm = !target_is_json
+                            && (file_name.ends_with(".mjs") || file_name.ends_with(".mts"));
+                        // Skip file_is_esm_map check only for ambiguous JS sources (.js/.jsx).
+                        // .cjs is unambiguously CJS, so it should check file_is_esm_map
+                        // to detect .js targets that are ESM via package.json "type".
+                        let skip_esm_map = target_is_json
+                            || self.ctx.file_name.ends_with(".js")
+                            || self.ctx.file_name.ends_with(".jsx")
+                            || self.ctx.file_name.ends_with(".mjs");
+                        let target_is_esm = target_ext_is_esm
+                            || (!skip_esm_map
+                                && self.lookup_file_is_esm(file_name).unwrap_or(false));
+                        let is_dts = source_file.is_declaration_file;
+                        (is_dts, Some((skip_exports, target_is_esm)))
+                    } else {
+                        (false, None)
+                    }
+                };
+
+                if let Some((should_skip_exports, target_is_esm)) = file_info {
+                    if should_skip_exports {
+                        skip_export_checks = true;
+                    }
+
+                    // TS1479: Check if CommonJS file is importing an ES module.
+                    // In TypeScript 6.0+, TSC only emits TS1479 for Node16/Node18
+                    // module kinds. Node20 and NodeNext (targeting Node 22+) support
+                    // `require()` of ESM modules, so the diagnostic is suppressed.
+                    // For ESNext, Preserve, bundler, and other module kinds, the
+                    // import interop is handled by the bundler/runtime.
+                    let is_node_module_kind =
+                        self.ctx.compiler_options.module.is_node16_or_node18();
+                    let current_is_commonjs = is_node_module_kind && {
+                        let current_file = &self.ctx.file_name;
+                        // .cts/.cjs are always CommonJS
+                        let is_commonjs_file =
+                            current_file.ends_with(".cts") || current_file.ends_with(".cjs");
+                        // .mts/.mjs are always ESM
+                        let is_esm_file =
+                            current_file.ends_with(".mts") || current_file.ends_with(".mjs");
+                        if is_commonjs_file {
+                            true
+                        } else if is_esm_file {
+                            false
+                        } else if let Some(is_esm) = self.ctx.file_is_esm {
+                            // Driver-provided per-file module kind from package.json
+                            // "type" field (Node16/NodeNext resolution)
+                            !is_esm
+                        } else {
+                            // Fallback: global module kind heuristic
+                            !self.ctx.compiler_options.module.is_es_module()
+                        }
+                    };
+
+                    // TSC suppresses TS1479 for .cjs relative imports, but .cts
+                    // files still report the CJS -> ESM boundary for relative
+                    // imports that resolve to ESM targets.
+                    let is_explicit_cjs_js_file = self.ctx.file_name.ends_with(".cjs");
+                    let is_relative_import =
+                        module_name.starts_with("./") || module_name.starts_with("../");
+                    let suppress_for_cjs_relative = is_relative_import && is_explicit_cjs_js_file;
+
+                    // TS1479 only applies under Node16/Node18 module kinds where
+                    // CJS/ESM interop boundaries exist at runtime. Node20/NodeNext,
+                    // bundler resolution, and pure ESM module kinds handle interop
+                    // transparently.
+                    let module_has_cjs_esm_boundary =
+                        self.ctx.compiler_options.module.is_node16_or_node18();
+
+                    if current_is_commonjs
+                        && target_is_esm
+                        && module_has_cjs_esm_boundary
+                        && !is_type_only_import
+                        && !suppress_for_cjs_relative
+                    {
+                        use crate::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+                        let message = format_message(
+                            diagnostic_messages::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_WHOSE_IMPORTS_WILL_PRODUCE_REQUIRE_CALLS_H,
+                            &[module_name],
+                        );
+                        self.error_at_position(
+                            spec_start,
+                            spec_length,
+                            &message,
+                            diagnostic_codes::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_WHOSE_IMPORTS_WILL_PRODUCE_REQUIRE_CALLS_H,
+                        );
+                    }
+
+                    // TS1541: type-only imports that cross a Node16/Node18
+                    // CJS -> ESM boundary need an explicit resolution-mode.
+                    if is_type_only_import
+                        && self.type_only_cjs_esm_resolution_mode_is_missing(
+                            target_idx,
+                            self.get_resolution_mode_override(import.attributes)
+                                .is_some(),
+                        )
+                    {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_position(
+                            spec_start,
+                            spec_length,
+                            diagnostic_messages::TYPE_ONLY_IMPORT_OF_AN_ECMASCRIPT_MODULE_FROM_A_COMMONJS_MODULE_MUST_HAVE_A_RESO,
+                            diagnostic_codes::TYPE_ONLY_IMPORT_OF_AN_ECMASCRIPT_MODULE_FROM_A_COMMONJS_MODULE_MUST_HAVE_A_RESO,
+                        );
+                    }
+                }
+
+                self.maybe_emit_json_esm_import_attribute_required(
+                    import,
+                    target_idx,
+                    spec_start,
+                    spec_length,
+                    is_type_only_import,
+                );
+
+                // TS2846 for resolved .d.ts files is only emitted when the import
+                // specifier explicitly uses a .d.ts extension (handled above at the
+                // dts_ext check). TSC does NOT emit TS2846 when an import like
+                // "./foo" resolves to "foo.d.ts" — even under verbatimModuleSyntax.
+                self.maybe_emit_imported_global_augmentation_errors(target_idx);
+                if let Some(binder) = self.ctx.get_binder_for_file(target_idx) {
+                    let normalized_module_name = module_name.trim_matches('"').trim_matches('\'');
+                    // Side-effect imports (`import "x"`) never require the target
+                    // to be a module — they just execute the file.  Skip TS2306
+                    // regardless of the noUncheckedSideEffectImports setting.
+                    let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                    let source_file = arena.source_files.first();
+                    let target_is_global_augmentation_dts =
+                        source_file.is_some_and(|source_file| {
+                            source_file.file_name.ends_with(".d.ts")
+                                && !self
+                                    .source_file_has_syntactic_module_indicator(arena, source_file)
+                                && self.source_file_has_top_level_global_augmentation(
+                                    arena,
+                                    source_file,
+                                )
+                        });
+                    if !is_side_effect_import
+                        && (!binder.is_external_module || target_is_global_augmentation_dts)
+                        && !self.is_ambient_module_match(module_name)
+                        && !self
+                            .ctx
+                            .declared_modules_contains(binder, normalized_module_name)
+                        && let Some(source_file) = source_file
+                    {
+                        let file_name = source_file.file_name.as_str();
+                        let is_js_like = file_name.ends_with(".js")
+                            || file_name.ends_with(".jsx")
+                            || file_name.ends_with(".mjs")
+                            || file_name.ends_with(".cjs");
+                        let is_json_module = file_name.ends_with(".json")
+                            && (self.ctx.compiler_options.resolve_json_module
+                                || self.import_attributes_enable_json_module(import.attributes));
+                        if !is_js_like && !is_json_module {
+                            use crate::diagnostics::{
+                                diagnostic_codes, diagnostic_messages, format_message,
+                            };
+                            let message = format_message(
+                                diagnostic_messages::FILE_IS_NOT_A_MODULE,
+                                &[&source_file.file_name],
+                            );
+                            self.error_at_position(
+                                spec_start,
+                                spec_length,
+                                &message,
+                                diagnostic_codes::FILE_IS_NOT_A_MODULE,
+                            );
+                            self.ctx.import_resolution_stack.pop();
+                            return;
+                        }
+                    }
+                }
+                if !skip_export_checks {
+                    self.check_imported_members(import, module_name);
+                }
+                self.check_js_type_only_imports_after_import_validation(import, module_name);
+            } else {
+                self.check_imported_members(import, module_name);
+                self.check_js_type_only_imports_after_import_validation(import, module_name);
+            }
+
+            // TS1484/TS1485: verbatimModuleSyntax import checks
+            self.check_verbatim_module_syntax_imports(import, module_name);
+
+            if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
+                let mut visited = FxHashSet::default();
+                for source_module in source_modules {
+                    self.check_reexport_chain_for_cycles(source_module, &mut visited);
+                }
+            }
+
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        if self
+            .ctx
+            .module_exports_contains_module(self.ctx.binder, module_name)
+            && self.ctx.get_resolution_error(module_name).is_none()
+        {
+            tracing::trace!(%module_name, "check_import_declaration: found in module_exports, checking members");
+            self.check_imported_members(import, module_name);
+            self.check_js_type_only_imports_after_import_validation(import, module_name);
+
+            // TS1484/TS1485: verbatimModuleSyntax import checks
+            self.check_verbatim_module_syntax_imports(import, module_name);
+
+            if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
+                let mut visited = FxHashSet::default();
+                for source_module in source_modules {
+                    self.check_reexport_chain_for_cycles(source_module, &mut visited);
+                }
+            }
+
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        // Node.js built-in modules: suppress fallback TS2307/TS2882 too,
+        // unless noTypesAndSymbols — emit TS2591 in that case.
+        if is_node_builtin {
+            if self.ctx.compiler_options.no_types_and_symbols {
+                let (msg, code) = self.module_not_found_diagnostic_for_site(
+                    module_name,
+                    crate::import::core::ModuleNotFoundSite::Import,
+                );
+                if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+                    self.ctx.modules_with_ts2307_emitted.insert(module_key);
+                    self.error_at_position(spec_start, spec_length, &msg, code);
+                }
+            }
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        // AMD/System/classic-resolution: same suppression rule as the
+        // resolution-error branch above (issue #3077).
+        if self.deprecated_mode_suppresses_module_not_found() {
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        tracing::trace!(%module_name, "check_import_declaration: fallback - emitting module-not-found error");
+
+        // Side-effect imports are silently ignored when noUncheckedSideEffectImports is false
+        if is_side_effect_import && !self.ctx.compiler_options.no_unchecked_side_effect_imports {
+            self.ctx.import_resolution_stack.pop();
+            return;
+        }
+
+        // Fallback: Emit module-not-found error if no specific error was found
+        // Check if we've already emitted for this module (prevents duplicate emissions)
+        if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
+            self.ctx.modules_with_ts2307_emitted.insert(module_key);
+            // Side-effect imports (bare `import "module"`) use TS2882 instead of TS2307
+            let (message, code) = if is_side_effect_import {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                (
+                    format_message(
+                        diagnostic_messages::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF,
+                        &[module_name],
+                    ),
+                    diagnostic_codes::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF,
+                )
+            } else {
+                self.module_not_found_diagnostic(module_name)
+            };
+            // Use pre-extracted position instead of error_at_node to avoid
+            // silent failures when get_node_span returns None
+            self.error_at_position(spec_start, spec_length, &message, code);
+        }
+
+        self.ctx.import_resolution_stack.pop();
+    }
+
+    fn resolved_module_set_contains_specifier(&self, module_name: &str) -> bool {
+        self.ctx.resolved_modules.as_ref().is_some_and(|resolved| {
+            crate::module_resolution::module_specifier_candidates(module_name)
+                .iter()
+                .any(|candidate| resolved.contains(candidate))
+        })
+    }
+
+    // =========================================================================
+    // Re-export Cycle Detection
+    // =========================================================================
+
+    /// Walk the re-export chain rooted at `module_name`, guarding against
+    /// infinite recursion on circular chains.
+    ///
+    /// tsc does not emit a diagnostic for circular `export * from` chains —
+    /// it simply treats the cycle as contributing no transitive exports. This
+    /// walker exists purely to keep exported-symbol collection from spinning
+    /// forever on self/mutually-referential packages (e.g. a typesVersions
+    /// subfolder that re-exports from the package root and vice versa).
+    pub(crate) fn check_reexport_chain_for_cycles(
+        &mut self,
+        module_name: &str,
+        visited: &mut FxHashSet<String>,
+    ) {
+        if visited.contains(module_name) {
+            return;
+        }
+
+        visited.insert(module_name.to_string());
+
+        if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
+            for source_module in source_modules {
+                self.check_reexport_chain_for_cycles(source_module, visited);
+            }
+        }
+
+        if let Some(reexports) = self.ctx.binder.reexports.get(module_name) {
+            for (source_module, _) in reexports.values() {
+                self.check_reexport_chain_for_cycles(source_module, visited);
+            }
+        }
+
+        visited.remove(module_name);
+    }
+
+    /// Check if adding a module to the resolution path would create a cycle.
+    pub(crate) fn would_create_cycle(&self, module: &str) -> bool {
+        self.ctx
+            .import_resolution_stack
+            .contains(&module.to_string())
+    }
+
+    // =========================================================================
+    // Re-export Resolution Helpers
+    // =========================================================================
+
+    /// Try to resolve an import through the target module's binder re-export chains.
+    /// Traverses across binder boundaries by resolving each re-export source
+    /// to its target file and checking that file's binder.
+    pub(crate) fn resolve_import_via_target_binder(
+        &self,
+        module_name: &str,
+        import_name: &str,
+        resolution_mode: Option<crate::context::ResolutionModeOverride>,
+    ) -> bool {
+        let target_idx = if let Some(mode) = resolution_mode {
+            self.ctx.resolve_import_target_from_file_with_mode(
+                self.ctx.current_file_idx,
+                module_name,
+                Some(mode),
+            )
+        } else {
+            self.ctx.resolve_import_target(module_name)
+        };
+        if let Some(target_idx) = target_idx {
+            let mut visited = rustc_hash::FxHashSet::default();
+            return self.resolve_import_in_file(target_idx, import_name, &mut visited);
+        }
+        false
+    }
+
+    /// Try to resolve an import by searching binders' re-export chains.
+    ///
+    /// Uses `global_module_binder_index` for O(1) candidate lookup when available,
+    /// falling back to an O(N) scan of all binders otherwise.
+    pub(crate) fn resolve_import_via_all_binders(
+        &self,
+        module_name: &str,
+        normalized: &str,
+        import_name: &str,
+    ) -> bool {
+        let Some(all_binders) = &self.ctx.all_binders else {
+            return false;
+        };
+        // Use global module binder index for O(1) candidate lookup.
+        if let Some(ref idx) = self.ctx.global_module_binder_index {
+            let candidate_indices = idx
+                .get(module_name)
+                .into_iter()
+                .flatten()
+                .chain(idx.get(normalized).into_iter().flatten());
+            let mut seen = FxHashSet::default();
+            for &binder_idx in candidate_indices {
+                if !seen.insert(binder_idx) {
+                    continue;
+                }
+                if let Some(binder) = all_binders.get(binder_idx)
+                    && (binder
+                        .resolve_import_if_needed_public(module_name, import_name)
+                        .is_some()
+                        || binder
+                            .resolve_import_if_needed_public(normalized, import_name)
+                            .is_some())
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        // Fallback: O(N) scan when index not built.
+        for binder in all_binders.iter() {
+            if binder
+                .resolve_import_if_needed_public(module_name, import_name)
+                .is_some()
+                || binder
+                    .resolve_import_if_needed_public(normalized, import_name)
+                    .is_some()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Resolve an import by checking a specific file's exports and following
+    /// re-export chains across binder boundaries. Each file has its own binder
+    /// in multi-file mode, so we traverse wildcard/named re-exports by resolving
+    /// each source specifier to its target file and checking that file's binder.
+    fn resolve_import_in_file(
+        &self,
+        file_idx: usize,
+        import_name: &str,
+        visited: &mut rustc_hash::FxHashSet<usize>,
+    ) -> bool {
+        if !visited.insert(file_idx) {
+            return false; // Cycle detection
+        }
+
+        let Some(target_binder) = self.ctx.get_binder_for_file(file_idx) else {
+            return false;
+        };
+
+        let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(target_file_name) = target_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+        else {
+            return false;
+        };
+
+        // Check direct exports
+        if let Some(exports) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
+            && exports.has(import_name)
+        {
+            return true;
+        }
+
+        // Check named re-exports
+        if let Some(reexports) = self
+            .ctx
+            .reexports_for_file(target_binder, &target_file_name)
+            && let Some((source_module, original_name)) = reexports.get(import_name)
+        {
+            let name = original_name.as_deref().unwrap_or(import_name);
+            if let Some(source_idx) = self
+                .ctx
+                .resolve_import_target_from_file(file_idx, source_module)
+                && self.resolve_import_in_file(source_idx, name, visited)
+            {
+                return true;
+            }
+        }
+
+        // Check wildcard re-exports
+        if let Some(source_modules) = self
+            .ctx
+            .wildcard_reexports_for_file(target_binder, &target_file_name)
+        {
+            let source_modules = source_modules.clone();
+            for source_module in &source_modules {
+                if let Some(source_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(file_idx, source_module)
+                    && self.resolve_import_in_file(source_idx, import_name, visited)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn check_import_declaration_conflicts(&mut self, stmt_idx: NodeIndex, clause_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+            return;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return;
+        };
+
+        let mut bindings_to_check = Vec::new();
+
+        if clause.name.is_some() {
+            bindings_to_check.push((clause_idx, clause.name, clause.name));
+        }
+
+        if clause.named_bindings.is_some()
+            && let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings)
+        {
+            if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                if let Some(ns) = self.ctx.arena.get_named_imports(bindings_node)
+                    && ns.name.is_some()
+                {
+                    bindings_to_check.push((clause.named_bindings, ns.name, ns.name));
+                }
+            } else if bindings_node.kind == syntax_kind_ext::NAMED_IMPORTS
+                && let Some(named) = self.ctx.arena.get_named_imports(bindings_node)
+            {
+                for &spec_idx in &named.elements.nodes {
+                    if let Some(spec_node) = self.ctx.arena.get(spec_idx)
+                        && let Some(spec) = self.ctx.arena.get_specifier(spec_node)
+                    {
+                        let name_idx = if spec.name.is_some() {
+                            spec.name
+                        } else {
+                            spec.property_name
+                        };
+                        let diagnostic_name_idx = if spec.property_name.is_some() {
+                            // For aliased named imports (`import { x as y }`), tsc
+                            // anchors TS2440 at the imported name (`x`), while the
+                            // message still references the local binding (`y`).
+                            spec.property_name
+                        } else {
+                            name_idx
+                        };
+                        if name_idx.is_some() {
+                            bindings_to_check.push((spec_idx, name_idx, diagnostic_name_idx));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (binding_node_idx, name_idx, diagnostic_name_idx) in bindings_to_check {
+            if let Some(name_node) = self.ctx.arena.get(name_idx)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                let name = ident.escaped_text.clone();
+                let sym_id_opt = self
+                    .ctx
+                    .binder
+                    .node_symbols
+                    .get(&binding_node_idx.0)
+                    .copied();
+                if let Some(sym_id) = sym_id_opt {
+                    let mut has_conflict = false;
+                    if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
+                        if sym.is_type_only {
+                            continue;
+                        }
+
+                        // Fast path: if there is no other local declaration merged into
+                        // this symbol and no separate same-name symbol in the current file,
+                        // there is nothing for this import to conflict with. Avoid resolving
+                        // the import alias just to discover the absence of a candidate.
+                        let has_merged_local_candidate = sym.declarations.iter().any(|&decl_idx| {
+                            decl_idx != binding_node_idx
+                                && decl_idx != clause_idx
+                                && decl_idx != stmt_idx
+                                && self.ctx.binder.node_symbols.contains_key(&decl_idx.0)
+                        });
+                        let has_same_name_candidate = self
+                            .ctx
+                            .binder
+                            .symbols
+                            .find_all_by_name(&name)
+                            .iter()
+                            .any(|&other_sym_id| other_sym_id != sym_id);
+                        if !has_merged_local_candidate && !has_same_name_candidate {
+                            continue;
+                        }
+
+                        let mut import_has_value = false;
+                        let mut import_has_type = false;
+                        let mut visited = AliasCycleTracker::new();
+                        if let Some(resolved_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                            // When resolve_alias_symbol returns the SAME symbol, it
+                            // means resolution failed (e.g. unresolved external module).
+                            // The symbol's flags include merged local declarations,
+                            // which would give a false positive.
+                            && resolved_id != sym_id
+                            && let Some(resolved_sym) = self
+                                .ctx
+                                .binder
+                                .get_symbol_with_libs(resolved_id, &self.get_lib_binders())
+                        {
+                            let mut has_value = resolved_sym
+                                .has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE);
+                            if has_value
+                                && resolved_sym.has_any_flags(symbol_flags::VALUE_MODULE)
+                                && !resolved_sym.has_any_flags(
+                                    symbol_flags::VALUE & !symbol_flags::VALUE_MODULE,
+                                )
+                            {
+                                let mut any_instantiated = false;
+                                for &decl_idx in &resolved_sym.declarations {
+                                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                                        continue;
+                                    };
+                                    if decl_node.kind
+                                        == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
+                                    {
+                                        if self.is_namespace_declaration_instantiated(decl_idx) {
+                                            any_instantiated = true;
+                                            break;
+                                        }
+                                    } else {
+                                        any_instantiated = true;
+                                        break;
+                                    }
+                                }
+                                has_value = any_instantiated;
+                            }
+                            import_has_value = has_value;
+                            // Check if the imported symbol carries type semantics
+                            // (e.g. enum, class, interface). When it does, local type
+                            // aliases or interfaces with the same name conflict.
+                            if resolved_sym.has_any_flags(symbol_flags::TYPE) {
+                                import_has_type = true;
+                            }
+                            if resolved_sym.has_any_flags(symbol_flags::ALIAS)
+                                && sym.import_module.is_some()
+                                && sym.import_name.is_none()
+                            {
+                                import_has_value = true;
+                            }
+                        }
+
+                        // Cross-file fallback: when resolve_alias_symbol returns the alias
+                        // itself (can't resolve cross-file), check the exported symbol's
+                        // flags directly in the target file's binder.
+                        if (!import_has_value || !import_has_type)
+                            && let Some(ref module_name) = sym.import_module
+                        {
+                            let export_name = sym.import_name.as_deref().unwrap_or(&name);
+                            // Try declared modules (module_exports)
+                            // Use global_module_binder_index for O(1) lookup instead of O(N) binder scan
+                            if let Some(binders) = &self.ctx.all_binders {
+                                let candidate_indices = self
+                                    .ctx
+                                    .global_module_binder_index
+                                    .as_ref()
+                                    .and_then(|idx| idx.get(module_name.as_str()));
+                                if let Some(indices) = candidate_indices {
+                                    for &binder_idx in indices {
+                                        if let Some(binder) = binders.get(binder_idx)
+                                            && let Some(exports) =
+                                                self.ctx.module_exports_for_module(
+                                                    binder,
+                                                    module_name.as_str(),
+                                                )
+                                            && let Some(target_sym_id) = exports.get(export_name)
+                                            && let Some(target_sym) =
+                                                binder.symbols.get(target_sym_id)
+                                        {
+                                            if target_sym.has_any_flags(
+                                                symbol_flags::VALUE | symbol_flags::EXPORT_VALUE,
+                                            ) {
+                                                import_has_value = true;
+                                            }
+                                            if target_sym.has_any_flags(symbol_flags::TYPE) {
+                                                import_has_type = true;
+                                            }
+                                            if import_has_value {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    for binder in binders.iter() {
+                                        if let Some(exports) = self
+                                            .ctx
+                                            .module_exports_for_module(binder, module_name.as_str())
+                                            && let Some(target_sym_id) = exports.get(export_name)
+                                            && let Some(target_sym) =
+                                                binder.symbols.get(target_sym_id)
+                                        {
+                                            if target_sym.has_any_flags(
+                                                symbol_flags::VALUE | symbol_flags::EXPORT_VALUE,
+                                            ) {
+                                                import_has_value = true;
+                                            }
+                                            if target_sym.has_any_flags(symbol_flags::TYPE) {
+                                                import_has_type = true;
+                                            }
+                                            if import_has_value {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Try regular file exports: follow re-export chains
+                            // (module_exports → named re-exports → wildcard re-exports)
+                            // to find the actual exported symbol.  Using file_locals directly
+                            // would pick up globals leaked by create_binder_from_bound_file.
+                            if (!import_has_value || !import_has_type)
+                                && let Some(target_idx) =
+                                    self.ctx.resolve_import_target(module_name)
+                            {
+                                let mut visited = FxHashSet::default();
+                                if let Some((resolved_sym_id, resolved_file_idx)) = self
+                                    .resolve_export_in_file(target_idx, export_name, &mut visited)
+                                {
+                                    let resolved_binder =
+                                        self.ctx.get_binder_for_file(resolved_file_idx);
+                                    if let Some(resolved_sym) =
+                                        resolved_binder.and_then(|b| b.symbols.get(resolved_sym_id))
+                                    {
+                                        if resolved_sym.has_any_flags(
+                                            symbol_flags::VALUE | symbol_flags::EXPORT_VALUE,
+                                        ) {
+                                            import_has_value = true;
+                                        }
+                                        if resolved_sym.has_any_flags(symbol_flags::TYPE) {
+                                            import_has_type = true;
+                                        }
+                                        // Non-type-only re-export aliases forward values
+                                        if !import_has_value
+                                            && resolved_sym.has_any_flags(symbol_flags::ALIAS)
+                                            && !resolved_sym.is_type_only
+                                        {
+                                            import_has_value = true;
+                                        }
+                                        // When a type alias shadows an import alias,
+                                        // follow alias_partners to the partner ALIAS
+                                        // and check its import chain for value semantics.
+                                        if !import_has_value
+                                            && resolved_sym.has_any_flags(symbol_flags::TYPE_ALIAS)
+                                            && !resolved_sym.is_type_only
+                                            && let Some(resolved_binder) =
+                                                self.ctx.get_binder_for_file(resolved_file_idx)
+                                            && let Some(partner_id) = self
+                                                .ctx
+                                                .alias_partner_for(resolved_binder, resolved_sym_id)
+                                            && let Some(partner) =
+                                                resolved_binder.symbols.get(partner_id)
+                                            && partner.has_any_flags(symbol_flags::ALIAS)
+                                            && !partner.is_type_only
+                                            && let Some(ref src_module) = partner.import_module
+                                        {
+                                            let src_name = partner
+                                                .import_name
+                                                .as_deref()
+                                                .unwrap_or(export_name);
+                                            if let Some(src_idx) =
+                                                self.ctx.resolve_import_target_from_file(
+                                                    resolved_file_idx,
+                                                    src_module,
+                                                )
+                                            {
+                                                let mut inner_visited = FxHashSet::default();
+                                                if let Some((src_sym_id, src_file_idx)) = self
+                                                    .resolve_export_in_file(
+                                                        src_idx,
+                                                        src_name,
+                                                        &mut inner_visited,
+                                                    )
+                                                    && let Some(src_binder) =
+                                                        self.ctx.get_binder_for_file(src_file_idx)
+                                                    && let Some(src_sym) =
+                                                        src_binder.symbols.get(src_sym_id)
+                                                    && src_sym.has_any_flags(
+                                                        symbol_flags::VALUE
+                                                            | symbol_flags::EXPORT_VALUE,
+                                                    )
+                                                {
+                                                    import_has_value = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Namespace imports (`import * as X`) always create a
+                        // value binding (the module namespace object), even when
+                        // the target module can't be resolved.
+                        if !import_has_value
+                            && let Some(binding_node) = self.ctx.arena.get(binding_node_idx)
+                            && binding_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+                        {
+                            import_has_value = true;
+                        }
+
+                        if !import_has_value {
+                            // Even when the imported target carries no value,
+                            // there are two isolated-modules-specific checks:
+                            //
+                            // (a) TS2865: imported `T` is type-only at target,
+                            //     but the local file has a value declaration
+                            //     called `T` (`const T = 0`). Under
+                            //     isolatedModules the import would be erased
+                            //     by the transpiler and the local value would
+                            //     replace it. tsc requires `import type` here.
+                            //
+                            // (b) TS2440: imported `T` is type-only at target,
+                            //     and the local file has a TYPE declaration
+                            //     called `T` (`type T = number`). Both bind
+                            //     the same type-name slot.
+                            self.report_isolated_modules_import_conflicts(
+                                stmt_idx,
+                                binding_node_idx,
+                                clause_idx,
+                                diagnostic_name_idx,
+                                &name,
+                                sym_id,
+                                import_has_type,
+                            );
+                            continue;
+                        }
+
+                        // Use the import STATEMENT's enclosing scope — the scope
+                        // the import lives in (e.g. module scope).  We avoid using
+                        // the import-specifier's scope because `find_enclosing_scope`
+                        // may differ from the statement scope when the specifier is
+                        // inside a NamedImports node that happens to be scope-creating.
+                        let import_scope = self
+                            .ctx
+                            .binder
+                            .find_enclosing_scope(self.ctx.arena, stmt_idx);
+
+                        // Check 1: merged declarations on the import's own symbol.
+                        has_conflict = sym.declarations.iter().any(|&decl_idx| {
+                            if decl_idx == binding_node_idx
+                                || decl_idx == clause_idx
+                                || decl_idx == stmt_idx
+                            {
+                                return false;
+                            }
+                            let is_current_file_decl =
+                                self.ctx.binder.node_symbols.contains_key(&decl_idx.0);
+                            if !is_current_file_decl {
+                                return false;
+                            }
+                            // Skip declarations inside module augmentations
+                            // (`declare module "./foo" { ... }`).  The binder may
+                            // not create a separate scope for the augmentation block,
+                            // so the scope check alone can't detect this.
+                            if self.is_inside_module_augmentation(decl_idx) {
+                                return false;
+                            }
+                            // `declare global { ... }` injects declarations into the
+                            // global scope, not the module scope the import lives in.
+                            // Those declarations must not collide with module imports.
+                            if self.is_inside_global_augmentation(decl_idx) {
+                                return false;
+                            }
+                            // Scope check: the declaration must be in the same
+                            // logical scope as the import.  We compare scopes by
+                            // checking if they are the same ScopeId OR if they
+                            // share the same container symbol (merged namespace
+                            // blocks create separate scopes but share one symbol).
+                            // Use the PARENT's scope for scope-creating nodes
+                            // (e.g. function/class declarations create a body
+                            // scope, but they *live in* the parent scope).
+                            let decl_containing_scope =
+                                self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
+                                    let parent = ext.parent;
+                                    if parent.is_some() {
+                                        self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
+                                    } else {
+                                        self.ctx
+                                            .binder
+                                            .find_enclosing_scope(self.ctx.arena, decl_idx)
+                                    }
+                                });
+                            let in_same_scope = match (import_scope, decl_containing_scope) {
+                                (Some(a), Some(b)) if a == b => true,
+                                (Some(a), Some(b)) => {
+                                    // Merged namespace: check if both scopes'
+                                    // container nodes map to the same symbol.
+                                    let sym_a =
+                                        self.ctx.binder.scopes.get(a.0 as usize).and_then(|s| {
+                                            self.ctx.binder.node_symbols.get(&s.container_node.0)
+                                        });
+                                    let sym_b =
+                                        self.ctx.binder.scopes.get(b.0 as usize).and_then(|s| {
+                                            self.ctx.binder.node_symbols.get(&s.container_node.0)
+                                        });
+                                    sym_a.is_some() && sym_a == sym_b
+                                }
+                                _ => true,
+                            };
+                            if !in_same_scope {
+                                return false;
+                            }
+
+                            // `export as namespace X` only binds a global
+                            // namespace alias, never a local module binding.
+                            if self.decl_is_namespace_export_declaration(decl_idx) {
+                                return false;
+                            }
+                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                                if matches!(
+                                    decl_node.kind,
+                                    syntax_kind_ext::IMPORT_CLAUSE
+                                        | syntax_kind_ext::NAMESPACE_IMPORT
+                                        | syntax_kind_ext::IMPORT_SPECIFIER
+                                        | syntax_kind_ext::NAMED_IMPORTS
+                                        | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                                        | syntax_kind_ext::IMPORT_DECLARATION
+                                        // Re-exports (`export { x } from "./b"`) don't
+                                        // introduce local bindings, so they must not
+                                        // conflict with imports.
+                                        | syntax_kind_ext::EXPORT_SPECIFIER
+                                        | syntax_kind_ext::EXPORT_DECLARATION
+                                        | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                                ) {
+                                    return false;
+                                }
+                                // Type aliases and interfaces live in the type declaration
+                                // space. They only conflict with imports that also carry
+                                // type semantics (e.g. enums, classes).
+                                if !import_has_type
+                                    && matches!(
+                                        decl_node.kind,
+                                        syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                            | syntax_kind_ext::INTERFACE_DECLARATION
+                                    )
+                                {
+                                    return false;
+                                }
+                                // Non-import, non-type local declarations (var, function,
+                                // class, namespace, enum) conflict with value imports.
+                                // Type declarations conflict when the import has type meaning.
+                                true
+                            } else {
+                                false
+                            }
+                        });
+
+                        // Check 2: separate symbols with the same name (binder may
+                        // create distinct symbols instead of merging declarations).
+                        if !has_conflict {
+                            let all_symbols = self.ctx.binder.symbols.find_all_by_name(&name);
+                            for &other_sym_id in all_symbols {
+                                if other_sym_id == sym_id {
+                                    continue;
+                                }
+                                if let Some(other_sym) = self.ctx.binder.symbols.get(other_sym_id) {
+                                    // Skip if the other symbol is purely an alias (another import)
+                                    if other_sym.has_any_flags(symbol_flags::ALIAS)
+                                        && !other_sym.has_any_flags(!symbol_flags::ALIAS)
+                                    {
+                                        continue;
+                                    }
+                                    // Skip type-only symbols (type aliases, interfaces) — they
+                                    // live in the type declaration space and don't conflict
+                                    // with value-only imports. When the import also carries
+                                    // type semantics (e.g. enum, class), they DO conflict.
+                                    if !import_has_type {
+                                        let type_only_flags = symbol_flags::TYPE_ALIAS
+                                            | symbol_flags::INTERFACE
+                                            | symbol_flags::TYPE_PARAMETER;
+                                        if other_sym.has_any_flags(type_only_flags)
+                                            && !other_sym.has_any_flags(symbol_flags::VALUE)
+                                        {
+                                            continue;
+                                        }
+                                    }
+                                    // Must have a declaration in the same scope
+                                    let decl_in_same_scope =
+                                        other_sym.declarations.iter().any(|&decl_idx| {
+                                            let decl_containing =
+                                                self.ctx.arena.get_extended(decl_idx).and_then(
+                                                    |ext| {
+                                                        let parent = ext.parent;
+                                                        if parent.is_some() {
+                                                            self.ctx.binder.find_enclosing_scope(
+                                                                self.ctx.arena,
+                                                                parent,
+                                                            )
+                                                        } else {
+                                                            self.ctx.binder.find_enclosing_scope(
+                                                                self.ctx.arena,
+                                                                decl_idx,
+                                                            )
+                                                        }
+                                                    },
+                                                );
+
+                                            match (import_scope, decl_containing) {
+                                                (Some(a), Some(b)) => a == b,
+                                                _ => true,
+                                            }
+                                        });
+                                    if !decl_in_same_scope {
+                                        continue;
+                                    }
+                                    // Must be in the current file and not an
+                                    // import/export specifier (re-exports like
+                                    // `export { x } from "./b"` don't create local
+                                    // bindings and must not conflict with imports).
+                                    let has_local_decl =
+                                        other_sym.declarations.iter().any(|&decl_idx| {
+                                            if self.ctx.binder.node_symbols.get(&decl_idx.0)
+                                                != Some(&other_sym_id)
+                                            {
+                                                return false;
+                                            }
+                                            // `declare global { ... }` places declarations in
+                                            // the global scope; they can't conflict with an
+                                            // import living in the enclosing module scope.
+                                            if self.is_inside_global_augmentation(decl_idx) {
+                                                return false;
+                                            }
+                                            // `export as namespace X` declares a global
+                                            // namespace alias for the module. It does not
+                                            // introduce a local binding, so it must not
+                                            // collide with a module-scope import. The binder
+                                            // may point at the identifier inside the
+                                            // declaration, so check both the node itself and
+                                            // its immediate parent.
+                                            if self.decl_is_namespace_export_declaration(decl_idx)
+                                            {
+                                                return false;
+                                            }
+                                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                                                if matches!(
+                                                    decl_node.kind,
+                                                    syntax_kind_ext::EXPORT_SPECIFIER
+                                                        | syntax_kind_ext::EXPORT_DECLARATION
+                                                        | syntax_kind_ext::IMPORT_CLAUSE
+                                                        | syntax_kind_ext::NAMESPACE_IMPORT
+                                                        | syntax_kind_ext::IMPORT_SPECIFIER
+                                                        | syntax_kind_ext::NAMED_IMPORTS
+                                                        | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                                                        | syntax_kind_ext::IMPORT_DECLARATION
+                                                        | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                                                ) {
+                                                    return false;
+                                                }
+                                                // Type declarations only conflict when
+                                                // the import also carries type semantics.
+                                                if !import_has_type
+                                                    && matches!(
+                                                        decl_node.kind,
+                                                        syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                                            | syntax_kind_ext::INTERFACE_DECLARATION
+                                                    )
+                                                {
+                                                    return false;
+                                                }
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        });
+                                    if has_local_decl {
+                                        has_conflict = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if has_conflict {
+                        let message = format_message(
+                                diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+                                &[&name],
+                            );
+                        self.error_at_node(
+                                diagnostic_name_idx,
+                                &message,
+                                diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+                            );
+                        // Record so TS2456 can be suppressed for type aliases
+                        // whose apparent circularity is caused by this conflict.
+                        self.ctx.import_conflict_names.insert(name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Helper for `check_import_declaration_conflicts` covering the
+    /// type-only-import case. When the imported target carries no value
+    /// semantics, we still need two isolatedModules-specific diagnostics:
+    ///
+    /// - **TS2440**: a local TYPE declaration with the same name. tsc treats
+    ///   this as `excludedMeanings & Type` overlap.
+    /// - **TS2865**: a local VALUE declaration with the same name. tsc emits
+    ///   this only under isolatedModules to flag that the transpiler would
+    ///   erase the import and pick the local value instead.
+    ///
+    /// Both must respect the same scope/declaration filters as the main
+    /// conflict check (skip module-augmentation/global-augmentation decls,
+    /// skip re-export specifiers, etc.).
+    fn report_isolated_modules_import_conflicts(
+        &mut self,
+        stmt_idx: NodeIndex,
+        binding_node_idx: NodeIndex,
+        clause_idx: NodeIndex,
+        diagnostic_name_idx: NodeIndex,
+        name: &str,
+        sym_id: tsz_binder::SymbolId,
+        import_has_type: bool,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // The import declaration node at this point is for a regular
+        // ImportDeclaration / ImportSpecifier — the import-equals path is
+        // handled elsewhere. Skip when the import itself is type-only.
+        let import_is_type_only_syntax = self
+            .ctx
+            .arena
+            .get(clause_idx)
+            .and_then(|n| self.ctx.arena.get_import_clause(n))
+            .map(|c| c.is_type_only)
+            .unwrap_or(false);
+        if import_is_type_only_syntax {
+            return;
+        }
+        // ImportSpecifier-level `type` modifier (`import { type T }`).
+        if self
+            .ctx
+            .arena
+            .get(binding_node_idx)
+            .and_then(|n| self.ctx.arena.get_specifier(n))
+            .is_some_and(|spec| spec.is_type_only)
+        {
+            return;
+        }
+
+        // Already-reported conflicts: avoid double-reporting when
+        // import_conflict_names was set by another path.
+        if self.ctx.import_conflict_names.contains(name) {
+            return;
+        }
+
+        // Walk other same-name local symbols and figure out whether any
+        // carry Value or pure-Type meaning.
+        let import_scope = self
+            .ctx
+            .binder
+            .find_enclosing_scope(self.ctx.arena, stmt_idx);
+        let mut local_has_value = false;
+        let mut local_has_pure_type = false;
+
+        // Look at merged decls on the import's own symbol.
+        if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+            for &decl_idx in &sym.declarations {
+                if decl_idx == binding_node_idx || decl_idx == clause_idx || decl_idx == stmt_idx {
+                    continue;
+                }
+                if !self.ctx.binder.node_symbols.contains_key(&decl_idx.0) {
+                    continue;
+                }
+                if self.is_inside_module_augmentation(decl_idx) {
+                    continue;
+                }
+                if self.is_inside_global_augmentation(decl_idx) {
+                    continue;
+                }
+                if self.decl_is_namespace_export_declaration(decl_idx) {
+                    continue;
+                }
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                if matches!(
+                    decl_node.kind,
+                    syntax_kind_ext::IMPORT_CLAUSE
+                        | syntax_kind_ext::NAMESPACE_IMPORT
+                        | syntax_kind_ext::IMPORT_SPECIFIER
+                        | syntax_kind_ext::NAMED_IMPORTS
+                        | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        | syntax_kind_ext::IMPORT_DECLARATION
+                        | syntax_kind_ext::EXPORT_SPECIFIER
+                        | syntax_kind_ext::EXPORT_DECLARATION
+                        | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                ) {
+                    continue;
+                }
+                // Same-scope check.
+                let decl_containing_scope = self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
+                    let parent = ext.parent;
+                    if parent.is_some() {
+                        self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
+                    } else {
+                        self.ctx
+                            .binder
+                            .find_enclosing_scope(self.ctx.arena, decl_idx)
+                    }
+                });
+                let in_same_scope =
+                    match (import_scope, decl_containing_scope) {
+                        (Some(a), Some(b)) if a == b => true,
+                        (Some(a), Some(b)) => {
+                            let sym_a = self.ctx.binder.scopes.get(a.0 as usize).and_then(|s| {
+                                self.ctx.binder.node_symbols.get(&s.container_node.0)
+                            });
+                            let sym_b = self.ctx.binder.scopes.get(b.0 as usize).and_then(|s| {
+                                self.ctx.binder.node_symbols.get(&s.container_node.0)
+                            });
+                            sym_a.is_some() && sym_a == sym_b
+                        }
+                        _ => true,
+                    };
+                if !in_same_scope {
+                    continue;
+                }
+                match decl_node.kind {
+                    syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::ENUM_DECLARATION
+                    | syntax_kind_ext::VARIABLE_DECLARATION
+                    | syntax_kind_ext::VARIABLE_STATEMENT => {
+                        local_has_value = true;
+                    }
+                    syntax_kind_ext::MODULE_DECLARATION
+                        if self.is_namespace_declaration_instantiated(decl_idx) =>
+                    {
+                        local_has_value = true;
+                    }
+                    syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    | syntax_kind_ext::INTERFACE_DECLARATION => {
+                        local_has_pure_type = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Look at separate same-name symbols (binder may keep them split
+        // across imports vs locals via alias_partners).
+        if !local_has_value || !local_has_pure_type {
+            let all_symbols: Vec<tsz_binder::SymbolId> =
+                self.ctx.binder.symbols.find_all_by_name(name).to_vec();
+            for other_sym_id in all_symbols {
+                if other_sym_id == sym_id {
+                    continue;
+                }
+                let Some(other_sym) = self.ctx.binder.symbols.get(other_sym_id) else {
+                    continue;
+                };
+                // Skip purely-alias symbols (other imports).
+                if other_sym.has_any_flags(symbol_flags::ALIAS)
+                    && !other_sym.has_any_flags(!symbol_flags::ALIAS)
+                {
+                    continue;
+                }
+                // Same-scope filter.
+                let other_in_same_scope = other_sym.declarations.iter().any(|&decl_idx| {
+                    let decl_containing = self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
+                        let parent = ext.parent;
+                        if parent.is_some() {
+                            self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
+                        } else {
+                            self.ctx
+                                .binder
+                                .find_enclosing_scope(self.ctx.arena, decl_idx)
+                        }
+                    });
+                    match (import_scope, decl_containing) {
+                        (Some(a), Some(b)) => a == b,
+                        _ => true,
+                    }
+                });
+                if !other_in_same_scope {
+                    continue;
+                }
+                let has_local_decl = other_sym.declarations.iter().any(|&decl_idx| {
+                    if self.ctx.binder.node_symbols.get(&decl_idx.0) != Some(&other_sym_id) {
+                        return false;
+                    }
+                    if self.is_inside_global_augmentation(decl_idx) {
+                        return false;
+                    }
+                    if self.decl_is_namespace_export_declaration(decl_idx) {
+                        return false;
+                    }
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        return false;
+                    };
+                    !matches!(
+                        decl_node.kind,
+                        syntax_kind_ext::EXPORT_SPECIFIER
+                            | syntax_kind_ext::EXPORT_DECLARATION
+                            | syntax_kind_ext::IMPORT_CLAUSE
+                            | syntax_kind_ext::NAMESPACE_IMPORT
+                            | syntax_kind_ext::IMPORT_SPECIFIER
+                            | syntax_kind_ext::NAMED_IMPORTS
+                            | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                            | syntax_kind_ext::IMPORT_DECLARATION
+                            | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                    )
+                });
+                if !has_local_decl {
+                    continue;
+                }
+                if other_sym.has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE) {
+                    local_has_value = true;
+                }
+                let pure_type_flags = symbol_flags::TYPE_ALIAS | symbol_flags::INTERFACE;
+                if other_sym.has_any_flags(pure_type_flags)
+                    && !other_sym.has_any_flags(symbol_flags::VALUE)
+                {
+                    local_has_pure_type = true;
+                }
+            }
+        }
+
+        // TS2440: local Type collides with imported Type.
+        if local_has_pure_type && import_has_type {
+            let message = format_message(
+                diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+                &[name],
+            );
+            self.error_at_node(
+                diagnostic_name_idx,
+                &message,
+                diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+            );
+            self.ctx.import_conflict_names.insert(name.to_string());
+            return;
+        }
+
+        // TS2865: local Value collides with imported type-only target under
+        // isolatedModules. Not under verbatimModuleSyntax — that case is
+        // already covered by the existing TS1361/TS1362 imports-of-types
+        // diagnostics.
+        if local_has_value
+            && self.ctx.compiler_options.isolated_modules
+            && !self.ctx.compiler_options.verbatim_module_syntax
+        {
+            let message = format_message(
+                diagnostic_messages::IMPORT_CONFLICTS_WITH_LOCAL_VALUE_SO_MUST_BE_DECLARED_WITH_A_TYPE_ONLY_IMPORT_WH,
+                &[name],
+            );
+            // tsc anchors TS2865 at the whole import specifier node, not
+            // just the imported name. Preserve that for fingerprint parity.
+            self.error_at_node(
+                binding_node_idx,
+                &message,
+                diagnostic_codes::IMPORT_CONFLICTS_WITH_LOCAL_VALUE_SO_MUST_BE_DECLARED_WITH_A_TYPE_ONLY_IMPORT_WH,
+            );
+            self.ctx.import_conflict_names.insert(name.to_string());
+        }
+    }
+
+    /// Returns `true` if `specifier` resolves via directory-index probing rather
+    /// than direct TS-extension file matching.
+    ///
+    /// This mirrors tsc's `!resolvedModule.resolvedUsingTsExtension`:
+    /// if the specifier is `./foo.ts` but the resolved file is
+    /// `foo.ts/index.ts`, the TS extension in the specifier was NOT used to
+    /// find the file — directory probing found it instead.
+    pub(crate) fn resolved_via_directory_index(&self, specifier: &str) -> bool {
+        let Some(target_idx) = self.ctx.resolve_import_target(specifier) else {
+            return false;
+        };
+        let Some(arenas) = self.ctx.all_arenas.as_ref() else {
+            return false;
+        };
+        let Some(target_arena) = arenas.get(target_idx) else {
+            return false;
+        };
+        let Some(sf) = target_arena.source_files.first() else {
+            return false;
+        };
+        // Extract the stem (without extension) from the specifier basename.
+        let spec_file = specifier
+            .rsplit_once('/')
+            .map_or(specifier, |(_, file)| file);
+        let spec_stem = spec_file.rfind('.').map_or(spec_file, |i| &spec_file[..i]);
+        // Extract the stem from the resolved file's basename.
+        // For declaration files like "foo.d.ts", strip all declaration
+        // suffixes to get the base stem "foo".
+        let resolved_file = sf
+            .file_name
+            .rsplit_once('/')
+            .map_or(sf.file_name.as_str(), |(_, file)| file);
+        let resolved_stem = resolved_file
+            .strip_suffix(".d.ts")
+            .or_else(|| resolved_file.strip_suffix(".d.mts"))
+            .or_else(|| resolved_file.strip_suffix(".d.cts"))
+            .or_else(|| resolved_file.rfind('.').map(|i| &resolved_file[..i]))
+            .unwrap_or(resolved_file);
+        // If the stems match, the resolution used the TS extension directly
+        // (e.g., ./obj.ts → obj.d.ts). If stems differ, it went through
+        // directory probing (e.g., ./foo.ts → foo.ts/index.d.ts).
+        resolved_stem != spec_stem
+    }
+
+    /// Returns a relative display path for the resolved target of `specifier`,
+    /// suitable for the TS2876 diagnostic message argument.
+    pub(crate) fn resolved_file_display_path(&self, specifier: &str) -> String {
+        let Some(target_idx) = self.ctx.resolve_import_target(specifier) else {
+            return specifier.to_string();
+        };
+        let Some(arenas) = self.ctx.all_arenas.as_ref() else {
+            return specifier.to_string();
+        };
+        let Some(target_arena) = arenas.get(target_idx) else {
+            return specifier.to_string();
+        };
+        let Some(sf) = target_arena.source_files.first() else {
+            return specifier.to_string();
+        };
+        // Return a relative path with "./" prefix, matching tsc's output format.
+        let resolved = &sf.file_name;
+        if resolved.starts_with("./") || resolved.starts_with("../") {
+            resolved.clone()
+        } else {
+            format!("./{resolved}")
+        }
+    }
+
+    /// Returns `true` if `specifier` resolves to a file inside `node_modules/`.
+    /// Mirrors tsc's `isExternalLibraryImport` — external library imports should
+    /// not trigger TS2877 rewrite-extension warnings.
+    fn resolved_module_is_from_node_modules(&self, specifier: &str) -> bool {
+        let Some(target_idx) = self.ctx.resolve_import_target(specifier) else {
+            return false;
+        };
+        let Some(arenas) = self.ctx.all_arenas.as_ref() else {
+            return false;
+        };
+        let Some(target_arena) = arenas.get(target_idx) else {
+            return false;
+        };
+        let Some(source_file) = target_arena.source_files.first() else {
+            return false;
+        };
+        path_has_node_modules_segment(&source_file.file_name)
+    }
+
+    /// Returns `true` if `specifier` resolves to a non-declaration TypeScript input
+    /// file (`.ts`, `.tsx`, `.mts`, `.cts`) that can participate in emit rewriting.
+    fn module_target_is_typescript_input_file(&self, specifier: &str) -> bool {
+        let Some(target_idx) = self.ctx.resolve_import_target(specifier) else {
+            return false;
+        };
+        let Some(arenas) = self.ctx.all_arenas.as_ref() else {
+            return false;
+        };
+        let Some(target_arena) = arenas.get(target_idx) else {
+            return false;
+        };
+        let Some(source_file) = target_arena.source_files.first() else {
+            return false;
+        };
+        let file_name = source_file.file_name.as_str();
+        if is_declaration_file_name(file_name) {
+            return false;
+        }
+
+        file_name.ends_with(".ts")
+            || file_name.ends_with(".tsx")
+            || file_name.ends_with(".mts")
+            || file_name.ends_with(".cts")
+    }
+}
+
+fn path_has_node_modules_segment(file_name: &str) -> bool {
+    file_name
+        .split(['/', '\\'])
+        .any(|component| component == "node_modules")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{path_has_node_modules_segment, ts_extension_suffix};
+    use crate::context::{CheckerOptions, ScriptTarget};
+    use crate::module_resolution::build_module_resolution_maps;
+    use crate::state::CheckerState;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_common::common::ModuleKind;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    #[test]
+    fn ts_extension_detects_ts() {
+        assert_eq!(ts_extension_suffix("./foo.ts"), Some(".ts"));
+    }
+
+    #[test]
+    fn ts_extension_detects_tsx() {
+        assert_eq!(ts_extension_suffix("./foo.tsx"), Some(".tsx"));
+    }
+
+    #[test]
+    fn ts_extension_detects_mts() {
+        assert_eq!(ts_extension_suffix("./foo.mts"), Some(".mts"));
+    }
+
+    #[test]
+    fn ts_extension_detects_cts() {
+        assert_eq!(ts_extension_suffix("./foo.cts"), Some(".cts"));
+    }
+
+    #[test]
+    fn import_external_library_check_uses_node_modules_path_segment() {
+        assert!(path_has_node_modules_segment(
+            "/repo/node_modules/pkg/index.d.ts"
+        ));
+        assert!(path_has_node_modules_segment(
+            r"C:\repo\node_modules\pkg\index.d.ts"
+        ));
+        assert!(path_has_node_modules_segment(
+            "/repo/packages/app/node_modules/pkg/index.d.ts"
+        ));
+
+        assert!(!path_has_node_modules_segment(
+            "/repo/fixtures/node_modules_pkg/index.d.ts"
+        ));
+        assert!(!path_has_node_modules_segment(
+            "/repo/fixtures/not_node_modules/index.d.ts"
+        ));
+    }
+
+    #[test]
+    fn ts_extension_ignores_dts() {
+        assert_eq!(ts_extension_suffix("./foo.d.ts"), None);
+    }
+
+    #[test]
+    fn ts_extension_ignores_d_mts() {
+        assert_eq!(ts_extension_suffix("./foo.d.mts"), None);
+    }
+
+    #[test]
+    fn ts_extension_ignores_d_cts() {
+        assert_eq!(ts_extension_suffix("./foo.d.cts"), None);
+    }
+
+    #[test]
+    fn ts_extension_ignores_js() {
+        assert_eq!(ts_extension_suffix("./foo.js"), None);
+    }
+
+    #[test]
+    fn ts_extension_ignores_no_ext() {
+        assert_eq!(ts_extension_suffix("./foo"), None);
+    }
+
+    #[test]
+    fn ts_extension_ignores_json() {
+        assert_eq!(ts_extension_suffix("./data.json"), None);
+    }
+
+    fn import_binding_is_type_only_for_named_files(
+        files: &[(&str, &str)],
+        entry_file: &str,
+        module_name: &str,
+        import_name: &str,
+    ) -> bool {
+        let mut arenas = Vec::with_capacity(files.len());
+        let mut binders = Vec::with_capacity(files.len());
+        let mut roots = Vec::with_capacity(files.len());
+        let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+        for (name, source) in files {
+            let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+            let root = parser.parse_source_file();
+            let mut binder = BinderState::new();
+            binder.bind_source_file(parser.get_arena(), root);
+            arenas.push(Arc::new(parser.get_arena().clone()));
+            binders.push(Arc::new(binder));
+            roots.push(root);
+        }
+
+        let entry_idx = file_names
+            .iter()
+            .position(|name| name == entry_file)
+            .expect("entry file should exist");
+        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+        let all_arenas = Arc::new(arenas);
+        let all_binders = Arc::new(binders);
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            all_arenas[entry_idx].as_ref(),
+            all_binders[entry_idx].as_ref(),
+            &types,
+            file_names[entry_idx].clone(),
+            CheckerOptions {
+                allow_js: true,
+                check_js: true,
+                target: ScriptTarget::ES2015,
+                module: ModuleKind::ES2020,
+                ..CheckerOptions::default()
+            },
+        );
+
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(entry_idx);
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::new(resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules);
+
+        checker.check_source_file(roots[entry_idx]);
+        checker.is_import_specifier_type_only(module_name, import_name)
+            || checker.is_export_type_only_across_binders(module_name, import_name)
+            || (import_name == "default" && checker.is_module_export_equals_type_only(module_name))
+    }
+
+    #[test]
+    fn import_binding_is_type_only_detects_exported_interface() {
+        assert!(import_binding_is_type_only_for_named_files(
+            &[
+                (
+                    "mod.d.ts",
+                    r#"
+export interface WriteFileOptions {}
+export function writeFile(path: string, data: any, options: WriteFileOptions, callback: (err: Error) => void): void;
+                    "#,
+                ),
+                (
+                    "index.js",
+                    r#"
+import { writeFile, WriteFileOptions } from "./mod";
+writeFile("", "", /** @type {WriteFileOptions} */ ({}), () => {});
+                    "#,
+                ),
+            ],
+            "index.js",
+            "./mod",
+            "WriteFileOptions",
+        ));
+    }
+
+    #[test]
+    fn import_binding_is_type_only_detects_default_interface_export() {
+        assert!(import_binding_is_type_only_for_named_files(
+            &[
+                (
+                    "dep.d.ts",
+                    r#"
+export default interface TruffleContract {
+  foo: number;
+}
+                    "#,
+                ),
+                (
+                    "caller.js",
+                    r#"
+import TruffleContract from "./dep";
+                    "#,
+                ),
+            ],
+            "caller.js",
+            "./dep",
+            "default",
+        ));
+    }
+}

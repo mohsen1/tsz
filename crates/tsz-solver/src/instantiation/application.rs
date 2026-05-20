@@ -1,0 +1,249 @@
+//! Application Type Evaluation
+//!
+//! This module handles evaluation of generic type applications like `Store<ExtractState<R>>`.
+//! The key operation is:
+//! 1. Resolve the base type reference (e.g., `Store`) to get its body
+//! 2. Get the type parameters from the symbol
+//! 3. Instantiate the body with the provided type arguments
+//! 4. Recursively evaluate any nested applications
+//!
+//! This module implements the solver-first architecture principle: pure type logic
+//! belongs in the solver, while the checker handles AST traversal and symbol resolution.
+
+use crate::relations::subtype::TypeResolver;
+use crate::type_queries;
+#[cfg(test)]
+use crate::types::*;
+use crate::types::{TypeData, TypeId};
+use crate::{TypeDatabase, TypeSubstitution, instantiate_type};
+use std::cell::RefCell;
+
+/// Result of application type evaluation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApplicationResult {
+    /// Successfully evaluated to a concrete type
+    Resolved(TypeId),
+    /// The type is not an application type (pass through)
+    NotApplication(TypeId),
+    /// Recursion limit reached
+    DepthExceeded(TypeId),
+    /// Symbol resolution failed
+    ResolutionFailed(TypeId),
+}
+
+/// Evaluator for generic type applications.
+///
+/// This evaluator takes a type application like `Box<string>` and:
+/// 1. Looks up the definition of `Box` (via the resolver)
+/// 2. Gets its type parameters
+/// 3. Substitutes the type arguments
+/// 4. Returns the resulting type
+///
+/// # Type Resolver
+///
+/// The evaluator uses a `TypeResolver` to handle symbol resolution.
+/// This abstraction allows the solver to remain independent of the binder/checker:
+/// - `resolve_ref(symbol)` - get the body type of a type alias/interface
+/// - `get_type_params(symbol)` - get the type parameters for a symbol
+pub struct ApplicationEvaluator<'a, R: TypeResolver> {
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    /// Unified recursion guard for cycle detection and depth limiting.
+    guard: RefCell<crate::recursion::RecursionGuard<TypeId>>,
+    /// Cache for evaluated applications
+    cache: RefCell<rustc_hash::FxHashMap<TypeId, TypeId>>,
+}
+
+/// Operation-local memo table statistics for [`ApplicationEvaluator`].
+///
+/// Owner: one application-evaluation request family. The cache is dropped with
+/// the evaluator and is never shared across resolver or compiler-option modes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ApplicationEvaluatorCacheStatistics {
+    /// Entries in the application evaluation memo keyed by input `TypeId`.
+    pub application_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl ApplicationEvaluatorCacheStatistics {
+    /// Estimated heap bytes owned by the application evaluator memo table.
+    #[must_use]
+    pub const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
+}
+
+impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
+    /// Create a new application evaluator.
+    pub fn new(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
+        Self {
+            interner,
+            resolver,
+            guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
+                crate::recursion::RecursionProfile::TypeApplication,
+            )),
+            cache: RefCell::new(rustc_hash::FxHashMap::default()),
+        }
+    }
+
+    /// Clear the evaluation cache.
+    /// Call this when contextual type changes to ensure fresh evaluation.
+    pub fn clear_cache(&self) {
+        self.cache.borrow_mut().clear();
+    }
+
+    /// Return entry and size accounting for this evaluator's operation-local cache.
+    #[must_use]
+    pub fn cache_statistics(&self) -> ApplicationEvaluatorCacheStatistics {
+        let application_entries = self.cache.borrow().len();
+        let estimated_size_bytes =
+            application_entries.saturating_mul(std::mem::size_of::<(TypeId, TypeId)>());
+        ApplicationEvaluatorCacheStatistics {
+            application_entries,
+            estimated_size_bytes,
+        }
+    }
+
+    /// Evaluate an Application type by resolving the base symbol and instantiating.
+    ///
+    /// This handles types like `Store<ExtractState<R>>` by:
+    /// 1. Resolving the base type reference to get its body
+    /// 2. Getting the type parameters
+    /// 3. Instantiating the body with the provided type arguments
+    /// 4. Recursively evaluating the result
+    ///
+    /// # Returns
+    /// - `ApplicationResult::Resolved(type_id)` - successfully evaluated
+    /// - `ApplicationResult::NotApplication(type_id)` - input was not an application type
+    /// - `ApplicationResult::DepthExceeded(type_id)` - recursion limit reached
+    /// - `ApplicationResult::ResolutionFailed(type_id)` - symbol resolution failed
+    pub fn evaluate(&self, type_id: TypeId) -> ApplicationResult {
+        // Check if it's a generic application type
+        if !type_queries::is_generic_type(self.interner, type_id) {
+            return ApplicationResult::NotApplication(type_id);
+        }
+
+        // Check cache
+        if let Some(&cached) = self.cache.borrow().get(&type_id) {
+            return ApplicationResult::Resolved(cached);
+        }
+
+        // Unified enter: checks iterations, depth, cycle detection
+        match self.guard.borrow_mut().enter(type_id) {
+            crate::recursion::RecursionResult::Entered => {}
+            crate::recursion::RecursionResult::Cycle => {
+                return ApplicationResult::Resolved(type_id);
+            }
+            crate::recursion::RecursionResult::DepthExceeded
+            | crate::recursion::RecursionResult::IterationExceeded => {
+                return ApplicationResult::DepthExceeded(type_id);
+            }
+        }
+
+        let result = self.evaluate_inner(type_id);
+
+        self.guard.borrow_mut().leave(type_id);
+
+        if let ApplicationResult::Resolved(result_type) = result {
+            self.cache.borrow_mut().insert(type_id, result_type);
+        }
+
+        result
+    }
+
+    /// Inner evaluation logic without recursion guards.
+    fn evaluate_inner(&self, type_id: TypeId) -> ApplicationResult {
+        // Get application info (base type and type arguments)
+        let Some((base, args)) = type_queries::get_application_info(self.interner, type_id) else {
+            return ApplicationResult::NotApplication(type_id);
+        };
+
+        let (body_type, type_params) = if let Some(def_id) =
+            type_queries::get_lazy_def_id(self.interner, base)
+        {
+            let Some(body_type) = self.resolver.resolve_lazy(def_id, self.interner) else {
+                return ApplicationResult::ResolutionFailed(type_id);
+            };
+            let type_params = self
+                .resolver
+                .get_lazy_type_params(def_id)
+                .unwrap_or_default();
+            (body_type, type_params)
+        } else if let Some(TypeData::TypeQuery(symbol_ref)) = self.interner.lookup(base) {
+            let Some(mut body_type) = self.resolver.resolve_type_query(symbol_ref, self.interner)
+            else {
+                return ApplicationResult::ResolutionFailed(type_id);
+            };
+            if type_queries::get_callable_shape_for_type(self.interner, body_type).is_none()
+                && let Some(symbol_body) =
+                    self.resolver.resolve_symbol_ref(symbol_ref, self.interner)
+            {
+                body_type = symbol_body;
+            }
+            let symbol_params = self.resolver.get_type_params(symbol_ref);
+            let lazy_params = self
+                .resolver
+                .symbol_to_def_id(symbol_ref)
+                .and_then(|def_id| self.resolver.get_lazy_type_params(def_id));
+            let type_params = match (symbol_params, lazy_params) {
+                (Some(symbol), Some(lazy)) if lazy.len() > symbol.len() => lazy,
+                (Some(symbol), _) => symbol,
+                (_, Some(lazy)) => lazy,
+                _ => Vec::new(),
+            };
+            (body_type, type_params)
+        } else {
+            return ApplicationResult::NotApplication(type_id);
+        };
+
+        if body_type == TypeId::ANY || body_type == TypeId::ERROR {
+            return ApplicationResult::Resolved(type_id);
+        }
+
+        if type_params.is_empty() {
+            return ApplicationResult::Resolved(body_type);
+        }
+
+        // Use type arguments as-is (without eager evaluation).
+        //
+        // Eagerly evaluating Application args before substitution causes a loss of
+        // structural identity: e.g., `Synthetic<number, number>` becomes `{}` before
+        // being substituted as `U` in `U extends Synthetic<T, infer V> ? V : never`.
+        // With the expanded form, `try_application_infer_match` cannot do
+        // Application-vs-Application matching and the `infer V` binding is lost,
+        // causing uninstantiated type parameters to leak into the resolved type.
+        //
+        // TypeScript does not eagerly evaluate type arguments before substitution —
+        // they are substituted raw into the body, and any nested Applications are
+        // evaluated lazily when the body type is used (e.g., in a conditional check
+        // or subtype relation). The recursive `self.evaluate(instantiated)` call below
+        // handles any remaining Application types in the substituted body.
+        let substitution = TypeSubstitution::from_args(self.interner, &type_params, &args);
+        let mut instantiated = instantiate_type(self.interner, body_type, &substitution);
+        if crate::contains_this_type(self.interner, instantiated) {
+            instantiated = crate::substitute_this_type(self.interner, instantiated, type_id);
+        }
+
+        // Recursively evaluate for nested applications
+        match self.evaluate(instantiated) {
+            ApplicationResult::Resolved(result) => ApplicationResult::Resolved(result),
+            _ => ApplicationResult::Resolved(instantiated),
+        }
+    }
+
+    /// Evaluate a type and return the result, falling back to the original type.
+    ///
+    /// This is a convenience method that unwraps the `ApplicationResult`.
+    pub fn evaluate_or_original(&self, type_id: TypeId) -> TypeId {
+        match self.evaluate(type_id) {
+            ApplicationResult::Resolved(t)
+            | ApplicationResult::NotApplication(t)
+            | ApplicationResult::DepthExceeded(t)
+            | ApplicationResult::ResolutionFailed(t) => t,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/application_tests.rs"]
+mod tests;

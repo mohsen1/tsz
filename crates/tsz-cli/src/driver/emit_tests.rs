@@ -1,0 +1,384 @@
+use super::*;
+use std::path::Path;
+
+use crate::config::JsxEmit;
+use tempfile::tempdir;
+
+// ─── js_extension_for tests ──────────────────────────────────────────────────
+
+#[test]
+fn test_js_extension_for_ts_input() {
+    assert_eq!(js_extension_for(Path::new("file.ts"), None), Some("js"));
+}
+
+#[test]
+fn test_js_extension_for_tsx_react() {
+    assert_eq!(
+        js_extension_for(Path::new("file.tsx"), Some(JsxEmit::React)),
+        Some("js")
+    );
+}
+
+#[test]
+fn test_js_extension_for_tsx_preserve() {
+    assert_eq!(
+        js_extension_for(Path::new("file.tsx"), Some(JsxEmit::Preserve)),
+        Some("jsx")
+    );
+}
+
+#[test]
+fn test_js_extension_for_mts_input() {
+    assert_eq!(js_extension_for(Path::new("file.mts"), None), Some("mjs"));
+}
+
+#[test]
+fn test_js_extension_for_cts_input() {
+    assert_eq!(js_extension_for(Path::new("file.cts"), None), Some("cjs"));
+}
+
+#[test]
+fn test_js_extension_for_js_input() {
+    // JS input files should produce JS output (same extension).
+    // This matches tsc behavior where allowJs files are emitted.
+    assert_eq!(js_extension_for(Path::new("file.js"), None), Some("js"));
+}
+
+#[test]
+fn test_js_extension_for_jsx_input() {
+    assert_eq!(js_extension_for(Path::new("file.jsx"), None), Some("jsx"));
+}
+
+#[test]
+fn test_js_extension_for_mjs_input() {
+    assert_eq!(js_extension_for(Path::new("file.mjs"), None), Some("mjs"));
+}
+
+#[test]
+fn test_js_extension_for_cjs_input() {
+    assert_eq!(js_extension_for(Path::new("file.cjs"), None), Some("cjs"));
+}
+
+#[test]
+fn test_js_extension_for_unknown_ext() {
+    assert_eq!(js_extension_for(Path::new("file.txt"), None), None);
+    assert_eq!(js_extension_for(Path::new("file.rs"), None), None);
+}
+
+#[test]
+fn test_declaration_file_name_for_ts_inputs() {
+    assert_eq!(
+        declaration_file_name("file.ts"),
+        Some("file.d.ts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.tsx"),
+        Some("file.d.ts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.mts"),
+        Some("file.d.mts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.cts"),
+        Some("file.d.cts".to_string())
+    );
+}
+
+#[test]
+fn test_declaration_file_name_for_js_inputs() {
+    assert_eq!(
+        declaration_file_name("file.js"),
+        Some("file.d.ts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.jsx"),
+        Some("file.d.ts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.mjs"),
+        Some("file.d.mts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("file.cjs"),
+        Some("file.d.cts".to_string())
+    );
+}
+
+#[test]
+fn test_declaration_bundle_output_path_uses_out_file_name() {
+    let bundle_path =
+        declaration_bundle_output_path(Path::new("/tmp/project"), None, Path::new("dist/out.js"));
+
+    assert_eq!(
+        bundle_path,
+        Some(Path::new("/tmp/project/dist/out.d.ts").into())
+    );
+}
+
+#[test]
+fn test_js_output_path_ignores_out_dir_when_input_is_outside_root_dir() {
+    let path = js_output_path(
+        Path::new("/tmp/project/app"),
+        Some(Path::new("/tmp/project/base/src")),
+        Some(Path::new("/tmp/project/base/dist")),
+        None,
+        Path::new("/tmp/project/app/src/index.ts"),
+    );
+
+    assert_eq!(
+        path,
+        Some(Path::new("/tmp/project/app/src/index.js").into())
+    );
+}
+
+#[test]
+fn test_js_output_path_skips_arbitrary_extension_declaration_file() {
+    let path = js_output_path(
+        Path::new("/tmp/project/app"),
+        None,
+        Some(Path::new("/tmp/project/app/dist")),
+        None,
+        Path::new("/tmp/project/app/native.d.node.ts"),
+    );
+
+    assert_eq!(path, None);
+}
+
+#[test]
+fn test_declaration_output_path_ignores_out_dir_when_input_is_outside_root_dir() {
+    let path = declaration_output_path(
+        Path::new("/tmp/project/app"),
+        Some(Path::new("/tmp/project/base/src")),
+        Some(Path::new("/tmp/project/base/types")),
+        Path::new("/tmp/project/app/src/index.ts"),
+    );
+
+    assert_eq!(
+        path,
+        Some(Path::new("/tmp/project/app/src/index.d.ts").into())
+    );
+}
+
+#[test]
+fn test_declaration_output_path_skips_arbitrary_extension_declaration_file() {
+    let path = declaration_output_path(
+        Path::new("/tmp/project/app"),
+        None,
+        Some(Path::new("/tmp/project/app/types")),
+        Path::new("/tmp/project/app/native.d.node.ts"),
+    );
+
+    assert_eq!(path, None);
+}
+
+#[test]
+fn test_join_declaration_bundle_chunks_orders_reference_paths_first() {
+    let chunks = vec![
+        DeclarationBundleChunk {
+            path_key: "/project/a.ts".to_string(),
+            referenced_path_keys: Vec::new(),
+            contents: "declare class c {\n}".to_string(),
+        },
+        DeclarationBundleChunk {
+            path_key: "/project/b.js".to_string(),
+            referenced_path_keys: vec!["/project/c.js".to_string()],
+            contents: "declare function foo(): void;".to_string(),
+        },
+        DeclarationBundleChunk {
+            path_key: "/project/c.js".to_string(),
+            referenced_path_keys: Vec::new(),
+            contents: "declare function bar(): void;".to_string(),
+        },
+    ];
+
+    let output = join_declaration_bundle_chunks(&chunks, "\n");
+
+    assert_eq!(
+        output,
+        "declare class c {\n}\ndeclare function bar(): void;\ndeclare function foo(): void;"
+    );
+}
+
+#[test]
+fn test_js_bundle_chunk_order_orders_reference_paths_first() {
+    let chunks = vec![
+        JsBundleChunk {
+            path_key: "/project/a.ts".to_string(),
+            referenced_path_keys: Vec::new(),
+            contents: "class c {\n}".to_string(),
+        },
+        JsBundleChunk {
+            path_key: "/project/b.js".to_string(),
+            referenced_path_keys: vec!["/project/c.js".to_string()],
+            contents: "/// <reference path=\"c.js\"/>\nfunction foo() {\n}".to_string(),
+        },
+        JsBundleChunk {
+            path_key: "/project/c.js".to_string(),
+            referenced_path_keys: Vec::new(),
+            contents: "function bar() {\n}".to_string(),
+        },
+    ];
+
+    let order = js_bundle_chunk_order(&chunks);
+
+    assert_eq!(order, vec![0, 2, 1]);
+}
+
+#[test]
+fn test_resolve_declaration_reference_path_treats_bare_paths_as_relative() {
+    let mut file_lookup = rustc_hash::FxHashMap::default();
+    file_lookup.insert("/project/c.js".to_string(), "/project/c.js".to_string());
+
+    let resolved = resolve_declaration_reference_path_file("/project/b.js", "c.js", &file_lookup);
+
+    assert_eq!(resolved.as_deref(), Some("/project/c.js"));
+}
+
+#[test]
+fn test_bundle_declaration_output_wraps_named_amd_modules() {
+    let input = r#"/// <amd-module name="mynamespace::SomeModuleA" />
+export declare class Foo {
+}"#;
+
+    let output = bundle_declaration_output(input, tsz_common::common::ModuleKind::AMD, None);
+    let expected = r#"/// <amd-module name="mynamespace::SomeModuleA" />
+declare module "mynamespace::SomeModuleA" {
+    export class Foo {
+    }
+}"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_bundle_declaration_output_wraps_amd_modules_with_fallback_name() {
+    let input = "export declare const value = 1;";
+
+    let output =
+        bundle_declaration_output(input, tsz_common::common::ModuleKind::AMD, Some("index"));
+    let expected = r#"declare module "index" {
+    export const value = 1;
+}"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_bundle_declaration_output_rewrites_inline_amd_import_types() {
+    let input = r#"/** @type {typeof import("./folder/mod1")} */
+export declare const items: (typeof import("./folder/mod1"))[];
+export declare const also: import("../shared/types").Thing;"#;
+
+    let output = bundle_declaration_output(
+        input,
+        tsz_common::common::ModuleKind::AMD,
+        Some("app/index"),
+    );
+    let expected = r#"declare module "app/index" {
+    /** @type {typeof import("./folder/mod1")} */
+    export const items: (typeof import("app/folder/mod1"))[];
+    export const also: import("shared/types").Thing;
+}"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_bundle_declaration_output_does_not_use_amd_dependency_name() {
+    let input = r#"/// <amd-dependency name="legacyAlias" path="legacy/module" />
+export declare const value = 1;"#;
+
+    let output =
+        bundle_declaration_output(input, tsz_common::common::ModuleKind::AMD, Some("index"));
+    let expected = r#"/// <amd-dependency name="legacyAlias" path="legacy/module" />
+declare module "index" {
+    export const value = 1;
+}"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_bundle_declaration_output_ignores_amd_module_prefix_tag() {
+    let input = r#"/// <amd-modulex name="wrong" />
+export declare const value = 1;"#;
+
+    let output =
+        bundle_declaration_output(input, tsz_common::common::ModuleKind::AMD, Some("index"));
+    let expected = r#"/// <amd-modulex name="wrong" />
+declare module "index" {
+    export const value = 1;
+}"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_type_only_export_equals_module_collection() {
+    let program = tsz::parallel::compile_files_with_libs(
+        vec![(
+            "modules.d.ts".to_string(),
+            r#"
+declare module "interface" {
+    interface Foo { x: number }
+    export = Foo;
+}
+declare module "variable" {
+    export var Foo: { a: number };
+    export = Foo;
+}
+declare module "namespace" {
+    namespace Foo {
+        export var a: number;
+    }
+    export = Foo;
+}
+declare module "class" {
+    export class Foo { x: number }
+    export = Foo;
+}
+"#
+            .to_string(),
+        )],
+        &[],
+    );
+
+    let modules = build_type_only_export_equals_modules(&program, false);
+
+    assert!(modules.contains("interface"));
+    assert!(!modules.contains("variable"));
+    assert!(!modules.contains("namespace"));
+    assert!(!modules.contains("class"));
+}
+
+#[test]
+fn test_normalize_type_roots_keeps_existing_absolute_root() {
+    let temp = tempdir().unwrap();
+    let types_dir = temp.path().join("types");
+    std::fs::create_dir_all(&types_dir).unwrap();
+    let absolute = canonicalize_or_owned(&types_dir);
+
+    let normalized = normalize_type_roots(temp.path(), Some(vec![absolute.clone()])).unwrap();
+
+    assert_eq!(normalized, vec![absolute]);
+}
+
+#[test]
+fn test_normalize_type_roots_skips_missing_absolute_root() {
+    let temp = tempdir().unwrap();
+    let base_dir = canonicalize_or_owned(temp.path());
+    // Even though <base_dir>/types/ exists, an absolute "/types" that doesn't
+    // exist on disk should NOT fall back to the base_dir-relative path.
+    // tsc treats absolute typeRoots as-is; if they don't exist, they're skipped.
+    let _types_dir = base_dir.join("types");
+    std::fs::create_dir_all(&_types_dir).unwrap();
+
+    let normalized =
+        normalize_type_roots(&base_dir, Some(vec![Path::new("/types").to_path_buf()])).unwrap();
+
+    assert!(
+        normalized.is_empty(),
+        "absolute /types should be skipped when it doesn't exist on disk"
+    );
+}

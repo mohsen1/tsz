@@ -1,0 +1,28 @@
+//! Type evaluation rules organized by type category.
+//!
+//! This module contains the implementation of TypeScript's meta-type evaluation,
+//! split into focused modules for maintainability:
+//!
+//! - `conditional`: Conditional type evaluation (T extends U ? X : Y)
+//! - `index_access`: Index access type evaluation (T[K])
+//! - `mapped`: Mapped type evaluation ({ [K in keyof T]: T[K] })
+//! - `keyof`: keyof operator evaluation
+//! - `template_literal`: Template literal type evaluation
+//! - `string_intrinsic`: String manipulation intrinsics (Uppercase, etc.)
+//! - `infer_pattern`: Pattern matching for infer types
+//! - `apparent`: Apparent type utilities for primitives
+//! - `substitute`: Exact-type substitution used by distributive conditionals
+
+pub mod apparent;
+pub mod conditional;
+pub mod index_access;
+pub mod infer_pattern;
+mod infer_pattern_helpers;
+pub mod infer_substitutor;
+pub mod keyof;
+pub mod mapped;
+mod mapped_template_index;
+mod string_index_helpers;
+pub mod string_intrinsic;
+mod substitute;
+pub mod template_literal;

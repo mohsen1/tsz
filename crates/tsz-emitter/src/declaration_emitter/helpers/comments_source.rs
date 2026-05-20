@@ -1,0 +1,922 @@
+//! Comment emission, source mapping, and writer utilities
+
+#[allow(unused_imports)]
+use super::super::{DeclarationEmitter, ImportPlan, PlannedImportModule, PlannedImportSymbol};
+#[allow(unused_imports)]
+use crate::emitter::type_printer::TypePrinter;
+#[allow(unused_imports)]
+use crate::output::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
+#[allow(unused_imports)]
+use rustc_hash::{FxHashMap, FxHashSet};
+#[allow(unused_imports)]
+use std::sync::Arc;
+#[allow(unused_imports)]
+use tracing::debug;
+#[allow(unused_imports)]
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
+#[allow(unused_imports)]
+use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+#[allow(unused_imports)]
+use tsz_parser::parser::ParserState;
+#[allow(unused_imports)]
+use tsz_parser::parser::node::{Node, NodeAccess, NodeArena, ParameterData};
+#[allow(unused_imports)]
+use tsz_parser::parser::syntax_kind_ext;
+#[allow(unused_imports)]
+use tsz_parser::parser::{NodeIndex, NodeList};
+#[allow(unused_imports)]
+use tsz_scanner::SyntaxKind;
+
+impl<'a> DeclarationEmitter<'a> {
+    pub(crate) fn emit_leading_jsdoc_comment_chain_preserving_source(&mut self, pos: u32) {
+        if self.remove_comments {
+            return;
+        }
+
+        let Some(text) = self.source_file_text.clone() else {
+            return;
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let Some(nearest_idx) = self
+            .all_comments
+            .iter()
+            .enumerate()
+            .filter(|(_, comment)| comment.end as usize <= actual_start)
+            .filter(|(_, comment)| is_jsdoc_comment(comment, &text))
+            .filter(|(_, comment)| {
+                Self::jsdoc_attaches_through_var_prefix(&text[comment.end as usize..actual_start])
+            })
+            .max_by_key(|(_, comment)| comment.end)
+            .map(|(idx, _)| idx)
+        else {
+            return;
+        };
+
+        let mut chain = vec![nearest_idx];
+        let mut current_start = self.all_comments[nearest_idx].pos as usize;
+        for idx in (0..nearest_idx).rev() {
+            let comment = &self.all_comments[idx];
+            if !is_jsdoc_comment(comment, &text) {
+                continue;
+            }
+
+            let between = &text[comment.end as usize..current_start];
+            if !between
+                .bytes()
+                .all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            {
+                break;
+            }
+
+            chain.push(idx);
+            current_start = comment.pos as usize;
+        }
+        chain.reverse();
+
+        for (position, idx) in chain.iter().copied().enumerate() {
+            let comment = &self.all_comments[idx];
+            let next_on_same_line = chain.get(position + 1).is_some_and(|next_idx| {
+                let next = &self.all_comments[*next_idx];
+                !text[comment.end as usize..next.pos as usize].contains('\n')
+            });
+            self.emit_jsdoc_comment_text_preserving_source(
+                &text,
+                comment.pos,
+                comment.end,
+                next_on_same_line,
+                true,
+            );
+        }
+    }
+
+    pub(crate) fn emit_jsdoc_comment_chain(&mut self, chain: &[String]) {
+        if self.remove_comments {
+            return;
+        }
+
+        for jsdoc in chain {
+            self.write_indent();
+            let trimmed = jsdoc.trim();
+            if !trimmed.contains('\n') {
+                self.write("/** ");
+                self.write(trimmed);
+                self.write(" */");
+                self.write_line();
+                continue;
+            }
+
+            self.write("/**");
+            self.write_line();
+            for line in trimmed.lines() {
+                self.write_indent();
+                if line.trim().is_empty() {
+                    self.write(" *");
+                } else {
+                    self.write(" * ");
+                    self.write(line.trim());
+                }
+                self.write_line();
+            }
+            self.write_indent();
+            self.write(" */");
+            self.write_line();
+        }
+    }
+
+    pub(crate) fn emit_jsdoc_comment_chain_preserving_source_for_pos(
+        &mut self,
+        pos: u32,
+        chain: &[String],
+    ) -> bool {
+        self.emit_jsdoc_comment_chain_preserving_source_for_pos_with_indent_mode(pos, chain, true)
+    }
+
+    pub(crate) fn emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
+        &mut self,
+        pos: u32,
+        chain: &[String],
+    ) -> bool {
+        self.emit_jsdoc_comment_chain_preserving_source_for_pos_with_indent_mode(pos, chain, false)
+    }
+
+    fn emit_jsdoc_comment_chain_preserving_source_for_pos_with_indent_mode(
+        &mut self,
+        pos: u32,
+        chain: &[String],
+        normalize_inner_indent: bool,
+    ) -> bool {
+        if self.remove_comments {
+            return true;
+        }
+        if chain.is_empty() {
+            return true;
+        }
+
+        let Some(text) = self.source_file_text.clone() else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let mut matched = Vec::with_capacity(chain.len());
+        let mut chain_idx = 0usize;
+        for (comment_idx, comment) in self.all_comments.iter().enumerate() {
+            if comment.end as usize > actual_start {
+                break;
+            }
+
+            let raw = &text[comment.pos as usize..comment.end as usize];
+            if raw.starts_with("/**")
+                && raw != "/**/"
+                && get_jsdoc_content(comment, &text) == chain[chain_idx]
+            {
+                matched.push(comment_idx);
+                chain_idx += 1;
+                if chain_idx == chain.len() {
+                    break;
+                }
+            }
+        }
+
+        if chain_idx != chain.len() {
+            return false;
+        }
+
+        for (position, idx) in matched.iter().copied().enumerate() {
+            let comment = &self.all_comments[idx];
+            let next_on_same_line = matched.get(position + 1).is_some_and(|next_idx| {
+                let next = &self.all_comments[*next_idx];
+                !text[comment.end as usize..next.pos as usize].contains('\n')
+            });
+            self.emit_jsdoc_comment_text_preserving_source(
+                &text,
+                comment.pos,
+                comment.end,
+                next_on_same_line,
+                normalize_inner_indent,
+            );
+        }
+
+        true
+    }
+
+    pub(crate) fn emitted_leading_single_line_jsdoc_type_comment_for_pos(&self, pos: u32) -> bool {
+        let Some(text) = self.source_file_text.as_deref() else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let Some(comment) = self
+            .all_comments
+            .iter()
+            .filter(|comment| comment.end as usize <= actual_start)
+            .filter(|comment| is_jsdoc_comment(comment, text))
+            .filter(|comment| {
+                Self::jsdoc_attaches_through_var_prefix(&text[comment.end as usize..actual_start])
+            })
+            .max_by_key(|comment| comment.end)
+        else {
+            return false;
+        };
+
+        let raw = &text[comment.pos as usize..comment.end as usize];
+        !raw.contains(['\n', '\r'])
+            && Self::extract_jsdoc_type_expression(&get_jsdoc_content(comment, text)).is_some()
+    }
+
+    pub(crate) fn join_last_emitted_jsdoc_comment_to_next_declaration(&mut self) {
+        if self.writer.undo_last_write_line() {
+            self.write(" ");
+        }
+    }
+
+    pub(crate) fn emit_jsdoc_comment_verbatim_for_pos(&mut self, pos: u32, jsdoc: &str) -> bool {
+        if self.remove_comments {
+            return true;
+        }
+        let Some(text) = self.source_file_text.clone() else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let Some(comment) = self
+            .all_comments
+            .iter()
+            .filter(|comment| comment.end as usize <= actual_start)
+            .filter(|comment| is_jsdoc_comment(comment, &text))
+            .filter(|comment| get_jsdoc_content(comment, &text) == jsdoc)
+            .max_by_key(|comment| comment.end)
+        else {
+            return false;
+        };
+
+        self.emit_jsdoc_comment_text_preserving_source(
+            &text,
+            comment.pos,
+            comment.end,
+            false,
+            false,
+        );
+        true
+    }
+
+    pub(crate) fn emit_multiline_jsdoc_comment(&mut self, jsdoc: &str) {
+        if self.remove_comments {
+            return;
+        }
+
+        self.write_indent();
+        self.write("/**");
+        self.write_line();
+        for line in jsdoc.trim().lines() {
+            self.write_indent();
+            if line.trim().is_empty() {
+                self.write(" *");
+            } else {
+                self.write(" * ");
+                self.write(line.trim());
+            }
+            self.write_line();
+        }
+        self.write_indent();
+        self.write(" */");
+        self.write_line();
+    }
+
+    fn emit_jsdoc_comment_text_preserving_source(
+        &mut self,
+        text: &str,
+        comment_pos: u32,
+        comment_end: u32,
+        next_on_same_line: bool,
+        normalize_inner_indent: bool,
+    ) {
+        let bytes = text.as_bytes();
+        let ct = &text[comment_pos as usize..comment_end as usize];
+        let source_indent = {
+            let cp = comment_pos as usize;
+            let mut line_start = cp;
+            if line_start > 0 {
+                let mut i = line_start;
+                while i > 0 {
+                    i -= 1;
+                    if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                        line_start = i + 1;
+                        break;
+                    }
+                    if i == 0 {
+                        line_start = 0;
+                    }
+                }
+            }
+
+            let mut width = 0usize;
+            for &b in &bytes[line_start..cp] {
+                if b == b' ' {
+                    width += 1;
+                } else if b == b'\t' {
+                    width = (width / 4 + 1) * 4;
+                } else {
+                    break;
+                }
+            }
+            width
+        };
+
+        self.write_indent();
+        if ct.contains('\n') {
+            let mut first = true;
+            for line in ct.split('\n') {
+                if first {
+                    self.write(line.trim_end());
+                    first = false;
+                } else {
+                    self.write_line();
+                    let line_bytes = line.as_bytes();
+                    let mut line_width = 0usize;
+                    let mut char_width = 0usize;
+                    for &b in line_bytes.iter() {
+                        if b == b' ' {
+                            line_width += 1;
+                            char_width += 1;
+                        } else if b == b'\t' {
+                            line_width = (line_width / 4 + 1) * 4;
+                            char_width += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let content = line[char_width..].trim_end();
+                    let content = if normalize_inner_indent
+                        && let Some(rest) = content.strip_prefix('*')
+                        && rest.starts_with("  ")
+                    {
+                        format!("* {}", rest.trim_start())
+                    } else {
+                        content.to_string()
+                    };
+                    let output_indent = (self.indent_level as usize) * 4;
+                    let out_width = if line_width >= source_indent {
+                        output_indent + (line_width - source_indent)
+                    } else {
+                        output_indent.saturating_sub(source_indent - line_width)
+                    };
+                    for _ in 0..out_width {
+                        self.write_raw(" ");
+                    }
+                    self.write(&content);
+                }
+            }
+        } else {
+            self.write(ct);
+        }
+
+        if next_on_same_line {
+            self.write(" ");
+        } else {
+            self.write_line();
+        }
+    }
+
+    pub(crate) fn emit_leading_jsdoc_comments(&mut self, pos: u32) {
+        if self.remove_comments {
+            return;
+        }
+        let Some(ref text) = self.source_file_text else {
+            return;
+        };
+        let text = text.clone();
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+        let actual_start = actual_start as u32;
+        while self.comment_emit_idx < self.all_comments.len() {
+            let c_pos = self.all_comments[self.comment_emit_idx].pos;
+            let c_end = self.all_comments[self.comment_emit_idx].end;
+            if c_end > actual_start {
+                break;
+            }
+            let ct = &text[c_pos as usize..c_end as usize];
+            // Skip empty block comments like /**/
+            if ct.starts_with("/**") && ct != "/**/" {
+                // Check if the next comment is a JSDoc comment on the same
+                // source line — if so, emit a space instead of a newline to
+                // keep consecutive JSDoc comments on one line (matching tsc).
+                let next_idx = self.comment_emit_idx + 1;
+                let next_on_same_line = next_idx < self.all_comments.len() && {
+                    let n_pos = self.all_comments[next_idx].pos;
+                    let n_end = self.all_comments[next_idx].end;
+                    n_end <= actual_start && {
+                        let between = &text[c_end as usize..n_pos as usize];
+                        let next_ct = &text[n_pos as usize..n_end as usize];
+                        next_ct.starts_with("/**") && next_ct != "/**/" && !between.contains('\n')
+                    }
+                };
+                self.emit_jsdoc_comment_text_preserving_source(
+                    &text,
+                    c_pos,
+                    c_end,
+                    next_on_same_line,
+                    true,
+                );
+            }
+            self.comment_emit_idx += 1;
+        }
+    }
+
+    /// Emit all inline block comments (both `/*...*/` and `/**...*/`) that appear
+    /// before `name_pos`. Used for variable declarations where tsc preserves
+    /// comments between the keyword and the variable name (e.g. `var /*4*/ point`).
+    pub(crate) fn emit_inline_block_comments(&mut self, name_pos: u32) {
+        if self.remove_comments {
+            return;
+        }
+        let Some(ref text) = self.source_file_text else {
+            return;
+        };
+        let text = text.clone();
+        let bytes = text.as_bytes();
+        let mut actual_start = name_pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+        let actual_start = actual_start as u32;
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.end > actual_start {
+                break;
+            }
+            let ct = &text[comment.pos as usize..comment.end as usize];
+            if ct.starts_with("/*") {
+                self.write(ct);
+                self.write(" ");
+            }
+            self.comment_emit_idx += 1;
+        }
+    }
+
+    pub(crate) fn emit_inline_parameter_comment(&mut self, param_pos: u32) {
+        if self.remove_comments {
+            return;
+        }
+        let Some(ref text) = self.source_file_text else {
+            return;
+        };
+        let text = text.clone();
+        let bytes = text.as_bytes();
+        let mut actual_start = param_pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+        let actual_start = actual_start as u32;
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            if comment.end > actual_start {
+                break;
+            }
+            let c_pos = comment.pos as usize;
+            let c_end = comment.end as usize;
+            let ct = &text[c_pos..c_end];
+            if ct.starts_with("/*") {
+                // Determine if this is a "leading" comment (before a parameter name)
+                // or a "trailing" comment (after a parameter's type annotation).
+                // Leading: preceded by `(`, `,`, `[`, `<`, whitespace, or another comment.
+                // Trailing: preceded by identifier chars, `)`, type annotation, etc.
+                let is_leading = {
+                    let mut p = c_pos;
+                    let mut leading = true;
+                    while p > 0 {
+                        p -= 1;
+                        match bytes[p] {
+                            b' ' | b'\t' | b'\r' | b'\n' => continue,
+                            b'(' | b',' | b'[' | b'<' => break,
+                            b'/' if p > 0 && bytes[p - 1] == b'*' => break, // end of another comment
+                            _ => {
+                                leading = false;
+                                break;
+                            }
+                        }
+                    }
+                    leading
+                };
+
+                if is_leading {
+                    // Check if the comment was on a new line in the source.
+                    let has_newline = {
+                        let mut pos = c_pos;
+                        let mut found = false;
+                        while pos > 0 {
+                            pos -= 1;
+                            match bytes[pos] {
+                                b'\n' => {
+                                    found = true;
+                                    break;
+                                }
+                                b' ' | b'\t' | b'\r' => continue,
+                                _ => break,
+                            }
+                        }
+                        found
+                    };
+                    if has_newline {
+                        self.write_line();
+                        self.write_indent();
+                    }
+                    self.write(ct);
+                    if has_newline {
+                        self.write_line();
+                        self.write_indent();
+                    } else {
+                        self.write(" ");
+                    }
+                }
+            }
+            self.comment_emit_idx += 1;
+        }
+    }
+
+    pub(crate) fn nearest_leading_comment_contains(
+        &self,
+        pos: u32,
+        lower_bound: u32,
+        needle: &str,
+    ) -> bool {
+        let Some(ref text) = self.source_file_text else {
+            return false;
+        };
+        self.all_comments
+            .iter()
+            .rfind(|comment| comment.end <= pos && comment.pos >= lower_bound)
+            .is_some_and(|comment| {
+                text[comment.pos as usize..comment.end as usize].contains(needle)
+            })
+    }
+
+    pub(crate) fn parameter_semantic_end(&self, param_node_end: u32, param: &ParameterData) -> u32 {
+        self.arena
+            .get(param.initializer)
+            .or_else(|| self.arena.get(param.type_annotation))
+            .or_else(|| self.arena.get(param.name))
+            .map_or(param_node_end, |node| node.end)
+    }
+
+    pub(crate) fn emit_strip_internal_constructor_parameter_comment(
+        &mut self,
+        param_pos: u32,
+        lower_bound: u32,
+        allow_plain_block: bool,
+    ) {
+        if self.remove_comments {
+            return;
+        }
+        let Some(ref text) = self.source_file_text else {
+            return;
+        };
+        let text = text.clone();
+        let Some(comment) = self
+            .all_comments
+            .iter()
+            .rfind(|comment| {
+                if comment.end > param_pos || comment.pos < lower_bound {
+                    return false;
+                }
+                let ct = &text[comment.pos as usize..comment.end as usize];
+                ct.starts_with("/**") || (allow_plain_block && ct.starts_with("/*"))
+            })
+            .cloned()
+        else {
+            return;
+        };
+
+        let bytes = text.as_bytes();
+        let c_pos = comment.pos as usize;
+        let c_end = comment.end as usize;
+        let ct = &text[c_pos..c_end];
+        let has_prior_comment = self
+            .all_comments
+            .iter()
+            .any(|candidate| candidate.pos >= lower_bound && candidate.end <= comment.pos);
+        let has_newline = {
+            let mut pos = c_pos;
+            let mut found = false;
+            while pos > 0 {
+                pos -= 1;
+                match bytes[pos] {
+                    b'\n' => {
+                        found = true;
+                        break;
+                    }
+                    b' ' | b'\t' | b'\r' => continue,
+                    _ => break,
+                }
+            }
+            found
+        };
+        let own_line = ct.starts_with("/**") && (lower_bound == 0 || has_prior_comment);
+
+        if own_line {
+            self.write_line();
+            self.write_indent();
+            self.write(ct);
+            self.write_line();
+            self.write_indent();
+        } else if has_newline {
+            self.write_line();
+            self.write_indent();
+            self.write(ct);
+            self.write(" ");
+        } else {
+            self.write(ct);
+            self.write(" ");
+        }
+    }
+
+    /// Check if there is a trailing block comment on the same source line as `node_end`,
+    /// and if so, emit it (space-separated) before the caller emits a newline.
+    /// Returns true if a trailing comment was emitted.
+    pub(crate) fn emit_trailing_comment(&mut self, node_end: u32) -> bool {
+        if self.remove_comments {
+            return false;
+        }
+        let Some(ref text) = self.source_file_text else {
+            return false;
+        };
+        let text = text.clone();
+        let bytes = text.as_bytes();
+        if self.comment_emit_idx >= self.all_comments.len() {
+            return false;
+        }
+        let c_pos = self.all_comments[self.comment_emit_idx].pos;
+        let c_end = self.all_comments[self.comment_emit_idx].end;
+        // The comment must start after the node end
+        if c_pos < node_end {
+            return false;
+        }
+        let ct = &text[c_pos as usize..c_end as usize];
+        // Only handle block comments (/* ... */), not line comments
+        if !ct.starts_with("/*") {
+            return false;
+        }
+        // Check that there's no newline between node_end and the comment start
+        let between = &bytes[node_end as usize..c_pos as usize];
+        if between.contains(&b'\n') || between.contains(&b'\r') {
+            return false;
+        }
+        // Emit as trailing comment
+        self.write(" ");
+        self.write(ct);
+        self.comment_emit_idx += 1;
+        true
+    }
+
+    /// Advance the comment index past any comments that end before `pos`,
+    /// without emitting them. Used to skip comments that belong to a parent
+    /// context (e.g. comments between `:` and the type's opening paren).
+    pub(crate) fn skip_comments_before(&mut self, pos: u32) {
+        while self.comment_emit_idx < self.all_comments.len() {
+            if self.all_comments[self.comment_emit_idx].end <= pos {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    pub(crate) fn skip_comments_in_node(&mut self, pos: u32, end: u32) {
+        let ae = self.find_node_code_end(pos, end);
+        while self.comment_emit_idx < self.all_comments.len() {
+            if self.all_comments[self.comment_emit_idx].pos < ae {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    pub(crate) fn skip_comments_before_raw(&mut self, end: u32) {
+        while self.comment_emit_idx < self.all_comments.len() {
+            if self.all_comments[self.comment_emit_idx].pos < end {
+                self.comment_emit_idx += 1;
+            } else {
+                break;
+            }
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn find_node_code_end(&self, pos: u32, end: u32) -> u32 {
+        let Some(ref text) = self.source_file_text else {
+            return end;
+        };
+        let bytes = text.as_bytes();
+        let s = pos as usize;
+        let e = std::cmp::min(end as usize, bytes.len());
+        if s >= e {
+            return end;
+        }
+        let mut d: i32 = 0;
+        let mut lt: Option<usize> = None;
+        let mut i = s;
+        while i < e {
+            match bytes[i] {
+                b'{' => {
+                    d += 1;
+                    i += 1;
+                }
+                b'}' => {
+                    d -= 1;
+                    if d == 0 {
+                        lt = Some(i + 1);
+                    }
+                    i += 1;
+                }
+                b';' => {
+                    if d == 0 {
+                        lt = Some(i + 1);
+                    }
+                    i += 1;
+                }
+                b'\'' | b'"' | b'`' => {
+                    let q = bytes[i];
+                    i += 1;
+                    while i < e {
+                        if bytes[i] == b'\\' {
+                            i += 2;
+                        } else if bytes[i] == q {
+                            i += 1;
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                b'/' if i + 1 < e && bytes[i + 1] == b'/' => {
+                    i += 2;
+                    while i < e && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                }
+                b'/' if i + 1 < e && bytes[i + 1] == b'*' => {
+                    i += 2;
+                    while i + 1 < e {
+                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                            i += 2;
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        if lt.is_none() {
+            let mut i = s;
+            while i < e {
+                if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                    let line_end = i;
+                    let mut j = i + 1;
+                    while j < e && matches!(bytes[j], b' ' | b'\t' | b'\r' | b'\n') {
+                        j += 1;
+                    }
+                    if j + 2 < e && bytes[j] == b'/' && bytes[j + 1] == b'*' && bytes[j + 2] == b'*'
+                    {
+                        return line_end as u32;
+                    }
+                }
+                i += 1;
+            }
+        }
+        lt.map_or(end, |x| x as u32)
+    }
+
+    pub(crate) fn queue_source_mapping(&mut self, node: &Node) {
+        if !self.writer.has_source_map() {
+            self.pending_source_pos = None;
+            return;
+        }
+
+        let Some(text) = self.source_map_text else {
+            self.pending_source_pos = None;
+            return;
+        };
+
+        self.pending_source_pos = Some(source_position_from_offset(text, node.pos));
+    }
+
+    pub(crate) const fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
+        self.pending_source_pos.take()
+    }
+
+    /// Returns the quote character used for a string literal in the original source.
+    /// Falls back to double quote if source text is unavailable.
+    pub(crate) fn original_quote_char(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> &'static str {
+        if let Some(text) = self.source_file_text.as_ref() {
+            let pos = node.pos as usize;
+            if pos < text.len() {
+                let ch = text.as_bytes()[pos];
+                if ch == b'\'' {
+                    return "'";
+                }
+            }
+        }
+        "\""
+    }
+
+    pub(crate) fn get_source_slice(&self, start: u32, end: u32) -> Option<String> {
+        let text = self.source_file_text.as_ref()?;
+        let start = start as usize;
+        let end = end as usize;
+        if start > end || end > text.len() {
+            return None;
+        }
+
+        let slice = text[start..end].trim().to_string();
+        if slice.is_empty() { None } else { Some(slice) }
+    }
+
+    /// Like `get_source_slice` but also strips a trailing `;` if present.
+    /// Use this when extracting type/value text from source that will be
+    /// embedded in a statement where the caller adds its own `;`.
+    pub(crate) fn get_source_slice_no_semi(&self, start: u32, end: u32) -> Option<String> {
+        let mut s = self.get_source_slice(start, end)?;
+        if s.ends_with(';') {
+            s.pop();
+            let trimmed = s.trim_end().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        } else {
+            Some(s)
+        }
+    }
+
+    pub(crate) fn write_raw(&mut self, s: &str) {
+        self.writer.write(s);
+    }
+
+    pub(crate) fn write(&mut self, s: &str) {
+        if let Some(source_pos) = self.take_pending_source_pos() {
+            self.writer.write_node(s, source_pos);
+        } else {
+            self.writer.write(s);
+        }
+    }
+
+    pub(crate) fn write_line(&mut self) {
+        self.writer.write_line();
+    }
+
+    pub(crate) fn write_indent(&mut self) {
+        for _ in 0..self.indent_level {
+            self.write_raw("    ");
+        }
+    }
+
+    pub(crate) const fn increase_indent(&mut self) {
+        self.indent_level += 1;
+    }
+
+    pub(crate) const fn decrease_indent(&mut self) {
+        if self.indent_level > 0 {
+            self.indent_level -= 1;
+        }
+    }
+}

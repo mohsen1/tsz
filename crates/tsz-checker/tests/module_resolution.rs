@@ -1,0 +1,1487 @@
+use super::*;
+
+// ===========================================================================
+// strip_ts_extension
+// ===========================================================================
+
+#[test]
+fn test_strip_ts_extension() {
+    assert_eq!(strip_ts_extension("foo.ts"), "foo");
+    assert_eq!(strip_ts_extension("foo.tsx"), "foo");
+    assert_eq!(strip_ts_extension("foo.js"), "foo");
+    assert_eq!(strip_ts_extension("foo.jsx"), "foo");
+    assert_eq!(strip_ts_extension("foo.d.ts"), "foo");
+    assert_eq!(strip_ts_extension("foo.d.tsx"), "foo");
+    assert_eq!(strip_ts_extension("foo.mts"), "foo");
+    assert_eq!(strip_ts_extension("foo.cts"), "foo");
+    assert_eq!(strip_ts_extension("foo.mjs"), "foo");
+    assert_eq!(strip_ts_extension("foo.cjs"), "foo");
+    assert_eq!(strip_ts_extension("foo.d.mts"), "foo");
+    assert_eq!(strip_ts_extension("foo.d.cts"), "foo");
+}
+
+#[test]
+fn test_strip_ts_extension_with_path() {
+    assert_eq!(strip_ts_extension("/tmp/test/foo.ts"), "/tmp/test/foo");
+    assert_eq!(strip_ts_extension("lib/utils.d.ts"), "lib/utils");
+    assert_eq!(strip_ts_extension("src/index.tsx"), "src/index");
+}
+
+#[test]
+fn test_strip_ts_extension_no_match() {
+    assert_eq!(strip_ts_extension("foo"), "foo");
+    assert_eq!(strip_ts_extension("foo.txt"), "foo.txt");
+    assert_eq!(strip_ts_extension("foo.css"), "foo.css");
+    assert_eq!(strip_ts_extension(""), "");
+}
+
+#[test]
+fn test_strip_dts_before_ts() {
+    // .d.ts must be stripped as a whole, not just .ts leaving ".d".
+    assert_eq!(strip_ts_extension("types.d.ts"), "types");
+    assert_eq!(strip_ts_extension("globals.d.tsx"), "globals");
+}
+
+// ===========================================================================
+// relative_specifier_for_file
+// ===========================================================================
+
+#[test]
+fn test_relative_specifier_same_dir() {
+    let from = Path::new("/tmp/test");
+    let to = Path::new("/tmp/test/types.ts");
+    assert_eq!(
+        relative_specifier_for_file(from, to),
+        Some("./types".to_string())
+    );
+}
+
+#[test]
+fn test_relative_specifier_nested() {
+    let from = Path::new("/tmp/test");
+    let to = Path::new("/tmp/test/lib/utils.ts");
+    assert_eq!(
+        relative_specifier_for_file(from, to),
+        Some("./lib/utils".to_string())
+    );
+}
+
+#[test]
+fn test_relative_specifier_parent_dir() {
+    let from = Path::new("/tmp/test/src");
+    let to = Path::new("/tmp/test/lib/utils.ts");
+    assert_eq!(
+        relative_specifier_for_file(from, to),
+        Some("../lib/utils".to_string())
+    );
+}
+
+#[test]
+fn test_relative_specifier_two_levels_up() {
+    let from = Path::new("/tmp/test/src/deep");
+    let to = Path::new("/tmp/test/lib/utils.ts");
+    assert_eq!(
+        relative_specifier_for_file(from, to),
+        Some("../../lib/utils".to_string())
+    );
+}
+
+#[test]
+fn test_relative_specifier_dts_extension() {
+    let from = Path::new("/tmp/test");
+    let to = Path::new("/tmp/test/types.d.ts");
+    assert_eq!(
+        relative_specifier_for_file(from, to),
+        Some("./types".to_string())
+    );
+}
+
+// ===========================================================================
+// normalize_import_specifier
+// ===========================================================================
+
+#[test]
+fn test_normalize_strips_whitespace_and_matching_quotes() {
+    // Double quotes.
+    let got = normalize_import_specifier("  \"./foo\"  ").expect("some");
+    assert_eq!(got.text, "./foo");
+    assert_eq!(got.kind, SpecifierKind::Relative);
+    assert!(!got.is_directory_hint);
+
+    // Single quotes.
+    let got = normalize_import_specifier("'./bar'").expect("some");
+    assert_eq!(got.text, "./bar");
+
+    // Lopsided quotes are NOT stripped (they are not a matching pair).
+    let got = normalize_import_specifier("\"./foo").expect("some");
+    assert_eq!(got.text, "\"./foo");
+}
+
+#[test]
+fn test_normalize_returns_none_for_empty_or_quotes_only() {
+    assert!(normalize_import_specifier("").is_none());
+    assert!(normalize_import_specifier("   ").is_none());
+    assert!(normalize_import_specifier("\"\"").is_none());
+    assert!(normalize_import_specifier("''").is_none());
+}
+
+#[test]
+fn test_normalize_converts_backslashes() {
+    let got = normalize_import_specifier(".\\foo\\bar").expect("some");
+    assert_eq!(got.text, "./foo/bar");
+    assert_eq!(got.kind, SpecifierKind::Relative);
+}
+
+#[test]
+fn test_normalize_classifies_kinds() {
+    let kinds = |s: &str| normalize_import_specifier(s).map(|c| c.kind);
+    assert_eq!(kinds("./foo"), Some(SpecifierKind::Relative));
+    assert_eq!(kinds("."), Some(SpecifierKind::Relative));
+    assert_eq!(kinds("./"), Some(SpecifierKind::Relative));
+    assert_eq!(kinds("../foo"), Some(SpecifierKind::Parent));
+    assert_eq!(kinds(".."), Some(SpecifierKind::Parent));
+    assert_eq!(kinds("../"), Some(SpecifierKind::Parent));
+    assert_eq!(kinds("/abs/path"), Some(SpecifierKind::Absolute));
+    assert_eq!(kinds("lodash"), Some(SpecifierKind::Bare));
+    assert_eq!(kinds("@scope/pkg"), Some(SpecifierKind::Bare));
+}
+
+#[test]
+fn test_normalize_directory_hint() {
+    let hint = |s: &str| normalize_import_specifier(s).map(|c| c.is_directory_hint);
+    // Dot chains are always directory hints, both with and without trailing slash.
+    assert_eq!(hint("."), Some(true));
+    assert_eq!(hint("./"), Some(true));
+    assert_eq!(hint(".."), Some(true));
+    assert_eq!(hint("../"), Some(true));
+    assert_eq!(hint("../.."), Some(true));
+    assert_eq!(hint("../../"), Some(true));
+    // Trailing slash on non-dot-chain is a directory hint.
+    assert_eq!(hint("./foo/"), Some(true));
+    assert_eq!(hint("./a/b/"), Some(true));
+    // No trailing slash, not a dot chain → not a directory hint.
+    assert_eq!(hint("./foo"), Some(false));
+    assert_eq!(hint("./a/b"), Some(false));
+    assert_eq!(hint("lodash"), Some(false));
+}
+
+#[test]
+fn test_normalize_strips_trailing_slash_on_non_dot_chains() {
+    // `./foo/` canonicalizes to `./foo` (the trailing slash is a directory
+    // hint but not part of the canonical key).
+    assert_eq!(
+        normalize_import_specifier("./foo/").map(|c| c.text),
+        Some("./foo".to_string())
+    );
+    // Pure dot chains keep their form.
+    assert_eq!(
+        normalize_import_specifier("./").map(|c| c.text),
+        Some("./".to_string())
+    );
+    assert_eq!(
+        normalize_import_specifier(".").map(|c| c.text),
+        Some(".".to_string())
+    );
+}
+
+// ===========================================================================
+// module_specifier_candidates (compatibility shim)
+// ===========================================================================
+
+#[test]
+fn test_candidates_returns_single_entry_for_already_canonical_input() {
+    // When the raw input already equals the canonical form and has no TS
+    // extension to strip, there is no fan-out at all.
+    assert_eq!(
+        module_specifier_candidates("./foo"),
+        vec!["./foo".to_string()]
+    );
+    assert_eq!(module_specifier_candidates("."), vec![".".to_string()]);
+    assert_eq!(module_specifier_candidates("./"), vec!["./".to_string()]);
+}
+
+#[test]
+fn test_candidates_returns_canonical_plus_raw_when_different() {
+    let candidates = module_specifier_candidates("  \"./foo\"  ");
+    // At most three entries — no quoted/chain variants, only canonical + raw
+    // (+ a stem fallback when the extension is a recognized TS/JS one).
+    assert!(candidates.len() <= 3);
+    assert!(candidates.contains(&"./foo".to_string()));
+    assert!(candidates.contains(&"  \"./foo\"  ".to_string()));
+}
+
+#[test]
+fn test_candidates_normalizes_backslashes_without_fan_out() {
+    let candidates = module_specifier_candidates(".\\foo\\bar");
+    assert!(candidates.len() <= 3);
+    assert!(candidates.contains(&"./foo/bar".to_string()));
+    assert!(candidates.contains(&".\\foo\\bar".to_string()));
+}
+
+#[test]
+fn test_candidates_adds_extension_stripped_stem_for_ts_extensions() {
+    // TS allows `./foo.js` to resolve to a `./foo.d.ts` target. The stripped
+    // stem is included as a single narrow fallback.
+    let candidates = module_specifier_candidates("./foo.js");
+    assert!(candidates.contains(&"./foo.js".to_string()));
+    assert!(candidates.contains(&"./foo".to_string()));
+    assert!(candidates.len() <= 3);
+}
+
+#[test]
+fn test_candidates_has_no_stem_fallback_for_plain_identifiers() {
+    // Plain specifiers without a recognized extension — no stem fallback.
+    assert_eq!(
+        module_specifier_candidates("./foo"),
+        vec!["./foo".to_string()]
+    );
+    assert_eq!(
+        module_specifier_candidates("lodash"),
+        vec!["lodash".to_string()]
+    );
+}
+
+// ===========================================================================
+// module_specifier_error_candidates
+// ===========================================================================
+
+#[test]
+fn test_error_candidates_does_not_strip_extension() {
+    // Resolution-error lookups must NOT fan out to the extension-stripped
+    // stem. Two specifiers with the same stem but different extensions are
+    // distinct user inputs that the resolver may treat very differently
+    // (e.g. `./foo.js` succeeds via the synthetic `.js → .ts` substitution,
+    // while `./foo` fails with TS2835). If the lookup conflated them, the
+    // checker would emit the TS2835 from the extensionless variant on the
+    // line that actually wrote `./foo.js`.
+    let candidates = module_specifier_error_candidates("./foo.js");
+    assert_eq!(candidates, vec!["./foo.js".to_string()]);
+    assert!(!candidates.contains(&"./foo".to_string()));
+
+    let candidates = module_specifier_error_candidates("./index.mjs");
+    assert_eq!(candidates, vec!["./index.mjs".to_string()]);
+    assert!(!candidates.contains(&"./index".to_string()));
+
+    // Same for declaration extensions.
+    let candidates = module_specifier_error_candidates("./types.d.ts");
+    assert_eq!(candidates, vec!["./types.d.ts".to_string()]);
+    assert!(!candidates.contains(&"./types".to_string()));
+}
+
+#[test]
+fn test_error_candidates_includes_canonical_form() {
+    // When the input differs from its canonical form, callers may have
+    // recorded the error against either spelling. Both must be probed.
+    let candidates = module_specifier_error_candidates("  \"./foo.js\"  ");
+    assert!(candidates.contains(&"./foo.js".to_string()));
+    assert!(candidates.contains(&"  \"./foo.js\"  ".to_string()));
+    // Crucially, no stem fallback: an error registered against "./foo"
+    // must not be returned for a query against "./foo.js".
+    assert!(!candidates.contains(&"./foo".to_string()));
+}
+
+#[test]
+fn test_error_candidates_normalizes_backslashes() {
+    // Path separator normalization is harmless because the same target
+    // specifier is being addressed; only extension stripping changes
+    // identity.
+    let candidates = module_specifier_error_candidates(".\\foo\\bar.js");
+    assert!(candidates.contains(&"./foo/bar.js".to_string()));
+    assert!(!candidates.contains(&"./foo/bar".to_string()));
+}
+
+#[test]
+fn test_error_candidates_handles_empty_specifier() {
+    // Quotes-only / empty input: fall back to the raw string for parity
+    // with `module_specifier_candidates`.
+    let candidates = module_specifier_error_candidates("");
+    assert_eq!(candidates, vec!["".to_string()]);
+    let candidates = module_specifier_error_candidates("\"\"");
+    assert_eq!(candidates, vec!["\"\"".to_string()]);
+}
+
+#[test]
+fn test_error_candidates_dot_chain_specifiers_are_preserved() {
+    // Pure dot-chain specifiers ('.', './', '..', '../') keep their exact
+    // form — no trailing-slash normalization, no extension stripping.
+    assert_eq!(
+        module_specifier_error_candidates("./"),
+        vec!["./".to_string()]
+    );
+    assert_eq!(
+        module_specifier_error_candidates("."),
+        vec![".".to_string()]
+    );
+    assert_eq!(
+        module_specifier_error_candidates("../"),
+        vec!["../".to_string()]
+    );
+}
+
+/// Prove the new resolver does NOT rely on trying many textual aliases for
+/// the same target. Every legitimate spelling that a caller might pass in
+/// canonicalizes to a single (canonical) lookup key that is present in the
+/// map. This test exercises a broad mix of spellings and asserts that each
+/// canonicalizes to something the map already contains directly.
+#[test]
+fn test_resolution_does_not_depend_on_alias_explosion() {
+    let files = vec![
+        "/proj/src/main.ts".to_string(),
+        "/proj/src/types.ts".to_string(),
+        "/proj/src/lib/index.ts".to_string(),
+    ];
+    let (paths, _modules) = build_module_resolution_maps(&files);
+
+    // Varying surface forms of "types" from main.ts.
+    for raw in &[
+        "./types",
+        "  ./types  ",
+        "\"./types\"",
+        "'./types'",
+        ".\\types",
+        "./types/",
+        "types",
+    ] {
+        let canon = normalize_import_specifier(raw).expect("canonical").text;
+        assert!(
+            paths.contains_key(&(0, canon.clone())),
+            "map missing canonical lookup key {canon:?} (from raw {raw:?})",
+        );
+        // And exactly one canonical key covers the lookup — no fallback list.
+        let candidates = module_specifier_candidates(raw);
+        assert!(
+            candidates.iter().any(|c| c == &canon),
+            "candidates {candidates:?} should include canonical {canon:?}",
+        );
+    }
+
+    // Varying surface forms of the `lib` directory index from main.ts.
+    for raw in &["./lib", "./lib/", "'./lib'", ".\\lib", ".\\lib\\", "lib"] {
+        let canon = normalize_import_specifier(raw).expect("canonical").text;
+        assert!(
+            paths.contains_key(&(0, canon.clone())),
+            "map missing canonical lookup key {canon:?} (from raw {raw:?})",
+        );
+    }
+}
+
+// ===========================================================================
+// TargetIndex / build_target_index
+// ===========================================================================
+
+#[test]
+fn test_target_index_len_matches_non_skipped_files() {
+    let files = vec![
+        "/proj/a.ts".to_string(),
+        "/proj/b.ts".to_string(),
+        "/proj/c.d.ts".to_string(),
+    ];
+    let index = build_target_index(&files);
+    assert_eq!(index.len(), 3);
+    assert!(!index.is_empty());
+}
+
+#[test]
+fn test_target_index_skips_arbitrary_extension_declaration_files() {
+    // `foo.d.ts.ts` is an arbitrary-extension declaration file — it must be
+    // dropped from the target index so its stripped form never shadows a real
+    // declaration import.
+    let files = vec!["/proj/a.ts".to_string(), "/proj/foo.d.ts.ts".to_string()];
+    let index = build_target_index(&files);
+    assert_eq!(index.len(), 1);
+}
+
+#[test]
+fn test_empty_file_list_builds_empty_index() {
+    let files: Vec<String> = vec![];
+    let index = build_target_index(&files);
+    assert!(index.is_empty());
+}
+
+// ===========================================================================
+// resolve_from_source (index-based direct resolution)
+// ===========================================================================
+
+#[test]
+fn test_resolve_from_source_relative_file() {
+    let files = vec![
+        "/proj/src/main.ts".to_string(),
+        "/proj/src/types.ts".to_string(),
+    ];
+    let index = build_target_index(&files);
+    let spec = normalize_import_specifier("./types").unwrap();
+    assert_eq!(
+        resolve_from_source("/proj/src/main.ts", &spec, &index),
+        Some(1)
+    );
+}
+
+#[test]
+fn test_resolve_from_source_directory_index() {
+    let files = vec![
+        "/proj/src/main.ts".to_string(),
+        "/proj/src/lib/index.ts".to_string(),
+    ];
+    let index = build_target_index(&files);
+    for raw in &["./lib", "./lib/"] {
+        let spec = normalize_import_specifier(raw).unwrap();
+        assert_eq!(
+            resolve_from_source("/proj/src/main.ts", &spec, &index),
+            Some(1),
+            "failed for {raw}",
+        );
+    }
+}
+
+#[test]
+fn test_resolve_from_source_dot_and_dot_slash_both_work() {
+    let files = vec![
+        "/proj/a/index.ts".to_string(),
+        "/proj/a/file.ts".to_string(),
+    ];
+    let index = build_target_index(&files);
+    for raw in &[".", "./"] {
+        let spec = normalize_import_specifier(raw).unwrap();
+        assert_eq!(
+            resolve_from_source("/proj/a/file.ts", &spec, &index),
+            Some(0),
+            "failed for {raw}",
+        );
+    }
+}
+
+#[test]
+fn test_resolve_from_source_returns_none_for_bare_specifiers() {
+    let files = vec!["/proj/src/main.ts".to_string()];
+    let index = build_target_index(&files);
+    let spec = normalize_import_specifier("lodash").unwrap();
+    assert_eq!(
+        resolve_from_source("/proj/src/main.ts", &spec, &index),
+        None
+    );
+}
+
+// ===========================================================================
+// build_module_resolution_maps — intentional behavior
+// ===========================================================================
+
+#[test]
+fn test_simple_relative_import() {
+    let files = vec![
+        "/tmp/test/main.ts".to_string(),
+        "/tmp/test/types.ts".to_string(),
+    ];
+
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "./types".to_string())), Some(&1));
+    assert!(modules.contains("./types"));
+    // Same-directory bare alias (intentional compatibility shim).
+    assert_eq!(paths.get(&(0, "types".to_string())), Some(&1));
+}
+
+#[test]
+fn test_bidirectional_resolution() {
+    let files = vec!["/tmp/test/a.ts".to_string(), "/tmp/test/b.ts".to_string()];
+
+    let (paths, _) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "./b".to_string())), Some(&1));
+    assert_eq!(paths.get(&(1, "./a".to_string())), Some(&0));
+}
+
+#[test]
+fn test_nested_import() {
+    let files = vec![
+        "/tmp/test/main.ts".to_string(),
+        "/tmp/test/lib/utils.ts".to_string(),
+    ];
+
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "./lib/utils".to_string())), Some(&1));
+    assert!(modules.contains("./lib/utils"));
+}
+
+#[test]
+fn test_deeply_nested_import() {
+    let files = vec![
+        "/tmp/test/main.ts".to_string(),
+        "/tmp/test/src/lib/deep/module.ts".to_string(),
+    ];
+
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(
+        paths.get(&(0, "./src/lib/deep/module".to_string())),
+        Some(&1)
+    );
+    assert!(modules.contains("./src/lib/deep/module"));
+}
+
+#[test]
+fn test_nested_bare_alias_is_not_registered() {
+    // Intentional removal: `lib/utils` (bare nested) would semantically
+    // collide with package sub-path imports; not registered anymore.
+    let files = vec![
+        "/tmp/test/main.ts".to_string(),
+        "/tmp/test/lib/utils.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert!(!paths.contains_key(&(0, "lib/utils".to_string())));
+}
+
+#[test]
+fn test_node_modules_sibling_package_bare_alias_is_registered() {
+    let files = vec![
+        "/tmp/test/node_modules/baz/index.d.ts".to_string(),
+        "/tmp/test/node_modules/foo/index.d.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "foo".to_string())), Some(&1));
+    assert!(modules.contains("foo"));
+}
+
+#[test]
+fn test_scoped_node_modules_package_bare_alias_is_registered() {
+    let files = vec![
+        "/tmp/test/src/app.ts".to_string(),
+        "/tmp/test/node_modules/@scope/pkg/index.d.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "@scope/pkg".to_string())), Some(&1));
+    assert!(modules.contains("@scope/pkg"));
+}
+
+#[test]
+fn test_parent_directory_import() {
+    let files = vec![
+        "/tmp/test/src/app.ts".to_string(),
+        "/tmp/test/lib/utils.ts".to_string(),
+    ];
+
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "../lib/utils".to_string())), Some(&1));
+    assert!(modules.contains("../lib/utils"));
+}
+
+#[test]
+fn test_sibling_directory_import() {
+    let files = vec![
+        "/tmp/test/src/components/Button.tsx".to_string(),
+        "/tmp/test/src/utils/helpers.ts".to_string(),
+    ];
+
+    let (paths, _) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "../utils/helpers".to_string())), Some(&1));
+}
+
+#[test]
+fn test_tsx_extension() {
+    let files = vec![
+        "/tmp/test/app.ts".to_string(),
+        "/tmp/test/Button.tsx".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./Button".to_string())), Some(&1));
+}
+
+#[test]
+fn test_dts_extension() {
+    let files = vec![
+        "/tmp/test/app.ts".to_string(),
+        "/tmp/test/types.d.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./types".to_string())), Some(&1));
+}
+
+#[test]
+fn test_mts_extension() {
+    let files = vec![
+        "/tmp/test/app.mts".to_string(),
+        "/tmp/test/utils.mts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./utils".to_string())), Some(&1));
+}
+
+#[test]
+fn test_js_extension() {
+    let files = vec![
+        "/tmp/test/app.ts".to_string(),
+        "/tmp/test/legacy.js".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./legacy".to_string())), Some(&1));
+}
+
+#[test]
+fn test_cjs_extension() {
+    let files = vec![
+        "/tmp/test/app.ts".to_string(),
+        "/tmp/test/config.cjs".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./config".to_string())), Some(&1));
+}
+
+#[test]
+fn test_declaration_mts() {
+    let files = vec![
+        "/tmp/test/app.ts".to_string(),
+        "/tmp/test/types.d.mts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./types".to_string())), Some(&1));
+}
+
+#[test]
+fn test_index_file_resolution() {
+    let files = vec![
+        "/tmp/test/main.ts".to_string(),
+        "/tmp/test/lib/index.ts".to_string(),
+    ];
+
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "./lib".to_string())), Some(&1));
+    assert!(modules.contains("./lib"));
+    assert_eq!(paths.get(&(0, "./lib/index".to_string())), Some(&1));
+}
+
+#[test]
+fn test_index_tsx_resolution() {
+    let files = vec![
+        "/tmp/test/main.ts".to_string(),
+        "/tmp/test/components/index.tsx".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./components".to_string())), Some(&1));
+}
+
+#[test]
+fn test_index_dts_resolution() {
+    let files = vec![
+        "/tmp/test/main.ts".to_string(),
+        "/tmp/test/types/index.d.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./types".to_string())), Some(&1));
+}
+
+#[test]
+fn test_nested_index_resolution() {
+    let files = vec![
+        "/tmp/test/main.ts".to_string(),
+        "/tmp/test/src/lib/index.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./src/lib".to_string())), Some(&1));
+}
+
+#[test]
+fn test_same_dir_index_registers_dot_and_slash_forms() {
+    // For `a/index.ts` imported from `a/file.ts`, both `.` and `./` are valid
+    // spellings and are both registered directly in the map.
+    let files = vec![
+        "/proj/a/index.ts".to_string(),
+        "/proj/a/file.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(1, ".".to_string())), Some(&0));
+    assert_eq!(paths.get(&(1, "./".to_string())), Some(&0));
+    assert!(modules.contains("."));
+    assert!(modules.contains("./"));
+}
+
+#[test]
+fn test_parent_dir_index_registers_dot_dot_and_slash_forms() {
+    let files = vec![
+        "/proj/a/index.ts".to_string(),
+        "/proj/a/b/file.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    // From `a/b/file.ts`, `..` and `../` both point at `a/index.ts`.
+    assert_eq!(paths.get(&(1, "..".to_string())), Some(&0));
+    assert_eq!(paths.get(&(1, "../".to_string())), Some(&0));
+    assert!(modules.contains(".."));
+    assert!(modules.contains("../"));
+}
+
+#[test]
+fn test_grandparent_dir_index_registers_chain_and_slash_forms() {
+    let files = vec![
+        "/proj/a/index.ts".to_string(),
+        "/proj/a/b/c/file.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+
+    // Both `../..` and `../../` refer to `a/index.ts` from `a/b/c/file.ts`.
+    assert_eq!(paths.get(&(1, "../..".to_string())), Some(&0));
+    assert_eq!(paths.get(&(1, "../../".to_string())), Some(&0));
+}
+
+#[test]
+fn test_multiple_targets() {
+    let files = vec![
+        "/tmp/test/main.ts".to_string(),
+        "/tmp/test/utils.ts".to_string(),
+        "/tmp/test/types.ts".to_string(),
+        "/tmp/test/config.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./utils".to_string())), Some(&1));
+    assert_eq!(paths.get(&(0, "./types".to_string())), Some(&2));
+    assert_eq!(paths.get(&(0, "./config".to_string())), Some(&3));
+}
+
+#[test]
+fn test_cross_imports_between_nested() {
+    let files = vec![
+        "/tmp/test/src/a.ts".to_string(),
+        "/tmp/test/src/b.ts".to_string(),
+        "/tmp/test/lib/c.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "./b".to_string())), Some(&1));
+    assert_eq!(paths.get(&(0, "../lib/c".to_string())), Some(&2));
+    assert_eq!(paths.get(&(2, "../src/a".to_string())), Some(&0));
+}
+
+#[test]
+fn test_self_import_resolves_to_same_file() {
+    let files = vec!["/tmp/test/main.ts".to_string()];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./main".to_string())), Some(&0));
+    assert_eq!(paths.get(&(0, "main".to_string())), Some(&0));
+}
+
+#[test]
+fn test_empty_file_list() {
+    let files: Vec<String> = vec![];
+    let (paths, modules) = build_module_resolution_maps(&files);
+    assert!(paths.is_empty());
+    assert!(modules.is_empty());
+}
+
+#[test]
+fn test_typical_project_layout() {
+    let files = vec![
+        "/project/src/index.ts".to_string(),
+        "/project/src/app.ts".to_string(),
+        "/project/src/components/Button.tsx".to_string(),
+        "/project/src/components/index.ts".to_string(),
+        "/project/src/utils/helpers.ts".to_string(),
+        "/project/src/types/api.d.ts".to_string(),
+    ];
+
+    let (paths, _) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "./app".to_string())), Some(&1));
+    assert_eq!(paths.get(&(0, "./components".to_string())), Some(&3));
+    assert_eq!(paths.get(&(0, "./components/Button".to_string())), Some(&2));
+    assert_eq!(paths.get(&(0, "./utils/helpers".to_string())), Some(&4));
+    assert_eq!(paths.get(&(0, "./types/api".to_string())), Some(&5));
+    assert_eq!(paths.get(&(2, "../utils/helpers".to_string())), Some(&4));
+    assert_eq!(paths.get(&(2, "../types/api".to_string())), Some(&5));
+}
+
+#[test]
+fn test_arbitrary_extension_declaration_file_is_not_mapped() {
+    // A `foo.d.ts.ts` file is skipped by the target index, so `./foo.d.ts`
+    // and `./foo` both remain unmapped (there is no other file providing them).
+    let files = vec!["/proj/app.ts".to_string(), "/proj/foo.d.ts.ts".to_string()];
+    let (paths, modules) = build_module_resolution_maps(&files);
+    assert!(!paths.contains_key(&(0, "./foo.d.ts".to_string())));
+    assert!(!paths.contains_key(&(0, "./foo".to_string())));
+    assert!(!modules.contains("./foo.d.ts"));
+    assert!(!modules.contains("./foo"));
+}
+
+#[test]
+fn test_extension_bearing_specifier_resolves_to_same_target() {
+    // Users legitimately write the extension in `require()`, triple-slash
+    // references, and JS sources. Both `./a` and `./a.js` must resolve to
+    // the same target file.
+    let files = vec!["/proj/main.ts".to_string(), "/proj/a.js".to_string()];
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    assert_eq!(paths.get(&(0, "./a".to_string())), Some(&1));
+    assert_eq!(paths.get(&(0, "./a.js".to_string())), Some(&1));
+    assert!(modules.contains("./a"));
+    assert!(modules.contains("./a.js"));
+}
+
+#[test]
+fn test_extension_bearing_dts_specifier() {
+    let files = vec!["/proj/main.ts".to_string(), "/proj/types.d.ts".to_string()];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./types".to_string())), Some(&1));
+    assert_eq!(paths.get(&(0, "./types.d.ts".to_string())), Some(&1));
+}
+
+// ---------------------------------------------------------------------------
+// resolve_specifier_via_file_index — matches every canonical form
+// `build_module_resolution_maps` registers, without the O(N²) cross-product.
+// ---------------------------------------------------------------------------
+
+fn file_index_from(files: &[&str]) -> FxHashMap<String, usize> {
+    files
+        .iter()
+        .enumerate()
+        .map(|(i, s)| ((*s).to_string(), i))
+        .collect()
+}
+
+#[test]
+fn test_fast_resolver_same_dir_relative() {
+    let files = ["/proj/a.ts", "/proj/b.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a.ts", "./b", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a.ts", "./b.ts", &idx),
+        Some(1),
+    );
+    // Same-directory bare alias.
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a.ts", "b", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_parent_and_sibling() {
+    let files = ["/proj/src/a.ts", "/proj/lib/b.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/src/a.ts", "../lib/b", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/src/a.ts", "../lib/b.ts", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_directory_index() {
+    let files = ["/proj/main.ts", "/proj/lib/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./lib", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./lib/", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_dot_chain_to_index() {
+    let files = ["/proj/sub/main.ts", "/proj/sub/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/sub/main.ts", ".", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/sub/main.ts", "./", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_parent_dot_chain_to_index() {
+    let files = ["/proj/sub/main.ts", "/proj/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/sub/main.ts", "..", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/sub/main.ts", "../", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_handles_bare_source_file_name() {
+    // Regression: earlier the resolver returned None when the source file
+    // had no directory component, breaking test harnesses that use bare
+    // file names like `other.js`. Treat a missing src_dir as "current
+    // directory" so relative specifiers still resolve against siblings.
+    let files = ["types.ts", "other.js"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("other.js", "./types", &idx),
+        Some(0),
+    );
+}
+
+#[test]
+fn test_fast_resolver_miss_for_unknown_specifier() {
+    let files = ["/proj/main.ts", "/proj/types.d.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./does-not-exist", &idx),
+        None,
+    );
+    // Bare package-style specifier that isn't a same-dir file is not a match.
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "react", &idx),
+        None,
+    );
+}
+
+#[test]
+fn test_fast_resolver_rejects_nested_bare_package_subpaths() {
+    let files = [
+        "/proj/main.ts",
+        "/proj/lib/utils.ts",
+        "/proj/react/jsx-runtime/index.ts",
+        "/proj/lib/index.ts",
+    ];
+    let idx = file_index_from(&files);
+
+    // Only same-directory single-segment bare aliases are supported. Nested
+    // bare specifiers are package subpaths, so the fallback must not reinterpret
+    // them as project-relative files after the primary resolver misses.
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "lib/utils", &idx),
+        None,
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "react/jsx-runtime", &idx),
+        None,
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "lib", &idx),
+        Some(3),
+    );
+}
+
+#[test]
+fn test_fast_resolver_tsx_and_dts_fanout() {
+    let files = ["/proj/a.tsx", "/proj/b/main.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/b/main.ts", "../a", &idx),
+        Some(0),
+    );
+    // Extension-bearing form resolves directly.
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/b/main.ts", "../a.tsx", &idx),
+        Some(0),
+    );
+}
+
+#[test]
+fn test_fast_resolver_matches_legacy_map_entries() {
+    // For a realistic cross-directory project, every (src, specifier) entry
+    // `build_module_resolution_maps` registers must be resolvable by the
+    // fast resolver. That's the invariant that makes the hot-path fallback
+    // behavior-preserving.
+    let files = vec![
+        "/proj/pkg/src/a.ts".to_string(),
+        "/proj/pkg/src/b.ts".to_string(),
+        "/proj/pkg/src/nested/c.ts".to_string(),
+        "/proj/pkg/src/nested/index.ts".to_string(),
+        "/proj/pkg/lib/util.ts".to_string(),
+        "/proj/pkg/lib/index.tsx".to_string(),
+        "/proj/pkg/types.d.ts".to_string(),
+    ];
+    let (legacy, _) = build_module_resolution_maps(&files);
+    let idx = file_index_from(&files.iter().map(String::as_str).collect::<Vec<_>>());
+
+    for ((src_idx, specifier), &tgt) in legacy.iter() {
+        let got = resolve_specifier_via_file_index(&files[*src_idx], specifier, &idx);
+        assert_eq!(
+            got,
+            Some(tgt),
+            "fast resolver disagreed for src={} spec={}",
+            files[*src_idx],
+            specifier,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Arbitrary-extension declaration files (`<base>.d.<ext>.ts`, `<ext>` outside
+// TS/JS/JSON).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_arbitrary_ext_decl_user_parts_extracts_user_form() {
+    // Non-TS/JS/JSON inner extensions: the helper returns the (base, ext)
+    // parts the user types in their import (`<base>.<ext>`).
+    assert_eq!(
+        arbitrary_ext_decl_user_parts("component.d.html.ts"),
+        Some(("component", "html")),
+    );
+    assert_eq!(
+        arbitrary_ext_decl_user_parts("styles.d.css.ts"),
+        Some(("styles", "css")),
+    );
+    assert_eq!(
+        arbitrary_ext_decl_user_parts("Button.d.svelte.ts"),
+        Some(("Button", "svelte")),
+    );
+    assert_eq!(
+        arbitrary_ext_decl_user_parts("widget.d.vue.ts"),
+        Some(("widget", "vue")),
+    );
+    // Nested paths: the `.d.` split is rightmost so the base preserves its
+    // directory prefix and only the file-level shape participates.
+    assert_eq!(
+        arbitrary_ext_decl_user_parts("src/components/Button.d.svelte.ts"),
+        Some(("src/components/Button", "svelte")),
+    );
+}
+
+#[test]
+fn test_arbitrary_ext_decl_user_parts_rejects_ts_js_json_inner_ext() {
+    // TS/JS/JSON-wrapped declaration files are handled by
+    // `is_arbitrary_extension_declaration_file` (they are dropped from the
+    // target index entirely). The user-form helper must return None for
+    // every member of that set.
+    for inner in ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "json"] {
+        let file = format!("foo.d.{inner}.ts");
+        assert_eq!(
+            arbitrary_ext_decl_user_parts(&file),
+            None,
+            "user-form helper must not claim TS/JS/JSON-wrapped decl `{file}`",
+        );
+    }
+}
+
+#[test]
+fn test_arbitrary_ext_decl_user_parts_rejects_non_decl_shapes() {
+    // Plain TS files have no `.d.` infix.
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.ts"), None);
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.tsx"), None);
+    // Normal `.d.ts` has no second extension between `.d.` and `.ts`.
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.d.ts"), None);
+    // Empty inner ext (`<base>.d..ts`) is invalid.
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.d..ts"), None);
+    // Inner ext containing a slash or dot is rejected as a defensive shape
+    // check (these are not real arbitrary-ext spellings).
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.d.svelte.kit.ts"), None);
+    // Missing trailing `.ts` (the file is not a TS source).
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.d.html"), None);
+    // Empty base.
+    assert_eq!(arbitrary_ext_decl_user_parts(".d.html.ts"), None);
+    // Non-decl file ending in the right extension by coincidence.
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.html"), None);
+    assert_eq!(arbitrary_ext_decl_user_parts("foo.html.ts"), None);
+}
+
+#[test]
+fn test_build_module_resolution_maps_registers_arbitrary_ext_decl_under_user_form() {
+    let files = vec![
+        "/proj/main.ts".to_string(),
+        "/proj/component.d.html.ts".to_string(),
+        "/proj/styles.d.css.ts".to_string(),
+        "/proj/widgets/Button.d.svelte.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    // User-form specifiers resolve to the declaration file.
+    assert_eq!(paths.get(&(0, "./component.html".to_string())), Some(&1));
+    assert_eq!(paths.get(&(0, "./styles.css".to_string())), Some(&2));
+    assert_eq!(
+        paths.get(&(0, "./widgets/Button.svelte".to_string())),
+        Some(&3),
+    );
+
+    // Additive: the legacy naive `<base>.d.<ext>` strip form and the
+    // `<base>.d.<ext>.ts` extension form remain registered for fixture
+    // compatibility. The user-form is the new addition; both spellings
+    // resolve to the same target file.
+    assert_eq!(paths.get(&(0, "./component.d.html".to_string())), Some(&1));
+    assert_eq!(
+        paths.get(&(0, "./component.d.html.ts".to_string())),
+        Some(&1)
+    );
+
+    // Module set mirrors the path map.
+    assert!(modules.contains("./component.html"));
+    assert!(modules.contains("./styles.css"));
+    assert!(modules.contains("./widgets/Button.svelte"));
+    assert!(modules.contains("./component.d.html"));
+}
+
+#[test]
+fn test_arbitrary_ext_decl_renamed_extensions() {
+    // Section §25 generalization: the rule must not be keyed on `.html` /
+    // `.css` / `.svelte`. Any non-TS/JS/JSON arbitrary extension that the
+    // user can type in an import specifier must register under the same
+    // user-form.
+    let files = vec![
+        "/proj/main.ts".to_string(),
+        "/proj/asset.d.png.ts".to_string(),
+        "/proj/shader.d.wgsl.ts".to_string(),
+        "/proj/template.d.mustache.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./asset.png".to_string())), Some(&1));
+    assert_eq!(paths.get(&(0, "./shader.wgsl".to_string())), Some(&2));
+    assert_eq!(paths.get(&(0, "./template.mustache".to_string())), Some(&3));
+}
+
+#[test]
+fn test_arbitrary_ext_decl_does_not_disturb_ts_js_json_wrapped_files() {
+    // Regression guard for the existing `test_arbitrary_extension_declaration_file_is_not_mapped`
+    // invariant: TS/JS/JSON-wrapped declaration files remain unmapped.
+    let files = vec![
+        "/proj/app.ts".to_string(),
+        "/proj/foo.d.ts.ts".to_string(),
+        "/proj/bar.d.json.ts".to_string(),
+        "/proj/baz.d.js.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+    for spec in [
+        "./foo.d.ts",
+        "./foo.json",
+        "./bar.json",
+        "./baz.js",
+        "./foo",
+        "./bar",
+        "./baz",
+    ] {
+        assert!(
+            !paths.contains_key(&(0, spec.to_string())),
+            "TS/JS/JSON-wrapped decl file must not register {spec}",
+        );
+        assert!(
+            !modules.contains(spec),
+            "TS/JS/JSON-wrapped decl file must not register {spec} in module set",
+        );
+    }
+}
+
+#[test]
+fn test_fast_resolver_arbitrary_ext_decl() {
+    let files = [
+        "/proj/main.ts",
+        "/proj/component.d.html.ts",
+        "/proj/styles.d.css.ts",
+        "/proj/widgets/Button.d.svelte.ts",
+    ];
+    let idx = file_index_from(&files);
+
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./component.html", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./styles.css", &idx),
+        Some(2),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./widgets/Button.svelte", &idx),
+        Some(3),
+    );
+
+    // Additive: the legacy naive `.d.<ext>` form also resolves (preserved
+    // for fixture compatibility).
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./component.d.html", &idx),
+        Some(1),
+    );
+
+    // Parent traversal works.
+    assert_eq!(
+        resolve_specifier_via_file_index(
+            "/proj/widgets/Button.d.svelte.ts",
+            "../component.html",
+            &idx,
+        ),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_arbitrary_ext_decl_matches_legacy_map() {
+    // The fast resolver must resolve every (src, specifier) the legacy map
+    // registers when arbitrary-extension decl files are present.
+    let files = vec![
+        "/proj/main.ts".to_string(),
+        "/proj/component.d.html.ts".to_string(),
+        "/proj/widgets/Button.d.svelte.ts".to_string(),
+    ];
+    let (legacy, _) = build_module_resolution_maps(&files);
+    let idx = file_index_from(&files.iter().map(String::as_str).collect::<Vec<_>>());
+    for ((src_idx, specifier), &tgt) in legacy.iter() {
+        let got = resolve_specifier_via_file_index(&files[*src_idx], specifier, &idx);
+        assert_eq!(
+            got,
+            Some(tgt),
+            "fast resolver disagreed for src={} spec={}",
+            files[*src_idx],
+            specifier,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// build_file_name_index — unified resolver parity
+//
+// Verify that `build_file_name_index` produces a FileNameIndex that
+// `resolve_specifier_via_file_index` can use to reproduce every result that
+// `build_module_resolution_maps` would have produced.  This is the core
+// invariant that lets `set_all_arenas` auto-build the index and eliminates
+// the O(N) linear-scan fallback in `resolve_import_target_from_file`.
+// ---------------------------------------------------------------------------
+
+fn make_arenas(file_names: &[&str]) -> Vec<std::sync::Arc<NodeArena>> {
+    use std::sync::Arc;
+    use tsz_parser::parser::ParserState;
+    file_names
+        .iter()
+        .map(|name| {
+            let mut p = ParserState::new((*name).to_string(), String::new());
+            p.parse_source_file();
+            Arc::new(p.get_arena().clone())
+        })
+        .collect()
+}
+
+#[test]
+fn test_build_file_name_index_matches_legacy_for_absolute_paths() {
+    let file_names: Vec<String> = vec![
+        "/proj/src/a.ts".to_string(),
+        "/proj/src/b.ts".to_string(),
+        "/proj/src/nested/c.ts".to_string(),
+        "/proj/src/nested/index.ts".to_string(),
+        "/proj/lib/util.d.ts".to_string(),
+    ];
+    let (legacy, _) = build_module_resolution_maps(&file_names);
+    let arenas = make_arenas(&file_names.iter().map(String::as_str).collect::<Vec<_>>());
+    let idx = build_file_name_index(&arenas);
+
+    // Every entry the legacy map registered must be resolvable by the new index.
+    for ((src_idx, specifier), &tgt) in legacy.iter() {
+        let got = resolve_specifier_via_file_index(&file_names[*src_idx], specifier, &idx);
+        assert_eq!(
+            got,
+            Some(tgt),
+            "build_file_name_index resolution disagreed with legacy map: src={} spec={}",
+            file_names[*src_idx],
+            specifier,
+        );
+    }
+}
+
+#[test]
+fn test_resolve_via_index_absolute_specifier_direct_hit() {
+    // Absolute specifiers (like those the driver passes as full paths) should
+    // resolve via direct lookup in the index, not the relative-path joiner.
+    let files = ["/proj/src/a.ts", "/proj/src/b.ts", "/proj/lib/util.ts"];
+    let arenas = make_arenas(&files);
+    let idx = build_file_name_index(&arenas);
+
+    // Absolute direct hit.
+    assert_eq!(idx.get("/proj/src/b.ts").copied(), Some(1));
+    // Stem lookup via index also available.
+    assert_eq!(idx.get("/proj/lib/util.ts").copied(), Some(2));
+    // Relative lookup still works from the index.
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/src/a.ts", "./b", &idx),
+        Some(1)
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/src/a.ts", "../lib/util", &idx),
+        Some(2)
+    );
+}
+
+#[test]
+fn test_build_file_name_index_covers_varied_specifier_names() {
+    // Test with deliberately varied names: underscore, hyphen, camel-case.
+    // The unified resolver must not be coupled to identifier spelling.
+    let file_names: Vec<String> = vec![
+        "/proj/src/myModule.ts".to_string(),
+        "/proj/src/my-util.ts".to_string(),
+        "/proj/src/my_helper.ts".to_string(),
+        "/proj/src/SomeClass.ts".to_string(),
+    ];
+    let (legacy, _) = build_module_resolution_maps(&file_names);
+    let arenas = make_arenas(&file_names.iter().map(String::as_str).collect::<Vec<_>>());
+    let idx = build_file_name_index(&arenas);
+
+    for ((src_idx, specifier), &tgt) in legacy.iter() {
+        let got = resolve_specifier_via_file_index(&file_names[*src_idx], specifier, &idx);
+        assert_eq!(
+            got,
+            Some(tgt),
+            "name-varied parity: src={} spec={}",
+            file_names[*src_idx],
+            specifier,
+        );
+    }
+}
+
+#[test]
+fn test_build_file_name_index_directory_index_resolution() {
+    // Directory-index imports (`./lib` → `./lib/index.ts`) must work via the
+    // unified index as well as via the legacy map.
+    let file_names: Vec<String> = vec![
+        "/proj/main.ts".to_string(),
+        "/proj/lib/index.ts".to_string(),
+        "/proj/utils/index.tsx".to_string(),
+        "/proj/types/index.d.ts".to_string(),
+    ];
+    let (legacy, _) = build_module_resolution_maps(&file_names);
+    let arenas = make_arenas(&file_names.iter().map(String::as_str).collect::<Vec<_>>());
+    let idx = build_file_name_index(&arenas);
+
+    for ((src_idx, specifier), &tgt) in legacy.iter() {
+        let got = resolve_specifier_via_file_index(&file_names[*src_idx], specifier, &idx);
+        assert_eq!(
+            got,
+            Some(tgt),
+            "directory-index parity: src={} spec={}",
+            file_names[*src_idx],
+            specifier,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// probe_file_name_index — direct lookup without path joining
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_probe_single_segment_bare_name() {
+    // `types` → `types.ts` even when source is in a subdirectory (the case
+    // resolve_specifier_via_file_index would miss for root-level files).
+    let files = ["types.ts", "utils.ts", "main.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(probe_file_name_index("types", &idx), Some(0));
+    assert_eq!(probe_file_name_index("utils", &idx), Some(1));
+    assert_eq!(probe_file_name_index("main", &idx), Some(2));
+}
+
+#[test]
+fn test_probe_multi_segment_project_relative_path() {
+    // `packages/foo/src/bar` is a project-relative bare path, not an npm
+    // subpath. probe_file_name_index must find it via extension fan-out.
+    // The name choice (`bar` vs `X` vs `module`) must not affect the result.
+    let files = [
+        "packages/foo/src/bar.ts",
+        "packages/foo/src/X.ts",
+        "packages/baz/lib/module.ts",
+    ];
+    let idx = file_index_from(&files);
+
+    assert_eq!(probe_file_name_index("packages/foo/src/bar", &idx), Some(0),);
+    assert_eq!(probe_file_name_index("packages/foo/src/X", &idx), Some(1),);
+    assert_eq!(
+        probe_file_name_index("packages/baz/lib/module", &idx),
+        Some(2),
+    );
+}
+
+#[test]
+fn test_probe_with_explicit_ts_extension() {
+    // Specifier already carries `.ts`; direct hit must work.
+    let files = ["packages/foo/src/bar.ts", "lib/util.d.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        probe_file_name_index("packages/foo/src/bar.ts", &idx),
+        Some(0),
+    );
+    assert_eq!(probe_file_name_index("lib/util.d.ts", &idx), Some(1));
+}
+
+#[test]
+fn test_probe_directory_index_fallback() {
+    // `packages/foo/src` → `packages/foo/src/index.ts`.
+    let files = ["packages/foo/src/index.ts", "packages/bar/src/index.tsx"];
+    let idx = file_index_from(&files);
+    assert_eq!(probe_file_name_index("packages/foo/src", &idx), Some(0),);
+    assert_eq!(probe_file_name_index("packages/bar/src", &idx), Some(1),);
+}
+
+#[test]
+fn test_probe_misses_npm_packages_not_in_index() {
+    // External npm packages are not in the project file index, so they
+    // must not match even when a nested-bare path is probed.
+    let files = ["src/app.ts", "src/utils.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(probe_file_name_index("react", &idx), None);
+    assert_eq!(probe_file_name_index("react/jsx-runtime", &idx), None);
+    assert_eq!(probe_file_name_index("lodash/merge", &idx), None);
+}
+
+// ---------------------------------------------------------------------------
+// Directory-hint specifiers: "." and trailing slash
+//
+// Regression guard for importFromDot and importWithTrailingSlash.
+// When a specifier is a directory hint (trailing slash OR pure dot-chain),
+// the extension fan-out must be skipped so a same-name sibling file (e.g.
+// `a.ts` next to `a/b.ts`) does not shadow the intended `a/index.ts`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_dot_specifier_resolves_to_directory_index_not_sibling_file() {
+    // `"."` from `a/b.ts` must resolve to `a/index.ts`, not `a.ts`.
+    // Before the fix, extension fan-out turned base `a` into `a.ts` and
+    // returned the sibling file instead of the directory index.
+    let files = ["/proj/a.ts", "/proj/a/b.ts", "/proj/a/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a/b.ts", ".", &idx),
+        Some(2),
+        "'.' must resolve to a/index.ts (idx=2), not the sibling a.ts (idx=0)",
+    );
+}
+
+#[test]
+fn test_trailing_slash_resolves_to_directory_index_not_sibling_file() {
+    // `"./a/"` (trailing slash) must resolve to `a/a/index.ts`, not `a/a.ts`.
+    let files = ["/proj/a/a.ts", "/proj/a/test.ts", "/proj/a/a/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a/test.ts", "./a/", &idx),
+        Some(2),
+        "'./a/' must resolve to a/a/index.ts (idx=2), not the sibling a/a.ts (idx=0)",
+    );
+}
+
+#[test]
+fn test_dot_slash_resolves_to_directory_index() {
+    // `"./"` (trailing slash form of dot) must also resolve to `a/index.ts`.
+    let files = ["/proj/a.ts", "/proj/a/b.ts", "/proj/a/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a/b.ts", "./", &idx),
+        Some(2),
+        "'.' must resolve to a/index.ts (idx=2), not the sibling a.ts (idx=0)",
+    );
+}
+
+#[test]
+fn test_non_directory_hint_still_uses_extension_fan_out() {
+    // `"./a"` (no trailing slash) is NOT a directory hint; extension fan-out
+    // must still resolve it to `a/a.ts` when that file exists.
+    let files = ["/proj/a/a.ts", "/proj/a/test.ts", "/proj/a/a/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a/test.ts", "./a", &idx),
+        Some(0),
+        "'./a' (no slash) must resolve to a/a.ts via extension fan-out",
+    );
+}

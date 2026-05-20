@@ -1,0 +1,39 @@
+[package]
+name = "tsz-solver"
+description = "TypeScript type solver for the tsz compiler"
+version.workspace = true
+edition.workspace = true
+autotests = false
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+tsz-common = { workspace = true }
+tsz-scanner = { workspace = true }
+tsz-binder = { workspace = true }
+rustc-hash = { workspace = true }
+ena = { workspace = true }
+bitflags = { workspace = true }
+tracing = { workspace = true }
+smallvec = { workspace = true }
+fixedbitset = { workspace = true }
+dashmap = { workspace = true }
+serde = { workspace = true }
+stacker = "0.1.23"
+
+[dev-dependencies]
+rayon = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[package.metadata.cargo-shear]
+ignored = ["rayon"]
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false

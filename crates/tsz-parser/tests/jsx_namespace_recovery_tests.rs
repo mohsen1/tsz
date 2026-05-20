@@ -1,0 +1,402 @@
+use crate::parser::test_fixture::parse_source_named;
+use tsz_common::diagnostics::diagnostic_codes;
+
+fn parse_diagnostics(source: &str) -> Vec<(u32, u32, String)> {
+    let (parser, _root) = parse_source_named("test.tsx", source);
+    parser
+        .parse_diagnostics
+        .iter()
+        .map(|diag| (diag.code, diag.start, diag.message.clone()))
+        .collect()
+}
+
+#[test]
+fn jsx_namespaced_tag_with_extra_colon_reports_identifier_expected_at_second_colon() {
+    let source = "declare var React: any;\nvar x = <a:ele:ment />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let second_colon = source.rfind(':').expect("second colon") as u32;
+
+    assert_eq!(
+        diagnostics,
+        vec![(
+            diagnostic_codes::IDENTIFIER_EXPECTED,
+            second_colon,
+            "Identifier expected.".to_string(),
+        )],
+        "expected tsc-style recovery for extra JSX namespace separator, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_namespaced_tag_with_space_after_colon_recovers_through_spread_attribute_path() {
+    let source = "declare var React: any;\nvar x = <a: attr={\"value\"} />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let equals_pos = source.find("={").expect("equals") as u32;
+    let quote_pos = source.find("\"value\"").expect("quote") as u32;
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            (
+                diagnostic_codes::IDENTIFIER_EXPECTED,
+                equals_pos,
+                "Identifier expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                quote_pos,
+                "'...' expected.".to_string(),
+            ),
+        ],
+        "expected tsc-style recovery for spaced JSX namespace tag name, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_namespaced_tag_with_space_before_colon_recovers_through_spread_attribute_path() {
+    let source = "declare var React: any;\nvar x = <a :attr={\"value\"} />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let equals_pos = source.find("={").expect("equals") as u32;
+    let quote_pos = source.find("\"value\"").expect("quote") as u32;
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            (
+                diagnostic_codes::IDENTIFIER_EXPECTED,
+                equals_pos,
+                "Identifier expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                quote_pos,
+                "'...' expected.".to_string(),
+            ),
+        ],
+        "expected tsc-style recovery for spaced JSX namespace tag name, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_tag_cannot_start_with_namespace_colon_in_expression_context() {
+    let source = "declare var React: any;\nvar x = <:a attr={\"value\"} />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let less_than_pos = source.find('<').expect("opening angle") as u32;
+    let colon_pos = source[less_than_pos as usize + 1..]
+        .find(':')
+        .map(|offset| less_than_pos + 1 + offset as u32)
+        .expect("colon");
+    let attr_pos = source.find("attr").expect("attr") as u32;
+    let close_brace_pos = source.rfind('}').expect("close brace") as u32;
+    let greater_than_pos = source.rfind('>').expect("greater-than") as u32;
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            (
+                diagnostic_codes::EXPRESSION_EXPECTED,
+                less_than_pos,
+                "Expression expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPRESSION_EXPECTED,
+                colon_pos,
+                "Expression expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                attr_pos,
+                "',' expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                close_brace_pos,
+                "':' expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPRESSION_EXPECTED,
+                greater_than_pos,
+                "Expression expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPRESSION_EXPECTED,
+                greater_than_pos + 1,
+                "Expression expected.".to_string(),
+            ),
+        ],
+        "expected tsc-style recovery when JSX tag starts with ':', got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_closing_tag_with_extra_namespace_separator_keeps_tail_outside_closing_name() {
+    let source = "declare var React: any;\nvar x = <a:ele:ment>{\"text\"}</a:ele:ment>;\n";
+    let diagnostics = parse_diagnostics(source);
+    let second_colon = source.rfind(':').expect("closing tag second colon") as u32;
+    let closing_gt = source.rfind('>').expect("closing tag >") as u32;
+    let semicolon = source.rfind(';').expect("semicolon") as u32;
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            (
+                diagnostic_codes::IDENTIFIER_EXPECTED,
+                source.find("a:ele:ment").expect("opening tag") as u32 + 5,
+                "Identifier expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                second_colon,
+                "'>' expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                closing_gt,
+                "',' expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPRESSION_EXPECTED,
+                semicolon,
+                "Expression expected.".to_string(),
+            ),
+        ],
+        "expected tsc-style recovery for malformed JSX closing tag, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_attribute_with_leading_spread_in_initializer_reports_expression_then_identifier() {
+    let source = "var x = <X a={...a} />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let brace_pos = source.find("{...").expect("spread initializer") as u32 + 1;
+    let identifier_pos = source.find("{...").expect("spread initializer") as u32 + 5;
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            (
+                diagnostic_codes::EXPRESSION_EXPECTED,
+                brace_pos,
+                "Expression expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::IDENTIFIER_EXPECTED,
+                identifier_pos,
+                "Identifier expected.".to_string(),
+            ),
+        ],
+        "expected tsc-style recovery for attribute initializer spread syntax, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_namespaced_tag_local_unicode_escape_reports_ts17021() {
+    let source = "let x = <a:\\u0062 />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let escape_pos = source.find("\\u0062").expect("unicode escape") as u32;
+
+    assert!(
+        diagnostics.iter().any(|(code, start, message)| {
+            *code == diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE
+                && *start == escape_pos
+                && message == "Unicode escape sequence cannot appear here."
+        }),
+        "expected TS17021 for unicode escape in JSX namespaced tag local name, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_namespaced_attribute_local_unicode_escape_reports_ts17021() {
+    let source = "let x = <div a:\\u0062=\"x\" />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let escape_pos = source.find("\\u0062").expect("unicode escape") as u32;
+
+    assert!(
+        diagnostics.iter().any(|(code, start, message)| {
+            *code == diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE
+                && *start == escape_pos
+                && message == "Unicode escape sequence cannot appear here."
+        }),
+        "expected TS17021 for unicode escape in JSX namespaced attribute local name, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_hyphenated_unicode_escape_reports_from_full_name_start() {
+    let source = "let x = <a-\\u0063></a-c>;\nlet y = <video data-\\u0076ideo />;\nlet z = <x.\\u0076ideo />;\n";
+    let diagnostics = parse_diagnostics(source);
+    let tag_pos = source.find("a-\\u0063").expect("tag unicode escape") as u32;
+    let attr_pos = source
+        .find("data-\\u0076ideo")
+        .expect("attribute unicode escape") as u32;
+    let property_pos = source
+        .rfind("\\u0076ideo")
+        .expect("property unicode escape") as u32;
+
+    assert!(
+        diagnostics.iter().any(|(code, start, _)| {
+            *code == diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE
+                && *start == tag_pos
+        }),
+        "expected TS17021 at hyphenated tag start, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, start, _)| {
+            *code == diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE
+                && *start == attr_pos
+        }),
+        "expected TS17021 at hyphenated attribute start, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, start, _)| {
+            *code == diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE
+                && *start == property_pos
+        }),
+        "expected TS17021 at property segment escape, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _, _)| *code == 17002),
+        "escaped hyphenated tag should still match its closing tag, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_attribute_name_allows_hyphen_followed_by_digit() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        x: { "data-123": "ok" };
+    }
+}
+
+const ok = <x data-123="ok" />;
+"#;
+    let diagnostics = parse_diagnostics(source);
+
+    assert!(
+        diagnostics.is_empty(),
+        "expected no parser diagnostics for digit-starting hyphen segment, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_attribute_names_starting_with_number_or_minus_follow_tsc_recovery() {
+    let source = "declare namespace JSX {\n\tinterface Element { }\n\tinterface IntrinsicElements {\n\t\ttest1: { \"data-foo\"?: string };\n\t\ttest2: { \"data-foo\"?: string };\n\t}\n}\n\n<test1 32data={32} />;\n<test2 -data={32} />;\n";
+    let diagnostics = parse_diagnostics(source);
+
+    let first_numeric = source.find("32data").expect("first numeric attr start") as u32;
+    let first_data = first_numeric + 2;
+    let first_close_brace = source
+        .find("32} />;")
+        .map(|idx| idx as u32 + 2)
+        .expect("first close brace");
+    let first_slash = source
+        .find(" />;\n<test2")
+        .map(|idx| idx as u32 + 1)
+        .expect("first slash");
+    let first_gt = first_slash + 1;
+    let first_semi = first_gt + 1;
+
+    let second_minus = source.find("-data={32}").expect("second minus attr start") as u32;
+    let second_equals = second_minus + 5;
+    let second_slash = source
+        .rfind(" />;")
+        .map(|idx| idx as u32 + 1)
+        .expect("second slash");
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            (
+                diagnostic_codes::IDENTIFIER_EXPECTED,
+                first_numeric,
+                "Identifier expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                first_data,
+                "';' expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                first_data,
+                "An identifier or keyword cannot immediately follow a numeric literal."
+                    .to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                first_close_brace,
+                "':' expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPRESSION_EXPECTED,
+                first_gt,
+                "Expression expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPRESSION_EXPECTED,
+                first_semi,
+                "Expression expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::IDENTIFIER_EXPECTED,
+                second_minus,
+                "Identifier expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                second_equals,
+                "';' expected.".to_string(),
+            ),
+            (
+                diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL,
+                second_slash,
+                "Unterminated regular expression literal.".to_string(),
+            ),
+        ],
+        "expected tsc-style recovery for invalid JSX attribute starters, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_embedded_expression_starting_with_closing_tag_reports_only_expression_expected() {
+    let source = "declare namespace JSX { interface Element { } }\nfunction foo() {\n    var x = <div>  { </div>\n}\nvar y = { a: 1 };\n";
+    let diagnostics = parse_diagnostics(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _, _)| *code).collect();
+
+    assert_eq!(
+        codes,
+        vec![diagnostic_codes::EXPRESSION_EXPECTED],
+        "expected only TS1109 for malformed JSX embedded expression, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_namespaced_opening_tag_with_mismatched_closing_uses_local_name_only() {
+    // Regression: parse_jsx_element_name derived the namespaced-name node end
+    // from `token_end()` AFTER consuming the local name, which actually
+    // returned the end of the next token (`>`). That stretched the captured
+    // opening-tag text and produced messages like
+    //   "Expected corresponding JSX closing tag for 'a:b>'."
+    // tsc reports `'a:b'`. Lock that in.
+    let source = "<a:b></b>;\n";
+    let diagnostics = parse_diagnostics(source);
+
+    let mismatches: Vec<&(u32, u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _, _)| {
+            *code == diagnostic_codes::EXPECTED_CORRESPONDING_JSX_CLOSING_TAG_FOR
+        })
+        .collect();
+
+    assert_eq!(
+        mismatches.len(),
+        1,
+        "expected exactly one TS17002 for `<a:b></b>;`, got {diagnostics:?}"
+    );
+    assert_eq!(
+        mismatches[0].2, "Expected corresponding JSX closing tag for 'a:b'.",
+        "TS17002 must reference 'a:b' (no trailing token), got {diagnostics:?}"
+    );
+}

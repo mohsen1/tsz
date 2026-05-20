@@ -1,0 +1,125 @@
+//! Self-reference resolution (package importing itself by name).
+//!
+//! In Node16/NodeNext/Bundler, a package can import itself using its own
+//! name if the package.json `exports` field matches.
+
+use super::{ModuleExtension, ModuleResolver, ResolvedModule};
+use crate::config::ModuleResolutionKind;
+use crate::span::Span;
+use std::path::Path;
+
+/// Result of trying to resolve a self-reference
+pub(super) enum SelfReferenceResultV2 {
+    /// Successfully resolved to a module
+    Resolved(ResolvedModule),
+    /// Self-reference detected but exports don't resolve - should emit error
+    ExportsFailed,
+    /// Not a self-reference (package name doesn't match) - should continue searching
+    NotSelfReference,
+    /// TS2209: Project root is ambiguous for export map entry
+    AmbiguousRoot,
+}
+
+impl ModuleResolver {
+    /// Try to resolve a self-reference (package importing itself by name)
+    /// This version properly distinguishes between:
+    /// 1. Self-reference that successfully resolved
+    /// 2. Self-reference detected but exports don't resolve (should error)
+    /// 3. Not a self-reference (package name doesn't match) - should continue searching
+    pub(super) fn try_self_reference_v2(
+        &self,
+        package_name: &str,
+        subpath: Option<&str>,
+        original_specifier: &str,
+        containing_dir: &Path,
+        _containing_file: &str,
+        _specifier_span: Span,
+        conditions: &[String],
+    ) -> SelfReferenceResultV2 {
+        // Only available in Node16/NodeNext/Bundler
+        if !matches!(
+            self.resolution_kind,
+            ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        ) {
+            return SelfReferenceResultV2::NotSelfReference;
+        }
+
+        // Walk up to find the closest package.json
+        let mut current = containing_dir.to_path_buf();
+
+        loop {
+            let package_json_path = current.join("package.json");
+
+            if package_json_path.is_file()
+                && let Ok(package_json) = self.read_package_json(&package_json_path)
+            {
+                // Check if the package name matches - this is REQUIRED for a self-reference
+                let name_matches = package_json.name.as_deref() == Some(package_name);
+
+                if name_matches {
+                    // This is a self-reference!
+                    if self.resolve_package_json_exports
+                        && let Some(exports) = &package_json.exports
+                    {
+                        let subpath_key = match subpath {
+                            Some(sp) => format!("./{sp}"),
+                            None => ".".to_string(),
+                        };
+
+                        if let Some((resolved, resolved_using_ts_extension)) = self
+                            .resolve_package_exports_with_conditions(
+                                &current,
+                                exports,
+                                &subpath_key,
+                                conditions,
+                            )
+                        {
+                            // Self-reference resolved successfully via exports.
+                            // This includes .ts files found via .js -> .ts extension
+                            // substitution, which is the standard Node16/NodeNext
+                            // behavior for source-to-output mapping.
+                            //
+                            // `resolved_using_ts_extension` is propagated from the
+                            // matched export pattern key: when the package author
+                            // wrote `"./*.ts": ...` in exports, the import path's
+                            // `.ts` was consumed by the exports map (rather than
+                            // preserved through to the resolved file), suppressing
+                            // TS2877 in the checker's import-extension gate.
+                            return SelfReferenceResultV2::Resolved(ResolvedModule {
+                                resolved_path: resolved.clone(),
+                                resolved_using_ts_extension,
+                                is_external: false,
+                                package_name: Some(package_name.to_string()),
+                                original_specifier: original_specifier.to_string(),
+                                extension: ModuleExtension::from_path(&resolved),
+                            });
+                        }
+                        // Self-reference detected but exports didn't resolve to an existing file
+                        // Check if this is due to ambiguous project root (TS2209)
+                        if self.root_dir.is_none() && self.out_dir.is_none() {
+                            return SelfReferenceResultV2::AmbiguousRoot;
+                        }
+                        return SelfReferenceResultV2::ExportsFailed;
+                    }
+                    // Name matches but no exports field - not a self-reference for Node16+
+                    // Fall through to NotSelfReference
+                }
+                // Found a package.json but either:
+                // - The name doesn't match, OR
+                // - The name matches but there's no exports field
+                // In both cases, stop searching and continue to node_modules resolution
+                return SelfReferenceResultV2::NotSelfReference;
+            }
+
+            // Move to parent directory
+            match current.parent() {
+                Some(parent) if parent != current => current = parent.to_path_buf(),
+                _ => break,
+            }
+        }
+
+        SelfReferenceResultV2::NotSelfReference
+    }
+}

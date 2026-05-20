@@ -1,0 +1,50 @@
+use std::fs;
+
+#[test]
+fn control_flow_contains_type_parameter_checks_use_flow_query_boundary() {
+    let src = fs::read_to_string("src/flow/control_flow/core.rs")
+        .expect("failed to read src/flow/control_flow/core.rs for architecture guard");
+
+    assert!(
+        src.contains("query::contains_type_parameters("),
+        "control_flow type-parameter cacheability checks should route through query_boundaries::flow_analysis"
+    );
+    assert!(
+        !src.contains("tsz_solver::type_queries::contains_type_parameters_db("),
+        "control_flow should not call solver type_queries::contains_type_parameters_db directly"
+    );
+}
+
+#[test]
+fn control_flow_assignability_helpers_use_flow_query_boundary() {
+    let src = fs::read_to_string("src/flow/control_flow/core.rs")
+        .expect("failed to read src/flow/control_flow/core.rs for architecture guard");
+
+    assert!(
+        src.contains("query::is_assignable_with_env("),
+        "FlowAnalyzer assignability should route through query_boundaries::flow_analysis"
+    );
+    assert!(
+        src.contains("query::is_assignable_strict_null("),
+        "FlowAnalyzer strict-null assignability should route through query_boundaries::flow_analysis"
+    );
+}
+
+#[test]
+fn assignment_reduction_uses_flow_query_boundary() {
+    let src = fs::read_to_string("src/flow/control_flow/assignment.rs")
+        .expect("failed to read src/flow/control_flow/assignment.rs for architecture guard");
+
+    assert!(
+        src.contains("query_boundaries::flow_analysis::narrow_assignment("),
+        "FlowAnalyzer assignment reduction should delegate type algebra to query_boundaries::flow_analysis"
+    );
+    assert!(
+        !src.contains("fn resolve_assignment_reduction_type("),
+        "assignment reduction type resolution belongs in query_boundaries::flow_analysis"
+    );
+    assert!(
+        !src.contains("fn assignment_source_assignable_to_member("),
+        "assignment member filtering belongs in query_boundaries::flow_analysis"
+    );
+}

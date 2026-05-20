@@ -1,0 +1,82 @@
+---
+layout: layouts/base.njk
+page_class: benchmark-detail
+extra_scripts: <script src="/benchmark-source-viewer.js" defer></script>
+pagination:
+  data: benchmark_pages
+  size: 1
+  alias: benchmark
+permalink: "benchmarks/{{ benchmark.slug }}/index.html"
+eleventyComputed:
+  title: "{{ benchmark.display_name }} Benchmark"
+---
+
+<nav class="bench-breadcrumb" aria-label="Breadcrumb">
+  <a href="/benchmarks/">Benchmarks</a>
+</nav>
+
+<h1>{{ benchmark.display_name }}</h1>
+
+{% if benchmark.detail_focus %}
+  <p class="bench-detail-subtitle">{{ benchmark.detail_focus }}</p>
+{% endif %}
+
+<p class="bench-detail-summary">
+  {% if benchmark.comparison.available %}
+    <strong>
+      {% if benchmark.speedup_label == "equal" %}
+        equal
+      {% else %}
+        {{ benchmark.speedup_label | replace("tsz ", "tsz is ") | replace("tsgo ", "tsgo is ") }}
+      {% endif %}
+    </strong>
+  {% else %}
+    <strong>tsz unavailable</strong>
+  {% endif %}
+  <span>{{ benchmark.lines or 0 }} lines</span>
+  <span>{{ benchmark.kb or 0 }} KB</span>
+  {% if benchmark.status_label %}
+    <span>{{ benchmark.status_label }}</span>
+  {% endif %}
+</p>
+
+<section>
+  <h2>Timing</h2>
+  <div class="bench-detail-bars">
+    <div class="bench-bar-row">
+      <span class="bench-bar-label">tsz</span>
+      <div class="bench-detail-meter">
+        <span class="bench-detail-fill tsz" style="width: {{ benchmark.tsz_width }}%"></span>
+      </div>
+      <span class="bench-detail-time">{% if benchmark.tsz_time %}{{ benchmark.tsz_time }}{% else %}failed{% endif %}</span>
+    </div>
+    <div class="bench-bar-row">
+      <span class="bench-bar-label">tsgo</span>
+      <div class="bench-detail-meter">
+        <span class="bench-detail-fill tsgo" style="width: {{ benchmark.tsgo_width }}%"></span>
+      </div>
+      <span class="bench-detail-time">{% if benchmark.tsgo_time %}{{ benchmark.tsgo_time }}{% else %}n/a{% endif %}</span>
+    </div>
+  </div>
+</section>
+
+{% if benchmark.readme_html %}
+  <section class="benchmark-readme-section">
+    <h2>README</h2>
+    <div class="benchmark-readme">
+      {{ benchmark.readme_html | safe }}
+    </div>
+  </section>
+{% endif %}
+
+{% if benchmark.source_files.length %}
+  <section id="benchmark-files">
+    <h2>Files</h2>
+    <div class="benchmark-source-viewer" data-files="{{ benchmark.source_files_json | safe }}">
+      <div class="benchmark-source-tabs" role="tablist" aria-label="Benchmark files"></div>
+      <div class="benchmark-source-editor" aria-label="Benchmark source viewer">
+        <pre class="bench-snippet"><code>{{ benchmark.snippet }}</code></pre>
+      </div>
+    </div>
+  </section>
+{% endif %}

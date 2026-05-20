@@ -1,0 +1,3003 @@
+//! Binary expression type computation.
+//! Extracted from `core.rs` — handles all binary operators including
+//! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
+
+use crate::context::TypingRequest;
+use crate::query_boundaries::type_computation::core::{
+    WriteTargetLogicalOperator, WriteTargetLogicalResult,
+};
+use crate::state::CheckerState;
+use tsz_binder::symbol_flags;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
+
+/// Result of syntactic nullishness analysis, mirroring tsc's `PredicateSemantics`.
+/// This is a purely syntactic check -- it does NOT look at types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum SyntacticNullishness {
+    /// The expression is always nullish (e.g., `null`, `undefined`).
+    #[allow(dead_code)]
+    Always,
+    /// The expression may or may not be nullish (e.g., identifiers, calls, property accesses).
+    Sometimes,
+    /// The expression is never nullish (e.g., literals, arithmetic results, `??` results).
+    Never,
+}
+
+impl<'a> CheckerState<'a> {
+    pub(crate) fn resolve_literal_index_access_property_type(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let (object_type, index_type) =
+            crate::query_boundaries::common::index_access_parts(self.ctx.types, type_id)?;
+        let atom = crate::query_boundaries::type_computation::access::literal_property_name(
+            self.ctx.types,
+            index_type,
+        )?;
+        let property_name = self.ctx.types.resolve_atom(atom);
+
+        self.contextual_object_literal_property_type(object_type, property_name.as_ref())
+            .or_else(|| {
+                self.ctx
+                    .types
+                    .contextual_property_type(object_type, property_name.as_ref())
+            })
+    }
+
+    pub(crate) fn reduce_literal_index_access_property_types(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(resolved) = self.resolve_literal_index_access_property_type(type_id) {
+            return resolved;
+        }
+
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        else {
+            return type_id;
+        };
+
+        let mut changed = false;
+        let reduced = members
+            .into_iter()
+            .map(|member| {
+                if let Some(resolved) = self.resolve_literal_index_access_property_type(member) {
+                    changed = true;
+                    resolved
+                } else {
+                    member
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if changed {
+            self.ctx.types.factory().union_preserve_members(reduced)
+        } else {
+            type_id
+        }
+    }
+
+    fn global_function_interface_type_for_instanceof(&mut self) -> Option<TypeId> {
+        if !self.ctx.compiler_options.no_lib {
+            return Some(TypeId::FUNCTION);
+        }
+
+        let function_sym_id = self.ctx.binder.lib_symbol_ids.iter().find_map(|&sym_id| {
+            self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
+                (symbol.escaped_name == "Function" && symbol.has_any_flags(symbol_flags::INTERFACE))
+                    .then_some(sym_id)
+            })
+        });
+
+        function_sym_id
+            .map(|sym_id| self.get_type_of_symbol(sym_id))
+            .or_else(|| {
+                self.resolve_actual_lib_name_to_def_id_for_lowering("Function")
+                    .map(|def_id| self.ctx.types.lazy(def_id))
+            })
+            .or_else(|| self.resolve_lib_type_by_name("Function"))
+    }
+
+    fn declared_instanceof_left_operand_type(
+        &mut self,
+        left_idx: NodeIndex,
+        left_type: TypeId,
+    ) -> TypeId {
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
+        if evaluator.is_valid_instanceof_left_operand(left_type) {
+            return left_type;
+        }
+
+        let Some(node) = self.ctx.arena.get(left_idx) else {
+            return left_type;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return left_type;
+        }
+
+        let Some(sym_id) = self.resolve_identifier_symbol(left_idx) else {
+            return left_type;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return left_type;
+        };
+
+        let mut decl_idx = symbol.value_declaration;
+        let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
+            return left_type;
+        };
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            decl_idx = ext.parent;
+            decl_node = parent_node;
+        }
+        if !self.is_const_variable_declaration(decl_idx) {
+            return left_type;
+        }
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return left_type;
+        };
+        if var_decl.type_annotation.is_none() {
+            return left_type;
+        }
+        if !self
+            .ctx
+            .binder
+            .get_node_flow(left_idx)
+            .and_then(|flow_id| self.ctx.binder.flow_nodes.get(flow_id))
+            .is_some_and(|flow| flow.has_any_flags(tsz_binder::flow_flags::ASSIGNMENT))
+        {
+            return left_type;
+        }
+
+        let declared_type = self.get_type_of_symbol(sym_id);
+        if evaluator.is_valid_instanceof_left_operand(declared_type) {
+            declared_type
+        } else {
+            left_type
+        }
+    }
+
+    pub(crate) fn get_type_of_write_target_base_expression(&mut self, idx: NodeIndex) -> TypeId {
+        // PERF: For non-binary expressions, the write context doesn't change the
+        // result type compared to the normal path. Check the node_types cache first
+        // to avoid redundant type resolution through the full property-access pipeline.
+        // This is especially impactful for deep optional chains like `a?.b?.c?.d`
+        // where each level recursively calls this method on its base expression.
+        let logical_idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let is_binary = self
+            .ctx
+            .arena
+            .get(logical_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION);
+        if !is_binary && let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+            return cached;
+        }
+        if let Some(node) = self.ctx.arena.get(logical_idx)
+            && node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && matches!(
+                binary.operator_token,
+                k if k == SyntaxKind::BarBarToken as u16
+                    || k == SyntaxKind::QuestionQuestionToken as u16
+            )
+        {
+            let left_type = self.get_type_of_node_with_request(binary.left, &TypingRequest::NONE);
+            let right_type = self.get_type_of_node_with_request(binary.right, &TypingRequest::NONE);
+            let operator = if binary.operator_token == SyntaxKind::BarBarToken as u16 {
+                WriteTargetLogicalOperator::LogicalOr
+            } else {
+                WriteTargetLogicalOperator::NullishCoalescing
+            };
+            match crate::query_boundaries::type_computation::core::write_target_logical_result_type(
+                self.ctx.types,
+                operator,
+                left_type,
+                right_type,
+            ) {
+                Some(WriteTargetLogicalResult::Type(result)) => return result,
+                Some(WriteTargetLogicalResult::FallbackToLogicalExpression) => {
+                    return self.get_type_of_node_with_request(
+                        logical_idx,
+                        &TypingRequest::for_write_context(),
+                    );
+                }
+                None => {}
+            }
+        }
+
+        self.get_type_of_node_with_request(idx, &TypingRequest::for_write_context())
+    }
+
+    /// Mirrors tsc's `getSyntacticNullishnessSemantics`. This is a purely syntactic check
+    /// that determines whether an expression can ever be nullish, WITHOUT consulting the
+    /// type system. For example, a variable `foo: string` returns `Sometimes` (it could
+    /// theoretically be reassigned at runtime), while a literal `"hello"` returns `Never`.
+    #[allow(dead_code)]
+    fn get_syntactic_nullishness(&self, idx: NodeIndex) -> SyntacticNullishness {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return SyntacticNullishness::Sometimes;
+        };
+
+        let kind = node.kind;
+
+        // Skip parenthesized expressions (tsc's skipOuterExpressions)
+        if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+        {
+            return self.get_syntactic_nullishness(paren.expression);
+        }
+
+        // Non-null assertions (!): always Never
+        if kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+            return SyntacticNullishness::Never;
+        }
+
+        // Type assertions (as/satisfies/<T>x): tsc skips these via skipOuterExpressions
+        if kind == syntax_kind_ext::AS_EXPRESSION
+            || kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            || kind == syntax_kind_ext::TYPE_ASSERTION
+        {
+            return SyntacticNullishness::Sometimes;
+        }
+
+        // Expressions that may produce null/undefined at runtime
+        if kind == syntax_kind_ext::AWAIT_EXPRESSION
+            || kind == syntax_kind_ext::CALL_EXPRESSION
+            || kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+            || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            || kind == syntax_kind_ext::META_PROPERTY
+            || kind == syntax_kind_ext::NEW_EXPRESSION
+            || kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || kind == syntax_kind_ext::YIELD_EXPRESSION
+            || kind == SyntaxKind::ThisKeyword as u16
+        {
+            return SyntacticNullishness::Sometimes;
+        }
+
+        // Binary expressions
+        if kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+        {
+            let op = binary.operator_token;
+            // ||, ||=, &&, &&= can produce null/undefined
+            if op == SyntaxKind::BarBarToken as u16
+                || op == SyntaxKind::BarBarEqualsToken as u16
+                || op == SyntaxKind::AmpersandAmpersandToken as u16
+                || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            {
+                return SyntacticNullishness::Sometimes;
+            }
+            // For ??, ??=, =, comma: result nullishness is determined by right operand
+            if op == SyntaxKind::CommaToken as u16
+                || op == SyntaxKind::EqualsToken as u16
+                || op == SyntaxKind::QuestionQuestionToken as u16
+                || op == SyntaxKind::QuestionQuestionEqualsToken as u16
+            {
+                return self.get_syntactic_nullishness(binary.right);
+            }
+            // All other binary operators (arithmetic, comparison, bitwise, etc.)
+            // never produce null/undefined
+            return SyntacticNullishness::Never;
+        }
+
+        // Conditional expression: union of true and false branches
+        if kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+            && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
+        {
+            let when_true = self.get_syntactic_nullishness(cond.when_true);
+            let when_false = self.get_syntactic_nullishness(cond.when_false);
+            if when_true == SyntacticNullishness::Never && when_false == SyntacticNullishness::Never
+            {
+                return SyntacticNullishness::Never;
+            }
+            if when_true == SyntacticNullishness::Always
+                && when_false == SyntacticNullishness::Always
+            {
+                return SyntacticNullishness::Always;
+            }
+            return SyntacticNullishness::Sometimes;
+        }
+
+        // null keyword
+        if kind == SyntaxKind::NullKeyword as u16 {
+            return SyntacticNullishness::Always;
+        }
+
+        // Identifier: check if it's `undefined`
+        if kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.ctx.arena.get_identifier(node)
+                && ident.escaped_text == "undefined"
+            {
+                return SyntacticNullishness::Always;
+            }
+            return SyntacticNullishness::Sometimes;
+        }
+
+        // Everything else: literals (string, number, boolean, bigint, regex, template,
+        // object literal, array literal, function expression, arrow function, class expression,
+        // etc.) are never nullish.
+        SyntacticNullishness::Never
+    }
+    fn is_valid_in_operator_rhs(&mut self, ty: TypeId) -> bool {
+        use crate::query_boundaries::dispatch as query;
+
+        if matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::OBJECT) {
+            return true;
+        }
+
+        // For type parameters, check if their constraint is assignable to object.
+        // Unconstrained type params are NOT valid (could be primitive) → TS2322.
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
+            return match crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                ty,
+            ) {
+                Some(c) => self.is_valid_in_operator_rhs(c),
+                None => false,
+            };
+        }
+
+        if query::is_object_like_type(self.ctx.types, ty) {
+            return true;
+        }
+
+        if let Some(members) = query::union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .all(|&member| self.is_valid_in_operator_rhs(member));
+        }
+
+        if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .any(|&member| self.is_valid_in_operator_rhs(member));
+        }
+
+        let evaluated = crate::query_boundaries::dispatch::evaluate_type_with_resolver(
+            self.ctx.types,
+            &self.ctx,
+            ty,
+        );
+        if evaluated != ty {
+            return self.is_valid_in_operator_rhs(evaluated);
+        }
+
+        false
+    }
+
+    /// Check if an AST node is a nullish coalescing expression (`??`) or a
+    /// literal value (string, number, boolean, bigint, template), unwrapping
+    /// parentheses. TSC only emits TS2869 for these syntactic forms; general
+    /// non-nullable expressions (identifiers, property access, `&&` chains)
+    /// do not trigger TS2869 even when their type is never nullish.
+    fn is_nullish_coalescing_or_literal(
+        arena: &tsz_parser::parser::NodeArena,
+        node_idx: NodeIndex,
+    ) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+
+        // Unwrap parentheses: (expr) -> expr
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = arena.get_parenthesized(node) {
+                return Self::is_nullish_coalescing_or_literal(arena, paren.expression);
+            }
+            return false;
+        }
+
+        // Binary expression: check if it's a `??`
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(binary) = arena.get_binary_expr(node) {
+                return binary.operator_token == SyntaxKind::QuestionQuestionToken as u16;
+            }
+            return false;
+        }
+
+        // Literal values: string, number, bigint, template, true, false
+        let kind = node.kind;
+        kind == SyntaxKind::StringLiteral as u16
+            || kind == SyntaxKind::NumericLiteral as u16
+            || kind == SyntaxKind::BigIntLiteral as u16
+            || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || kind == SyntaxKind::TrueKeyword as u16
+            || kind == SyntaxKind::FalseKeyword as u16
+            || kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+    }
+
+    /// Check if a type "may represent a primitive value" for TS2638.
+    ///
+    /// In tsc, this fires for "instantiable" types (type parameters, conditional types)
+    /// whose constraint is missing or could accept primitive values. Concrete object
+    /// types like `{}` do NOT trigger TS2638 on their own — only when they appear as
+    /// the constraint of a type parameter that could be instantiated with a primitive.
+    fn type_may_represent_primitive(&self, ty: TypeId) -> bool {
+        // The intrinsic `object` type excludes primitives by definition
+        if ty == TypeId::OBJECT {
+            return false;
+        }
+
+        // `unknown` can represent any value including primitives — TS2638
+        if ty == TypeId::UNKNOWN {
+            return true;
+        }
+
+        // Type parameters: check if constraint is missing or could be primitive.
+        // A type param with no constraint or constraint `{}` may represent a primitive
+        // because it could be instantiated with string, number, etc.
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
+            return match crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                ty,
+            ) {
+                None => true,                            // Unconstrained type param may be primitive
+                Some(c) if c == TypeId::OBJECT => false, // `extends object` excludes primitives
+                Some(c) => {
+                    // Check if the constraint itself could accept primitives.
+                    // This handles `T extends {}` (may represent primitive) vs
+                    // `T extends object` (may not) vs `T extends { a: number }` (may not).
+                    if self.type_may_represent_primitive(c) {
+                        return true;
+                    }
+                    // For concrete constraints, check if a primitive is assignable
+                    self.ctx.types.is_assignable_to(TypeId::STRING, c)
+                }
+            };
+        }
+
+        // Union: any member may represent primitive
+        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .any(|&m| self.type_may_represent_primitive(m));
+        }
+
+        // Intersection: `T & {}` still may represent a primitive because `{}`
+        // only removes nullish values. However, `T & object`, `T & { x: ... }`,
+        // and `T & Interface` exclude primitives through the object-like member.
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, ty)
+        {
+            let has_instantiable_primitive_member = members.iter().any(|&member| {
+                crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, member)
+                    && self.type_may_represent_primitive(member)
+            });
+            if has_instantiable_primitive_member
+                && !members
+                    .iter()
+                    .any(|&member| self.in_operator_intersection_member_excludes_primitive(member))
+            {
+                return true;
+            }
+
+            return members
+                .iter()
+                .all(|&m| self.type_may_represent_primitive(m));
+        }
+
+        let evaluated = crate::query_boundaries::dispatch::evaluate_type_with_resolver(
+            self.ctx.types,
+            &self.ctx,
+            ty,
+        );
+        if evaluated != ty {
+            return self.type_may_represent_primitive(evaluated);
+        }
+
+        // Concrete object types are NOT considered "may represent primitive" —
+        // only type parameters can be instantiated with primitives at runtime.
+        false
+    }
+
+    /// True when `ty` is an `in`-operator RHS shape that tsc reports via
+    /// TS2322 (assignability to `object`) rather than TS2638 (primitive
+    /// runtime warning).
+    ///
+    /// tsc routes these to the assignability gateway:
+    /// - bare type parameters (`T`)
+    /// - unions that contain a type parameter/primitive assignability member
+    ///   (`T | U`, `string | number | T`, `T | { a: string }`)
+    /// - intersections whose every member is a type parameter or
+    ///   primitive constraint (`T & U`, `T & (0 | 1 | 2)`)
+    ///
+    /// It keeps TS2638 for shapes whose apparent type is reported with a
+    /// `NonNullable<T>`-style message — typically intersections with
+    /// `{}`-shaped object constraints. For those, the empty-object
+    /// member excludes some nullish cases without committing to the
+    /// `object` constraint, and tsc emits TS2638 with the
+    /// `NonNullable<T>` apparent-type display.
+    fn in_rhs_is_type_parameter_assignability_shape(&self, ty: TypeId) -> bool {
+        use crate::query_boundaries::common;
+
+        if common::is_type_parameter_like(self.ctx.types, ty) {
+            return true;
+        }
+        if let Some(members) = common::union_members(self.ctx.types, ty) {
+            // A union containing a bare generic or primitive constituent is
+            // reported through assignability to `object`, even when other
+            // constituents are object-like. This is the shape produced by a
+            // false branch of `("a" in x && "b" in x)`: `T | (T & Record<...>)`.
+            return members
+                .iter()
+                .any(|&m| self.in_rhs_is_type_parameter_assignability_shape(m));
+        }
+        if let Some(members) = common::intersection_members(self.ctx.types, ty) {
+            // Intersections with an empty-object-constraint member
+            // (e.g. `T & {}`, `T & EmptyAlias`) collapse to
+            // `NonNullable<T>` in tsc's apparent-type rendering and stay
+            // on the TS2638 path. Recognize that by requiring every
+            // member to be either a type parameter or a primitive — if
+            // any member is an empty-object shape, defer to TS2638.
+            if members.iter().any(|&m| {
+                common::object_shape_for_type(self.ctx.types, m)
+                    .is_some_and(|shape| shape.properties.is_empty())
+            }) {
+                return false;
+            }
+            return members
+                .iter()
+                .all(|&m| self.in_rhs_is_type_parameter_assignability_shape(m));
+        }
+        // Concrete primitives (string, number, ...) are also routed to
+        // the assignability gateway when they're combined with type
+        // parameters in a union / intersection that we already verified
+        // above. A bare primitive (no generics involved) keeps the
+        // TS2638 path because the user can fix it without touching a
+        // generic position.
+        common::is_primitive_type(self.ctx.types, ty)
+    }
+
+    fn in_operator_type_contains_empty_object_shape(&self, ty: TypeId) -> bool {
+        use crate::query_boundaries::common;
+
+        if common::is_empty_object_type(self.ctx.types, ty) {
+            return true;
+        }
+
+        if let Some(members) = common::union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .any(|&member| self.in_operator_type_contains_empty_object_shape(member));
+        }
+
+        let evaluated = crate::query_boundaries::dispatch::evaluate_type_with_resolver(
+            self.ctx.types,
+            &self.ctx,
+            ty,
+        );
+        evaluated != ty && self.in_operator_type_contains_empty_object_shape(evaluated)
+    }
+
+    fn in_operator_intersection_member_excludes_primitive(&self, ty: TypeId) -> bool {
+        use crate::query_boundaries::{common, dispatch as query};
+
+        if ty == TypeId::OBJECT {
+            return true;
+        }
+
+        if common::is_type_parameter_like(self.ctx.types, ty) {
+            return crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                ty,
+            )
+            .is_some_and(|constraint| {
+                self.in_operator_intersection_member_excludes_primitive(constraint)
+            });
+        }
+
+        if let Some(members) = query::union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .all(|&member| self.in_operator_intersection_member_excludes_primitive(member));
+        }
+
+        if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .any(|&member| self.in_operator_intersection_member_excludes_primitive(member));
+        }
+
+        query::is_object_like_type(self.ctx.types, ty)
+            && !common::is_empty_object_type(self.ctx.types, ty)
+    }
+
+    /// Format the apparent type for display in TS2638 error messages.
+    ///
+    /// tsc uses the apparent type in the "may represent a primitive" message:
+    /// - `unknown` → `{}`
+    /// - unconstrained type parameter → `{}`
+    /// - constrained type parameter → the constraint type string
+    fn format_apparent_type_for_in_operator(&self, ty: TypeId) -> String {
+        if ty == TypeId::UNKNOWN {
+            return "{}".to_string();
+        }
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, ty) {
+            return match crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                ty,
+            ) {
+                None => format!("NonNullable<{}>", self.format_type(ty)),
+                Some(c) => self.format_type(c),
+            };
+        }
+        self.format_type(ty)
+    }
+
+    /// Check if an identifier was declared as `unknown` and has been truthiness-narrowed
+    /// to an empty object `{}`.
+    ///
+    /// This is used for TS2638: when `unknown` is narrowed through truthiness to `{}`,
+    /// we still need to emit TS2638 because the original declared type was `unknown`.
+    /// However, `instanceof Object` narrowing produces a different type (the Object
+    /// instance type, not `{}`) that does NOT trigger TS2638 because it genuinely
+    /// excludes primitives.
+    ///
+    /// The two conditions we check:
+    /// 1. The declared type is `unknown`
+    /// 2. The narrowed type is an empty object `{}`
+    ///
+    /// If both are true, we emit TS2638. If the declared type is `unknown` but the
+    /// narrowed type is not `{}` (e.g., after `instanceof Object`), we don't emit TS2638.
+    fn truthiness_narrowed_from_unknown(
+        &mut self,
+        node_idx: NodeIndex,
+        narrowed_type: TypeId,
+    ) -> bool {
+        // First check if the narrowed type includes the empty object `{}`.
+        // After previous `in` checks, flow can preserve both the truthiness-
+        // narrowed unknown branch and the record branch as a union.
+        if !self.in_operator_type_contains_empty_object_shape(narrowed_type) {
+            return false;
+        }
+
+        // Now check if the declared type is `unknown`
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(node_idx) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Navigate to the declaration
+        let decl_idx = symbol.value_declaration;
+        let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        // Handle identifier inside variable declaration
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+        {
+            decl_node = parent_node;
+        }
+
+        // Check parameter type annotation
+        if let Some(param) = self.ctx.arena.get_parameter(decl_node)
+            && param.type_annotation.is_some()
+        {
+            let declared_type = self.get_type_from_type_node(param.type_annotation);
+            return declared_type == TypeId::UNKNOWN;
+        }
+
+        // Check variable declaration type annotation
+        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+            && var_decl.type_annotation.is_some()
+        {
+            let declared_type = self.get_type_from_type_node(var_decl.type_annotation);
+            return declared_type == TypeId::UNKNOWN;
+        }
+
+        false
+    }
+
+    fn expression_is_identifier_symbol(
+        &mut self,
+        expr_idx: NodeIndex,
+        symbol_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        node.kind == SyntaxKind::Identifier as u16
+            && self.resolve_identifier_symbol(expr_idx) == Some(symbol_id)
+    }
+
+    fn node_matches_after_outer_expressions(&self, left: NodeIndex, right: NodeIndex) -> bool {
+        self.ctx.arena.skip_parenthesized_and_assertions(left)
+            == self.ctx.arena.skip_parenthesized_and_assertions(right)
+    }
+
+    fn in_rhs_has_direct_truthiness_guard(&mut self, right_idx: NodeIndex) -> bool {
+        let stripped_right = self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
+        let Some(right_node) = self.ctx.arena.get(stripped_right) else {
+            return false;
+        };
+        if right_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(right_symbol) = self.resolve_identifier_symbol(stripped_right) else {
+            return false;
+        };
+
+        let mut current = right_idx;
+        let in_expression = loop {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(parent_binary) = self.ctx.arena.get_binary_expr(parent_node)
+                && parent_binary.operator_token == SyntaxKind::InKeyword as u16
+                && self.node_matches_after_outer_expressions(parent_binary.right, current)
+            {
+                break parent_idx;
+            }
+
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    | syntax_kind_ext::AS_EXPRESSION
+                    | syntax_kind_ext::SATISFIES_EXPRESSION
+                    | syntax_kind_ext::NON_NULL_EXPRESSION
+                    | syntax_kind_ext::TYPE_ASSERTION
+            ) {
+                current = parent_idx;
+                continue;
+            }
+
+            return false;
+        };
+
+        current = in_expression;
+        loop {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(parent_binary) = self.ctx.arena.get_binary_expr(parent_node)
+                && parent_binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+            {
+                if self.node_matches_after_outer_expressions(parent_binary.right, current)
+                    && self.expression_is_identifier_symbol(parent_binary.left, right_symbol)
+                {
+                    return true;
+                }
+                current = parent_idx;
+                continue;
+            }
+
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    | syntax_kind_ext::AS_EXPRESSION
+                    | syntax_kind_ext::SATISFIES_EXPRESSION
+                    | syntax_kind_ext::NON_NULL_EXPRESSION
+                    | syntax_kind_ext::TYPE_ASSERTION
+            ) {
+                current = parent_idx;
+                continue;
+            }
+
+            return false;
+        }
+    }
+
+    fn expression_is_object_string_literal(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        node.kind == SyntaxKind::StringLiteral as u16
+            && self
+                .ctx
+                .arena
+                .get_literal(node)
+                .is_some_and(|literal| literal.text == "object")
+    }
+
+    fn expression_is_typeof_identifier_symbol(
+        &mut self,
+        expr_idx: NodeIndex,
+        symbol_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return false;
+        }
+        let Some(unary) = self.ctx.arena.get_unary_expr(node) else {
+            return false;
+        };
+        unary.operator == SyntaxKind::TypeOfKeyword as u16
+            && self.expression_is_identifier_symbol(unary.operand, symbol_id)
+    }
+
+    fn expression_is_typeof_object_guard_for_symbol(
+        &mut self,
+        expr_idx: NodeIndex,
+        symbol_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
+            return false;
+        };
+        if binary.operator_token != SyntaxKind::EqualsEqualsEqualsToken as u16
+            && binary.operator_token != SyntaxKind::EqualsEqualsToken as u16
+        {
+            return false;
+        }
+
+        (self.expression_is_typeof_identifier_symbol(binary.left, symbol_id)
+            && self.expression_is_object_string_literal(binary.right))
+            || (self.expression_is_object_string_literal(binary.left)
+                && self.expression_is_typeof_identifier_symbol(binary.right, symbol_id))
+    }
+
+    fn expression_contains_typeof_object_guard_for_symbol(
+        &mut self,
+        expr_idx: NodeIndex,
+        symbol_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        if self.expression_is_typeof_object_guard_for_symbol(expr_idx, symbol_id) {
+            return true;
+        }
+
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+        {
+            return self.expression_contains_typeof_object_guard_for_symbol(binary.left, symbol_id)
+                || self
+                    .expression_contains_typeof_object_guard_for_symbol(binary.right, symbol_id);
+        }
+
+        false
+    }
+
+    fn in_rhs_has_typeof_object_guard(&mut self, right_idx: NodeIndex) -> bool {
+        let stripped_right = self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
+        let Some(right_node) = self.ctx.arena.get(stripped_right) else {
+            return false;
+        };
+        if right_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(right_symbol) = self.resolve_identifier_symbol(stripped_right) else {
+            return false;
+        };
+
+        let mut current = right_idx;
+        let in_expression = loop {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(parent_binary) = self.ctx.arena.get_binary_expr(parent_node)
+                && parent_binary.operator_token == SyntaxKind::InKeyword as u16
+                && self.node_matches_after_outer_expressions(parent_binary.right, current)
+            {
+                break parent_idx;
+            }
+
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    | syntax_kind_ext::AS_EXPRESSION
+                    | syntax_kind_ext::SATISFIES_EXPRESSION
+                    | syntax_kind_ext::NON_NULL_EXPRESSION
+                    | syntax_kind_ext::TYPE_ASSERTION
+            ) {
+                current = parent_idx;
+                continue;
+            }
+
+            return false;
+        };
+
+        current = in_expression;
+        loop {
+            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(parent_binary) = self.ctx.arena.get_binary_expr(parent_node)
+                && parent_binary.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+            {
+                if self.node_matches_after_outer_expressions(parent_binary.right, current)
+                    && self.expression_contains_typeof_object_guard_for_symbol(
+                        parent_binary.left,
+                        right_symbol,
+                    )
+                {
+                    return true;
+                }
+                current = parent_idx;
+                continue;
+            }
+
+            if matches!(
+                parent_node.kind,
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    | syntax_kind_ext::AS_EXPRESSION
+                    | syntax_kind_ext::SATISFIES_EXPRESSION
+                    | syntax_kind_ext::NON_NULL_EXPRESSION
+                    | syntax_kind_ext::TYPE_ASSERTION
+            ) {
+                current = parent_idx;
+                continue;
+            }
+
+            return false;
+        }
+    }
+
+    /// Get the type of a binary expression.
+    ///
+    /// Handles all binary operators including arithmetic, comparison, logical,
+    /// assignment, nullish coalescing, and comma operators.
+    #[allow(dead_code)]
+    pub(crate) fn get_type_of_binary_expression(&mut self, idx: NodeIndex) -> TypeId {
+        self.get_type_of_binary_expression_with_request(idx, &TypingRequest::NONE)
+    }
+
+    pub(crate) fn get_type_of_binary_expression_with_request(
+        &mut self,
+        idx: NodeIndex,
+        request: &TypingRequest,
+    ) -> TypeId {
+        use crate::query_boundaries::type_computation::core::BinaryOpResult;
+        use tsz_scanner::SyntaxKind;
+        let factory = self.ctx.types.factory();
+
+        // Hot path: pure `+` chains with stable primitive operands are common in
+        // generated benchmark fixtures. We still check every operand node (so
+        // operand diagnostics are preserved), but skip generic per-node binary
+        // operator evaluation when the final result is deterministic.
+        if let Some(root_node) = self.ctx.arena.get(idx)
+            && root_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(root_binary) = self.ctx.arena.get_binary_expr(root_node)
+            && root_binary.operator_token == SyntaxKind::PlusToken as u16
+        {
+            let mut all_plus = true;
+            let mut operand_nodes = Vec::new();
+            let mut pending = vec![idx];
+
+            while let Some(node_idx) = pending.pop() {
+                let Some(node) = self.ctx.arena.get(node_idx) else {
+                    all_plus = false;
+                    break;
+                };
+
+                if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+                {
+                    if binary.operator_token == SyntaxKind::PlusToken as u16 {
+                        pending.push(binary.right);
+                        pending.push(binary.left);
+                        continue;
+                    }
+                    all_plus = false;
+                    break;
+                }
+
+                operand_nodes.push(node_idx);
+            }
+
+            if all_plus && operand_nodes.len() > 1 {
+                let mut operand_types = Vec::with_capacity(operand_nodes.len());
+                let mut has_error = false;
+
+                for node_idx in operand_nodes {
+                    let ty = self.get_type_of_node(node_idx);
+                    if ty == TypeId::ERROR {
+                        has_error = true;
+                        // Continue checking remaining operands to emit diagnostics
+                        // for all unresolved names (e.g., both `e` in `e + e`).
+                    }
+                    operand_types.push(ty);
+                }
+
+                if has_error {
+                    return TypeId::ERROR;
+                }
+
+                if let Some(ty) =
+                    crate::query_boundaries::type_computation::core::evaluate_plus_chain(
+                        self.ctx.types,
+                        &operand_types,
+                    )
+                {
+                    return ty;
+                }
+            }
+        }
+
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
+        // PERF: Use SmallVec to avoid heap allocation for simple binary expressions.
+        // Most binary ops (??. ||, &&, +=, etc.) have exactly 1 stack frame and 2 types.
+        // Only deep + chains or nested binary expressions spill to heap.
+        let mut stack: smallvec::SmallVec<[(NodeIndex, bool); 4]> =
+            smallvec::smallvec![(idx, false)];
+        let mut type_stack: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
+
+        while let Some((node_idx, visited)) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                // Return UNKNOWN instead of ANY when node cannot be found
+                type_stack.push(TypeId::UNKNOWN);
+                continue;
+            };
+
+            if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                type_stack.push(self.get_type_of_node(node_idx));
+                continue;
+            }
+
+            let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
+                // Return UNKNOWN instead of ANY when binary expression cannot be extracted
+                type_stack.push(TypeId::UNKNOWN);
+                continue;
+            };
+
+            let left_idx = binary.left;
+            let right_idx = binary.right;
+            let op_kind = binary.operator_token;
+
+            // TS5076: Check for mixing ?? with || or && without parentheses.
+            // Only check on first visit to avoid duplicates from the stack-based iteration.
+            if !visited {
+                let is_nullish_coalescing = op_kind == SyntaxKind::QuestionQuestionToken as u16;
+                let is_logical = op_kind == SyntaxKind::BarBarToken as u16
+                    || op_kind == SyntaxKind::AmpersandAmpersandToken as u16;
+
+                if is_nullish_coalescing || is_logical {
+                    // Check left operand: is it a binary expr with a conflicting operator?
+                    if let Some(left_node) = self.ctx.arena.get(left_idx)
+                        && left_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                        && let Some(left_binary) = self.ctx.arena.get_binary_expr(left_node)
+                    {
+                        let left_op = left_binary.operator_token;
+                        let left_is_nullish = left_op == SyntaxKind::QuestionQuestionToken as u16;
+                        let left_is_logical = left_op == SyntaxKind::BarBarToken as u16
+                            || left_op == SyntaxKind::AmpersandAmpersandToken as u16;
+
+                        if (is_nullish_coalescing && left_is_logical)
+                            || (is_logical && left_is_nullish)
+                        {
+                            // Determine operator names for the error message
+                            let left_op_str = if left_is_nullish {
+                                "??"
+                            } else if left_op == SyntaxKind::BarBarToken as u16 {
+                                "||"
+                            } else {
+                                "&&"
+                            };
+                            let right_op_str = if is_nullish_coalescing {
+                                "??"
+                            } else if op_kind == SyntaxKind::BarBarToken as u16 {
+                                "||"
+                            } else {
+                                "&&"
+                            };
+                            self.error_at_node_msg(
+                                left_idx,
+                                crate::diagnostics::diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
+                                &[left_op_str, right_op_str],
+                            );
+                        }
+                    }
+
+                    // Check right operand
+                    if let Some(right_node) = self.ctx.arena.get(right_idx)
+                        && right_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                        && let Some(right_binary) = self.ctx.arena.get_binary_expr(right_node)
+                    {
+                        let right_op = right_binary.operator_token;
+                        let right_is_nullish = right_op == SyntaxKind::QuestionQuestionToken as u16;
+                        let right_is_logical = right_op == SyntaxKind::BarBarToken as u16
+                            || right_op == SyntaxKind::AmpersandAmpersandToken as u16;
+
+                        if (is_nullish_coalescing && right_is_logical)
+                            || (is_logical && right_is_nullish)
+                        {
+                            let outer_op_str = if is_nullish_coalescing {
+                                "??"
+                            } else if op_kind == SyntaxKind::BarBarToken as u16 {
+                                "||"
+                            } else {
+                                "&&"
+                            };
+                            let inner_op_str = if right_is_nullish {
+                                "??"
+                            } else if right_op == SyntaxKind::BarBarToken as u16 {
+                                "||"
+                            } else {
+                                "&&"
+                            };
+                            self.error_at_node_msg(
+                                right_idx,
+                                crate::diagnostics::diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
+                                &[outer_op_str, inner_op_str],
+                            );
+                        }
+                    }
+                }
+            }
+
+            if !visited {
+                if self.is_assignment_operator(op_kind) {
+                    let assign_type = if op_kind == SyntaxKind::EqualsToken as u16 {
+                        self.check_assignment_expression(left_idx, right_idx, node_idx)
+                    } else {
+                        self.check_compound_assignment_expression(
+                            left_idx, right_idx, op_kind, node_idx,
+                        )
+                    };
+                    type_stack.push(assign_type);
+                    continue;
+                }
+
+                // For &&, the right operand gets the contextual type of the whole
+                // expression (inherited from parent, e.g. assignment target).
+                // For || and ??, the right operand gets the outer contextual type
+                // if available, falling back to the left type (minus nullish).
+                // This enables contextual typing of callbacks:
+                //   let x: (a: string) => string;
+                //   x = y && (a => a);           // a: string from assignment context
+                //   let g = f || (x => { ... }); // x: string from left type fallback
+                if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
+                    // && passes outer contextual type to the right operand only.
+                    // The left operand gets no contextual type.
+                    //
+                    // Preserve literal types for the left operand: tsc's
+                    // checkExpression returns the FRESH literal type for literal
+                    // expressions (e.g., `"baz"` stays `"baz"`, not widened to
+                    // `string`). This matters for `||`/`&&`/`??` because the
+                    // logical evaluator uses truthiness narrowing — a widened
+                    // `string` cannot be narrowed to NEVER on the falsy branch,
+                    // so the result wrongly unions in the right operand.
+                    let prev_preserve = self.ctx.preserve_literal_types;
+                    self.ctx.preserve_literal_types = true;
+                    let left_type =
+                        self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
+                    self.ctx.preserve_literal_types = prev_preserve;
+                    let right_type = self.get_type_of_node_with_request(right_idx, request);
+
+                    type_stack.push(left_type);
+                    type_stack.push(right_type);
+                    stack.push((node_idx, true));
+                    continue;
+                }
+                if op_kind == SyntaxKind::BarBarToken as u16
+                    || op_kind == SyntaxKind::QuestionQuestionToken as u16
+                {
+                    // Preserve literal types for the left operand — see comment
+                    // on the && branch above for the rationale.
+                    let prev_preserve = self.ctx.preserve_literal_types;
+                    self.ctx.preserve_literal_types = true;
+                    let left_type = self.get_type_of_node(left_idx);
+                    self.ctx.preserve_literal_types = prev_preserve;
+                    let outer_context = request.contextual_type;
+                    let right_ctx_idx = self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
+                    let right_accepts_context =
+                        self.ctx.arena.get(right_ctx_idx).is_some_and(|right_node| {
+                            matches!(
+                                right_node.kind,
+                                syntax_kind_ext::ARROW_FUNCTION
+                                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                    | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    | syntax_kind_ext::CONDITIONAL_EXPRESSION
+                            )
+                        });
+                    // Right operand: prefer the whole-expression contextual type
+                    // inherited from the parent only for expression forms that
+                    // are context-sensitive. Identifiers and other ordinary
+                    // expressions should be checked once as part of the whole
+                    // logical expression result, matching tsc's single
+                    // assignment-level diagnostic for `var x: T = a || b`.
+                    // Fall back to the left operand with nullish removed when
+                    // there is no outer context.
+                    let right_request = if outer_context.is_none() {
+                        let evaluated_left = self.evaluate_type_with_env(left_type);
+                        let mut non_nullish = self.ctx.types.remove_nullish(evaluated_left);
+                        // When the left type was flow-narrowed to only null/undefined
+                        // (e.g., after `f || ...` on a previous line), non_nullish
+                        // becomes NEVER. Fall back to the declared type of the left
+                        // operand so the right operand still gets contextual typing.
+                        if non_nullish == TypeId::NEVER
+                            && let Some(sym_id) = self.resolve_identifier_symbol(left_idx)
+                        {
+                            let declared = self.get_type_of_symbol(sym_id);
+                            let ev = self.evaluate_type_with_env(declared);
+                            let dn = self.ctx.types.remove_nullish(ev);
+                            if dn != TypeId::NEVER {
+                                non_nullish = dn;
+                            }
+                        }
+                        if right_accepts_context
+                            && non_nullish != TypeId::NEVER
+                            && non_nullish != TypeId::UNKNOWN
+                        {
+                            request.read().normal_origin().contextual(non_nullish)
+                        } else {
+                            TypingRequest::NONE
+                        }
+                    } else if right_accepts_context {
+                        request.read()
+                    } else {
+                        TypingRequest::NONE
+                    };
+                    let right_type = self.get_type_of_node_with_request(right_idx, &right_request);
+
+                    let should_check_contextual_right =
+                        outer_context.is_some() && right_accepts_context && {
+                            let mut parent_idx = self
+                                .ctx
+                                .arena
+                                .get_extended(node_idx)
+                                .map(|ext| ext.parent)
+                                .unwrap_or(NodeIndex::NONE);
+                            let mut check = true;
+                            for _ in 0..4 {
+                                let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                                    break;
+                                };
+                                if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                                    parent_idx = self
+                                        .ctx
+                                        .arena
+                                        .get_extended(parent_idx)
+                                        .map(|ext| ext.parent)
+                                        .unwrap_or(NodeIndex::NONE);
+                                    continue;
+                                }
+                                if matches!(
+                                    parent_node.kind,
+                                    syntax_kind_ext::AS_EXPRESSION
+                                        | syntax_kind_ext::TYPE_ASSERTION
+                                        | syntax_kind_ext::SATISFIES_EXPRESSION
+                                        | syntax_kind_ext::CASE_CLAUSE
+                                        | syntax_kind_ext::SPREAD_ELEMENT
+                                        | syntax_kind_ext::SPREAD_ASSIGNMENT
+                                ) {
+                                    // Suppress contextual assignability check when:
+                                    // - Case clauses: use comparability (TS2678), not
+                                    //   assignability, for the switch discriminant.
+                                    // - Type assertions/satisfies: explicit type override.
+                                    // - Spread elements/assignments: the RHS of ?? inside
+                                    //   a spread doesn't need to independently satisfy the
+                                    //   contextual type because properties merge with
+                                    //   earlier ones in the containing object literal.
+                                    check = false;
+                                } else if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                    && let Some(parent_binary) =
+                                        self.ctx.arena.get_binary_expr(parent_node)
+                                    && matches!(
+                                        parent_binary.operator_token,
+                                        k if k == SyntaxKind::BarBarToken as u16
+                                            || k == SyntaxKind::AmpersandAmpersandToken as u16
+                                            || k == SyntaxKind::QuestionQuestionToken as u16
+                                            || k == SyntaxKind::CommaToken as u16
+                                    )
+                                {
+                                    check = false;
+                                }
+                                break;
+                            }
+                            check
+                        };
+                    if should_check_contextual_right
+                        && right_type != TypeId::ANY
+                        && right_type != TypeId::ERROR
+                        && right_type != TypeId::UNKNOWN
+                    {
+                        let _ = self.check_assignable_or_report_at_exact_anchor(
+                            right_type,
+                            outer_context.expect("guarded by outer_context.is_some() check"),
+                            right_idx,
+                            right_idx,
+                        );
+                    }
+
+                    type_stack.push(left_type);
+                    type_stack.push(right_type);
+                    stack.push((node_idx, true));
+                    continue;
+                }
+
+                // For comma operator: left gets no contextual type,
+                // right gets the outer contextual type
+                if op_kind == SyntaxKind::CommaToken as u16 {
+                    let left_type =
+                        self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
+                    let right_type = self.get_type_of_node_with_request(right_idx, request);
+
+                    type_stack.push(left_type);
+                    type_stack.push(right_type);
+                    stack.push((node_idx, true));
+                    continue;
+                }
+
+                stack.push((node_idx, true));
+                stack.push((right_idx, false));
+                stack.push((left_idx, false));
+                continue;
+            }
+
+            // Return UNKNOWN instead of ANY when type_stack is empty
+            let right_type = type_stack.pop().unwrap_or(TypeId::UNKNOWN);
+            let left_type = type_stack.pop().unwrap_or(TypeId::UNKNOWN);
+            if op_kind == SyntaxKind::CommaToken as u16 {
+                // TS2695: Emit when left side has no side effects
+                // TypeScript suppresses this diagnostic when allowUnreachableCode is enabled
+                // TypeScript DOES emit this even when left operand has type errors or is typed as any
+                // Use node-level error flags instead of file-level has_parse_errors:
+                // Grammar errors like TS1171 (comma in computed property) are emitted by
+                // our parser but by tsc's checker, so they set has_parse_errors in our
+                // pipeline but shouldn't suppress TS2695. Only suppress when the binary
+                // expression itself has structural parse errors (e.g., `(a, new)`).
+                let node_has_parse_error = self
+                    .ctx
+                    .arena
+                    .get(node_idx)
+                    .is_some_and(|n| n.this_node_has_error() || n.this_or_subtree_has_error());
+                // Also suppress TS2695 when the comma expression is inside a bare
+                // block statement (not a function/method body).  This matches tsc's
+                // behavior: `{ a, b } = fn()` is parsed as a block followed by `=`,
+                // and the comma inside the block is always a malformed destructuring
+                // pattern, never a legitimate comma operator.  Suppress unconditionally
+                // regardless of parse-error state (has_parse_errors is program-level
+                // and may miss file-local grammar errors like TS2809).
+                let in_bare_block = self.is_inside_bare_block(node_idx);
+                if !node_has_parse_error
+                    && !in_bare_block
+                    && self.ctx.compiler_options.allow_unreachable_code != Some(true)
+                    && self.is_side_effect_free(left_idx)
+                    && !self.is_indirect_call(node_idx, left_idx, right_idx)
+                {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        left_idx,
+                        diagnostic_messages::LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS,
+                        diagnostic_codes::LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS,
+                    );
+                }
+                type_stack.push(right_type);
+                continue;
+            }
+            if op_kind == SyntaxKind::InKeyword as u16 {
+                let result = self.check_in_operator(left_idx, right_idx, right_type);
+                type_stack.push(result);
+                continue;
+            }
+            // instanceof always produces boolean
+            if op_kind == SyntaxKind::InstanceOfKeyword as u16 {
+                let result =
+                    self.check_instanceof_operator(left_idx, right_idx, left_type, right_type);
+                type_stack.push(result);
+                continue;
+            }
+
+            // Logical AND: `a && b`
+            if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
+                // Skip TS2845 enum member checks — tsc only emits those in condition contexts.
+                self.check_truthy_or_falsy_with_type_no_enum(left_idx, left_type);
+                let callable_truthiness_body = self.find_callable_truthiness_body(idx);
+                self.check_callable_truthiness(left_idx, callable_truthiness_body);
+                if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
+                    type_stack.push(TypeId::ERROR);
+                    continue;
+                }
+                let result = match evaluator.evaluate_with_context(
+                    left_type,
+                    right_type,
+                    "&&",
+                    request.contextual_type,
+                ) {
+                    BinaryOpResult::Success(ty) => ty,
+                    BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,
+                };
+                type_stack.push(result);
+                continue;
+            }
+
+            // Logical OR: `a || b`
+            if op_kind == SyntaxKind::BarBarToken as u16 {
+                // TS2872/TS2873: left side of `||` can be syntactically always truthy/falsy.
+                // Skip TS2845 enum member checks — tsc only emits those in condition contexts.
+                self.check_truthy_or_falsy_with_type_no_enum(left_idx, left_type);
+                let callable_truthiness_body = self.find_callable_truthiness_body(idx);
+                if callable_truthiness_body.is_some() {
+                    self.check_callable_truthiness(left_idx, callable_truthiness_body);
+                }
+
+                if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
+                    type_stack.push(TypeId::ERROR);
+                    continue;
+                }
+
+                let left_type = self.reduce_literal_index_access_property_types(left_type);
+                let right_type = self.reduce_literal_index_access_property_types(right_type);
+                let result = match evaluator.evaluate(left_type, right_type, "||") {
+                    BinaryOpResult::Success(ty) => ty,
+                    BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,
+                };
+                type_stack.push(result);
+                continue;
+            }
+
+            // Nullish coalescing: `a ?? b`
+            if op_kind == SyntaxKind::QuestionQuestionToken as u16 {
+                let callable_truthiness_body = self.find_callable_truthiness_body(idx);
+                if callable_truthiness_body.is_some() {
+                    self.check_callable_truthiness(left_idx, callable_truthiness_body);
+                }
+                // Propagate error types (don't collapse to unknown)
+                if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
+                    type_stack.push(TypeId::ERROR);
+                    continue;
+                }
+
+                let left_type = self.reduce_literal_index_access_property_types(left_type);
+                let right_type = self.reduce_literal_index_access_property_types(right_type);
+                // Evaluate the left type to resolve type aliases (Applications)
+                // before splitting nullish parts. For example, `Maybe<T> = null | undefined | T`
+                // stored as an Application needs to be expanded so that the nullish split
+                // can see through the alias to extract the non-nullable component.
+                let evaluated_left = self.evaluate_type_with_env(left_type);
+                let (non_nullish, cause) = self.split_nullish_type(evaluated_left);
+                let left_is_top_type =
+                    evaluated_left == TypeId::UNKNOWN || evaluated_left == TypeId::ANY;
+                let left_is_nullish_chain_or_literal =
+                    Self::is_nullish_coalescing_or_literal(self.ctx.arena, left_idx);
+                let left_is_nullish_literal = self.is_literal_null_or_undefined_node(left_idx);
+                if cause.is_none() && !left_is_top_type && left_is_nullish_chain_or_literal {
+                    use crate::diagnostics::diagnostic_codes;
+                    // tsc points the error at the left operand (the never-nullish expression),
+                    // skipping through any parentheses to reach the inner expression.
+                    // e.g., `(expr) ?? ""` → error anchored at `expr`, not `(expr)`.
+                    let diag_idx = self.ctx.arena.skip_parenthesized(left_idx);
+                    self.error_at_node(
+                        diag_idx,
+                        "Right operand of ?? is unreachable because the left operand is never nullish.",
+                        diagnostic_codes::RIGHT_OPERAND_OF_IS_UNREACHABLE_BECAUSE_THE_LEFT_OPERAND_IS_NEVER_NULLISH,
+                    );
+                    type_stack.push(left_type);
+                } else if non_nullish.is_none()
+                    && cause.is_some()
+                    && !left_is_top_type
+                    && (left_is_nullish_chain_or_literal || left_is_nullish_literal)
+                {
+                    // TS2871: complementary to TS2869. When the left operand of
+                    // `??` is syntactically a nullish-coalescing chain or a
+                    // bare nullish literal and its evaluated type contains
+                    // only nullish constituents (split yields no non-nullish
+                    // part), tsc emits TS2871 — the left expression is
+                    // *always* nullish, so the `??` itself is redundant.
+                    //
+                    // Same anchor strategy as TS2869: point at the left
+                    // operand, skipping through parentheses.
+                    use crate::diagnostics::diagnostic_codes;
+                    let diag_idx = self.ctx.arena.skip_parenthesized(left_idx);
+                    self.error_at_node(
+                        diag_idx,
+                        "This expression is always nullish.",
+                        diagnostic_codes::THIS_EXPRESSION_IS_ALWAYS_NULLISH,
+                    );
+                    // Result type is the right operand's type — the `??`
+                    // result equals `right_type` whenever the left is always
+                    // nullish, matching the `non_nullish.is_none()` branch in
+                    // the else arm below.
+                    type_stack.push(right_type);
+                } else {
+                    // tsc uses UnionReduction.Subtype for ?? result types,
+                    // which removes structural subtypes (e.g., never[] from
+                    // number[] | never[] → number[]). This matters when the
+                    // RHS is an empty array literal [] (always never[] in strict mode).
+                    let result = match non_nullish {
+                        None => right_type,
+                        Some(non_nullish) => {
+                            // Apply tsc's NonNullable<D> approximation: when D is an
+                            // unconstrained type parameter, `(D | undefined) ?? X`
+                            // yields `(D & {}) | X` rather than `D | X`.  This matches
+                            // what the solver does for `??` in BinaryOpEvaluator.
+                            let non_nullish = evaluator
+                                .apply_non_nullable_approximation(evaluated_left, non_nullish);
+                            if non_nullish == right_type
+                                || self.is_subtype_of(right_type, non_nullish)
+                            {
+                                non_nullish
+                            } else if self.is_subtype_of(non_nullish, right_type) {
+                                right_type
+                            } else {
+                                factory.union2(non_nullish, right_type)
+                            }
+                        }
+                    };
+                    type_stack.push(result);
+                }
+                continue;
+            }
+            // TS17006/TS17007: Certain expressions not allowed as left-hand side of `**`.
+            // `-x ** y` is ambiguous; `<T>x ** y` is also forbidden by the grammar.
+            // When these grammar errors fire, skip remaining type-checks to prevent
+            // false-positive arithmetic diagnostics (e.g., TS2362 from `typeof x`).
+            if op_kind == SyntaxKind::AsteriskAsteriskToken as u16 {
+                let mut lhs_grammar_error = false;
+                // Check for unary expression or type assertion on LHS of **
+                if let Some(left_node) = self.ctx.arena.get(left_idx) {
+                    if left_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                        && let Some(left_unary) = self.ctx.arena.get_unary_expr(left_node)
+                        && let Some(op_name) = Self::unary_operator_name(left_unary.operator)
+                    {
+                        // TS17006: Unary expression as LHS.
+                        self.error_at_node_msg(
+                            left_idx,
+                            crate::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
+                            &[op_name],
+                        );
+                        lhs_grammar_error = true;
+                    } else if left_node.kind == syntax_kind_ext::TYPE_ASSERTION {
+                        // TS17007: `<T>x ** y` is not allowed.
+                        self.error_at_node_msg(
+                            left_idx,
+                            crate::diagnostics::diagnostic_codes::A_TYPE_ASSERTION_EXPRESSION_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN_EXPONENTI,
+                            &[],
+                        );
+                        lhs_grammar_error = true;
+                    }
+                }
+                // Case 2: parent of `**` is a forbidden unary (e.g. `delete(x ** y)`).
+                if !lhs_grammar_error
+                    && let Some(parent_idx) =
+                        self.ctx.arena.get_extended(node_idx).map(|e| e.parent)
+                    && let Some(parent_node) = self.ctx.arena.get(parent_idx)
+                    && parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    && let Some(parent_unary) = self.ctx.arena.get_unary_expr(parent_node)
+                    && let Some(op_name) = Self::unary_operator_name(parent_unary.operator)
+                {
+                    self.error_at_node_msg(
+                        parent_idx,
+                        crate::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
+                        &[op_name],
+                    );
+                    lhs_grammar_error = true;
+                }
+                if lhs_grammar_error {
+                    // Skip arithmetic type-checking to avoid false-positive diagnostics
+                    // caused by the grammar-error expression types (e.g., typeof -> string).
+                    type_stack.push(TypeId::ERROR);
+                    continue;
+                }
+
+                // TS2791: bigint exponentiation requires target >= ES2016.
+                // Only fire when both types are specifically bigint-like,
+                // not when either is `any`/`unknown` (TSC skips the bigint branch for those).
+                if (self.ctx.compiler_options.target as u32)
+                    < (tsz_common::common::ScriptTarget::ES2016 as u32)
+                    && left_type != TypeId::ANY
+                    && right_type != TypeId::ANY
+                    && left_type != TypeId::UNKNOWN
+                    && right_type != TypeId::UNKNOWN
+                    && self.is_subtype_of(left_type, TypeId::BIGINT)
+                    && self.is_subtype_of(right_type, TypeId::BIGINT)
+                {
+                    self.error_at_node_msg(
+                        node_idx,
+                        crate::diagnostics::diagnostic_codes::EXPONENTIATION_CANNOT_BE_PERFORMED_ON_BIGINT_VALUES_UNLESS_THE_TARGET_OPTION_IS,
+                        &[],
+                    );
+                }
+            }
+
+            // TS2839: Check for object literal equality comparison.
+            // "This condition will always return 'false'/'true' since JavaScript
+            // compares objects by reference, not value."
+            // Fires when at least one operand is an object/array/regex/function/class literal.
+            // In JS files, only fires for strict equality (===, !==), not loose (==, !=).
+            {
+                let is_strict_eq = op_kind == SyntaxKind::EqualsEqualsEqualsToken as u16
+                    || op_kind == SyntaxKind::ExclamationEqualsEqualsToken as u16;
+                let is_loose_eq = op_kind == SyntaxKind::EqualsEqualsToken as u16
+                    || op_kind == SyntaxKind::ExclamationEqualsToken as u16;
+
+                if is_strict_eq || is_loose_eq {
+                    let left_is_literal = self.is_literal_expression_of_object(left_idx);
+                    let right_is_literal = self.is_literal_expression_of_object(right_idx);
+
+                    if (left_is_literal || right_is_literal) && (!self.is_js_file() || is_strict_eq)
+                    {
+                        let is_eq = op_kind == SyntaxKind::EqualsEqualsToken as u16
+                            || op_kind == SyntaxKind::EqualsEqualsEqualsToken as u16;
+                        let result = if is_eq { "false" } else { "true" };
+                        self.error_at_node_msg(
+                            node_idx,
+                            crate::diagnostics::diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN_SINCE_JAVASCRIPT_COMPARES_OBJECTS_BY_REFERENCE,
+                            &[result],
+                        );
+                    }
+                }
+            }
+
+            // TS2367: Check for comparisons with no overlap
+            let is_equality_op = matches!(
+                op_kind,
+                k if k == SyntaxKind::EqualsEqualsToken as u16
+                    || k == SyntaxKind::ExclamationEqualsToken as u16
+                    || k == SyntaxKind::EqualsEqualsEqualsToken as u16
+                    || k == SyntaxKind::ExclamationEqualsEqualsToken as u16
+            );
+
+            // For TS2367, get the narrow types (literals) not the widened types.
+            // For typeof expressions, use the typeof result type (union of all
+            // valid typeof return strings) so that comparisons like
+            // `typeof x == "Object"` correctly detect no overlap.
+            // When the pre-narrowed type of either operand is `any`, skip flow
+            // narrowing for TS2367 purposes. `any` overlaps with everything, so
+            // comparisons like `var1.constructor === Number` (where `var1: any`)
+            // must not trigger TS2367 even if a prior `if (var1.constructor ===
+            // String)` caused flow narrowing to produce a specific type for
+            // `var1.constructor`.
+            let left_comparison_type = if left_type == TypeId::ANY {
+                left_type
+            } else if self.ctx.arena.get(left_idx).is_some_and(|n| {
+                n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            }) {
+                self.apply_flow_narrowing(left_idx, left_type)
+            } else {
+                left_type
+            };
+            let right_comparison_type = if right_type == TypeId::ANY {
+                right_type
+            } else if self.ctx.arena.get(right_idx).is_some_and(|n| {
+                n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            }) {
+                self.apply_flow_narrowing(right_idx, right_type)
+            } else {
+                right_type
+            };
+
+            let left_narrow = self
+                .typeof_result_type_if_typeof(left_idx)
+                .or_else(|| self.literal_type_from_initializer(left_idx))
+                .unwrap_or(left_comparison_type);
+            let right_narrow = self
+                .typeof_result_type_if_typeof(right_idx)
+                .or_else(|| self.literal_type_from_initializer(right_idx))
+                .unwrap_or(right_comparison_type);
+
+            let is_left_nan = self.is_identifier_reference_to_global_nan(left_idx);
+            let is_right_nan = self.is_identifier_reference_to_global_nan(right_idx);
+
+            // TS2839: Object/array literal equality always compares by reference
+            let left_is_object_or_array_literal = self
+                .ctx
+                .arena
+                .get(left_idx)
+                .map(|n| {
+                    n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                })
+                .unwrap_or(false);
+            let right_is_object_or_array_literal = self
+                .ctx
+                .arena
+                .get(right_idx)
+                .map(|n| {
+                    n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                })
+                .unwrap_or(false);
+
+            if is_equality_op && (is_left_nan || is_right_nan) {
+                let condition_result = match op_kind {
+                    k if k == SyntaxKind::EqualsEqualsToken as u16
+                        || k == SyntaxKind::EqualsEqualsEqualsToken as u16 =>
+                    {
+                        "false"
+                    }
+                    _ => "true",
+                };
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let message = format_message(
+                    diagnostic_messages::THIS_CONDITION_WILL_ALWAYS_RETURN,
+                    &[condition_result],
+                );
+                self.error_at_node(
+                    node_idx,
+                    &message,
+                    diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN,
+                );
+            } else if is_equality_op
+                && (left_is_object_or_array_literal || right_is_object_or_array_literal)
+                && (!self.is_js_file()
+                    || op_kind == SyntaxKind::EqualsEqualsEqualsToken as u16
+                    || op_kind == SyntaxKind::ExclamationEqualsEqualsToken as u16)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let condition_result = match op_kind {
+                    k if k == SyntaxKind::EqualsEqualsToken as u16
+                        || k == SyntaxKind::EqualsEqualsEqualsToken as u16 =>
+                    {
+                        "false"
+                    }
+                    _ => "true",
+                };
+                let message = format_message(
+                    diagnostic_messages::THIS_CONDITION_WILL_ALWAYS_RETURN_SINCE_JAVASCRIPT_COMPARES_OBJECTS_BY_REFERENCE,
+                    &[condition_result],
+                );
+                self.error_at_node(
+                    node_idx,
+                    &message,
+                    diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN_SINCE_JAVASCRIPT_COMPARES_OBJECTS_BY_REFERENCE,
+                );
+            } else if is_equality_op
+                && left_narrow != TypeId::ERROR
+                && right_narrow != TypeId::ERROR
+                && left_narrow != TypeId::NEVER
+                && right_narrow != TypeId::NEVER
+                && self.types_have_no_overlap(left_narrow, right_narrow)
+                // Suppress TS2367 when the DECLARED type of either operand has overlap
+                // with the other. This handles loop narrowing: e.g., `code: 0 | 1 = 0;
+                // while (...) { code = code === 1 ? 0 : 1; }` — flow narrows `code` to `0`
+                // but the declared type `0 | 1` overlaps with `1`. tsc widens at the loop
+                // boundary; we compensate by checking declared types here.
+                && !self.declared_type_has_overlap_in_loop(
+                    node_idx,
+                    left_idx,
+                    left_narrow,
+                    right_narrow,
+                )
+                && !self.declared_type_has_overlap_in_loop(
+                    node_idx,
+                    right_idx,
+                    right_narrow,
+                    left_narrow,
+                )
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                // tsc widens literal types to their base primitives when comparing
+                // types from different primitive families (e.g., string vs number).
+                // For same-family comparisons (e.g., `"foo"` vs `"bar"`), literal
+                // types are preserved in the error message.
+                let (left_display, right_display) = if let Some(type_param) = self
+                    .ts2367_explicit_unknown_like_intersection_type_param_display(
+                        left_narrow,
+                        right_narrow,
+                    ) {
+                    (
+                        type_param,
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            right_narrow,
+                        ),
+                    )
+                } else if let Some(type_param) = self
+                    .ts2367_explicit_unknown_like_intersection_type_param_display(
+                        right_narrow,
+                        left_narrow,
+                    )
+                {
+                    (
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            left_narrow,
+                        ),
+                        type_param,
+                    )
+                } else {
+                    self.widen_for_ts2367_cross_family_display(left_narrow, right_narrow)
+                };
+                // tsc shows unique symbols as `typeof varName` in comparison overlap errors
+                // (distinct from index-type errors like TS2538/TS7053 where it uses `unique symbol`).
+                let left_str = self.format_type_for_ts2367_display(left_display);
+                let right_str = self.format_type_for_ts2367_display(right_display);
+                let (left_str, right_str) = if left_str == right_str {
+                    // Fall back to disambiguated pair formatting when names collide
+                    self.format_type_pair(left_display, right_display)
+                } else {
+                    (left_str, right_str)
+                };
+                let message = format_message(
+                    diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
+                    &[&left_str, &right_str],
+                );
+                self.error_at_node(
+                    node_idx,
+                    &message,
+                    diagnostic_codes::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
+                );
+            }
+
+            let op_str = match op_kind {
+                k if k == SyntaxKind::PlusToken as u16 => "+",
+                k if k == SyntaxKind::MinusToken as u16 => "-",
+                k if k == SyntaxKind::AsteriskToken as u16 => "*",
+                k if k == SyntaxKind::AsteriskAsteriskToken as u16 => "**",
+                k if k == SyntaxKind::SlashToken as u16 => "/",
+                k if k == SyntaxKind::PercentToken as u16 => "%",
+                k if k == SyntaxKind::LessThanToken as u16 => "<",
+                k if k == SyntaxKind::GreaterThanToken as u16 => ">",
+                k if k == SyntaxKind::LessThanEqualsToken as u16 => "<=",
+                k if k == SyntaxKind::GreaterThanEqualsToken as u16 => ">=",
+                k if k == SyntaxKind::EqualsEqualsToken as u16 => "==",
+                k if k == SyntaxKind::ExclamationEqualsToken as u16 => "!=",
+                k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => "===",
+                k if k == SyntaxKind::ExclamationEqualsEqualsToken as u16 => "!==",
+                // && and || are handled above
+                k if k == SyntaxKind::AmpersandToken as u16
+                    || k == SyntaxKind::BarToken as u16
+                    || k == SyntaxKind::CaretToken as u16
+                    || k == SyntaxKind::LessThanLessThanToken as u16
+                    || k == SyntaxKind::GreaterThanGreaterThanToken as u16
+                    || k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 =>
+                {
+                    // Bitwise operators require integer operands (number, bigint, any, or enum)
+                    // Emit TS2362/TS2363 if operands are not valid
+                    let op_str = match op_kind {
+                        k if k == SyntaxKind::AmpersandToken as u16 => "&",
+                        k if k == SyntaxKind::BarToken as u16 => "|",
+                        k if k == SyntaxKind::CaretToken as u16 => "^",
+                        k if k == SyntaxKind::LessThanLessThanToken as u16 => "<<",
+                        k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => ">>",
+                        k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => {
+                            ">>>"
+                        }
+                        _ => "?",
+                    };
+
+                    // TS18046: unknown cannot be used with bitwise operators
+                    // Only emit under strictNullChecks; otherwise fall through to normal checks.
+                    if left_type == TypeId::UNKNOWN || right_type == TypeId::UNKNOWN {
+                        let mut emitted = false;
+                        if left_type == TypeId::UNKNOWN {
+                            emitted |= self.error_is_of_type_unknown(left_idx);
+                        }
+                        if right_type == TypeId::UNKNOWN {
+                            emitted |= self.error_is_of_type_unknown(right_idx);
+                        }
+                        if emitted {
+                            type_stack.push(TypeId::ERROR);
+                            continue;
+                        }
+                        // Without strictNullChecks, fall through to normal handling
+                    }
+
+                    let emitted_nullish_error = self.check_and_emit_nullish_binary_operands(
+                        left_idx, right_idx, left_type, right_type, op_str,
+                    );
+
+                    // Evaluate types to resolve unevaluated conditional/mapped types
+                    let eval_left = self.evaluate_type_for_binary_ops(left_type);
+                    let eval_right = self.evaluate_type_for_binary_ops(right_type);
+                    let right_narrow = self
+                        .literal_type_from_initializer(right_idx)
+                        .unwrap_or(eval_right);
+                    if matches!(op_str, "<<" | ">>" | ">>>")
+                        && let Some(n) = crate::query_boundaries::common::number_literal_value(
+                            self.ctx.types,
+                            right_narrow,
+                        )
+                        && n.abs() >= 32.0
+                        // tsc only surfaces TS6807 ("This operation can be simplified")
+                        // for shifts that participate in compile-time constant
+                        // evaluation, which in practice means enum member
+                        // initializers. Plain expression statements like
+                        // `1 << 32;` do not get the suggestion. Walk to the
+                        // nearest enum-member ancestor; only emit when one is
+                        // found.
+                        && {
+                            let mut ancestor = self.ctx.arena.get_extended(node_idx).map(|e| e.parent);
+                            let mut in_enum_member = false;
+                            while let Some(idx) = ancestor {
+                                if idx.is_none() {
+                                    break;
+                                }
+                                if let Some(node) = self.ctx.arena.get(idx)
+                                    && node.kind == tsz_parser::parser::syntax_kind_ext::ENUM_MEMBER
+                                {
+                                    in_enum_member = true;
+                                    break;
+                                }
+                                ancestor = self.ctx.arena.get_extended(idx).map(|e| e.parent);
+                            }
+                            in_enum_member
+                        }
+                    {
+                        let left_text = if let Some(left_node) = self.ctx.arena.get(left_idx) {
+                            if let Some(src) = self.ctx.arena.source_files.first() {
+                                src.text
+                                    .get(left_node.pos as usize..left_node.end as usize)
+                                    .unwrap_or("expr")
+                                    .to_string()
+                            } else {
+                                "expr".to_string()
+                            }
+                        } else {
+                            "expr".to_string()
+                        };
+                        let shift_amount = ((n as i64) % 32).to_string();
+                        self.error_at_node_msg(
+                                    node_idx,
+                                    crate::diagnostics::diagnostic_codes::THIS_OPERATION_CAN_BE_SIMPLIFIED_THIS_SHIFT_IS_IDENTICAL_TO,
+                                    &[&left_text, op_str, &shift_amount],
+                                );
+                    }
+
+                    // TS2362/TS2363: Per-operand validity check for bitwise operators.
+                    // Same issue as arithmetic: when one operand is `any`, the evaluator
+                    // returns Success but tsc still validates the other operand individually.
+                    if !emitted_nullish_error {
+                        let left_any_like = eval_left == TypeId::ANY || eval_left == TypeId::ERROR;
+                        let right_any_like =
+                            eval_right == TypeId::ANY || eval_right == TypeId::ERROR;
+
+                        if (left_any_like || right_any_like)
+                            && left_type != TypeId::ERROR
+                            && right_type != TypeId::ERROR
+                        {
+                            if left_any_like
+                                && !evaluator.is_arithmetic_operand(eval_right)
+                                && !self.is_enum_type(right_type)
+                            {
+                                self.error_at_node(
+                                    right_idx,
+                                    "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+                                    crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                                );
+                            }
+                            if right_any_like
+                                && !evaluator.is_arithmetic_operand(eval_left)
+                                && !self.is_enum_type(left_type)
+                            {
+                                self.error_at_node(
+                                    left_idx,
+                                    "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+                                    crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                                );
+                            }
+                        }
+                    }
+
+                    let result = evaluator.evaluate(eval_left, eval_right, op_str);
+                    // Equality and relational operators always produce boolean,
+                    // even when the operands don't overlap (TS2367).
+                    // The TS2367 diagnostic is a warning about the comparison
+                    // being unintentional, but the expression type is still boolean.
+                    let is_comparison_op = matches!(
+                        op_str,
+                        "==" | "!=" | "===" | "!==" | "<" | ">" | "<=" | ">="
+                    );
+                    let result_type = match result {
+                        BinaryOpResult::Success(result_type) => result_type,
+                        BinaryOpResult::TypeError { .. } => {
+                            // Don't emit errors if either operand is ERROR - prevents cascading errors
+                            if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
+                                // Emit appropriate error for arithmetic type mismatch
+                                self.emit_binary_operator_error(
+                                    node_idx,
+                                    left_idx,
+                                    right_idx,
+                                    left_type,
+                                    right_type,
+                                    op_str,
+                                    emitted_nullish_error,
+                                );
+                            }
+                            if is_comparison_op {
+                                TypeId::BOOLEAN
+                            } else if matches!(op_str, "&" | "|" | "^" | "<<" | ">>" | ">>>") {
+                                self.operator_error_result_type(
+                                    left_type,
+                                    right_type,
+                                    TypeId::NUMBER,
+                                )
+                            } else {
+                                TypeId::UNKNOWN
+                            }
+                        }
+                    };
+                    type_stack.push(result_type);
+                    continue;
+                }
+                _ => {
+                    type_stack.push(TypeId::UNKNOWN);
+                    continue;
+                }
+            };
+
+            // TS18046: Emit "'x' is of type 'unknown'" when unknown is used with
+            // arithmetic, relational, or bitwise operators. Equality operators (==, !=,
+            // ===, !==) are allowed on unknown and do not trigger TS18046.
+            // Only emit under strictNullChecks; otherwise fall through to normal checks.
+            let is_non_equality_op = !matches!(op_str, "==" | "!=" | "===" | "!==");
+            if is_non_equality_op && (left_type == TypeId::UNKNOWN || right_type == TypeId::UNKNOWN)
+            {
+                let mut emitted = false;
+                if self.ctx.compiler_options.strict_null_checks {
+                    if left_type == TypeId::UNKNOWN {
+                        emitted |= self.error_is_of_type_unknown(left_idx);
+                    }
+                    if right_type == TypeId::UNKNOWN {
+                        emitted |= self.error_is_of_type_unknown(right_idx);
+                    }
+                } else {
+                    // In non-strict mode, unknown participates in normal operator
+                    // compatibility checks and emits TS2365/related diagnostics.
+                    self.emit_binary_operator_error(
+                        node_idx, left_idx, right_idx, left_type, right_type, op_str, false,
+                    );
+                    type_stack.push(TypeId::UNKNOWN);
+                    continue;
+                }
+                if emitted {
+                    type_stack.push(TypeId::ERROR);
+                    continue;
+                }
+            }
+
+            // Check for boxed primitive types in arithmetic operations BEFORE evaluating types.
+            // Boxed types (Number, String, Boolean) are interface types from lib.d.ts
+            // and are NOT valid for arithmetic operations. We must check BEFORE calling
+            // evaluate_type_for_binary_ops because that function converts boxed types
+            // to primitives (Number → number), which would make our check fail.
+            let is_arithmetic_op = matches!(op_str, "+" | "-" | "*" | "/" | "%" | "**");
+
+            // TS18050: Emit errors for null/undefined operands BEFORE returning results or evaluating further
+            let emitted_nullish_error = self.check_and_emit_nullish_binary_operands(
+                left_idx, right_idx, left_type, right_type, op_str,
+            );
+
+            if is_arithmetic_op {
+                let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
+                let right_is_nullish =
+                    right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
+
+                let left_is_boxed = self.is_boxed_primitive_type(left_type);
+                let right_is_boxed = self.is_boxed_primitive_type(right_type);
+
+                // If one operand is null/undefined, tsc prioritizes TS18050
+                // over the boxed primitive error (TS2362/TS2363/TS2365).
+                let skip_boxed_error = left_is_nullish || right_is_nullish;
+
+                if (left_is_boxed || right_is_boxed) && !skip_boxed_error {
+                    // Emit appropriate error based on operator
+                    if op_str == "+" {
+                        // TS2365: Operator '+' cannot be applied to types 'T' and 'U'
+                        // Use the existing error reporter which handles + specially
+                        let left_str = self.format_type(left_type);
+                        let right_str = self.format_type(right_type);
+                        if let Some(node) = self.ctx.arena.get(node_idx) {
+                            let message = format!(
+                                "Operator '{op_str}' cannot be applied to types '{left_str}' and '{right_str}'."
+                            );
+                            self.ctx.error(
+                                node.pos,
+                                node.end - node.pos,
+                                message,
+                                2365, // TS2365
+                            );
+                        }
+                    } else {
+                        // TS2362/TS2363: Left/right hand side must be number/bigint/enum
+                        // Emit separate errors for left and right operands.
+                        // tsc checks both operands independently — when one is boxed
+                        // and the other is also invalid (e.g., boolean ** Number), both
+                        // errors must be emitted.
+                        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(
+                            self.ctx.types,
+                        );
+                        if left_is_boxed && let Some(node) = self.ctx.arena.get(left_idx) {
+                            let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                            self.ctx.error(
+                                node.pos,
+                                node.end - node.pos,
+                                message,
+                                2362, // TS2362
+                            );
+                        } else {
+                            // Strip null/undefined before checking — tsc calls checkNonNullType()
+                            // first (emitting TS18048/TS2532), then checks the remaining type.
+                            let left_stripped = crate::query_boundaries::common::remove_nullish(
+                                self.ctx.types,
+                                left_type,
+                            );
+                            if !evaluator.is_arithmetic_operand(left_stripped)
+                                && !self.is_enum_type(left_stripped)
+                                && let Some(node) = self.ctx.arena.get(left_idx)
+                            {
+                                let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end - node.pos,
+                                    message,
+                                    2362, // TS2362
+                                );
+                            }
+                        }
+                        if right_is_boxed && let Some(node) = self.ctx.arena.get(right_idx) {
+                            let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                            self.ctx.error(
+                                node.pos,
+                                node.end - node.pos,
+                                message,
+                                2363, // TS2363
+                            );
+                        } else {
+                            let right_stripped = crate::query_boundaries::common::remove_nullish(
+                                self.ctx.types,
+                                right_type,
+                            );
+                            if !evaluator.is_arithmetic_operand(right_stripped)
+                                && !self.is_enum_type(right_stripped)
+                                && let Some(node) = self.ctx.arena.get(right_idx)
+                            {
+                                let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end - node.pos,
+                                    message,
+                                    2363, // TS2363
+                                );
+                            }
+                        }
+                    }
+                    type_stack.push(TypeId::UNKNOWN);
+                    continue;
+                }
+            }
+
+            // Hot path: exact primitive arithmetic pairs do not require
+            // generic binary-op evaluation.
+            if is_arithmetic_op {
+                let direct_result = match op_str {
+                    "+" | "-" | "*" | "/" | "%" | "**"
+                        if left_type == TypeId::NUMBER && right_type == TypeId::NUMBER =>
+                    {
+                        Some(TypeId::NUMBER)
+                    }
+                    "+" if left_type == TypeId::STRING && right_type == TypeId::STRING => {
+                        Some(TypeId::STRING)
+                    }
+                    "+" | "-" | "*" | "/" | "%" | "**"
+                        if left_type == TypeId::BIGINT && right_type == TypeId::BIGINT =>
+                    {
+                        Some(TypeId::BIGINT)
+                    }
+                    _ => None,
+                };
+
+                if let Some(result_type) = direct_result {
+                    type_stack.push(result_type);
+                    continue;
+                }
+            }
+
+            // TS2469: For relational operators (<, >, <=, >=), emit TS2469 when
+            // operands are symbol-typed. tsc rejects symbol in comparisons.
+            // This must be checked before the evaluator because the comparability
+            // fallback would incorrectly accept `symbol < symbol`.
+            // Also check constraint-resolved types for `S extends symbol`.
+            if matches!(op_str, "<" | ">" | "<=" | ">=") {
+                let resolve_tp = |t: TypeId| -> TypeId {
+                    crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, t)
+                        .filter(|&c| c != TypeId::UNKNOWN && c != t)
+                        .unwrap_or(t)
+                };
+                let left_is_symbol = evaluator.is_symbol_like(left_type)
+                    || evaluator.is_symbol_like(resolve_tp(left_type));
+                let right_is_symbol = evaluator.is_symbol_like(right_type)
+                    || evaluator.is_symbol_like(resolve_tp(right_type));
+                if left_is_symbol || right_is_symbol {
+                    use crate::diagnostics::diagnostic_codes;
+                    let target_idx = if left_is_symbol { left_idx } else { right_idx };
+                    self.error_at_node_msg(
+                        target_idx,
+                        diagnostic_codes::THE_OPERATOR_CANNOT_BE_APPLIED_TO_TYPE_SYMBOL,
+                        &[op_str],
+                    );
+                    type_stack.push(TypeId::BOOLEAN);
+                    continue;
+                }
+            }
+
+            // Evaluate types to resolve unevaluated conditional/mapped types before
+            // passing to the solver. e.g., DeepPartial<number> | number → number
+            let eval_left = self.evaluate_type_for_binary_ops(left_type);
+            let eval_right = self.evaluate_type_for_binary_ops(right_type);
+
+            // TS2362/TS2363: Per-operand validity check for arithmetic operators.
+            // When one operand is `any`, the evaluator returns Success(NUMBER) but tsc
+            // still requires the OTHER operand to be a valid arithmetic type (any, number,
+            // bigint, or enum). Without this pre-check, `any * T` silently passes.
+            if is_arithmetic_op && op_str != "+" && !emitted_nullish_error {
+                let left_any_like = eval_left == TypeId::ANY || eval_left == TypeId::ERROR;
+                let right_any_like = eval_right == TypeId::ANY || eval_right == TypeId::ERROR;
+
+                if left_any_like || right_any_like {
+                    if left_any_like
+                        && !evaluator.is_arithmetic_operand(eval_right)
+                        && !self.is_enum_type(right_type)
+                    {
+                        self.error_at_node(
+                            right_idx,
+                            "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+                            crate::diagnostics::diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                        );
+                    }
+                    if right_any_like
+                        && !evaluator.is_arithmetic_operand(eval_left)
+                        && !self.is_enum_type(left_type)
+                    {
+                        self.error_at_node(
+                            left_idx,
+                            "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
+                            crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
+                        );
+                    }
+                }
+            }
+
+            // For relational operators, widen literal/enum types to their base types
+            // before comparison (matching tsc's getBaseTypeOfLiteralTypeForComparison).
+            // e.g., enum E { A, B } → number, "hello" → string
+            let (cmp_left, cmp_right) = if matches!(op_str, "<" | ">" | "<=" | ">=") {
+                (
+                    crate::query_boundaries::common::get_base_type_for_comparison(
+                        self.ctx.types,
+                        eval_left,
+                    ),
+                    crate::query_boundaries::common::get_base_type_for_comparison(
+                        self.ctx.types,
+                        eval_right,
+                    ),
+                )
+            } else {
+                (eval_left, eval_right)
+            };
+
+            let result = evaluator.evaluate(cmp_left, cmp_right, op_str);
+            let result_type = match result {
+                BinaryOpResult::Success(result_type) => result_type,
+                BinaryOpResult::TypeError { left, right, op } => {
+                    // Check if this is actually valid because we have enum types
+                    // The evaluator doesn't have access to symbol information, so it can't
+                    // detect enum types. We need to check here at the checker layer.
+                    let left_is_enum = self.is_enum_type(left_type);
+                    let right_is_enum = self.is_enum_type(right_type);
+                    let is_arithmetic_op = matches!(op_str, "+" | "-" | "*" | "/" | "%" | "**");
+
+                    // If both operands are enum types and this is an arithmetic operation,
+                    // treat it as valid (enum members are numbers for numeric enums)
+                    if is_arithmetic_op && left_is_enum && right_is_enum {
+                        // For + operation, result is number; for other ops, also number
+                        TypeId::NUMBER
+                    } else if is_arithmetic_op
+                        && left_is_enum
+                        && evaluator.is_arithmetic_operand(right)
+                    {
+                        // Enum op number => number
+                        TypeId::NUMBER
+                    } else if is_arithmetic_op
+                        && right_is_enum
+                        && evaluator.is_arithmetic_operand(left)
+                    {
+                        // Number op enum => number
+                        TypeId::NUMBER
+                    } else if is_arithmetic_op
+                        && self.resolve_indexed_access_binary_op(eval_left, eval_right, op)
+                    {
+                        // IndexAccess types (T[K]) resolved through assignability
+                        // e.g., T[K] where T extends Record<K, number> is number-like
+                        TypeId::NUMBER
+                    } else {
+                        // For equality operators (==, !=, ===, !==), tsc allows comparison
+                        // when the types are comparable (assignable in either direction).
+                        // For relational operators (<, >, <=, >=), tsc requires both
+                        // operands to be assignable to number/bigint/string, or if neither
+                        // is, they must be comparable via the comparable relation.
+                        // cmp_left/cmp_right are widened for relational operators
+                        // (matching tsc's getBaseTypeOfLiteralTypeForComparison) and
+                        // unchanged for equality operators.
+                        let is_comparable = if matches!(op_str, "==" | "!=" | "===" | "!==") {
+                            self.is_type_comparable_to(cmp_left, cmp_right)
+                        } else if matches!(op_str, "<" | ">" | "<=" | ">=") {
+                            if cmp_left == TypeId::ANY || cmp_right == TypeId::ANY {
+                                true
+                            } else {
+                                let number_or_bigint =
+                                    self.ctx.types.union2(TypeId::NUMBER, TypeId::BIGINT);
+                                let left_to_num = self.is_assignable_to(cmp_left, number_or_bigint);
+                                let right_to_num =
+                                    self.is_assignable_to(cmp_right, number_or_bigint);
+
+                                if left_to_num && right_to_num {
+                                    true
+                                } else if !left_to_num && !right_to_num {
+                                    // Use the Comparable relation: bidirectional assignability
+                                    // plus union/intersection decomposition, all-optional
+                                    // property overlap, and constructor-only object checks.
+                                    self.is_type_comparable_to(cmp_left, cmp_right)
+                                } else {
+                                    false
+                                }
+                            }
+                        } else {
+                            false
+                        };
+
+                        if !is_comparable {
+                            // Don't emit errors if either operand is ERROR - prevents cascading errors
+                            if left != TypeId::ERROR && right != TypeId::ERROR {
+                                // For relational ops, use widened types in error messages
+                                // (matching tsc: enum members show as 'number', not 'E').
+                                // For equality/arithmetic ops, use original types so
+                                // widen_type_for_operator_display can preserve enum names.
+                                let (err_left, err_right) =
+                                    if matches!(op_str, "<" | ">" | "<=" | ">=") {
+                                        (cmp_left, cmp_right)
+                                    } else {
+                                        (left_type, right_type)
+                                    };
+                                self.emit_binary_operator_error(
+                                    node_idx,
+                                    left_idx,
+                                    right_idx,
+                                    err_left,
+                                    err_right,
+                                    op,
+                                    emitted_nullish_error,
+                                );
+                            }
+                        }
+                        // Result type depends on operator category and error state:
+                        // - Equality/relational → boolean
+                        // - Arithmetic with error (incompatible types) → any
+                        //   tsc returns `any` for failed arithmetic ops so that
+                        //   downstream checks (e.g., TS2538 for destructuring keys)
+                        //   see `any` rather than a misleading concrete type.
+                        // - Arithmetic without error (comparable) → number
+                        if !is_comparable && is_arithmetic_op {
+                            TypeId::ANY
+                        } else if is_arithmetic_op {
+                            TypeId::NUMBER
+                        } else {
+                            TypeId::BOOLEAN
+                        }
+                    }
+                }
+            };
+
+            // NOTE: TS2367 overlap checking for equality/inequality operators is handled
+            // entirely by the narrowed-type check above (lines 605-624) which uses
+            // `types_have_no_overlap` with `literal_type_from_initializer` narrowing.
+            // A second check using `are_types_overlapping` was removed because it used
+            // raw (unnarrowed) types and a different overlap function, producing false
+            // positives for empty object types ({}) vs type parameters and other cases.
+
+            type_stack.push(result_type);
+        }
+
+        type_stack.pop().unwrap_or(TypeId::UNKNOWN)
+    }
+
+    /// Get the operator name for a unary operator token (for TS17006 error messages).
+    ///
+    /// Returns the string representation of unary operators that are not allowed
+    /// on the left-hand side of exponentiation (`**`).
+    const fn unary_operator_name(op: u16) -> Option<&'static str> {
+        match op {
+            k if k == SyntaxKind::MinusToken as u16 => Some("-"),
+            k if k == SyntaxKind::PlusToken as u16 => Some("+"),
+            k if k == SyntaxKind::TildeToken as u16 => Some("~"),
+            k if k == SyntaxKind::ExclamationToken as u16 => Some("!"),
+            k if k == SyntaxKind::TypeOfKeyword as u16 => Some("typeof"),
+            k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
+            k if k == SyntaxKind::DeleteKeyword as u16 => Some("delete"),
+            _ => None,
+        }
+    }
+
+    /// Find the callable truthiness body for a logical operator expression.
+    ///
+    /// When a logical expression (`&&`, `||`, `??`) is part of an `if` condition,
+    /// this returns the then-branch statement for callable truthiness checking.
+    /// It walks up through nested logical expressions and parentheses to find
+    /// the containing `if` statement.
+    fn find_callable_truthiness_body(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut parent_idx = self.ctx.arena.get_extended(idx)?.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+
+        loop {
+            let parent = self.ctx.arena.get(parent_idx)?;
+            if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                || matches!(
+                    self.ctx.arena.get_binary_expr(parent),
+                    Some(bin)
+                        if bin.operator_token == SyntaxKind::AmpersandAmpersandToken as u16
+                            || bin.operator_token == SyntaxKind::BarBarToken as u16
+                            || bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
+                )
+            {
+                parent_idx = self.ctx.arena.get_extended(parent_idx)?.parent;
+                continue;
+            }
+
+            break if parent.kind == syntax_kind_ext::IF_STATEMENT {
+                self.ctx
+                    .arena
+                    .get_if_statement(parent)
+                    .map(|if_stmt| if_stmt.then_statement)
+            } else {
+                None
+            };
+        }
+    }
+
+    /// If `idx` is a `typeof` expression (`PREFIX_UNARY_EXPRESSION` with `TypeOfKeyword`),
+    /// return the typeof result type:
+    /// `"string" | "number" | "bigint" | "boolean" | "symbol" | "undefined" | "object" | "function"`.
+    /// This is used for TS2367 overlap detection so that comparisons like
+    /// `typeof x == "Object"` (capital O) correctly detect no overlap.
+    fn typeof_result_type_if_typeof(&self, idx: NodeIndex) -> Option<TypeId> {
+        use tsz_scanner::SyntaxKind;
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+        let unary = self.ctx.arena.get_unary_expr(node)?;
+        if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
+            return None;
+        }
+        let factory = self.ctx.types.factory();
+        let members = vec![
+            factory.literal_string("string"),
+            factory.literal_string("number"),
+            factory.literal_string("bigint"),
+            factory.literal_string("boolean"),
+            factory.literal_string("symbol"),
+            factory.literal_string("undefined"),
+            factory.literal_string("object"),
+            factory.literal_string("function"),
+        ];
+        Some(factory.union(members))
+    }
+
+    /// Check if an identifier node's declared type overlaps with the given comparison type.
+    /// Returns true if the identifier's declared type is wider than `narrow_type` and
+    /// has overlap with `other_type`. This prevents false TS2367 when flow narrowing
+    /// inside loops makes the narrowed type too specific (e.g., `0` instead of `0 | 1`).
+    fn declared_type_has_overlap_in_loop(
+        &mut self,
+        comparison_idx: NodeIndex,
+        idx: NodeIndex,
+        narrow_type: TypeId,
+        other_type: TypeId,
+    ) -> bool {
+        if !self.is_inside_loop(comparison_idx) {
+            return false;
+        }
+
+        let node = match self.ctx.arena.get(idx) {
+            Some(n) => n,
+            None => return false,
+        };
+        // Only applies to identifiers
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        // Resolve the identifier to a symbol
+        let sym_id = match self.ctx.binder.resolve_identifier(self.ctx.arena, idx) {
+            Some(s) => s,
+            None => return false,
+        };
+        // Get the symbol's value_declaration and its type (the declared type)
+        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+            Some(s) => s,
+            None => return false,
+        };
+        if symbol.value_declaration.is_none() {
+            return false;
+        }
+        let declared_type = match self.ctx.node_types.get(&symbol.value_declaration.0) {
+            Some(&t) => t,
+            None => return false,
+        };
+        // Only relevant when the declared type is wider than the narrowed type
+        if declared_type == narrow_type {
+            return false;
+        }
+        // Check if the declared type overlaps with the other operand
+        !self.types_have_no_overlap(declared_type, other_type)
+    }
+
+    fn is_inside_loop(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if matches!(
+                parent_node.kind,
+                k if k == syntax_kind_ext::WHILE_STATEMENT
+                    || k == syntax_kind_ext::DO_STATEMENT
+                    || k == syntax_kind_ext::FOR_STATEMENT
+                    || k == syntax_kind_ext::FOR_IN_STATEMENT
+                    || k == syntax_kind_ext::FOR_OF_STATEMENT
+            ) {
+                return true;
+            }
+            current = parent;
+        }
+        false
+    }
+
+    /// Get the primitive type family of a type: `TypeId::STRING` for string/string literals,
+    /// `TypeId::NUMBER` for number/number literals, `TypeId::BOOLEAN` for boolean/boolean literals,
+    /// `TypeId::BIGINT` for bigint/bigint literals, or `TypeId::ERROR` for non-primitive types.
+    ///
+    /// Used to determine if two types are from different primitive families (e.g., string vs number)
+    /// for TS2367 display purposes. When types are from different families, tsc widens literals
+    /// to their base primitive types in error messages.
+    fn get_primitive_family(&self, type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::common::LiteralTypeKind;
+        use crate::query_boundaries::common::{
+            classify_literal_type, is_string_intrinsic_type, is_template_literal_type,
+            is_unique_symbol_type,
+        };
+
+        // Check direct primitive type IDs
+        if type_id == TypeId::STRING
+            || type_id == TypeId::NUMBER
+            || type_id == TypeId::BOOLEAN
+            || type_id == TypeId::BIGINT
+            || type_id == TypeId::SYMBOL
+        {
+            return type_id;
+        }
+
+        // Boolean literal intrinsics (`true` / `false`) belong to the boolean
+        // family. classify_literal_type below short-circuits on intrinsics,
+        // so we'd otherwise miss them and TS2367 cross-family widening
+        // would skip — leaving messages like `'symbol' and 'true'` instead
+        // of tsc's `'symbol' and 'boolean'`.
+        if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+            return TypeId::BOOLEAN;
+        }
+
+        // Check literal types via query boundary
+        match classify_literal_type(self.ctx.types, type_id) {
+            LiteralTypeKind::String(_) => return TypeId::STRING,
+            LiteralTypeKind::Number(_) => return TypeId::NUMBER,
+            LiteralTypeKind::Boolean(_) => return TypeId::BOOLEAN,
+            LiteralTypeKind::BigInt(_) => return TypeId::BIGINT,
+            LiteralTypeKind::NotLiteral => {}
+        }
+
+        // Unique symbol literal types belong to the symbol family.
+        if is_unique_symbol_type(self.ctx.types, type_id) {
+            return TypeId::SYMBOL;
+        }
+
+        // Check template literals and string intrinsics
+        if is_template_literal_type(self.ctx.types, type_id)
+            || is_string_intrinsic_type(self.ctx.types, type_id)
+        {
+            return TypeId::STRING;
+        }
+
+        // Intersections narrow their members; if any member sits in a primitive
+        // family, treat the intersection as belonging to that family (e.g.
+        // `T & number` should count as number-family for TS2367 widening).
+        if let Some(list_id) =
+            crate::query_boundaries::common::intersection_list_id(self.ctx.types, type_id)
+        {
+            for member in self.ctx.types.type_list(list_id).iter() {
+                let family = self.get_primitive_family(*member);
+                if family != TypeId::ERROR {
+                    return family;
+                }
+            }
+        }
+
+        TypeId::ERROR // Non-primitive types
+    }
+
+    /// Widen types for TS2367 display when they are from different primitive families.
+    ///
+    /// tsc's rule: when comparing types from different primitive families (e.g., string vs number),
+    /// both types are widened to their base primitives in the error message. For same-family
+    /// comparisons (e.g., `"foo"` vs `"bar"`), literal types are preserved.
+    fn widen_for_ts2367_cross_family_display(
+        &self,
+        left: TypeId,
+        right: TypeId,
+    ) -> (TypeId, TypeId) {
+        let left_family = self.get_primitive_family(left);
+        let right_family = self.get_primitive_family(right);
+
+        // Both are primitives, but from different families → widen both
+        if left_family != TypeId::ERROR
+            && right_family != TypeId::ERROR
+            && left_family != right_family
+        {
+            (
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, left),
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, right),
+            )
+        } else {
+            // Same family (or non-primitives): preserve literal types
+            (left, right)
+        }
+    }
+
+    /// Check the `instanceof` operator.
+    ///
+    /// Validates:
+    /// - TS2848: RHS is not an instantiation expression
+    /// - TS2358: LHS is of type any, an object type, or a type parameter
+    /// - RHS is assignable to Function or has [Symbol.hasInstance]
+    /// - TS2860/TS2861: Symbol.hasInstance param/return type checks
+    fn check_instanceof_operator(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+        left_type: TypeId,
+        right_type: TypeId,
+    ) -> TypeId {
+        use crate::diagnostics::diagnostic_codes;
+
+        // TS2848: The right-hand side of an instanceof must not be an instantiation expression
+        let unwrapped_right = self.ctx.arena.skip_parenthesized(right_idx);
+        if let Some(right_node) = self.ctx.arena.get(unwrapped_right)
+            && right_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+        {
+            self.error_at_node(
+                unwrapped_right,
+                crate::diagnostics::diagnostic_messages::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_NOT_BE_AN_INSTANTIATION_EXP,
+                diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_NOT_BE_AN_INSTANTIATION_EXP,
+            );
+        }
+
+        // Validate left operand
+        if left_type != TypeId::ERROR {
+            let evaluator =
+                crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
+            let lhs_type = self.declared_instanceof_left_operand_type(left_idx, left_type);
+            if !evaluator.is_valid_instanceof_left_operand(lhs_type) {
+                self.error_at_node_msg(
+                    left_idx,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYP,
+                    &[],
+                );
+            }
+        }
+
+        let eval_right = self.evaluate_type_for_assignability(right_type);
+        if eval_right != TypeId::ERROR {
+            let mut is_valid_rhs = false;
+
+            let func_ty_opt = self.global_function_interface_type_for_instanceof();
+
+            if let Some(func_ty) = func_ty_opt {
+                let evaluator =
+                    crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
+                is_valid_rhs = evaluator.is_valid_instanceof_right_operand(
+                    eval_right,
+                    func_ty,
+                    &mut |src, tgt| self.is_assignable_to(src, tgt),
+                );
+            } else if self.ctx.compiler_options.no_lib {
+                // Under `--noLib`, the global `Function` type is deliberately
+                // absent. tsc suppresses TS2359 in that regime rather than
+                // cascading on every `instanceof X`; mirror that.
+                is_valid_rhs = true;
+            } else if eval_right == TypeId::ANY
+                || eval_right == TypeId::UNKNOWN
+                || eval_right == TypeId::FUNCTION
+            {
+                is_valid_rhs = true;
+            }
+
+            if !is_valid_rhs
+                && self.ctx.is_js_file()
+                && self
+                    .synthesize_js_constructor_instance_type(right_idx, eval_right, &[])
+                    .is_some()
+            {
+                is_valid_rhs = true;
+            }
+
+            // Check for [Symbol.hasInstance] on the RHS type
+            {
+                use crate::query_boundaries::common::PropertyAccessResult;
+                if let PropertyAccessResult::Success {
+                    type_id: has_instance_type,
+                    ..
+                } = self.resolve_property_access_with_env(eval_right, "[Symbol.hasInstance]")
+                {
+                    is_valid_rhs = true;
+                    let sig_info: Option<(Vec<tsz_solver::ParamInfo>, tsz_solver::TypeId)> =
+                        if let Some(fn_id) = crate::query_boundaries::common::function_shape_id(
+                            self.ctx.types,
+                            has_instance_type,
+                        ) {
+                            let shape = self.ctx.types.function_shape(fn_id);
+                            Some((shape.params.clone(), shape.return_type))
+                        } else if let Some(shape_id) =
+                            crate::query_boundaries::common::callable_shape_id(
+                                self.ctx.types,
+                                has_instance_type,
+                            )
+                        {
+                            let shape = self.ctx.types.callable_shape(shape_id);
+                            shape
+                                .call_signatures
+                                .first()
+                                .map(|sig| (sig.params.clone(), sig.return_type))
+                        } else {
+                            None
+                        };
+
+                    if let Some((params, return_type)) = sig_info {
+                        // TS2861: return type must be boolean
+                        let ret = self.evaluate_type_for_assignability(return_type);
+                        if ret != TypeId::BOOLEAN
+                            && ret != TypeId::ANY
+                            && ret != TypeId::ERROR
+                            && !self.is_assignable_to(ret, TypeId::BOOLEAN)
+                        {
+                            self.error_at_node_msg(
+                                right_idx,
+                                diagnostic_codes::AN_OBJECTS_SYMBOL_HASINSTANCE_METHOD_MUST_RETURN_A_BOOLEAN_VALUE_FOR_IT_TO_BE_US,
+                                &[],
+                            );
+                        }
+                        // TS2860: LHS must be assignable to first parameter
+                        if let Some(first_param) = params.first() {
+                            let param_type =
+                                self.evaluate_type_for_assignability(first_param.type_id);
+                            let lhs_type =
+                                self.declared_instanceof_left_operand_type(left_idx, left_type);
+                            if lhs_type != TypeId::ANY
+                                && lhs_type != TypeId::ERROR
+                                && param_type != TypeId::ANY
+                                && param_type != TypeId::UNKNOWN
+                                && param_type != TypeId::ERROR
+                                && !self.is_assignable_to(lhs_type, param_type)
+                            {
+                                self.error_at_node_msg(
+                                    left_idx,
+                                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_ASSIGNABLE_TO_THE_FIRST_A,
+                                    &[],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !is_valid_rhs {
+                self.error_at_node_msg(
+                    right_idx,
+                    diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_EITHER_OF_TYPE_ANY_A_CLA,
+                    &[],
+                );
+            }
+        }
+
+        TypeId::BOOLEAN
+    }
+
+    /// Check the `in` operator.
+    ///
+    /// Validates:
+    /// - TS18046: RHS is not `unknown`
+    /// - TS2322: RHS is assignable to object
+    /// - TS2638: RHS may not represent a primitive value
+    fn check_in_operator(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+        right_type: TypeId,
+    ) -> TypeId {
+        // TS1451: Private identifiers must be the direct LHS of `in`, not wrapped
+        // in parentheses. `(#field) in v` is invalid — #field is a standalone expression.
+        // Skip through parens to find if the LHS contains a private identifier.
+        let left_stripped = self.ctx.arena.skip_parenthesized_and_assertions(left_idx);
+        let left_node_kind = self
+            .ctx
+            .arena
+            .get(left_stripped)
+            .map(|n| n.kind)
+            .unwrap_or(0);
+        if left_node_kind == SyntaxKind::PrivateIdentifier as u16 && left_stripped != left_idx {
+            // TS1451: private identifier wrapped in parens is a standalone expression
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                left_stripped,
+                diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_ONLY_ALLOWED_IN_CLASS_BODIES_AND_MAY_ONLY_BE_USED_AS_PAR,
+                &[],
+            );
+        } else if left_node_kind == SyntaxKind::PrivateIdentifier as u16 {
+            // Direct private identifier as LHS — validate it
+            self.check_private_identifier_in_expression(left_stripped, right_idx, right_type);
+        }
+
+        // TS18047/TS18049: RHS of `in` must not be possibly null (or null|undefined).
+        // When strict null checks is enabled and the RHS includes null, emit TS18047.
+        // tsc only emits this when there is a name for the expression (identifier etc.).
+        if self.ctx.compiler_options.strict_null_checks && right_type != TypeId::UNKNOWN {
+            let (_, nullish_cause) = self.split_nullish_type(right_type);
+            if let Some(cause) = nullish_cause {
+                // Only emit for null-involving cases (not pure undefined).
+                // TS18047 = "is possibly null", TS18049 = "is possibly null or undefined"
+                let includes_null = cause == TypeId::NULL
+                    || (cause != TypeId::UNDEFINED
+                        && crate::query_boundaries::common::union_members(self.ctx.types, cause)
+                            .is_some_and(|members| members.contains(&TypeId::NULL)));
+                if includes_null {
+                    let name = self.expression_text(right_idx);
+                    if let Some(ref name) = name {
+                        use crate::diagnostics::diagnostic_codes;
+                        let code = if cause == TypeId::NULL {
+                            diagnostic_codes::IS_POSSIBLY_NULL
+                        } else {
+                            diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
+                        };
+                        self.emit_render_request(
+                            right_idx,
+                            crate::error_reporter::DiagnosticRenderRequest::simple_msg(
+                                code,
+                                &[name],
+                            ),
+                        );
+                    }
+                    return TypeId::BOOLEAN;
+                }
+            }
+        }
+
+        if right_type == TypeId::UNKNOWN {
+            self.error_is_of_type_unknown(right_idx);
+        } else {
+            let type_may_represent_primitive = self.type_may_represent_primitive(right_type);
+            let truthiness_narrowed_unknown = self
+                .truthiness_narrowed_from_unknown(right_idx, right_type)
+                && !self.in_rhs_has_typeof_object_guard(right_idx);
+            if type_may_represent_primitive || truthiness_narrowed_unknown {
+                let truthiness_guarded_type_parameter = self
+                    .in_rhs_is_type_parameter_assignability_shape(right_type)
+                    && self.in_rhs_has_direct_truthiness_guard(right_idx);
+                // tsc reports TS2322 ("Type 'T' is not assignable to type
+                // 'object'") rather than TS2638 ("may represent a primitive
+                // value") for type-parameter-shaped RHS values: bare `T`,
+                // unions of type parameters (`T | U`), unions mixing type
+                // parameters with primitives (`string | number | T`), and
+                // intersections of type parameters (`T & U`,
+                // `T & (0 | 1 | 2)`). Intersections with empty-object
+                // constraint shapes (`T & {}`, `NonNullable<T>` aliases)
+                // keep the existing TS2638 path because tsc emits that code
+                // with a `NonNullable<T>`-style message rather than a bare
+                // assignability failure.
+                if self.in_rhs_is_type_parameter_assignability_shape(right_type)
+                    && !truthiness_guarded_type_parameter
+                {
+                    let _ = self.check_assignable_or_report_at_exact_anchor(
+                        right_type,
+                        TypeId::OBJECT,
+                        right_idx,
+                        right_idx,
+                    );
+                } else {
+                    let type_str = if truthiness_narrowed_unknown {
+                        "{}".to_string()
+                    } else {
+                        self.format_apparent_type_for_in_operator(right_type)
+                    };
+                    let code = tsz_common::diagnostics::diagnostic_codes::TYPE_MAY_REPRESENT_A_PRIMITIVE_VALUE_WHICH_IS_NOT_PERMITTED_AS_THE_RIGHT_OPERAND;
+                    self.error_at_node_msg(right_idx, code, &[&type_str]);
+                }
+            } else if !self.is_valid_in_operator_rhs(right_type) {
+                // Route through the check_assignable_or_report(...) gateway family
+                // so computation-layer mismatches stay on the centralized path.
+                let _ = self.check_assignable_or_report_at_exact_anchor(
+                    right_type,
+                    TypeId::OBJECT,
+                    right_idx,
+                    right_idx,
+                );
+            }
+        }
+
+        TypeId::BOOLEAN
+    }
+
+    /// Check a binary operation with `IndexAccess` operands is valid through assignability.
+    fn resolve_indexed_access_binary_op(&mut self, left: TypeId, right: TypeId, op: &str) -> bool {
+        let left_is_index_access =
+            crate::query_boundaries::common::is_index_access_type(self.ctx.types, left);
+        let right_is_index_access =
+            crate::query_boundaries::common::is_index_access_type(self.ctx.types, right);
+
+        if !left_is_index_access && !right_is_index_access {
+            return false;
+        }
+
+        match op {
+            "+" | "-" | "*" | "/" | "%" | "**" => {
+                let left_ok = crate::query_boundaries::type_computation::core::is_arithmetic_operand(
+                    self.ctx.types,
+                    left,
+                )
+                    || left_is_index_access && self.is_assignable_to(left, TypeId::NUMBER);
+                let right_ok =
+                    crate::query_boundaries::type_computation::core::is_arithmetic_operand(
+                        self.ctx.types,
+                        right,
+                    ) || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
+                left_ok && right_ok
+            }
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "binary_tests.rs"]
+mod tests;

@@ -1,0 +1,3074 @@
+//! Property-related error reporting (TS2339, TS2741, TS2540, TS7053, TS18046).
+
+use crate::diagnostics::diagnostic_codes;
+use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, DiagnosticRenderRequest};
+use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
+use crate::query_boundaries::common as query;
+use crate::state::CheckerState;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
+
+impl<'a> CheckerState<'a> {
+    fn property_type_has_array_like_length(&self, type_id: TypeId) -> bool {
+        let kind = crate::query_boundaries::type_checking_utilities::classify_array_like(
+            self.ctx.types,
+            type_id,
+        );
+        match kind {
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Array(_)
+            | crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Tuple => true,
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Readonly(inner) => {
+                self.property_type_has_array_like_length(inner)
+            }
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Union(members) => {
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|&member| self.property_type_has_array_like_length(member))
+            }
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Intersection(
+                members,
+            ) => members
+                .iter()
+                .any(|&member| self.property_type_has_array_like_length(member)),
+            crate::query_boundaries::type_checking_utilities::ArrayLikeKind::Other => false,
+        }
+    }
+
+    fn is_global_this_surface_type(&self, type_id: TypeId) -> bool {
+        let Some(shape) = query::object_shape_for_type(self.ctx.types, type_id) else {
+            return false;
+        };
+
+        let has_global_this = shape.properties.iter().any(|prop| {
+            self.ctx.types.resolve_atom(prop.name) == "globalThis"
+                && prop.type_id == TypeId::UNKNOWN
+        });
+        let has_global_value = shape.properties.iter().any(|prop| {
+            matches!(
+                self.ctx.types.resolve_atom(prop.name).as_str(),
+                "Array" | "Object" | "String" | "Number" | "Boolean" | "Function"
+            )
+        });
+
+        has_global_this && has_global_value && shape.string_index.is_none()
+    }
+
+    fn fresh_empty_object_member_for_missing_union(
+        &mut self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, object_type)?;
+        let mut saw_present_member = false;
+        let mut fresh_empty_member = None;
+
+        for &member in members.iter() {
+            if member.is_nullable() {
+                continue;
+            }
+
+            let evaluated_member = self.evaluate_application_type(member);
+            let resolved_member = self.resolve_type_for_property_access(evaluated_member);
+            match self.resolve_property_access_with_env(resolved_member, property_name) {
+                crate::query_boundaries::common::PropertyAccessResult::Success { .. }
+                | crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: Some(_),
+                    ..
+                } => {
+                    saw_present_member = true;
+                }
+                crate::query_boundaries::common::PropertyAccessResult::PropertyNotFound { .. } => {
+                    if crate::query_boundaries::common::is_empty_object_type(
+                        self.ctx.types,
+                        resolved_member,
+                    ) && crate::query_boundaries::common::is_fresh_object_type(
+                        self.ctx.types,
+                        resolved_member,
+                    ) {
+                        fresh_empty_member = Some(resolved_member);
+                    }
+                }
+                crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+                    property_type: None,
+                    ..
+                }
+                | crate::query_boundaries::common::PropertyAccessResult::IsUnknown => {}
+            }
+        }
+
+        if saw_present_member {
+            fresh_empty_member
+        } else {
+            None
+        }
+    }
+
+    fn is_unshadowed_global_object_identifier(&self, idx: NodeIndex) -> bool {
+        let Some(base_ident) = self.ctx.arena.get_identifier_at(idx) else {
+            return false;
+        };
+        if base_ident.escaped_text != "Object" {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) else {
+            return true;
+        };
+        if self.known_global_value_has_local_shadow(idx, "Object") {
+            return false;
+        }
+        self.ctx.symbol_is_from_actual_lib(sym_id) || self.ctx.symbol_is_from_lib(sym_id)
+    }
+
+    fn should_suppress_excess_property_for_target(&mut self, target: TypeId) -> bool {
+        [target, self.evaluate_type_for_assignability(target)]
+            .into_iter()
+            .filter_map(|candidate| {
+                crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
+            })
+            .any(|members| {
+                members.iter().any(|member| {
+                    let evaluated_member = self.evaluate_type_for_assignability(*member);
+                    crate::query_boundaries::common::is_primitive_type(
+                        self.ctx.types,
+                        evaluated_member,
+                    ) || crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        evaluated_member,
+                    )
+                })
+            })
+    }
+
+    fn excess_property_target_annotation_for_site(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<(String, bool, Option<NodeIndex>)> {
+        let mut current = idx;
+        let mut from_nested_container = false;
+        loop {
+            let info = self.ctx.arena.node_info(current)?;
+            let parent_idx = info.parent;
+            let parent = self.ctx.arena.get(parent_idx)?;
+            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent)
+                && var_decl.initializer == current
+                && var_decl.type_annotation.is_some()
+            {
+                return self.node_text(var_decl.type_annotation).and_then(|text| {
+                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
+                        .map(|text| (text, from_nested_container, Some(var_decl.type_annotation)))
+                });
+            }
+            if parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                let grandparent_idx = self.ctx.arena.node_info(parent_idx)?.parent;
+                let grandparent = self.ctx.arena.get(grandparent_idx)?;
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(grandparent)
+                    && var_decl.initializer == parent_idx
+                    && var_decl.type_annotation.is_some()
+                {
+                    return self.node_text(var_decl.type_annotation).and_then(|text| {
+                        self.sanitize_type_annotation_text_for_diagnostic(text, true)
+                            .map(|text| {
+                                (text, from_nested_container, Some(var_decl.type_annotation))
+                            })
+                    });
+                }
+                if let Some(jsdoc_satisfies_text) =
+                    self.jsdoc_satisfies_type_text_for_node(parent_idx)
+                {
+                    return Some((jsdoc_satisfies_text, from_nested_container, None));
+                }
+                if matches!(
+                    grandparent.kind,
+                    syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                ) {
+                    from_nested_container = true;
+                    current = grandparent_idx;
+                    continue;
+                }
+                return None;
+            }
+            if matches!(
+                parent.kind,
+                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            ) {
+                from_nested_container = true;
+            }
+            current = parent_idx;
+        }
+    }
+
+    fn excess_property_target_display_for_site(
+        &mut self,
+        target: TypeId,
+        idx: NodeIndex,
+    ) -> String {
+        let inferred_display = self
+            .format_pick_over_all_keys_as_keyof(target)
+            .unwrap_or_else(|| self.format_excess_property_target_type(target));
+        if let Some((annotation_text, annotation_from_nested_container, annotation_type_node)) =
+            self.excess_property_target_annotation_for_site(idx)
+        {
+            let annotation_display = self.format_annotation_like_type(&annotation_text);
+            if self.excess_property_site_is_nested_in_nested_array_literal(idx) {
+                return annotation_display;
+            }
+            if inferred_display.starts_with('{') && annotation_display.contains("object &") {
+                return annotation_display;
+            }
+            if inferred_display.starts_with('{')
+                && !annotation_display.contains('|')
+                && !annotation_display.contains("object")
+                && annotation_display.contains('&')
+            {
+                return annotation_display;
+            }
+            if annotation_display.contains('|')
+                && Self::same_simple_alias_array_union_display(
+                    &annotation_display,
+                    &inferred_display,
+                )
+            {
+                return annotation_display;
+            }
+            // When the inferred display is an anonymous object but the annotation is a
+            // generic type alias (e.g. `Record<K, V>`, `Partial<T>`), prefer the annotation.
+            // Only apply for generic types (containing `<`) — plain identifiers like `Item`
+            // may resolve to union types, in which case tsc shows the specific union member.
+            if inferred_display.starts_with('{')
+                && annotation_display.contains('<')
+                && !annotation_display.contains('|')
+                && annotation_display
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            {
+                return annotation_display;
+            }
+            // When the annotation is a generic application (e.g. `Partial<Record<Keys, unknown>>`)
+            // and the inferred display is the same generic application but with one or more
+            // type arguments expanded past their alias name (e.g.
+            // `Partial<Record<"a" | "b" | "c" | "d", unknown>>`), prefer the annotation.
+            // tsc preserves the user-written alias in the type-argument position.
+            // Match by checking that both displays start with the same outer
+            // identifier (alphanumeric/underscore prefix) followed by `<`.
+            if let (Some(ann_prefix), Some(inf_prefix)) = (
+                Self::generic_application_outer_name(&annotation_display),
+                Self::generic_application_outer_name(&inferred_display),
+            ) && ann_prefix == inf_prefix
+                && !annotation_display.contains('|')
+            {
+                return annotation_display;
+            }
+            if Self::is_plain_type_alias_display(&annotation_display)
+                && annotation_from_nested_container
+                && annotation_type_node
+                    .is_some_and(|type_node| self.annotation_type_resolves_to_union(type_node))
+                && annotation_display != inferred_display
+                && !inferred_display.contains('|')
+            {
+                return annotation_display;
+            }
+        }
+        inferred_display
+    }
+
+    fn same_simple_alias_array_union_display(left: &str, right: &str) -> bool {
+        fn normalized(display: &str) -> Option<(&str, &str)> {
+            let mut parts = display.split(" | ");
+            let first = parts.next()?.trim();
+            let second = parts.next()?.trim();
+            if parts.next().is_some() {
+                return None;
+            }
+            if let Some(base) = first.strip_suffix("[]")
+                && base == second
+            {
+                return Some((base, first));
+            }
+            if let Some(base) = second.strip_suffix("[]")
+                && base == first
+            {
+                return Some((base, second));
+            }
+            None
+        }
+
+        match (normalized(left), normalized(right)) {
+            (Some(l), Some(r)) => l == r,
+            _ => false,
+        }
+    }
+
+    fn is_plain_type_alias_display(display: &str) -> bool {
+        let mut chars = display.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first.is_ascii_alphabetic() || first == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    fn annotation_type_resolves_to_union(&mut self, type_node: NodeIndex) -> bool {
+        let type_id = self.get_type_from_type_node(type_node);
+        [
+            type_id,
+            self.resolve_ref_type(type_id),
+            self.evaluate_type_with_env(type_id),
+            self.resolve_type_for_property_access(type_id),
+        ]
+        .into_iter()
+        .any(|candidate| query::union_members(self.ctx.types, candidate).is_some())
+    }
+
+    fn excess_property_site_is_nested_in_nested_array_literal(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        loop {
+            let Some(parent_idx) = self.ctx.arena.parent_of(current) else {
+                return false;
+            };
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                let mut array_depth = 0;
+                let mut container_idx = parent_idx;
+                while let Some(grandparent_idx) = self.ctx.arena.parent_of(container_idx)
+                    && let Some(grandparent) = self.ctx.arena.get(grandparent_idx)
+                    && grandparent.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                {
+                    array_depth += 1;
+                    container_idx = grandparent_idx;
+                }
+                return array_depth >= 2;
+            }
+            current = parent_idx;
+        }
+    }
+
+    /// If `display` looks like a generic application of the form `Name<...>`
+    /// (with `Name` an identifier of letters/digits/underscores), return the
+    /// outer name. Otherwise return `None`.
+    fn generic_application_outer_name(display: &str) -> Option<&str> {
+        let lt_idx = display.find('<')?;
+        let prefix = &display[..lt_idx];
+        if prefix.is_empty() {
+            return None;
+        }
+        let mut chars = prefix.chars();
+        let first = chars.next()?;
+        if !(first.is_ascii_alphabetic() || first == '_') {
+            return None;
+        }
+        if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return None;
+        }
+        Some(prefix)
+    }
+
+    fn format_pick_over_all_keys_as_keyof(&mut self, target: TypeId) -> Option<String> {
+        if !self.ctx.has_lib_loaded() || self.ctx.actual_lib_file_count == 0 {
+            return None;
+        }
+        let (base, args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target).or_else(
+                || {
+                    let alias = self.ctx.types.get_display_alias(target)?;
+                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                },
+            )?;
+        if args.len() != 2 {
+            return None;
+        }
+        let base_def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)?;
+        let is_actual_lib_pick = self
+            .ctx
+            .actual_lib_def_id_for_bare_name("Pick")
+            .is_some_and(|def_id| def_id == base_def_id)
+            || self
+                .ctx
+                .def_symbol_identity(base_def_id)
+                .is_some_and(|(sym_id, _)| {
+                    self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                        && self
+                            .get_symbol_globally(sym_id)
+                            .is_some_and(|symbol| symbol.escaped_name == "Pick")
+                });
+        if !is_actual_lib_pick {
+            return None;
+        }
+
+        let object_type = args[0];
+        let key_type = args[1];
+        let evaluated_object_type = self.evaluate_type_with_env(object_type);
+        let shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
+                .or_else(|| {
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        evaluated_object_type,
+                    )
+                })?;
+        let evaluated_key_type = self.evaluate_type_with_env(key_type);
+        let keys =
+            crate::query_boundaries::common::union_members(self.ctx.types, evaluated_key_type)
+                .or_else(|| {
+                    crate::query_boundaries::common::union_members(self.ctx.types, key_type)
+                })
+                .unwrap_or_else(|| vec![evaluated_key_type]);
+        if keys.len() != shape.properties.len() {
+            return None;
+        }
+        let mut key_atoms = keys
+            .iter()
+            .copied()
+            .map(|key| crate::query_boundaries::common::string_literal_value(self.ctx.types, key))
+            .collect::<Option<Vec<_>>>()?;
+        key_atoms.sort_unstable();
+        let mut prop_atoms = shape
+            .properties
+            .iter()
+            .map(|prop| prop.name)
+            .collect::<Vec<_>>();
+        prop_atoms.sort_unstable();
+        if key_atoms != prop_atoms {
+            return None;
+        }
+
+        let object_display = self.format_type_diagnostic(object_type);
+        Some(format!("Pick<{object_display}, keyof {object_display}>"))
+    }
+
+    pub(crate) fn excess_property_diagnostic_message(
+        &mut self,
+        prop_name: &str,
+        target: TypeId,
+        idx: NodeIndex,
+    ) -> (u32, String) {
+        let type_str = self.excess_property_target_display_for_site(target, idx);
+        let suggestion_target = self.strip_non_object_union_members_for_excess_display(target);
+        if !self.has_syntax_parse_errors()
+            && let Some(suggestion) = self
+                .find_similar_property(prop_name, suggestion_target)
+                .or_else(|| self.find_similar_property(prop_name, target))
+        {
+            return (
+                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
+                format!(
+                    "Object literal may only specify known properties, but '{prop_name}' does not exist in type '{type_str}'. Did you mean to write '{suggestion}'?"
+                ),
+            );
+        }
+
+        (
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+            format!(
+                "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{type_str}'."
+            ),
+        )
+    }
+
+    pub(super) fn access_receiver_for_diagnostic_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+        {
+            return Some(
+                self.ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(access.expression),
+            );
+        }
+
+        self.ctx
+            .arena
+            .node_info(idx)
+            .and_then(|info| self.ctx.arena.get(info.parent))
+            .and_then(|parent| self.ctx.arena.get_access_expr(parent))
+            .map(|access| {
+                self.ctx
+                    .arena
+                    .skip_parenthesized_and_assertions(access.expression)
+            })
+    }
+
+    fn object_literal_initializer_display_type_for_receiver(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(receiver)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol.value_declaration;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let init = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(decl.initializer);
+        let init_node = self.ctx.arena.get(init)?;
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let init_type = self.get_type_of_node(init);
+        let init_type = self.resolve_type_for_property_access(init_type);
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, init_type)
+            .filter(|shape| shape.symbol.is_none())
+            .map(|_| init_type)
+    }
+
+    fn object_rest_this_omit_display_for_receiver(&mut self, idx: NodeIndex) -> Option<String> {
+        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(receiver)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl_idx = symbol.value_declaration;
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == SyntaxKind::Identifier as u16 {
+            let ext = self.ctx.arena.get_extended(decl_idx)?;
+            decl_idx = ext.parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if decl_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+            return None;
+        }
+        let binding_element = self.ctx.arena.get_binding_element(decl_node)?;
+        if !binding_element.dot_dot_dot_token {
+            return None;
+        }
+
+        let binding_ext = self.ctx.arena.get_extended(decl_idx)?;
+        let pattern_idx = binding_ext.parent;
+        let pattern_node = self.ctx.arena.get(pattern_idx)?;
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+
+        let pattern_ext = self.ctx.arena.get_extended(pattern_idx)?;
+        let var_decl_node = self.ctx.arena.get(pattern_ext.parent)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(var_decl_node)?;
+        let init_idx = self.ctx.arena.skip_parenthesized(var_decl.initializer);
+        let init_node = self.ctx.arena.get(init_idx)?;
+        if init_node.kind != SyntaxKind::ThisKeyword as u16 {
+            return None;
+        }
+
+        let parent_type = self.get_type_of_node(init_idx);
+        let mut keys = self.collect_unspreadable_prototype_names_from(parent_type);
+        for name in self.collect_non_rest_property_names(pattern_idx) {
+            if !keys.iter().any(|k| k == &name) {
+                keys.push(name);
+            }
+        }
+        if keys.is_empty() {
+            return None;
+        }
+
+        let key_display = keys
+            .iter()
+            .map(|key| format!("\"{key}\""))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        Some(format!("Omit<this, {key_display}>"))
+    }
+
+    fn js_constructor_receiver_display_for_node(&mut self, idx: NodeIndex) -> Option<String> {
+        if !self.is_js_file() {
+            return None;
+        }
+
+        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind == SyntaxKind::ThisKeyword as u16 {
+            // Prefer the prototype-owner expression when `this` lives inside a
+            // method assigned to a `Foo.prototype.x = function() { ... }` chain.
+            if let Some(owner) = self
+                .find_enclosing_non_arrow_function(receiver)
+                .and_then(|func_idx| self.js_prototype_owner_expression_for_node(func_idx))
+                .and_then(|owner_expr| {
+                    self.js_prototype_owner_function_target(owner_expr)
+                        .map(|_| owner_expr)
+                })
+                .and_then(|owner_expr| self.expression_text(owner_expr))
+            {
+                return Some(owner);
+            }
+            if let Some(owner) = self
+                .find_enclosing_non_arrow_function(receiver)
+                .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))
+                .and_then(|lhs_idx| {
+                    let lhs_node = self.ctx.arena.get(lhs_idx)?;
+                    if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let access = self.ctx.arena.get_access_expr(lhs_node)?;
+                    let receiver_node = self.ctx.arena.get(access.expression)?;
+                    if receiver_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || receiver_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let sym_id =
+                        self.resolve_identifier_symbol(access.expression)
+                            .or_else(|| {
+                                self.expression_text(access.expression)
+                                    .and_then(|text| self.ctx.binder.file_locals.get(text.as_str()))
+                            })?;
+                    let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                    self.ctx
+                        .arena
+                        .get(symbol.value_declaration)
+                        .is_some_and(|decl| decl.is_function_like())
+                        .then(|| self.expression_text(access.expression))
+                        .flatten()
+                })
+            {
+                return Some(format!("typeof {owner}"));
+            }
+            if let Some(owner) = self
+                .find_enclosing_non_arrow_function(receiver)
+                .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))
+                .and_then(|lhs_idx| {
+                    let lhs_node = self.ctx.arena.get(lhs_idx)?;
+                    if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    {
+                        return None;
+                    }
+                    let lhs_access = self.ctx.arena.get_access_expr(lhs_node)?;
+                    if self
+                        .ctx
+                        .arena
+                        .get(lhs_access.expression)
+                        .and_then(|owner_node| self.ctx.arena.get_access_expr(owner_node))
+                        .and_then(|owner_access| {
+                            self.ctx
+                                .arena
+                                .get_identifier_at(owner_access.name_or_argument)
+                        })
+                        .is_some_and(|ident| ident.escaped_text == "prototype")
+                    {
+                        return None;
+                    }
+                    let owner_text = self.expression_text(lhs_access.expression)?;
+                    let owner_sym = self
+                        .resolve_identifier_symbol(lhs_access.expression)
+                        .or_else(|| self.resolve_qualified_symbol(lhs_access.expression))?;
+                    let owner_symbol = self.ctx.binder.get_symbol(owner_sym)?;
+                    if owner_symbol.has_any_flags(
+                        tsz_binder::symbol_flags::FUNCTION | tsz_binder::symbol_flags::CLASS,
+                    ) {
+                        Some(format!("typeof {owner_text}"))
+                    } else {
+                        None
+                    }
+                })
+            {
+                return Some(owner);
+            }
+            // Fallback: a top-level (or nested) JS function with expando
+            // assignments uses the function's own name as the apparent type
+            // for `this`. tsc displays `Property 'X' does not exist on type
+            // 'fn-name'` rather than the inferred expando object shape.
+            //
+            // Suppress the fallback when the function has an explicit JSDoc
+            // `@type` annotation that gives it a callable type — the user
+            // typed the function so the apparent `this` is whatever the
+            // annotation declares (e.g. `(this: Foo) => void`), not the
+            // function's own name.
+            let func_idx = self.find_enclosing_non_arrow_function(receiver)?;
+            if self
+                .jsdoc_callable_type_annotation_for_node(func_idx)
+                .is_some()
+                || self
+                    .get_jsdoc_for_function(func_idx)
+                    .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"))
+            {
+                return None;
+            }
+            let func_node = self.ctx.arena.get(func_idx)?;
+            if func_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
+                && func_node.kind != tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                return None;
+            }
+            let func_data = self.ctx.arena.get_function(func_node)?;
+            let name_node = self.ctx.arena.get(func_data.name)?;
+            return self
+                .ctx
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+        if receiver_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(receiver)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol.value_declaration;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let init = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(decl.initializer);
+        let init_node = self.ctx.arena.get(init)?;
+        if init_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return None;
+        }
+
+        let new_expr = self.ctx.arena.get_call_expr(init_node)?;
+        let ctor_expr = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(new_expr.expression);
+        let ctor_node = self.ctx.arena.get(ctor_expr)?;
+
+        if ctor_node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(ctor_node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+
+        if ctor_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(ctor_node)?;
+            let name = self.ctx.arena.get(access.name_or_argument)?;
+            return self
+                .ctx
+                .arena
+                .get_identifier(name)
+                .map(|ident| ident.escaped_text.clone());
+        }
+
+        None
+    }
+
+    /// When `type_id` is a `Lazy(DefId)` for a `TypeAlias` whose evaluated body
+    /// is an `Enum`, return the enum's nominal name. Returns `None` when the
+    /// receiver is not such an alias.
+    fn alias_to_enum_display_name(&mut self, type_id: TypeId) -> Option<String> {
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return None;
+        }
+        let evaluated = self.evaluate_type_for_assignability(type_id);
+        let enum_def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, evaluated)?;
+        let sym_id = self.ctx.def_to_symbol_id(enum_def_id)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        Some(symbol.escaped_name.to_string())
+    }
+
+    fn annotation_uses_module_local_array_type(&self, annotation: &str) -> bool {
+        let trimmed = annotation.trim_start();
+        let Some(name) = trimmed.strip_prefix("Array<").map(|_| "Array").or_else(|| {
+            trimmed
+                .strip_prefix("ReadonlyArray<")
+                .map(|_| "ReadonlyArray")
+        }) else {
+            return false;
+        };
+        if !self.ctx.binder.is_external_module() {
+            return false;
+        }
+
+        self.ctx.binder.file_locals.get(name).is_some_and(|sym_id| {
+            !self.ctx.symbol_is_from_actual_lib(sym_id)
+                && self.symbol_has_declared_type_meaning(sym_id)
+        })
+    }
+
+    fn property_receiver_display_for_node(&mut self, type_id: TypeId, idx: NodeIndex) -> String {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
+            return name;
+        }
+        if let Some(name) = self.object_rest_this_omit_display_for_receiver(idx) {
+            return name;
+        }
+        if let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
+            && self
+                .ctx
+                .arena
+                .get(receiver)
+                .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+            && !self.is_this_in_nested_function_without_own_this_binding(receiver)
+            && self.current_this_type() == Some(type_id)
+            && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+                .is_some()
+            && let Some(class_idx) = self.nearest_enclosing_class(receiver)
+        {
+            let class_name = self.get_class_name_with_type_params_from_decl(class_idx);
+            return if class_name == "<anonymous>" {
+                "(Anonymous class)".to_string()
+            } else {
+                class_name
+            };
+        }
+        // When the receiver has a declared type annotation, prefer the source-text
+        // annotation for the property-receiver display in cases where tsz's
+        // type representation has evaluated past the user-written form:
+        //   - generic instantiations (`Bar<Foo>`),
+        //   - simple aliases (`Bar` where `type Bar = Omit<Foo, "c">`),
+        //   - intersection annotations like `Window & typeof globalThis`
+        //     (which tsz collapses to a single member during property-access
+        //     evaluation; the source text faithfully preserves all members).
+        // Skip annotations containing `{` (inline object literals need the
+        // proper type formatter to add `| undefined` for optional members).
+        // Also skip reduced intersections: tsc displays `never` for impossible
+        // intersections like `A & B` with conflicting private fields or
+        // discriminants, not the unreduced source annotation.
+        // We deliberately do NOT trigger on `|` annotations because flow
+        // narrowing legitimately replaces a union receiver with its picked
+        // member, and the narrowed display is what tsc shows.
+        let receiver_reduces_to_never = self.evaluate_type_for_assignability(type_id).is_never();
+        if let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
+            && let Some(annotation) = self.declared_type_annotation_text_for_expression(receiver)
+            && annotation
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+            && !annotation.contains('{')
+            && !annotation.contains('|')
+            && !matches!(annotation.trim(), "any" | "unknown")
+            && !receiver_reduces_to_never
+            && crate::query_boundaries::common::union_members(self.ctx.types, type_id).is_none()
+            && (crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
+                || self.ctx.types.get_display_alias(type_id).is_some()
+                || annotation.contains('&'))
+        {
+            // Use the source-text annotation for both generic instantiations
+            // (`bar: Bar<Foo>` → `Bar<Foo>`) and simple-alias instantiations
+            // (`bar: Bar` where `type Bar = Omit<Foo, "c">` → `Bar`). tsc
+            // preserves the alias name in TS2339 even for non-generic aliases;
+            // tsz's `display_alias` only tracks one level back to the
+            // Application, so without this annotation-bridge we expand to
+            // `Omit<Foo, "c">` instead.
+            //
+            // Skip annotations that contain inline object literal types
+            // (`Required<{ a?: 1; x: 1 }>`) — those need the proper type
+            // formatter to add `| undefined` for optional properties.
+            if self.annotation_uses_module_local_array_type(&annotation) {
+                return annotation.trim().to_string();
+            }
+            return self.format_annotation_like_type(&annotation);
+        }
+        // When the receiver is a type alias whose body resolves to an Enum
+        // (e.g. `type C1 = Color` where `Color` is an enum), tsc displays the
+        // underlying enum's nominal name in TS2339 messages, not the alias.
+        // The default type formatter follows the Lazy(DefId) directly to the
+        // alias name, producing `'C1'` instead of `'Color'`.
+        if let Some(enum_name) = self.alias_to_enum_display_name(type_id) {
+            return enum_name;
+        }
+        if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
+            && let Some(constraint) =
+                crate::query_boundaries::property_access::type_parameter_constraint(
+                    self.ctx.types,
+                    type_id,
+                )
+        {
+            let access_target_idx = self
+                .ctx
+                .arena
+                .get_extended(idx)
+                .map(|ext| ext.parent)
+                .and_then(|parent_idx| {
+                    self.ctx.arena.get(parent_idx).and_then(|node| {
+                        ((node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                            && self
+                                .ctx
+                                .arena
+                                .get_access_expr(node)
+                                .is_some_and(|access| access.name_or_argument == idx))
+                        .then_some(parent_idx)
+                    })
+                })
+                .unwrap_or(idx);
+            let is_direct_write_target = self
+                .ctx
+                .arena
+                .get_extended(access_target_idx)
+                .map(|ext| ext.parent)
+                .and_then(|parent_idx| {
+                    self.ctx
+                        .arena
+                        .get(parent_idx)
+                        .map(|node| (parent_idx, node))
+                })
+                .is_some_and(|(parent_idx, parent_node)| {
+                    if (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                        && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+                        && access.expression == access_target_idx
+                    {
+                        return false;
+                    }
+
+                    if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                        && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+                    {
+                        return binary.left == access_target_idx
+                            && self.is_assignment_operator(binary.operator_token);
+                    }
+
+                    if (parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                        || parent_node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+                        && let Some(unary) = self.ctx.arena.get_unary_expr(parent_node)
+                    {
+                        return unary.operator == SyntaxKind::PlusPlusToken as u16
+                            || unary.operator == SyntaxKind::MinusMinusToken as u16;
+                    }
+
+                    let _ = parent_idx;
+                    false
+                });
+            if is_direct_write_target {
+                return self.format_type_for_assignability_message(type_id);
+            }
+            return self.format_type_for_assignability_message(constraint);
+        }
+        if self.is_js_file()
+            && let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
+            && let Some(receiver_node) = self.ctx.arena.get(receiver)
+            && receiver_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.ctx.arena.get_identifier(receiver_node)
+            && let Some(shape) =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+            && shape.symbol.is_none()
+            && self
+                .resolve_identifier_symbol(receiver)
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .and_then(|symbol| self.ctx.arena.get(symbol.value_declaration))
+                .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
+                .is_some_and(|decl| {
+                    self.ctx.arena.get(decl.initializer).is_some_and(|init| {
+                        init.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    })
+                })
+        {
+            return format!("typeof {}", ident.escaped_text);
+        }
+        let diagnostic_receiver = self.access_receiver_for_diagnostic_node(idx);
+        let is_direct_element_access_diagnostic = self
+            .ctx
+            .arena
+            .get(idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            || self
+                .ctx
+                .arena
+                .node_info(idx)
+                .and_then(|info| self.ctx.arena.get(info.parent))
+                .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION);
+        let is_element_access_receiver = self
+            .ctx
+            .arena
+            .get(idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            || self
+                .ctx
+                .arena
+                .node_info(idx)
+                .and_then(|info| self.ctx.arena.get(info.parent))
+                .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            || diagnostic_receiver.is_some_and(|receiver| {
+                self.ctx
+                    .arena
+                    .get(receiver)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                    || self
+                        .ctx
+                        .arena
+                        .node_info(receiver)
+                        .and_then(|info| self.ctx.arena.get(info.parent))
+                        .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            });
+
+        if is_element_access_receiver {
+            if !is_direct_element_access_diagnostic
+                && let Some(display) =
+                    self.element_access_receiver_declared_element_display(idx, type_id)
+            {
+                return display;
+            }
+            if let Some(module_name) = self.ctx.namespace_module_names.get(&type_id) {
+                return format!("typeof import(\"{module_name}\")");
+            }
+            let has_named_receiver_identity = self.named_type_display_name(type_id).is_some()
+                || self
+                    .ctx
+                    .definition_store
+                    .find_def_for_type(type_id)
+                    .is_some()
+                || crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id).is_some()
+                || self.ctx.types.get_display_alias(type_id).is_some()
+                || self.ctx.namespace_module_names.contains_key(&type_id);
+            if has_named_receiver_identity {
+                return self.format_type_for_diagnostic_role(
+                    type_id,
+                    DiagnosticTypeDisplayRole::PropertyReceiver,
+                );
+            }
+            if let Some(init_type) = self.object_literal_initializer_display_type_for_receiver(idx)
+            {
+                let widened = self.widen_type_for_display(init_type);
+                return self.format_type_diagnostic(widened);
+            }
+            if !self.is_js_file() {
+                let evaluated = self.evaluate_type_for_assignability(type_id);
+                if evaluated != type_id && self.named_type_display_name(evaluated).is_some() {
+                    return self.format_type_for_assignability_message(evaluated);
+                }
+            }
+            return self.format_type_diagnostic_structural(type_id);
+        }
+
+        if let Some(display) = self.class_first_union_property_receiver_display(type_id) {
+            return display;
+        }
+        self.format_type_for_diagnostic_role(type_id, DiagnosticTypeDisplayRole::PropertyReceiver)
+    }
+
+    fn class_first_union_property_receiver_display(&mut self, type_id: TypeId) -> Option<String> {
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
+        if members.len() < 2 {
+            return None;
+        }
+
+        let mut class_members = Vec::new();
+        let mut other_members = Vec::new();
+        for member in members {
+            if self.get_class_decl_from_type(member).is_some() {
+                class_members.push(member);
+            } else {
+                if member.is_intrinsic() {
+                    return None;
+                }
+                other_members.push(member);
+            }
+        }
+        if class_members.is_empty() || other_members.is_empty() {
+            return None;
+        }
+
+        class_members.extend(other_members);
+        let formatted = class_members
+            .into_iter()
+            .map(|member| {
+                let display = self.format_type(member);
+                if crate::query_boundaries::common::intersection_members(self.ctx.types, member)
+                    .is_some()
+                    || crate::query_boundaries::common::union_members(self.ctx.types, member)
+                        .is_some()
+                {
+                    format!("({display})")
+                } else {
+                    display
+                }
+            })
+            .collect::<Vec<_>>();
+        Some(formatted.join(" | "))
+    }
+
+    /// Build a copy of a Callable's shape with ERROR property types replaced
+    /// by ANY for diagnostic display. tsc renders apparent-type properties
+    /// whose resolution failed (e.g. `exports.blah = exports.someProp` where
+    /// `someProp` doesn't exist) as `any`, not as the internal error sentinel.
+    ///
+    /// Returns None when the input doesn't have a callable shape or contains
+    /// no ERROR-typed properties (no rebuild needed).
+    pub(crate) fn substitute_error_with_any_in_callable_shape(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::callable_shape_for_type_extended;
+        let shape = callable_shape_for_type_extended(self.ctx.types, type_id)?;
+        let needs_rewrite = shape
+            .properties
+            .iter()
+            .any(|p| p.type_id == TypeId::ERROR || p.write_type == TypeId::ERROR);
+        if !needs_rewrite {
+            return None;
+        }
+        let mut rewritten: tsz_solver::CallableShape = shape.as_ref().clone();
+        for prop in rewritten.properties.iter_mut() {
+            if prop.type_id == TypeId::ERROR {
+                prop.type_id = TypeId::ANY;
+            }
+            if prop.write_type == TypeId::ERROR {
+                prop.write_type = TypeId::ANY;
+            }
+        }
+        Some(self.ctx.types.factory().callable(rewritten))
+    }
+
+    // =========================================================================
+    // Property Errors
+    // =========================================================================
+
+    /// Report a property not exist error using solver diagnostics with source tracking.
+    /// If a similar property name is found on the type, emits TS2551 ("Did you mean?")
+    /// instead of TS2339.
+    pub fn error_property_not_exist_at(
+        &mut self,
+        prop_name: &str,
+        type_id: TypeId,
+        idx: NodeIndex,
+    ) {
+        // Suppress TS2339 when the type is an internal inference placeholder (__infer_*).
+        // These placeholders are created during generic call inference when a type parameter
+        // cannot be resolved to a concrete type. Reporting errors on these placeholders
+        // produces confusing diagnostics. The actual inference/assignability issue should be
+        // reported elsewhere.
+        if crate::query_boundaries::common::is_bare_infer_placeholder(self.ctx.types, type_id) {
+            return;
+        }
+
+        if self.actual_lib_namespace_merged_type_has_property(type_id, prop_name) {
+            return;
+        }
+
+        // Suppress error if type is ERROR/ANY or an Error type wrapper.
+        // This prevents cascading errors when accessing properties on error types.
+        // NOTE: We do NOT suppress for UNKNOWN — accessing properties on unknown should error (TS2339).
+        // NOTE: We do NOT suppress for NEVER — tsc emits TS2339 for property access on `never`
+        // (e.g., after typeof narrowing exhausts all possibilities).
+        if type_id == TypeId::ERROR
+            || type_id == TypeId::ANY
+            || crate::query_boundaries::common::is_error_type(self.ctx.types, type_id)
+        {
+            return;
+        }
+
+        if self.is_global_this_surface_type(type_id)
+            && self.ctx.no_implicit_any()
+            && !self.is_js_file()
+        {
+            use crate::diagnostics::{diagnostic_messages, format_message};
+            self.error_at_anchor(
+                idx,
+                DiagnosticAnchorKind::PropertyToken,
+                &format_message(
+                    diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+                    &["typeof globalThis"],
+                ),
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE,
+            );
+            return;
+        }
+
+        // Suppress TS2339 when evaluating a computed property name expression
+        // during class instance type building. When a class has a self-referential
+        // computed property (e.g., `[rC.x]` inside `declare class RC<T> { x: T;
+        // [rC.x]: "b"; }` where `rC: RC<"a">`), the class instance type isn't
+        // fully built yet, causing property access on the incomplete type to fail.
+        // This is a transient state — the property will be found once the class
+        // is fully built. Suppressing here avoids false positives while the
+        // computed property name is being evaluated for class member resolution.
+        if self.ctx.checking_computed_property_name.is_some()
+            && !self.ctx.class_instance_resolution_set.is_empty()
+            && crate::query_boundaries::common::application_info(
+                self.ctx.types.as_type_database(),
+                type_id,
+            )
+            .is_some()
+        {
+            return;
+        }
+
+        // Suppress TS2339 when the object is a type parameter whose constraint
+        // resolved to ERROR or is self-referential/circular.
+        //
+        // Case 1: constraint == ERROR — the constraint itself already produced a
+        // diagnostic (e.g., `typeof a` where `a` is out of scope → TS2552).
+        //
+        // Case 2: circular constraint — `T extends typeof a` where `a: T` creates
+        // a self-referential chain. During two-pass type parameter resolution, the
+        // placeholder T (constraint=None) is created first, then the refined T gets
+        // constraint=placeholder_T. When a destructured binding `{a}: {a:T}` uses
+        // the placeholder T, property access sees constraint=None but the scope has
+        // a refined version whose constraint points back to this same placeholder.
+        // tsc suppresses TS2339 in this case because the constraint is unresolvable.
+        if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
+        {
+            let constraint = crate::query_boundaries::state::checking::type_parameter_constraint(
+                self.ctx.types,
+                type_id,
+            );
+            if constraint.is_some_and(|constraint| {
+                constraint == TypeId::ERROR
+                    || crate::query_boundaries::common::is_error_type(self.ctx.types, constraint)
+            }) {
+                return;
+            }
+            if let Some(name) = crate::query_boundaries::property_access::type_parameter_name(
+                self.ctx.types,
+                type_id,
+            ) {
+                let is_self_ref = |c: TypeId| -> bool {
+                    crate::query_boundaries::state::checking::is_type_parameter_like(
+                        self.ctx.types,
+                        c,
+                    ) && crate::query_boundaries::property_access::type_parameter_name(
+                        self.ctx.types,
+                        c,
+                    ) == Some(name)
+                };
+                if constraint.is_some_and(&is_self_ref) {
+                    return;
+                }
+                let name_str = self.ctx.types.resolve_atom(name);
+                if let Some(&scope_id) = self.ctx.type_parameter_scope.get(&*name_str)
+                    && scope_id != type_id
+                {
+                    let scope_constraint =
+                        crate::query_boundaries::state::checking::type_parameter_constraint(
+                            self.ctx.types,
+                            scope_id,
+                        );
+                    if scope_constraint.is_some_and(|constraint| {
+                        constraint == TypeId::ERROR
+                            || crate::query_boundaries::common::is_error_type(
+                                self.ctx.types,
+                                constraint,
+                            )
+                            || is_self_ref(constraint)
+                            || constraint == type_id
+                    }) {
+                        return;
+                    }
+                }
+            } else if constraint.is_none() {
+                // Fall back to the display-keyed scope lookup for stale placeholder copies.
+                let type_display = self.format_type(type_id);
+                if let Some(&scope_id) = self.ctx.type_parameter_scope.get(&type_display)
+                    && scope_id != type_id
+                {
+                    let scope_constraint =
+                        crate::query_boundaries::state::checking::type_parameter_constraint(
+                            self.ctx.types,
+                            scope_id,
+                        );
+                    if scope_constraint == Some(type_id) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Suppress TS2339 when the file has syntax parse errors.
+        // This prevents cascading errors when the parser has already reported syntax issues
+        // (e.g., malformed import.defer() without parentheses → TS1005 already emitted).
+        if self.has_syntax_parse_errors() {
+            return;
+        }
+
+        // Suppress TS2339 when the property access is on an expression rooted in an
+        // unresolved import (TS2307 was already emitted for the missing module).
+        // This prevents cascading errors when a namespace import fails to resolve.
+        if let Some(parent) = self.ctx.arena.get_extended(idx)
+            && let Some(parent_node) = self.ctx.arena.get(parent.parent)
+            && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            // Get the access expression and check if the base is an unresolved import
+            if let Some(access) = self.ctx.arena.get_access_expr(parent_node) {
+                // Check if the base expression is an unresolved import
+                if self.is_unresolved_import_symbol(access.expression) {
+                    return;
+                }
+                // Check if the base expression type is ERROR (indicating a failed resolution)
+                let base_type = self.get_type_of_node(access.expression);
+                if base_type == TypeId::ERROR {
+                    return;
+                }
+                // Also check the full chain for unresolved imports
+                if self.is_property_access_on_unresolved_import(parent.parent) {
+                    return;
+                }
+            }
+        }
+
+        // Checked-JS function declarations support expando writes like
+        // `fn.extra = value` without TS2339. Suppress the diagnostic when the
+        // property name belongs to a direct write target rooted at a function
+        // symbol, even if an intermediate query transiently observed the RHS type.
+        if self.is_js_file()
+            && self.ctx.compiler_options.check_js
+            && let Some(parent) = self.ctx.arena.get_extended(idx)
+            && parent.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(parent.parent)
+            && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+            && access.name_or_argument == idx
+            && self
+                .ctx
+                .arena
+                .get_extended(parent.parent)
+                .is_some_and(|prop_ext| {
+                    let parent_idx = prop_ext.parent;
+                    self.ctx
+                        .arena
+                        .get(parent_idx)
+                        .and_then(|write_parent| {
+                            if write_parent.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                                let binary = self.ctx.arena.get_binary_expr(write_parent)?;
+                                return Some(
+                                    binary.left == parent.parent
+                                        && self.is_assignment_operator(binary.operator_token),
+                                );
+                            }
+                            if write_parent.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                                || write_parent.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+                            {
+                                let unary = self.ctx.arena.get_unary_expr(write_parent)?;
+                                return Some(
+                                    unary.operator == tsz_scanner::SyntaxKind::PlusPlusToken as u16
+                                        || unary.operator
+                                            == tsz_scanner::SyntaxKind::MinusMinusToken as u16,
+                                );
+                            }
+                            Some(false)
+                        })
+                        .unwrap_or(false)
+                })
+            && let Some(obj_sym) =
+                self.resolve_identifier_symbol_without_tracking(access.expression)
+            && let Some(symbol) = self
+                .get_cross_file_symbol(obj_sym)
+                .or_else(|| self.ctx.binder.get_symbol(obj_sym))
+            && symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
+            && !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+        {
+            return;
+        }
+
+        // In JS/checkJs, `Object.defineProperty(...)` can be handled by the
+        // checker’s descriptor-aware paths even when generic member lookup on
+        // the global Object value misses. Suppress the fallback TS2339 here so
+        // those specialized defineProperty semantics can proceed without the
+        // spurious property-not-found diagnostic.
+        if self.is_js_file()
+            && self.ctx.compiler_options.check_js
+            && prop_name == "defineProperty"
+            && let Some(parent) = self.ctx.arena.get_extended(idx)
+            && parent.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(parent.parent)
+            && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+            && access.name_or_argument == idx
+            && self.is_unshadowed_global_object_identifier(access.expression)
+        {
+            return;
+        }
+
+        // Suppress cascaded TS2339 from failed generic inference when the receiver
+        // remains a union that still contains unresolved type parameters.
+        // This keeps follow-on property errors from obscuring the primary root cause
+        // (typically assignability/inference diagnostics).
+        //
+        // Only suppress when a DIRECT union member is a type parameter (e.g. T | Foo).
+        // Do NOT suppress when type parameters are deeply nested inside object types
+        // (e.g. string | MyInterface where MyInterface has generic base types).
+        // The deep nesting case occurs with concrete unions like `string | MyArr`
+        // where MyArr extends Array<string> -- the resolved object shape may contain
+        // type parameters from the generic base, but the union itself is concrete.
+        // NOTE: In tsc 6.0, unconstrained type parameters in unions DO trigger
+        // TS2339 when the property doesn't exist on the type parameter member.
+        // We no longer suppress TS2339 for unions with type parameters.
+
+        // When a class extends `any`, tsc treats unknown member accesses as `any`
+        // and does not emit TS2339. Check this before computing source location
+        // to avoid unnecessary work.
+        if self.class_extends_any_base(type_id) {
+            return;
+        }
+
+        // Array-like generic constraints always provide `.length`; if property
+        // resolution misses while recursive conditional evaluation is still
+        // deferred, avoid emitting a cascaded TS2339.
+        if prop_name == "length" && self.property_type_has_array_like_length(type_id) {
+            return;
+        }
+
+        // Suppress TS2339 for indexed access types on generic conditional/mapped types.
+        // For example, `Parameters<DataFirst>["length"]` where `Parameters<T>` is a
+        // conditional type. When the type argument is generic, tsc defers the check
+        // rather than emitting a false TS2339.
+        if crate::query_boundaries::common::is_index_access_type(self.ctx.types, type_id) {
+            return;
+        }
+
+        // Suppress TS2339 for types that are generic type parameters with conditional
+        // type constraints. For example, when accessing a property on a type parameter
+        // like `T extends SomeConditionalType`, the property may exist on the resolved
+        // conditional type but we can't determine it until the type parameter is
+        // instantiated with a concrete type.
+        if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
+            && crate::query_boundaries::common::type_parameter_has_conditional_constraint(
+                self.ctx.types,
+                type_id,
+            )
+        {
+            return;
+        }
+
+        // Suppress TS2339 for type parameters with generic mapped type constraints.
+        // For example, `T extends { [K in keyof U]: V }` where U is another type parameter.
+        // The mapped type cannot be fully resolved until U is instantiated.
+        if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
+            && crate::query_boundaries::common::type_parameter_has_mapped_constraint(
+                self.ctx.types,
+                type_id,
+            )
+        {
+            return;
+        }
+
+        // Suppress TS2339 when the type is an intersection containing type parameters
+        // that haven't been resolved yet. This commonly occurs with mixin patterns where
+        // the return type is `Constructor<Tagged> & T` - the instance type should have
+        // properties from both sides of the intersection, but we may not resolve them
+        // properly when T is still generic.
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        {
+            let has_unresolved_type_param = members.iter().any(|&member| {
+                crate::query_boundaries::state::checking::is_type_parameter_like(
+                    self.ctx.types,
+                    member,
+                ) || crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    member,
+                )
+            });
+            if has_unresolved_type_param {
+                return;
+            }
+        }
+
+        // Suppress TS2339 for types that contain conditional types which may resolve
+        // to have the property once the type parameters are instantiated.
+        // For example: `FirstParameter<typeof h>["foo"]` where `FirstParameter<T>` is
+        // `T extends (x: infer P) => unknown ? P : unknown`. When the conditional type
+        // cannot be resolved (e.g., during generic inference), tsc defers the check
+        // rather than emitting a false TS2339.
+        if crate::query_boundaries::common::contains_conditional_type(self.ctx.types, type_id) {
+            return;
+        }
+
+        // Suppress TS2339 for indexed access types on unresolved generic conditional types.
+        // For example, `FirstParameter<typeof h>['foo']` where `FirstParameter<T>` is
+        // `T extends (x: infer P) => unknown ? P : unknown`. When the conditional type
+        // argument is generic and cannot be resolved (e.g., during inference),
+        // tsc defers the check rather than emitting a false TS2339.
+        // This covers cases where the base type is an indexed access type whose
+        // object type is an unresolved conditional type.
+        if let Some(indexed_info) =
+            crate::query_boundaries::common::get_indexed_access_type(self.ctx.types, type_id)
+            && (crate::query_boundaries::common::contains_conditional_type(
+                self.ctx.types,
+                indexed_info.object_type,
+            ) || crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                indexed_info.object_type,
+            ))
+        {
+            return;
+        }
+
+        // Suppress TS2339 for types that are the result of inference-based conditional
+        // types that haven't been resolved yet. This commonly occurs with patterns like
+        // `type X = FirstParameter<typeof h>['foo']` where `h` is a generic function
+        // and the conditional type cannot be resolved until inference completes.
+        if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+            self.ctx.types,
+            type_id,
+        )
+        {
+            return;
+        }
+
+        // Suppress TS2339 for type parameters constrained to generic functions.
+        // For example, in `const h = f(g)` where `f` and `g` are generic,
+        // the inferred type of `h` may contain unresolved type parameters from
+        // the conditional type inference that cannot be checked for property access.
+        if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
+        {
+            let constraint =
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id);
+            if let Some(constraint_type) = constraint {
+                // Only suppress if the constraint is unknown (unresolved) or contains
+                // conditional types or type parameters.
+                if constraint_type == TypeId::UNKNOWN
+                    || crate::query_boundaries::common::contains_conditional_type(
+                        self.ctx.types,
+                        constraint_type,
+                    )
+                    || crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        constraint_type,
+                    )
+                {
+                    return;
+                }
+            }
+            // Note: We do NOT suppress for unconstrained type parameters with no constraint.
+            // These should still report TS2339 for property access failures as tsc does.
+        }
+
+        // Suppress TS2339 for types that are intersections involving generic conditional types.
+        // For example, `{ foo: T } & (T extends string ? { bar: string } : { baz: number })`
+        // where the conditional type part may or may not have the property being accessed.
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        {
+            let has_conditional_or_type_param = members.iter().any(|&member| {
+                crate::query_boundaries::common::contains_conditional_type(self.ctx.types, member)
+                    || crate::query_boundaries::state::checking::is_type_parameter_like(
+                        self.ctx.types,
+                        member,
+                    )
+                    || crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        member,
+                    )
+            });
+            if has_conditional_or_type_param {
+                return;
+            }
+        }
+
+        if self
+            .resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::PropertyToken)
+            .is_some()
+        {
+            // TS2550: Check if property exists in a newer lib version before
+            // trying spelling suggestions. This matches tsc's priority order.
+            if !self.has_syntax_parse_errors()
+                && let Some((lib_name, override_type_name)) =
+                    self.get_lib_suggestion_for_property_with_node(prop_name, type_id, idx)
+            {
+                let type_str = if let Some(name) = override_type_name {
+                    name.to_string()
+                } else {
+                    self.property_receiver_display_for_node(type_id, idx)
+                };
+                let message = format!(
+                    "Property '{prop_name}' does not exist on type '{type_str}'. Do you need to change your target library? Try changing the 'lib' compiler option to '{lib_name}' or later."
+                );
+                self.error_at_anchor(
+                    idx,
+                    DiagnosticAnchorKind::PropertyToken,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CH,
+                );
+                return;
+            }
+
+            // On files with syntax parse errors, TypeScript generally avoids TS2551
+            // suggestion diagnostics and sticks with TS2339 to reduce cascades.
+            let suggestion = if self.has_syntax_parse_errors() {
+                None
+            } else {
+                self.find_similar_property(prop_name, type_id)
+            };
+
+            // For namespace types, override the type display to match TSC's
+            // `typeof import("module")` format instead of the literal object shape.
+            //
+            // Exception: when the receiver is a CJS module whose
+            // `module.exports = <callable>` produces a merged-callable apparent
+            // type, tsc displays the structural form (`{ (): void; blah: any; }`)
+            // rather than the namespace alias. The receiver Object cached in
+            // `namespace_module_names` may be a stale snapshot from an early-call
+            // race in `infer_commonjs_export_rhs_type` (returned UNDEFINED before
+            // the function expression was typed). Force a fresh recompute of
+            // the file's JS export surface — bypassing the resolution-set guard
+            // and the cache — and, when it now yields a different callable
+            // type, format that structural shape (with ERROR properties
+            // rewritten to ANY for parity with tsc's display policy) instead
+            // of the alias.
+            //
+            // See `compiler/pushTypeGetTypeOfAlias.ts` for the symptom and
+            // `memory/project_pushTypeGetTypeOfAlias_modulenamespace_display.md`
+            // for the iter-20/22/24/28/30/32 investigation trail.
+            if self.ctx.namespace_module_names.contains_key(&type_id) {
+                let recomputed_surface_type = {
+                    let current_file_idx = self.ctx.current_file_idx;
+                    self.ctx.js_export_surface_cache.remove(&current_file_idx);
+                    let was_in_resolution = self
+                        .ctx
+                        .js_export_surface_resolution_set
+                        .remove(&current_file_idx);
+                    let result = self.js_export_surface_namespace_type(current_file_idx);
+                    if was_in_resolution {
+                        self.ctx
+                            .js_export_surface_resolution_set
+                            .insert(current_file_idx);
+                    }
+                    result
+                };
+                if let Some(merged_ty) = recomputed_surface_type
+                    && merged_ty != type_id
+                    && crate::query_boundaries::common::has_call_signatures(
+                        self.ctx.types.as_type_database(),
+                        merged_ty,
+                    )
+                {
+                    let merged_for_display = self
+                        .substitute_error_with_any_in_callable_shape(merged_ty)
+                        .unwrap_or(merged_ty);
+                    let type_str = self.format_type(merged_for_display);
+                    let (code, message) = if let Some(ref suggestion) = suggestion {
+                        (
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+                            format!(
+                                "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
+                            ),
+                        )
+                    } else {
+                        (
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                            format!("Property '{prop_name}' does not exist on type '{type_str}'."),
+                        )
+                    };
+                    self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
+                    return;
+                }
+            }
+            if let Some(module_name) = self.ctx.namespace_module_names.get(&type_id).cloned() {
+                if let Some(members) =
+                    crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+                    && let Some(display_member) = members.into_iter().find(|&member| {
+                        !self.ctx.namespace_module_names.contains_key(&member)
+                            && !crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
+                                self.ctx.types,
+                                member,
+                            )
+                    })
+                {
+                    let type_str = self.format_type(display_member);
+                    let (code, message) = if let Some(ref suggestion) = suggestion {
+                        (
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+                            format!(
+                                "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
+                            ),
+                        )
+                    } else {
+                        (
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                            format!("Property '{prop_name}' does not exist on type '{type_str}'."),
+                        )
+                    };
+                    self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
+                    return;
+                }
+
+                // Normalize module specifier: TSC displays resolved module names
+                // without the relative path prefix (e.g., "./b" → "b").
+                let display_name = module_name.strip_prefix("./").unwrap_or(&module_name);
+                let display_name = strip_property_namespace_module_extension(display_name);
+                let type_str = format!("typeof import(\"{display_name}\")");
+                let (code, message) = if let Some(ref suggestion) = suggestion {
+                    (
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+                        format!(
+                            "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
+                        ),
+                    )
+                } else {
+                    (
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        format!("Property '{prop_name}' does not exist on type '{type_str}'."),
+                    )
+                };
+                self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
+                return;
+            }
+
+            // For enum container types (e.g., `U8.nonExistent`), tsc displays
+            // "typeof EnumName" for the type in the error message.
+            if let Some(def_id) =
+                crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
+                && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                let enum_name = &symbol.escaped_name;
+                let type_str = format!("typeof {enum_name}");
+                let (code, message) = if let Some(ref suggestion) = suggestion {
+                    (
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+                        format!(
+                            "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
+                        ),
+                    )
+                } else {
+                    (
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        format!("Property '{prop_name}' does not exist on type '{type_str}'."),
+                    )
+                };
+                self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
+                return;
+            }
+
+            // For namespace/module value types (e.g., `namespace M { ... }`), tsc displays
+            // "typeof NamespaceName" for the type in the error message.
+            if let Some(name) = self.get_namespace_typeof_name(type_id) {
+                let type_str = format!("typeof {name}");
+                let (code, message) = if let Some(ref suggestion) = suggestion {
+                    (
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+                        format!(
+                            "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
+                        ),
+                    )
+                } else {
+                    (
+                        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                        format!("Property '{prop_name}' does not exist on type '{type_str}'."),
+                    )
+                };
+                self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
+                return;
+            }
+
+            // TS2812: If the type name matches a known DOM global and the type is
+            // structurally empty, suggest including the 'dom' lib option.
+            if suggestion.is_none() && self.should_suggest_dom_lib_for_type(type_id) {
+                let type_display = self.property_receiver_display_for_node(type_id, idx);
+                let message = format!(
+                    "Property '{prop_name}' does not exist on type '{type_display}'. Try changing the 'lib' compiler option to include 'dom'."
+                );
+                self.error_at_anchor(
+                    idx,
+                    DiagnosticAnchorKind::PropertyToken,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_TRY_CHANGING_THE_LIB_COMPILER_OPTION_TO_INCLUDE,
+                );
+                return;
+            }
+
+            let type_display = self.property_receiver_display_for_node(type_id, idx);
+            let (code, message) = if let Some(ref suggestion) = suggestion {
+                (
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+                    format!(
+                        "Property '{prop_name}' does not exist on type '{type_display}'. Did you mean '{suggestion}'?"
+                    ),
+                )
+            } else {
+                (
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    format!("Property '{prop_name}' does not exist on type '{type_display}'."),
+                )
+            };
+            self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
+        }
+    }
+
+    fn actual_lib_namespace_merged_type_has_property(
+        &mut self,
+        type_id: TypeId,
+        prop_name: &str,
+    ) -> bool {
+        let lazy_def_id = query::lazy_def_id(self.ctx.types, type_id);
+        let sym_id = lazy_def_id
+            .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+            .or_else(|| query::type_shape_symbol(self.ctx.types, type_id));
+
+        let (export_name, require_symbol_match) = if let Some(sym_id) = sym_id {
+            let lib_binders = self.get_lib_binders();
+            let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+                return false;
+            };
+            if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+                (symbol.escaped_name.clone(), Some(sym_id))
+            } else if symbol.parent.is_some()
+                && self.ctx.symbol_is_from_actual_or_cloned_lib(symbol.parent)
+            {
+                (symbol.escaped_name.clone(), None)
+            } else {
+                return false;
+            }
+        } else {
+            let Some(def_id) = lazy_def_id else {
+                return false;
+            };
+            let Some(def_info) = self.ctx.definition_store.get(def_id) else {
+                return false;
+            };
+            let name = self.ctx.types.resolve_atom_ref(def_info.name).to_string();
+            if name.is_empty() {
+                return false;
+            }
+            (name, None)
+        };
+
+        let namespace = "Intl";
+        let Some(export_sym_id) = self.resolve_lib_namespace_export_symbol(namespace, &export_name)
+        else {
+            return false;
+        };
+        if require_symbol_match.is_some_and(|sym_id| export_sym_id != sym_id) {
+            return false;
+        }
+
+        let cache_name = format!("{namespace}.{export_name}");
+        self.ctx.lib_type_resolution_cache.remove(&cache_name);
+        let Some(merged_type) =
+            self.resolve_lib_interface_type_by_symbol(&cache_name, export_sym_id)
+        else {
+            return false;
+        };
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        query::raw_property_type(self.ctx.types.as_type_database(), merged_type, prop_atom)
+            .is_some()
+    }
+
+    /// Report TS2339 with an explicit type display string instead of formatting from TypeId.
+    /// Used when the apparent type should be displayed (e.g., `object` → `{}` in destructuring).
+    pub fn error_property_not_exist_with_apparent_type(
+        &mut self,
+        prop_name: &str,
+        type_display: &str,
+        idx: NodeIndex,
+    ) {
+        // Suppress TS2339 when the property access is on an expression rooted in an
+        // unresolved import (TS2307 was already emitted for the missing module).
+        if let Some(parent) = self.ctx.arena.get_extended(idx)
+            && let Some(parent_node) = self.ctx.arena.get(parent.parent)
+            && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+        {
+            if self.is_unresolved_import_symbol(access.expression) {
+                return;
+            }
+            if self.is_property_access_on_unresolved_import(parent.parent) {
+                return;
+            }
+        }
+
+        let message = format!("Property '{prop_name}' does not exist on type '{type_display}'.");
+        self.error_at_anchor(
+            idx,
+            DiagnosticAnchorKind::PropertyToken,
+            &message,
+            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+        );
+    }
+
+    /// Report TS2339/TS2551 for an enum object property access failure.
+    /// Checks for spelling suggestions and emits TS2551 if a match is found.
+    pub fn error_property_not_exist_on_enum(
+        &mut self,
+        prop_name: &str,
+        enum_name: &str,
+        object_type: TypeId,
+        idx: NodeIndex,
+    ) {
+        let type_str = format!("typeof {enum_name}");
+        let suggestion = self.find_similar_property(prop_name, object_type);
+        if let Some(ref suggestion) = suggestion {
+            let message = format!(
+                "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
+            );
+            self.error_at_anchor(
+                idx,
+                DiagnosticAnchorKind::PropertyToken,
+                &message,
+                diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN,
+            );
+        } else {
+            self.error_property_not_exist_with_apparent_type(prop_name, &type_str, idx);
+        }
+    }
+
+    /// Report TS18046: "'x' is of type 'unknown'."
+    /// Emitted when an expression of type `unknown` is used in a position that requires
+    /// a more specific type (property access, function call, arithmetic, etc.).
+    /// Falls back to TS2571 ("Object is of type 'unknown'.") when the expression name
+    /// cannot be determined.
+    ///
+    /// Returns `true` if the error was emitted, `false` if suppressed.
+    /// Callers should treat `unknown` as `any` when `false`.
+    pub fn error_is_of_type_unknown(&mut self, expr_idx: NodeIndex) -> bool {
+        // In tsc, TS18046 is emitted regardless of --strictNullChecks.
+        // The `unknown` type is always restricted: you cannot access properties,
+        // call, or operate on it without narrowing. The --strictNullChecks flag
+        // only controls `null`/`undefined` checking (TS2531/TS2532), not `unknown`.
+        let expr_text = self.expression_text(expr_idx);
+        let loc = self.get_source_location(expr_idx);
+
+        // Namespace imports are value bindings (`import * as ns`) and should not
+        // produce TS18046 when internal module namespace resolution falls back
+        // to unknown during cross-file/type-only export scenarios.
+        if self.is_namespace_import_rooted_expression(expr_idx) {
+            return false;
+        }
+        if self.ctx.is_js_file() && self.commonjs_destructured_named_export_exists(expr_idx) {
+            return false;
+        }
+        let name = expr_text;
+        if loc.is_some() {
+            let (code, message) = if let Some(ref name) = name {
+                (
+                    diagnostic_codes::IS_OF_TYPE_UNKNOWN,
+                    format!("'{name}' is of type 'unknown'."),
+                )
+            } else {
+                (
+                    diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
+                    "Object is of type 'unknown'.".to_string(),
+                )
+            };
+            self.error_at_node(expr_idx, &message, code);
+            return true;
+        }
+        false
+    }
+
+    fn is_namespace_import_rooted_expression(&self, expr_idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let Some(root_ident) = self.root_identifier_for_expression(expr_idx) else {
+            return false;
+        };
+        let Some(sym_id) = self.resolve_identifier_symbol(root_ident) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let symbol_is_namespace_import = symbol.import_module.is_some()
+            && (symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*"));
+        if symbol_is_namespace_import {
+            return true;
+        }
+        if symbol.has_any_flags(symbol_flags::ALIAS) {
+            let mut visited = AliasCycleTracker::new();
+            if let Some(resolved_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                && let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym_id)
+            {
+                let resolved_is_namespace_import = resolved_symbol.import_module.is_some()
+                    && (resolved_symbol.import_name.is_none()
+                        || resolved_symbol.import_name.as_deref() == Some("*"));
+                if resolved_is_namespace_import {
+                    return true;
+                }
+                if resolved_symbol.has_any_flags(symbol_flags::MODULE) {
+                    return true;
+                }
+            }
+        } else {
+            return false;
+        }
+
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                return true;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(ext.parent)
+                .is_some_and(|parent| parent.kind == syntax_kind_ext::NAMESPACE_IMPORT)
+        })
+    }
+
+    fn root_identifier_for_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = self.ctx.arena.skip_parenthesized(expr_idx);
+        loop {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return Some(current);
+            }
+
+            if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(access) = self.ctx.arena.get_access_expr(node)
+            {
+                current = self.ctx.arena.skip_parenthesized(access.expression);
+                continue;
+            }
+
+            return None;
+        }
+    }
+
+    /// Report an excess property error using solver diagnostics with source tracking.
+    pub fn error_excess_property_at(&mut self, prop_name: &str, target: TypeId, idx: NodeIndex) {
+        // Honor removed-but-still-effective suppressExcessPropertyErrors flag
+        if self.ctx.compiler_options.suppress_excess_property_errors {
+            return;
+        }
+        // Suppress cascade errors from unresolved types
+        if target == TypeId::ERROR || target == TypeId::ANY || target == TypeId::UNKNOWN {
+            return;
+        }
+        if self.should_suppress_excess_property_for_target(target) {
+            return;
+        }
+
+        let (code, message) = self.excess_property_diagnostic_message(prop_name, target, idx);
+        // Drill into the source expression to anchor the diagnostic at the
+        // offending property name token (tsc underlines `b` in
+        // `{ a: '', b: 123 }`, not `{` of the containing literal or the
+        // enclosing `||`/`? :` expression).
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        if let Some((start, length)) = self.find_excess_property_anchor(idx, prop_atom) {
+            self.error(start, length, message, code);
+            return;
+        }
+        self.emit_render_request(
+            idx,
+            DiagnosticRenderRequest::simple(DiagnosticAnchorKind::PropertyToken, code, message),
+        );
+    }
+
+    pub fn error_excess_property_at_no_suggestion(
+        &mut self,
+        prop_name: &str,
+        target: TypeId,
+        idx: NodeIndex,
+    ) {
+        if self.ctx.compiler_options.suppress_excess_property_errors {
+            return;
+        }
+        if target == TypeId::ERROR || target == TypeId::ANY || target == TypeId::UNKNOWN {
+            return;
+        }
+        if self.should_suppress_excess_property_for_target(target) {
+            return;
+        }
+
+        let type_str = self.excess_property_target_display_for_site(target, idx);
+        let message = format!(
+            "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{type_str}'."
+        );
+        self.emit_render_request(
+            idx,
+            DiagnosticRenderRequest::simple(
+                DiagnosticAnchorKind::PropertyToken,
+                diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+                message,
+            ),
+        );
+    }
+
+    /// Report a "Cannot assign to readonly property" error using solver diagnostics with source tracking.
+    pub fn error_readonly_property_at(&mut self, prop_name: &str, idx: NodeIndex) {
+        if let Some(anchor) =
+            self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::PropertyToken)
+        {
+            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
+                self.ctx.types,
+                &self.ctx.binder.symbols,
+                self.ctx.file_name.as_str(),
+            )
+            .with_def_store(&self.ctx.definition_store);
+            let diag = builder.readonly_property(prop_name, anchor.start, anchor.length);
+            self.ctx
+                .diagnostics
+                .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+        }
+    }
+
+    /// Report TS2542: Index signature in type '{0}' only permits reading.
+    pub fn error_readonly_index_signature_at(
+        &mut self,
+        object_type: tsz_solver::TypeId,
+        idx: NodeIndex,
+    ) {
+        let type_name = self.format_type_diagnostic(object_type);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::INDEX_SIGNATURE_IN_TYPE_ONLY_PERMITS_READING,
+            &[&type_name],
+        );
+    }
+
+    /// Report TS2704: The operand of a 'delete' operator cannot be a read-only property.
+    pub fn error_delete_readonly_property_at(&mut self, idx: NodeIndex) {
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_CANNOT_BE_A_READ_ONLY_PROPERTY,
+            &[],
+        );
+    }
+
+    /// Report TS2862: Type '{0}' is generic and can only be indexed for reading.
+    pub fn error_generic_only_indexed_for_reading(
+        &mut self,
+        object_type: tsz_solver::TypeId,
+        idx: NodeIndex,
+    ) {
+        let type_name = self.format_type_diagnostic(object_type);
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
+            &[&type_name],
+        );
+    }
+
+    /// Report TS2803: Cannot assign to private method. Private methods are not writable.
+    pub fn error_private_method_not_writable(&mut self, prop_name: &str, idx: NodeIndex) {
+        self.error_at_node_msg(
+            idx,
+            diagnostic_codes::CANNOT_ASSIGN_TO_PRIVATE_METHOD_PRIVATE_METHODS_ARE_NOT_WRITABLE,
+            &[prop_name],
+        );
+    }
+
+    /// Report no index signature error.
+    ///
+    /// `expr_idx` is the element access expression node (for TS7053 error span).
+    /// `arg_idx` is the argument/index node inside brackets (for TS2551 "did you mean" span).
+    /// tsc reports TS7053 at the full expression, but TS2551 at the argument.
+    pub(crate) fn error_no_index_signature_at(
+        &mut self,
+        index_type: TypeId,
+        object_type: TypeId,
+        expr_idx: NodeIndex,
+        arg_idx: NodeIndex,
+        prefer_write_method: bool,
+    ) {
+        let prefer_write_method =
+            prefer_write_method || self.is_element_access_write_like(expr_idx);
+        // Note: suppressImplicitAnyIndexErrors was removed in TypeScript 6.0.
+        // tsc now emits TS5102 warning and still reports the errors.
+        // TS7053 is a noImplicitAny error - suppress without it
+        if !self.ctx.no_implicit_any() {
+            return;
+        }
+        // Suppress when types are unresolved (but NOT for `any` — tsc reports
+        // TS7053 when `any` is used to index a type without an index signature
+        // under noImplicitAny, e.g., `emptyObj[hi]` where `hi: any`).
+        if index_type == TypeId::ERROR || index_type == TypeId::UNKNOWN {
+            return;
+        }
+        if object_type == TypeId::ANY
+            || object_type == TypeId::ERROR
+            || object_type == TypeId::NEVER
+        {
+            return;
+        }
+        if self.is_element_access_on_this_or_super_with_any_base(expr_idx) {
+            return;
+        }
+
+        if self
+            .ctx
+            .arena
+            .get(expr_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
+            && let Some(atom) =
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+        {
+            let prop_name = self.ctx.types.resolve_atom_ref(atom).to_string();
+            self.error_property_not_exist_at(&prop_name, object_type, arg_idx);
+            return;
+        }
+
+        // For literal indices on simple (non-union/non-intersection) types, emit
+        // TS2339 ("Property X does not exist") instead of TS7053. tsc uses TS2339
+        // for literal element access keys on simple types like `{}`, but uses
+        // TS7053 for unions with partial index signature presence.
+        //
+        // Also handle union index types where at least one member is a string
+        // literal that doesn't exist on the object type. In this case, emit
+        // TS2339 for the first missing property (matching tsc behavior).
+        let is_union_or_intersection =
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type).is_some()
+                || crate::query_boundaries::common::intersection_members(
+                    self.ctx.types,
+                    object_type,
+                )
+                .is_some();
+        // Check if the object has any index signature. If so, the more specific
+        // TS7015/TS7053 diagnostics below should handle the error, not TS2339.
+        let idx_resolver =
+            tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
+        let has_any_index_signature = idx_resolver.resolve_string_index(object_type).is_some()
+            || idx_resolver.resolve_number_index(object_type).is_some();
+
+        // Helper closure to emit TS2339 for a missing property
+        let emit_ts2339_for_missing_prop =
+            |prop_name_str: &str, object_type: TypeId, expr_idx: NodeIndex, checker: &mut Self| {
+                let object_str =
+                    if checker.is_object_literal_backed_element_access_receiver(expr_idx) {
+                        checker.format_type_for_assignability_message(object_type)
+                    } else {
+                        checker.property_receiver_display_for_node(object_type, expr_idx)
+                    };
+                let message =
+                    format!("Property '{prop_name_str}' does not exist on type '{object_str}'.");
+                checker.error_at_anchor(
+                    expr_idx,
+                    DiagnosticAnchorKind::ElementAccessExpr,
+                    &message,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                );
+            };
+
+        // Check if index is a string literal
+        if let Some(atom) =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+        {
+            let prop_name = self.ctx.types.resolve_atom_ref(atom);
+            let prop_name_str: &str = &prop_name;
+            let suppress_did_you_mean =
+                self.has_syntax_parse_errors() || self.class_extends_any_base(object_type);
+
+            let suggestion = if suppress_did_you_mean {
+                None
+            } else {
+                self.find_similar_property(prop_name_str, object_type)
+            };
+
+            if suggestion.is_some() {
+                // If there's a suggestion, TypeScript emits TS2551 instead of TS7053.
+                // TS2551 is reported at the argument node (e.g., "foo" in i["foo"]).
+                self.error_property_not_exist_at(prop_name_str, object_type, arg_idx);
+                return;
+            }
+
+            // For non-union types without index signatures, generally fall
+            // through to TS7053. tsc emits TS7053 for element access with
+            // literal keys on types without matching properties.
+            //
+            // Exception: when the receiver is an object literal expression
+            // (e.g., `{}["hi"]`), tsc emits TS2339 instead of TS7053.
+            // Named types like `interface Empty {}` get TS7053.
+            if !is_union_or_intersection
+                && !has_any_index_signature
+                && !prefer_write_method
+                && self.is_object_literal_backed_element_access_receiver(expr_idx)
+            {
+                emit_ts2339_for_missing_prop(prop_name_str, object_type, expr_idx, self);
+                return;
+            }
+        }
+        // Check if index is a union of string literals (e.g., 'a' | 'b' | 'z')
+        // If so and the receiver is an object literal, emit TS2339 for the first
+        // missing property instead of TS7053.
+        else if !is_union_or_intersection
+            && !has_any_index_signature
+            && !prefer_write_method
+            && self.is_object_literal_backed_element_access_receiver(expr_idx)
+            && let Some(union_members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, index_type)
+        {
+            // Find the first string literal member that doesn't exist as a property
+            for member in union_members {
+                if let Some(atom) =
+                    crate::query_boundaries::common::string_literal_value(self.ctx.types, member)
+                {
+                    let prop_name = self.ctx.types.resolve_atom_ref(atom);
+                    let prop_name_str: &str = &prop_name;
+
+                    // Check if this property exists on the object type
+                    let prop_exists = self
+                        .resolve_property_access_with_env(object_type, prop_name_str)
+                        .is_success();
+
+                    if !prop_exists {
+                        // Property doesn't exist - emit TS2339
+                        emit_ts2339_for_missing_prop(prop_name_str, object_type, expr_idx, self);
+                        return;
+                    }
+                }
+            }
+        }
+
+        // For non-union types with number literal indices and no index sigs,
+        // generally fall through to TS7053. Exception: object literal expression
+        // receivers (e.g., `{}[10]`) get TS2339.
+        if !is_union_or_intersection
+            && !has_any_index_signature
+            && let Some(num) =
+                crate::query_boundaries::common::number_literal_value(self.ctx.types, index_type)
+            && !prefer_write_method
+            && self.is_object_literal_backed_element_access_receiver(expr_idx)
+        {
+            let prop_name = if num.fract() == 0.0 && num.is_finite() {
+                format!("{}", num as i64)
+            } else {
+                num.to_string()
+            };
+            let object_str = self
+                .object_literal_initializer_display_type_for_receiver(expr_idx)
+                .map(|init_type| {
+                    self.format_type_diagnostic(self.widen_type_for_display(init_type))
+                })
+                .unwrap_or_else(|| self.property_receiver_display_for_node(object_type, expr_idx));
+            let message = format!("Property '{prop_name}' does not exist on type '{object_str}'.");
+            self.error_at_anchor(
+                expr_idx,
+                DiagnosticAnchorKind::ElementAccessExpr,
+                &message,
+                diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+            );
+            return;
+        }
+
+        if let Some(method_suggestion) = self.no_index_signature_method_suggestion(
+            object_type,
+            index_type,
+            expr_idx,
+            prefer_write_method,
+        ) {
+            let display_object_type =
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+                    .and_then(|atom| {
+                        let prop_name = self.ctx.types.resolve_atom_ref(atom);
+                        self.fresh_empty_object_member_for_missing_union(object_type, &prop_name)
+                    })
+                    .or_else(|| {
+                        crate::query_boundaries::common::type_parameter_constraint(
+                            self.ctx.types,
+                            object_type,
+                        )
+                    })
+                    .unwrap_or(object_type);
+            let object_str = self
+                .object_literal_initializer_display_type_for_receiver(expr_idx)
+                .map(|init_type| self.format_type_for_assignability_message(init_type))
+                .unwrap_or_else(|| self.format_type_for_assignability_message(display_object_type));
+            self.error_at_anchor(
+                expr_idx,
+                DiagnosticAnchorKind::ElementAccessExpr,
+                &format!(
+                    "Element implicitly has an 'any' type because type '{object_str}' has no index signature. Did you mean to call '{method_suggestion}'?"
+                ),
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_TYPE_HAS_NO_INDEX_SIGNATURE_DID_YOU_M,
+            );
+            return;
+        }
+
+        // TS7015: indexed with a non-numeric type when the object has a number index signature.
+        // tsc emits the more specific TS7015 ("index expression is not of type 'number'")
+        // for arrays, tuples, enums, or any type with a numeric indexer when the index
+        // type is not assignable to number.
+        //
+        // Suppress for for-in variables: `for (var i in arr) { arr[i] }` is a valid
+        // pattern — for-in produces string indices that are numeric at runtime.
+        // tsc does not emit TS7015 (or TS7053) for for-in variables indexing their
+        // iteration target or other arrays.
+        let is_for_in_index = self.is_for_in_variable_identifier(arg_idx);
+        // For union types, ALL members must have a number index (resolve_number_index uses
+        // find_map which is too permissive — it returns Some if any member matches).
+        let resolver =
+            tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
+        let has_number_index = if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
+        {
+            members
+                .iter()
+                .all(|&m| resolver.resolve_number_index(m).is_some())
+        } else {
+            resolver.resolve_number_index(object_type).is_some()
+        };
+        if has_number_index
+            && !is_for_in_index
+            && !self.ctx.types.is_assignable_to(index_type, TypeId::NUMBER)
+        {
+            // tsc reports TS7015 at the index expression (arg_idx), not the full element access.
+            self.error_at_anchor(
+                arg_idx,
+                DiagnosticAnchorKind::ElementIndexArg,
+                "Element implicitly has an 'any' type because index expression is not of type 'number'.",
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE,
+            );
+            return;
+        }
+
+        // Suppress TS7053 for for-in variables ONLY when the target type has an
+        // index signature. For union types, ALL members must have a string index
+        // signature — a number index alone is not sufficient because for-in produces
+        // string keys and arrays (which only have number index) cannot be string-indexed.
+        // For non-union types, either string or number index is acceptable (arrays
+        // with for-in string keys are a valid pattern in tsc).
+        if is_for_in_index {
+            let has_string_index = if let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, object_type)
+            {
+                // For union types: ALL members must have an explicit string index signature.
+                // `resolve_string_index` returns Some for arrays (treating them as string-indexable),
+                // but arrays are only numeric-indexed; string keys produce implicit `any` (TS7053).
+                // Use `is_element_indexable(m, wants_string=true, wants_number=false)` which
+                // correctly returns false for arrays (Array kind only supports wants_number).
+                // e.g. `any[] | Record<string, any>`: `any[]` returns false → don't suppress.
+                members
+                    .iter()
+                    .all(|&m| self.is_element_indexable(m, true, false))
+            } else {
+                resolver.resolve_string_index(object_type).is_some() || has_number_index
+            };
+            if has_string_index {
+                return;
+            }
+        }
+
+        let mut formatter = self.ctx.create_type_formatter();
+        let index_str = formatter.format(index_type);
+        // For type parameters, tsc displays the constraint type name in the
+        // diagnostic (e.g., "can't be used to index type 'Item'" not "'T'").
+        let display_object_type =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+                .and_then(|atom| {
+                    let prop_name = self.ctx.types.resolve_atom_ref(atom);
+                    self.fresh_empty_object_member_for_missing_union(object_type, &prop_name)
+                })
+                .or_else(|| {
+                    crate::query_boundaries::common::type_parameter_constraint(
+                        self.ctx.types,
+                        object_type,
+                    )
+                })
+                .unwrap_or(object_type);
+        let object_str = self
+            .object_literal_initializer_display_type_for_receiver(expr_idx)
+            .map(|init_type| self.format_type_for_assignability_message(init_type))
+            .unwrap_or_else(|| {
+                self.property_receiver_display_for_node(display_object_type, expr_idx)
+            });
+        let message = format!(
+            "Element implicitly has an 'any' type because expression of type '{index_str}' can't be used to index type '{object_str}'."
+        );
+
+        // TS7053 is reported at the full element access expression.
+        self.error_at_anchor(
+            expr_idx,
+            DiagnosticAnchorKind::ElementAccessExpr,
+            &message,
+            diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+        );
+    }
+
+    fn no_index_signature_method_suggestion(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+        expr_idx: NodeIndex,
+        prefer_write_method: bool,
+    ) -> Option<String> {
+        let method_name = if prefer_write_method { "set" } else { "get" };
+        if !self.no_index_signature_method_accepts_index(object_type, method_name, index_type) {
+            return None;
+        }
+
+        let receiver = self.access_receiver_for_diagnostic_node(expr_idx)?;
+        if self.is_named_method_suggestion_receiver(receiver)
+            && let Some(receiver_text) = self.named_method_suggestion_receiver_text(receiver)
+            && !receiver_text.is_empty()
+        {
+            return Some(format!("{receiver_text}.{method_name}"));
+        }
+
+        Some(method_name.to_string())
+    }
+
+    fn no_index_signature_method_accepts_index(
+        &mut self,
+        object_type: TypeId,
+        method_name: &str,
+        index_type: TypeId,
+    ) -> bool {
+        let Some(method_type) = (match self
+            .resolve_property_access_with_env(object_type, method_name)
+        {
+            crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } => {
+                Some(type_id)
+            }
+            crate::query_boundaries::common::PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } => Some(type_id),
+            _ => None,
+        }) else {
+            return false;
+        };
+
+        self.callable_accepts_index_argument(method_type, index_type)
+    }
+
+    fn callable_accepts_index_argument(
+        &mut self,
+        callable_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        if let Some(shape) =
+            crate::query_boundaries::property_access::function_shape(self.ctx.types, callable_type)
+        {
+            return self.signature_accepts_index_argument(&shape.params, index_type);
+        }
+
+        crate::query_boundaries::property_access::callable_shape(self.ctx.types, callable_type)
+            .is_some_and(|shape| {
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| self.signature_accepts_index_argument(&sig.params, index_type))
+            })
+    }
+
+    fn signature_accepts_index_argument(
+        &mut self,
+        params: &[tsz_solver::ParamInfo],
+        index_type: TypeId,
+    ) -> bool {
+        let Some(first) = params.first() else {
+            return false;
+        };
+
+        self.ctx.types.is_assignable_to(index_type, first.type_id)
+    }
+
+    fn is_named_method_suggestion_receiver(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16
+            || node.kind == SyntaxKind::ThisKeyword as u16
+            || node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            return true;
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        self.ctx
+            .arena
+            .get_access_expr(node)
+            .is_some_and(|access| self.is_named_method_suggestion_receiver(access.expression))
+    }
+
+    fn is_element_access_write_like(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let Some(ext) = self.ctx.arena.get_extended(expr_idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+            return false;
+        };
+
+        if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+        {
+            return binary.left == expr_idx && self.is_assignment_operator(binary.operator_token);
+        }
+
+        if (parent_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || parent_node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+            && let Some(unary) = self.ctx.arena.get_unary_expr(parent_node)
+        {
+            return unary.operand == expr_idx
+                && (unary.operator == SyntaxKind::PlusPlusToken as u16
+                    || unary.operator == SyntaxKind::MinusMinusToken as u16);
+        }
+
+        false
+    }
+
+    fn named_method_suggestion_receiver_text(&self, idx: NodeIndex) -> Option<String> {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+
+        if node.kind == SyntaxKind::ThisKeyword as u16 {
+            return Some("this".to_string());
+        }
+
+        if node.kind == SyntaxKind::SuperKeyword as u16 {
+            return Some("super".to_string());
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let left = self.named_method_suggestion_receiver_text(access.expression)?;
+        let right_node = self.ctx.arena.get(access.name_or_argument)?;
+        let right = self
+            .ctx
+            .arena
+            .get_identifier(right_node)?
+            .escaped_text
+            .clone();
+        Some(format!("{left}.{right}"))
+    }
+
+    fn is_object_literal_backed_element_access_receiver(&self, expr_idx: NodeIndex) -> bool {
+        let Some(receiver) = self.access_receiver_for_diagnostic_node(expr_idx) else {
+            return false;
+        };
+        self.is_object_literal_backed_receiver(receiver)
+    }
+
+    fn is_object_literal_backed_receiver(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return true;
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+
+        self.ctx
+            .arena
+            .get_access_expr(node)
+            .is_some_and(|access| self.is_object_literal_backed_receiver(access.expression))
+    }
+
+    /// Check if the receiver of an element access expression is an object literal
+    /// expression (e.g., `{}["hi"]`). Used to distinguish TS2339 vs TS7053 for
+    /// literal-keyed element access on types without index signatures.
+    fn is_object_literal_element_access_receiver(&self, expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get(access.expression)
+            .is_some_and(|receiver| {
+                receiver.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            })
+    }
+
+    /// Check if an identifier node refers to a variable declared in a for-in statement.
+    fn is_for_in_variable_identifier(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        // Resolve to symbol, then find the value declaration
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        let decl = symbol.value_declaration;
+        if decl.is_none() {
+            return false;
+        }
+
+        // Check: declaration → parent (VarDeclList) → parent (ForInStatement?)
+        let Some(decl_node) = self.ctx.arena.get(decl) else {
+            return false;
+        };
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        let Some(vdl_ext) = self.ctx.arena.get_extended(decl) else {
+            return false;
+        };
+        let vdl_idx = vdl_ext.parent;
+        if vdl_idx.is_none() {
+            return false;
+        }
+        let Some(for_ext) = self.ctx.arena.get_extended(vdl_idx) else {
+            return false;
+        };
+        let for_idx = for_ext.parent;
+        if for_idx.is_none() {
+            return false;
+        }
+        let Some(for_node) = self.ctx.arena.get(for_idx) else {
+            return false;
+        };
+        for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+    }
+
+    /// TypeScript suppresses TS7053 for `this[...]`/`super[...]` when the class extends an `any` base.
+    fn is_element_access_on_this_or_super_with_any_base(&mut self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // idx may be the element access expression itself or its argument node.
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        let access = if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            // idx IS the element access expression
+            self.ctx.arena.get_access_expr(node)
+        } else {
+            // idx is the argument — find parent element access
+            let Some(ext) = self.ctx.arena.get_extended(idx) else {
+                return false;
+            };
+            let Some(parent) = self.ctx.arena.get(ext.parent) else {
+                return false;
+            };
+            if parent.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                return false;
+            }
+            let access = self.ctx.arena.get_access_expr(parent);
+            if access.as_ref().is_some_and(|a| a.name_or_argument != idx) {
+                return false;
+            }
+            access
+        };
+
+        let Some(access) = access else {
+            return false;
+        };
+        let Some(expr_node) = self.ctx.arena.get(access.expression) else {
+            return false;
+        };
+        let is_this_or_super = expr_node.kind == SyntaxKind::SuperKeyword as u16
+            || expr_node.kind == SyntaxKind::ThisKeyword as u16;
+        if !is_this_or_super {
+            return false;
+        }
+
+        let Some(class_info) = self.ctx.enclosing_class.clone() else {
+            return false;
+        };
+        let Some(class_decl) = self.ctx.arena.get_class_at(class_info.class_idx) else {
+            return false;
+        };
+        let Some(heritage_clauses) = &class_decl.heritage_clauses else {
+            return false;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
+                continue;
+            };
+            if clause.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            let Some(&type_idx) = clause.types.nodes.first() else {
+                continue;
+            };
+            let expr_idx =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args_at(type_idx) {
+                    expr_type_args.expression
+                } else {
+                    type_idx
+                };
+            if self.get_type_of_node(expr_idx) == TypeId::ANY {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Get the display name for a namespace/module value type, if applicable.
+    /// Returns `Some("M")` for `namespace M {}` types, enabling `typeof M` display.
+    fn get_namespace_typeof_name(&self, type_id: TypeId) -> Option<String> {
+        use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
+        use tsz_binder::{SymbolId, symbol_flags};
+
+        const fn is_pure_namespace(symbol: &tsz_binder::Symbol) -> bool {
+            symbol.has_any_flags(symbol_flags::MODULE)
+                && !symbol.has_any_flags(symbol_flags::ENUM)
+                && !symbol.has_any_flags(symbol_flags::CLASS)
+        }
+
+        let kind = classify_namespace_member(self.ctx.types, type_id);
+        let sym_id = match kind {
+            NamespaceMemberKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
+            NamespaceMemberKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            NamespaceMemberKind::Callable(shape_id) => {
+                // Callable with namespace flags (class+namespace merges etc.)
+                let shape = self.ctx.types.callable_shape(shape_id);
+                shape.symbol?
+            }
+            _ => return None,
+        };
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        // Keep class+namespace merges on their class-instance display path.
+        if is_pure_namespace(symbol) {
+            Some(symbol.escaped_name.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Check if a type should get TS2812 (suggest 'dom' lib) instead of TS2339.
+    /// Returns true if ALL named components of the type match known DOM global names
+    /// AND each component is structurally empty (no user-defined members).
+    fn should_suggest_dom_lib_for_type(&mut self, type_id: TypeId) -> bool {
+        // Check intersection members individually
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        {
+            if members.is_empty() {
+                return false;
+            }
+            return members
+                .iter()
+                .all(|&m| self.should_suggest_dom_lib_for_empty_named_type(m));
+        }
+
+        self.should_suggest_dom_lib_for_empty_named_type(type_id)
+    }
+
+    fn should_suggest_dom_lib_for_empty_named_type(&mut self, type_id: TypeId) -> bool {
+        self.is_empty_dom_named_type(type_id) && !self.has_dom_lib_loaded()
+    }
+
+    fn has_dom_lib_loaded(&self) -> bool {
+        if self.ctx.typescript_dom_replacement_loaded {
+            return true;
+        }
+
+        self.ctx.lib_contexts.iter().any(|lib_ctx| {
+            lib_ctx.arena.source_files.iter().any(|sf| {
+                let file_name = sf.file_name.as_str();
+                file_name.ends_with("lib.dom.d.ts") || file_name.ends_with("lib.dom.iterable.d.ts")
+            })
+        })
+    }
+
+    /// Check if a single type has a known DOM type name and is structurally empty.
+    fn is_empty_dom_named_type(&self, type_id: TypeId) -> bool {
+        // Get the type's display name to check against the DOM-element name
+        // pattern. We mirror tsc's `containerSeemsToBeEmptyDomElement`, which
+        // tests the name against the regex `^(?:EventTarget|Node|(?:HTML[a-zA-Z]*)?Element)$`
+        // regardless of whether the declaration originates from a lib file.
+        let name = match self.dom_type_name(type_id) {
+            Some(n) if is_dom_element_like_name(&n) => n,
+            _ => return false,
+        };
+
+        // Check if the type is structurally empty (no user-defined properties).
+        // Interfaces may be lazy or materialized - check both paths.
+        if crate::query_boundaries::common::is_empty_object_type(self.ctx.types, type_id) {
+            return true;
+        }
+
+        // For lazy types (DefId-backed interfaces), check if the interface
+        // declaration has zero members in the AST.
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
+            .or_else(|| {
+                self.ctx
+                    .resolve_type_to_symbol_id(type_id)
+                    .and_then(|sym_id| self.ctx.get_existing_def_id(sym_id))
+            })
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+        {
+            let def_name = self.ctx.types.resolve_atom(def.name);
+            if def_name == name {
+                // Check if the body type is an empty object
+                if let Some(body) = def.body
+                    && crate::query_boundaries::common::is_empty_object_type(self.ctx.types, body)
+                {
+                    return true;
+                }
+                // Check via symbol: if interface has no AST members
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    return self.interface_has_no_members(sym_id);
+                }
+            }
+        }
+        false
+    }
+
+    /// Try to get the display name for a type, checking symbol and def store.
+    fn dom_type_name(&self, type_id: TypeId) -> Option<String> {
+        // Try Lazy(DefId) types directly
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+        {
+            let name = self.ctx.types.resolve_atom(def.name);
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+        // Try object shape symbol
+        if let Some(shape_id) =
+            crate::query_boundaries::common::object_shape_id(self.ctx.types, type_id)
+        {
+            let shape = self.ctx.types.object_shape(shape_id);
+            if let Some(sym_id) = shape.symbol
+                && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+            {
+                return Some(symbol.escaped_name.clone());
+            }
+        }
+        // Try definition store by type body
+        if let Some(def_id) = self
+            .ctx
+            .definition_store
+            .find_def_for_type(type_id)
+            .or_else(|| self.ctx.definition_store.find_type_alias_by_body(type_id))
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+        {
+            let name = self.ctx.types.resolve_atom(def.name);
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    /// Check if an interface symbol's declarations have zero members.
+    fn interface_has_no_members(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                && let Some(iface) = self.ctx.arena.get_interface(node)
+                && !iface.members.nodes.is_empty()
+            {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+fn strip_property_namespace_module_extension(module_name: &str) -> &str {
+    const EXTS: &[&str] = &[
+        ".d.ts", ".d.mts", ".d.cts", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts", ".cts",
+    ];
+    for ext in EXTS {
+        if let Some(stripped) = module_name.strip_suffix(ext) {
+            return stripped;
+        }
+    }
+    module_name
+}
+
+/// Match tsc's `^(?:EventTarget|Node|(?:HTML[a-zA-Z]*)?Element)$` regex used by
+/// `containerSeemsToBeEmptyDomElement` to detect DOM element-like type names.
+fn is_dom_element_like_name(name: &str) -> bool {
+    if name == "EventTarget" || name == "Node" || name == "Element" {
+        return true;
+    }
+    if let Some(prefix) = name.strip_suffix("Element")
+        && let Some(rest) = prefix.strip_prefix("HTML")
+        && rest.chars().all(|c| c.is_ascii_alphabetic())
+    {
+        return true;
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::diagnostics::diagnostic_codes;
+
+    fn diagnostics_for_source(source: &str) -> Vec<u32> {
+        crate::test_utils::check_source_codes(source)
+    }
+
+    /// TS2339 must be suppressed for property access on type parameters with
+    /// circular `typeof` constraints (`T extends typeof a` where `a: T`).
+    /// This applies to both direct parameters and destructured bindings.
+    #[test]
+    fn ts2339_suppressed_for_circular_typeof_constraint_direct_param() {
+        // Direct parameter: `a: T` where `T extends typeof a`
+        let diags = diagnostics_for_source("function f<T extends typeof a>(a: T) { a.b; }");
+        assert!(
+            !diags.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+            "TS2339 should be suppressed for direct param with circular typeof constraint, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts2339_suppressed_for_circular_typeof_constraint_destructured_param() {
+        // Destructured parameter: `{a}: {a:T}` where `T extends typeof a`
+        let diags = diagnostics_for_source("function f<T extends typeof a>({a}: {a:T}) { a.b; }");
+        assert!(
+            !diags.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+            "TS2339 should be suppressed for destructured param with circular typeof constraint, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts2339_suppressed_for_circular_typeof_constraint_array_destructured_param() {
+        // Array destructured parameter: `[a]: T[]` where `T extends typeof a`
+        let diags = diagnostics_for_source("function f<T extends typeof a>([a]: T[]) { a.b; }");
+        assert!(
+            !diags.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+            "TS2339 should be suppressed for array-destructured param with circular typeof constraint, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts2339_not_suppressed_for_unconstrained_type_param() {
+        // Unconstrained type parameter should still emit TS2339
+        let diags = diagnostics_for_source("function f<T>(a: T) { a.b; }");
+        assert!(
+            diags.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+            "TS2339 should be emitted for unconstrained type param, got: {diags:?}"
+        );
+    }
+}

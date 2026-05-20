@@ -1,0 +1,468 @@
+//! Go to Implementation for LSP.
+//!
+//! Given a position in the source at an interface or abstract class declaration,
+//! finds all concrete implementations of that type within the current file.
+//!
+//! Strategy:
+//! 1. Find the symbol at cursor position (reuse `GoToDefinition` pattern)
+//! 2. Determine if it's an interface or abstract class
+//! 3. Walk all `ClassDeclaration` / `InterfaceDeclaration` nodes in the AST
+//! 4. For each class/interface, check heritage clauses for the target name
+//! 5. Return locations of implementing classes/interfaces
+
+use crate::utils::find_node_at_offset;
+use tsz_common::position::{Location, Position, Range};
+use tsz_parser::{NodeIndex, modifier_flags, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
+
+define_lsp_provider!(binder GoToImplementationProvider, "Go to Implementation provider.");
+
+/// The kind of target the user is searching implementations for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetKind {
+    /// An interface: look for classes that `implements` it or interfaces that `extends` it.
+    Interface,
+    /// An abstract class: look for classes that `extends` it.
+    AbstractClass,
+    /// A concrete class: look for classes that `extends` it.
+    ConcreteClass,
+}
+
+/// Result of finding an implementation: the class/interface name and its location.
+#[derive(Debug, Clone)]
+pub struct ImplementationResult {
+    /// The name of the implementing class/interface
+    pub name: String,
+    /// The location of the implementation declaration
+    pub location: Location,
+}
+
+impl<'a> GoToImplementationProvider<'a> {
+    /// Get the text for an identifier node.
+    ///
+    /// Delegates to the arena's `resolve_identifier_text`, which transparently
+    /// falls back to `IdentifierData::escaped_text` when the interner has not
+    /// resolved the atom (the case `get_arena()`-served arenas hit when the
+    /// scanner-side interner has not been transferred). Previously this was
+    /// a manual bypass; the bypass is no longer needed because
+    /// `resolve_identifier_text` is total. See robustness audit
+    /// `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 13 (PR #M).
+    fn get_identifier_escaped_text(&self, node_idx: NodeIndex) -> Option<&str> {
+        let node = self.arena.get(node_idx)?;
+        let data = self.arena.get_identifier(node)?;
+        let text = self.arena.resolve_identifier_text(data);
+        if text.is_empty() { None } else { Some(text) }
+    }
+
+    /// Resolve the symbol at a node index.
+    ///
+    /// Tries multiple strategies:
+    /// 1. Direct lookup in `node_symbols` (works for declaration nodes)
+    /// 2. Parent lookup in `node_symbols` (works for name identifiers of declarations)
+    /// 3. Name-based lookup in `file_locals` using `escaped_text`
+    pub fn resolve_symbol_at_node(&self, node_idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
+        // Strategy 1: Direct lookup - the node itself is a declaration node
+        if let Some(&sym_id) = self.binder.node_symbols.get(&node_idx.0) {
+            return Some(sym_id);
+        }
+
+        // Strategy 2: Parent lookup - the node is the name identifier of a declaration
+        if let Some(ext) = self.arena.get_extended(node_idx)
+            && let Some(&sym_id) = self.binder.node_symbols.get(&ext.parent.0)
+        {
+            return Some(sym_id);
+        }
+
+        // Strategy 3: Name-based lookup in file_locals using escaped_text
+        let node = self.arena.get(node_idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let text = self.get_identifier_escaped_text(node_idx)?;
+            if !text.is_empty() {
+                return self.binder.file_locals.get(text);
+            }
+        }
+
+        None
+    }
+
+    /// Get the implementation locations for the symbol at the given position.
+    ///
+    /// Returns a list of locations where the interface/abstract class is implemented.
+    /// Returns None if no symbol is found at the position or the symbol is not an
+    /// interface or abstract class.
+    pub fn get_implementations(
+        &self,
+        root: NodeIndex,
+        position: Position,
+    ) -> Option<Vec<Location>> {
+        // 1. Convert position to byte offset
+        let offset = self
+            .line_map
+            .position_to_offset(position, self.source_text)?;
+
+        // 2. Find the most specific node at this offset
+        let node_idx = find_node_at_offset(self.arena, offset);
+        if node_idx.is_none() {
+            return None;
+        }
+
+        // 3. Resolve the node to a symbol
+        let symbol_id = self.resolve_symbol_at_node(node_idx)?;
+
+        // 4. Get the symbol and determine its kind
+        let symbol = self.binder.symbols.get(symbol_id)?;
+        let target_name = self
+            .qualified_name_for_symbol(symbol)
+            .unwrap_or_else(|| symbol.escaped_name.clone());
+
+        // Determine if the target is an interface or a class (abstract or not)
+        let target_kind = self.determine_target_kind(symbol)?;
+
+        // 5. Collect all implementing declarations
+        let mut locations = Vec::new();
+        self.collect_implementations(root, &target_name, target_kind, &mut locations);
+
+        if locations.is_empty() {
+            None
+        } else {
+            Some(locations)
+        }
+    }
+
+    /// Determine if a symbol represents an interface, abstract class, or concrete class.
+    pub fn determine_target_kind(&self, symbol: &tsz_binder::Symbol) -> Option<TargetKind> {
+        use tsz_binder::symbol_flags;
+
+        if symbol.has_any_flags(symbol_flags::INTERFACE) {
+            return Some(TargetKind::Interface);
+        }
+
+        if symbol.has_any_flags(symbol_flags::CLASS) {
+            // Check if the class is abstract by examining its declarations
+            for &decl_idx in &symbol.declarations {
+                if let Some(ext) = self.arena.get_extended(decl_idx)
+                    && ext.modifier_flags & modifier_flags::ABSTRACT != 0
+                {
+                    return Some(TargetKind::AbstractClass);
+                }
+            }
+            return Some(TargetKind::ConcreteClass);
+        }
+
+        None
+    }
+
+    /// Walk all nodes in the arena to find classes/interfaces that implement or extend the target.
+    fn collect_implementations(
+        &self,
+        _root: NodeIndex,
+        target_name: &str,
+        target_kind: TargetKind,
+        locations: &mut Vec<Location>,
+    ) {
+        // Iterate over all nodes in the arena looking for class and interface declarations
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            let node_idx = NodeIndex(i as u32);
+
+            match node.kind {
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    if let Some(class) = self.arena.get_class(node)
+                        && self.class_implements_or_extends(class, target_name, target_kind)
+                        && let Some(loc) = self.location_for_declaration(node_idx, class.name)
+                    {
+                        locations.push(loc);
+                    }
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    // An interface can extend another interface
+                    if target_kind == TargetKind::Interface
+                        && let Some(iface) = self.arena.get_interface(node)
+                        && self.interface_extends(iface, target_name)
+                        && let Some(loc) = self.location_for_declaration(node_idx, iface.name)
+                    {
+                        locations.push(loc);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Check if a class implements or extends the target name.
+    fn class_implements_or_extends(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+        target_name: &str,
+        target_kind: TargetKind,
+    ) -> bool {
+        let Some(ref heritage) = class.heritage_clauses else {
+            return false;
+        };
+
+        for &clause_idx in &heritage.nodes {
+            let Some(clause_node) = self.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage_data) = self.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+
+            let token = heritage_data.token;
+            let is_implements = token == SyntaxKind::ImplementsKeyword as u16;
+            let is_extends = token == SyntaxKind::ExtendsKeyword as u16;
+
+            // For interfaces: look for `implements InterfaceName`
+            // For abstract/concrete classes: look for `extends ClassName`
+            let should_check = match target_kind {
+                TargetKind::Interface => is_implements,
+                TargetKind::AbstractClass | TargetKind::ConcreteClass => is_extends,
+            };
+
+            if !should_check {
+                continue;
+            }
+
+            if self.heritage_types_contain_name(&heritage_data.types, target_name) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if an interface extends the target name.
+    fn interface_extends(
+        &self,
+        iface: &tsz_parser::parser::node::InterfaceData,
+        target_name: &str,
+    ) -> bool {
+        let Some(ref heritage) = iface.heritage_clauses else {
+            return false;
+        };
+
+        for &clause_idx in &heritage.nodes {
+            let Some(clause_node) = self.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage_data) = self.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+
+            // Interfaces use `extends` to inherit from other interfaces
+            if heritage_data.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            if self.heritage_types_contain_name(&heritage_data.types, target_name) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a heritage clause's type list contains a reference to the target name.
+    ///
+    /// Heritage clause types may be `ExpressionWithTypeArguments` nodes (wrapping an
+    /// expression child) or bare Identifier/expression nodes. For example:
+    ///   `implements Foo, Bar<T>` has two entries in the types list.
+    fn heritage_types_contain_name(
+        &self,
+        types: &tsz_parser::parser::base::NodeList,
+        target_name: &str,
+    ) -> bool {
+        for &type_idx in &types.nodes {
+            let Some(type_node) = self.arena.get(type_idx) else {
+                continue;
+            };
+
+            // Case 1: ExpressionWithTypeArguments wraps an expression child
+            if let Some(expr_data) = self.arena.get_expr_type_args(type_node)
+                && self.expression_matches_name(expr_data.expression, target_name)
+            {
+                return true;
+            }
+
+            // Case 2: The type entry is directly an Identifier or expression node
+            if self.expression_matches_name(type_idx, target_name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if an expression node (typically an Identifier) matches the target name.
+    /// Handles both simple identifiers and property access expressions (e.g., `Ns.Foo`).
+    fn expression_matches_name(&self, expr_idx: NodeIndex, target_name: &str) -> bool {
+        self.expression_qualified_name(expr_idx)
+            .is_some_and(|name| name == target_name)
+    }
+
+    fn expression_qualified_name(&self, expr_idx: NodeIndex) -> Option<String> {
+        if expr_idx.is_none() {
+            return None;
+        }
+
+        let expr_node = self.arena.get(expr_idx)?;
+
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .get_identifier_escaped_text(expr_idx)
+                .map(str::to_string);
+        }
+
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(expr_node)?;
+            let left = self.expression_qualified_name(access.expression)?;
+            let right = self.get_identifier_escaped_text(access.name_or_argument)?;
+            return Some(format!("{left}.{right}"));
+        }
+
+        None
+    }
+
+    fn qualified_name_for_symbol(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
+        let decl_idx = symbol.declarations.first().copied()?;
+        let namespace = self.namespace_for_declaration(decl_idx);
+        namespace
+            .map(|ns| format!("{ns}.{}", symbol.escaped_name))
+            .or_else(|| Some(symbol.escaped_name.clone()))
+    }
+
+    fn namespace_for_declaration(&self, decl_idx: NodeIndex) -> Option<String> {
+        if !decl_idx.is_some() {
+            return None;
+        }
+
+        let mut names = Vec::new();
+        let mut current = decl_idx;
+        while current.is_some() {
+            let parent_idx = self.arena.get_extended(current)?.parent;
+            if !parent_idx.is_some() {
+                break;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module_data) = self.arena.get_module(parent_node)
+                && let Some(name) = self.expression_qualified_name(module_data.name)
+            {
+                names.push(name);
+            }
+            current = parent_idx;
+        }
+
+        if names.is_empty() {
+            None
+        } else {
+            names.reverse();
+            Some(names.join("."))
+        }
+    }
+
+    /// Create a Location for a declaration node, preferring the name node for a tighter range.
+    fn location_for_declaration(
+        &self,
+        decl_idx: NodeIndex,
+        name_idx: NodeIndex,
+    ) -> Option<Location> {
+        // Use the name node if available for a tighter range
+        let target_idx = if name_idx.is_some() {
+            name_idx
+        } else {
+            decl_idx
+        };
+
+        let node = self.arena.get(target_idx)?;
+        let start_pos = self.line_map.offset_to_position(node.pos, self.source_text);
+        let end_pos = self.line_map.offset_to_position(node.end, self.source_text);
+
+        Some(Location {
+            file_path: self.file_name.clone(),
+            range: Range::new(start_pos, end_pos),
+        })
+    }
+
+    /// Find implementations of a target by name (for project-wide search).
+    ///
+    /// This method is used by Project for cross-file implementation search.
+    /// It searches the current file for classes/interfaces that implement or extend
+    /// the given target name, returning both the locations and the implementing names
+    /// (for transitive search).
+    ///
+    /// # Arguments
+    /// * `target_name` - The name of the interface/class to find implementations for
+    /// * `target_kind` - The kind of target (Interface, `AbstractClass`, or `ConcreteClass`)
+    ///
+    /// # Returns
+    /// A vector of `ImplementationResult` containing the implementing class/interface names
+    /// and their locations
+    pub fn find_implementations_for_name(
+        &self,
+        target_name: &str,
+        target_kind: TargetKind,
+    ) -> Vec<ImplementationResult> {
+        let mut results = Vec::new();
+
+        // Iterate over all nodes in the arena looking for class and interface declarations
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            let node_idx = NodeIndex(i as u32);
+
+            match node.kind {
+                k if k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                {
+                    if let Some(class) = self.arena.get_class(node)
+                        && self.class_implements_or_extends(class, target_name, target_kind)
+                        && let Some(class_name) = self.get_identifier_escaped_text(class.name)
+                        && let Some(loc) = self.location_for_declaration(node_idx, class.name)
+                    {
+                        results.push(ImplementationResult {
+                            name: class_name.to_string(),
+                            location: loc,
+                        });
+                    }
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    // An interface can extend another interface
+                    if target_kind == TargetKind::Interface
+                        && let Some(iface) = self.arena.get_interface(node)
+                        && self.interface_extends(iface, target_name)
+                        && let Some(iface_name) = self.get_identifier_escaped_text(iface.name)
+                        && let Some(loc) = self.location_for_declaration(node_idx, iface.name)
+                    {
+                        results.push(ImplementationResult {
+                            name: iface_name.to_string(),
+                            location: loc,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        results
+    }
+
+    /// Resolve the target kind for a symbol by name.
+    ///
+    /// This is used by Project to determine what kind of target we're searching for
+    /// when doing project-wide implementation search.
+    ///
+    /// # Arguments
+    /// * `symbol_name` - The name of the symbol to resolve
+    ///
+    /// # Returns
+    /// The `TargetKind` if the symbol is found and is an interface or class, None otherwise
+    pub fn resolve_target_kind_for_name(&self, symbol_name: &str) -> Option<TargetKind> {
+        // Look up the symbol by name in file_locals
+        let symbol_id = self.binder.file_locals.get(symbol_name)?;
+        let symbol = self.binder.symbols.get(symbol_id)?;
+        self.determine_target_kind(symbol)
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/implementation_tests.rs"]
+mod implementation_tests;

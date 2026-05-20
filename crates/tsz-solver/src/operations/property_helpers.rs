@@ -1,0 +1,1901 @@
+//! Property access resolution helpers: mapped-type resolution,
+//! primitive/array/function/application property resolution.
+
+use super::*;
+use crate::apparent_primitive_member_kind;
+use crate::evaluation::evaluate_rules::apparent::make_apparent_method_type;
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_type_cached, instantiate_type_with_infer_cached,
+    substitute_this_type_cached,
+};
+use crate::types::{
+    MappedType, MappedTypeId, PropertyInfo, PropertyLookup, TupleElement, TypeApplicationId,
+    TypeParamInfo,
+};
+
+fn is_array_mutating_method(prop_name: &str) -> bool {
+    matches!(
+        prop_name,
+        "copyWithin"
+            | "fill"
+            | "pop"
+            | "push"
+            | "reverse"
+            | "shift"
+            | "sort"
+            | "splice"
+            | "unshift"
+    )
+}
+
+impl<'a> PropertyAccessEvaluator<'a> {
+    #[inline]
+    fn instantiate_type_cached(&self, type_id: TypeId, substitution: &TypeSubstitution) -> TypeId {
+        instantiate_type_cached(self.interner(), Some(self.db), type_id, substitution)
+    }
+
+    #[inline]
+    fn instantiate_type_with_infer_cached(
+        &self,
+        type_id: TypeId,
+        substitution: &TypeSubstitution,
+    ) -> TypeId {
+        instantiate_type_with_infer_cached(self.interner(), Some(self.db), type_id, substitution)
+    }
+
+    #[inline]
+    fn substitute_this_type_cached(&self, type_id: TypeId, this_type: TypeId) -> TypeId {
+        substitute_this_type_cached(self.interner(), Some(self.db), type_id, this_type)
+    }
+
+    /// Lazily resolve a single property from a mapped type without fully expanding it.
+    /// This avoids OOM by only computing the property type that was requested.
+    ///
+    /// Returns `Some(result)` if we could resolve the property lazily,
+    /// `None` if we need to fall back to eager expansion.
+    pub(super) fn resolve_mapped_property_lazy(
+        &self,
+        mapped_id: MappedTypeId,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> Option<PropertyAccessResult> {
+        use crate::types::MappedModifier;
+
+        let mapped = self.interner().mapped_type(mapped_id);
+
+        // SPECIAL CASE: Mapped types over array-like sources
+        // When a mapped type like Boxified<T> = { [P in keyof T]: Box<T[P]> } is applied
+        // to an array type, array methods (pop, push, concat, etc.) should NOT be mapped
+        // through the template. They should be resolved from the resulting array type.
+        //
+        // For example: Boxified<T> where T extends any[]
+        // - Numeric properties (0, 1, 2) → Box<T[number]>
+        // - Array methods (pop, push) → resolved from Array<Box<T[number]>>
+        if let Some(result) =
+            self.resolve_array_mapped_type_method(&mapped, mapped_id, prop_name, prop_atom)
+        {
+            return Some(result);
+        }
+
+        if let Some(property_type) = crate::type_queries::get_finite_mapped_property_type(
+            self.interner(),
+            mapped_id,
+            prop_name,
+        ) {
+            return Some(PropertyAccessResult::simple(property_type));
+        }
+
+        if let Some(names) =
+            crate::type_queries::collect_finite_mapped_property_names(self.interner(), mapped_id)
+            && !names.contains(&prop_atom)
+        {
+            return Some(PropertyAccessResult::PropertyNotFound {
+                type_id: self.interner().mapped(*mapped.as_ref()),
+                property_name: prop_atom,
+            });
+        }
+
+        // Step 1: Check if this property name is valid in the constraint
+        // We need to check if the literal string prop_name is in the constraint
+        let constraint = mapped.constraint;
+
+        // Try to determine if prop_name is a valid key
+        let is_valid_key = self.is_key_in_mapped_constraint(constraint, prop_name);
+
+        if !is_valid_key {
+            // Property not in constraint - check if there's a string index signature
+            if self.mapped_has_string_index(&mapped) {
+                // Has string index - property access is valid
+            } else {
+                return Some(PropertyAccessResult::PropertyNotFound {
+                    type_id: self.interner().mapped(*mapped.as_ref()),
+                    property_name: prop_atom,
+                });
+            }
+        }
+
+        // Step 2: Create a substitution for just this property
+        let key_literal = self.interner().literal_string_atom(prop_atom);
+
+        // Handle name remapping if present (e.g., `as` clause in mapped types)
+        if let Some(name_type) = mapped.name_type {
+            let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
+            let remapped = self.instantiate_type_cached(name_type, &subst);
+            let remapped = self
+                .db
+                .evaluate_type_with_options(remapped, self.no_unchecked_indexed_access);
+            if remapped == TypeId::NEVER {
+                // Key is filtered out by `as never`
+                return Some(PropertyAccessResult::PropertyNotFound {
+                    type_id: self.interner().mapped(*mapped.as_ref()),
+                    property_name: prop_atom,
+                });
+            }
+        }
+
+        // Step 3: Instantiate the template with this single key.
+        //
+        // For homomorphic mapped types with template `Source[K]`, construct
+        // IndexAccess(Source, key_literal) directly instead of using name-based
+        // substitution. This avoids a name collision when the mapped key parameter
+        // (e.g., `P` from `[P in keyof T]: T[P]`) shares a name atom with an
+        // outer type parameter inside the source (e.g., `Props<P> & P` where the
+        // outer function declares `<P>`). Name-based substitution would
+        // incorrectly replace both occurrences of `P` with the key literal.
+        let property_type = if let Some((idx_obj, idx_key)) =
+            crate::type_queries::get_index_access_types(self.interner(), mapped.template)
+            && let Some(crate::types::TypeData::TypeParameter(info)) =
+                self.interner().lookup(idx_key)
+            && info.name == mapped.type_param.name
+        {
+            // Template is Source[K] — construct Source["propName"] directly
+            let index_access = self.interner().index_access(idx_obj, key_literal);
+            self.db
+                .evaluate_type_with_options(index_access, self.no_unchecked_indexed_access)
+        } else {
+            let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
+            let instantiated = self.instantiate_type_cached(mapped.template, &subst);
+            self.db
+                .evaluate_type_with_options(instantiated, self.no_unchecked_indexed_access)
+        };
+
+        // Step 4: Apply optional modifier
+        let final_type = match mapped.optional_modifier {
+            Some(MappedModifier::Add) => self.interner().union2(property_type, TypeId::UNDEFINED),
+            Some(MappedModifier::Remove) | None => property_type,
+        };
+
+        Some(PropertyAccessResult::simple(final_type))
+    }
+
+    /// Handle array method access on mapped types applied to array-like sources.
+    ///
+    /// When a mapped type like `{ [P in keyof T]: F<T[P]> }` is applied to an array type,
+    /// TypeScript preserves array methods (pop, push, concat, etc.) from the resulting
+    /// array type rather than mapping them through the template.
+    ///
+    /// Returns `Some(result)` if this is an array method on a mapped array type,
+    /// `None` otherwise.
+    fn resolve_array_mapped_type_method(
+        &self,
+        mapped: &MappedType,
+        _mapped_id: MappedTypeId,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> Option<PropertyAccessResult> {
+        // Only handle non-numeric property names (array methods)
+        // Numeric properties should go through normal template mapping
+        if prop_name.parse::<usize>().is_ok() {
+            return None;
+        }
+
+        let has_array_like_source = self.is_key_in_mapped_constraint(mapped.constraint, "0")
+            || self.is_key_in_mapped_constraint(mapped.constraint, "length")
+            || crate::visitor::collect_all_types(self.interner(), mapped.template)
+                .into_iter()
+                .filter_map(|candidate| {
+                    if candidate.is_intrinsic() {
+                        return None;
+                    }
+                    match self.interner().lookup(candidate) {
+                        Some(TypeData::IndexAccess(source, idx)) => {
+                            if idx.is_intrinsic() {
+                                return None;
+                            }
+                            match self.interner().lookup(idx) {
+                                Some(TypeData::TypeParameter(info))
+                                    if info.name == mapped.type_param.name =>
+                                {
+                                    Some(source)
+                                }
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    }
+                })
+                .any(|source| self.is_array_like_type(source));
+
+        if !has_array_like_source {
+            return None;
+        }
+
+        // For array methods, we need to:
+        // 1. Compute the mapped element type: F<T[number]>
+        // 2. Create Array<mapped_element>
+        // 3. Resolve the property on that array type
+
+        // Get the element type mapping: instantiate template with `number` as the key
+        let number_type = TypeId::NUMBER;
+        let subst = TypeSubstitution::single(mapped.type_param.name, number_type);
+        let mapped_element = self.instantiate_type_cached(mapped.template, &subst);
+        let mapped_element = self
+            .db
+            .evaluate_type_with_options(mapped_element, self.no_unchecked_indexed_access);
+
+        // Create the resulting array type
+        let array_type = self.interner().array(mapped_element);
+
+        // Resolve the property on the array type
+        let result = self.resolve_array_property(array_type, prop_name, prop_atom);
+        // If property not found on array, return None to fall through to normal handling
+        if result.is_not_found() {
+            return None;
+        }
+
+        Some(result)
+    }
+
+    /// Check if a type is array-like (array, tuple, or type parameter constrained to array).
+    fn is_array_like_type(&self, type_id: TypeId) -> bool {
+        use crate::types::TypeData;
+
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
+            Some(TypeData::TypeParameter(info)) => {
+                // Check if the type parameter has an array-like constraint
+                if let Some(constraint) = info.constraint {
+                    self.is_array_like_type(constraint)
+                } else {
+                    false
+                }
+            }
+            Some(TypeData::ReadonlyType(inner)) => self.is_array_like_type(inner),
+            // Also check for union types where all members are array-like
+            Some(TypeData::Union(members)) => {
+                let members = self.interner().type_list(members);
+                !members.is_empty() && members.iter().all(|&m| self.is_array_like_type(m))
+            }
+            Some(TypeData::Intersection(members)) => {
+                // For intersection, at least one member should be array-like
+                let members = self.interner().type_list(members);
+                members.iter().any(|&m| self.is_array_like_type(m))
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a property name is valid in a mapped type's constraint.
+    fn is_key_in_mapped_constraint(&self, constraint: TypeId, prop_name: &str) -> bool {
+        use crate::types::{LiteralValue, TypeData};
+
+        // Evaluate the constraint to try to reduce it
+        let evaluated = self
+            .db
+            .evaluate_type_with_options(constraint, self.no_unchecked_indexed_access);
+
+        let Some(key) = self.interner().lookup(evaluated) else {
+            return false;
+        };
+
+        match key {
+            // Single string literal - exact match
+            TypeData::Literal(LiteralValue::String(s)) => {
+                self.interner().resolve_atom(s) == prop_name
+            }
+
+            // Union of literals - check if prop_name is in the union
+            TypeData::Union(members) => {
+                let members = self.interner().type_list(members);
+                for &member in members.iter() {
+                    if member == TypeId::STRING {
+                        // string index covers all string properties
+                        return true;
+                    }
+                    // Recursively check each union member
+                    if self.is_key_in_mapped_constraint(member, prop_name) {
+                        return true;
+                    }
+                }
+                false
+            }
+
+            // Intersection - key must be valid in ALL members
+            TypeData::Intersection(members) => {
+                let members = self.interner().type_list(members);
+                // For intersection of key types, a key is valid if it's in the intersection
+                // This is conservative - we check if it might be valid
+                members
+                    .iter()
+                    .any(|&m| self.is_key_in_mapped_constraint(m, prop_name))
+            }
+
+            // Enum type used as mapped constraint: check the member union.
+            // For `enum E { A = "a", B = "b" }`, members is the union `E.A | E.B`.
+            // Recurse into the member union to check if prop_name matches.
+            TypeData::Enum(_def_id, members) => {
+                self.is_key_in_mapped_constraint(members, prop_name)
+            }
+
+            // Lazy type reference (e.g., type alias `AB = A | B`): resolve and recurse.
+            // The evaluator may not fully resolve type aliases used as mapped constraints,
+            // so we resolve the DefId to get the underlying type and check that.
+            TypeData::Lazy(def_id) => {
+                if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner())
+                    && resolved != evaluated
+                {
+                    return self.is_key_in_mapped_constraint(resolved, prop_name);
+                }
+                // Couldn't resolve further — be conservative and accept
+                true
+            }
+
+            TypeData::Intrinsic(crate::types::IntrinsicKind::String)
+            | TypeData::Conditional(_)
+            | TypeData::Infer(_) => true,
+
+            // Generic type alias application like `Exclude<keyof T, "x">`. The
+            // evaluator may leave such bound applications unreduced when the
+            // resolver in this context lacks the lib alias body, so we fall
+            // back to a structural inspection: an application of two arguments
+            // where the first arg is a finite set of literal keys and the
+            // second arg is a literal that equals `prop_name` exhibits the
+            // tsc Exclude/Omit shape — exclude that key. Other applications
+            // remain conservatively permissive.
+            TypeData::Application(app_id) => {
+                let app = self.interner().type_application(app_id);
+                if app.args.len() == 2
+                    && let Some(filter_atom) =
+                        crate::visitor::literal_string(self.interner(), app.args[1])
+                {
+                    let filter_str = self.interner().resolve_atom(filter_atom);
+                    if filter_str == prop_name {
+                        // The first arg may itself be an unreduced Application
+                        // (e.g. `keyof T` rendered as Lazy/Application). Only
+                        // treat as exclusion when we can confirm `prop_name`
+                        // appears in arg[0] as a literal — otherwise stay
+                        // permissive to avoid false negatives.
+                        if self.application_first_arg_excludes_key(app.args[0], prop_name) {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
+
+            // Generic keyof that survived evaluation.  The solver's NoopResolver
+            // cannot resolve Lazy(DefId) constraints, so `keyof P` stays deferred
+            // even when P has a concrete constraint (e.g., P extends Props).
+            //
+            // Strategy: only accept a concrete property name when it is guaranteed
+            // by the operand's constraint as an explicit property. Broad index
+            // signatures on the constraint do NOT guarantee that `keyof T`
+            // includes an arbitrary concrete name for every instantiation of T.
+            TypeData::KeyOf(operand) => {
+                if operand.is_intrinsic() {
+                    return true;
+                }
+                match self.interner().lookup(operand) {
+                    Some(TypeData::TypeParameter(info)) => {
+                        info.constraint.is_some_and(|constraint| {
+                            self.constraint_guarantees_named_property(constraint, prop_name)
+                        })
+                    }
+                    _ => true,
+                }
+            }
+
+            // Type parameter constraints should be checked recursively. A mapped type
+            // like `Pick<T, K>` must not treat all keys as valid when `K` is
+            // constrained to `keyof T`.
+            TypeData::TypeParameter(info) => info
+                .constraint
+                .is_some_and(|constraint| self.is_key_in_mapped_constraint(constraint, prop_name)),
+
+            // Template literal constraint: a property key is in the constraint when
+            // its string form matches the template pattern. Without this branch,
+            // `{ [K in `data-${string}`]: V }` rejects every literal key like
+            // `"data-id"`, surfacing as TS2353 false positives in object literals.
+            TypeData::TemplateLiteral(list_id) => {
+                self.literal_matches_template_pattern(prop_name, list_id)
+            }
+
+            // Other types - be conservative and reject
+            _ => false,
+        }
+    }
+
+    /// Match a literal property name against a template literal pattern.
+    ///
+    /// Handles the common cases sufficient for mapped-type key checks:
+    /// - `Text(atom)` spans must match the prefix of the remaining input.
+    /// - `Type(t)` spans where `t` is a string literal must match exactly.
+    /// - `Type(t)` spans where `t` is `string`/`any`/`unknown` consume any
+    ///   characters (with backtracking when followed by more spans).
+    /// - `Type(t)` spans where `t` is `number` consume a numeric token.
+    ///
+    /// More exotic Type span contents (intersections, generic intrinsics,
+    /// constrained type parameters) are not handled here; they require the
+    /// solver's full subtype context and are not reachable through ordinary
+    /// string-pattern mapped constraints.
+    fn literal_matches_template_pattern(
+        &self,
+        prop_name: &str,
+        list_id: crate::types::TemplateLiteralId,
+    ) -> bool {
+        let spans = self.interner().template_list(list_id);
+        self.match_template_spans(prop_name, &spans, 0)
+    }
+
+    fn match_template_spans(
+        &self,
+        remaining: &str,
+        spans: &[crate::types::TemplateSpan],
+        idx: usize,
+    ) -> bool {
+        use crate::types::{IntrinsicKind, TemplateSpan};
+        use crate::visitor::{intrinsic_kind, literal_string};
+
+        if idx >= spans.len() {
+            return remaining.is_empty();
+        }
+
+        match &spans[idx] {
+            TemplateSpan::Text(text_atom) => {
+                let text = self.interner().resolve_atom(*text_atom);
+                if let Some(rest) = remaining.strip_prefix(text.as_str()) {
+                    self.match_template_spans(rest, spans, idx + 1)
+                } else {
+                    false
+                }
+            }
+            TemplateSpan::Type(type_id) => {
+                if let Some(literal) = literal_string(self.interner(), *type_id) {
+                    let lit = self.interner().resolve_atom(literal);
+                    if let Some(rest) = remaining.strip_prefix(lit.as_str()) {
+                        return self.match_template_spans(rest, spans, idx + 1);
+                    }
+                    return false;
+                }
+                let kind = intrinsic_kind(self.interner(), *type_id);
+                match kind {
+                    Some(IntrinsicKind::String)
+                    | Some(IntrinsicKind::Any)
+                    | Some(IntrinsicKind::Unknown) => {
+                        // Backtrack over all possible split points: try matching
+                        // 0, 1, ..., n characters of `remaining` against the
+                        // wildcard, deferring the rest to subsequent spans.
+                        for split in 0..=remaining.len() {
+                            if remaining.is_char_boundary(split)
+                                && self.match_template_spans(&remaining[split..], spans, idx + 1)
+                            {
+                                return true;
+                            }
+                        }
+                        false
+                    }
+                    Some(IntrinsicKind::Number) => {
+                        let digits_end = remaining
+                            .char_indices()
+                            .take_while(|(_, c)| c.is_ascii_digit())
+                            .last()
+                            .map_or(0, |(i, c)| i + c.len_utf8());
+                        if digits_end == 0 {
+                            return false;
+                        }
+                        for split in 1..=digits_end {
+                            if remaining.is_char_boundary(split)
+                                && self.match_template_spans(&remaining[split..], spans, idx + 1)
+                            {
+                                return true;
+                            }
+                        }
+                        false
+                    }
+                    _ => false,
+                }
+            }
+        }
+    }
+
+    fn constraint_guarantees_named_property(&self, constraint: TypeId, prop_name: &str) -> bool {
+        let prop_atom = self.interner().intern_string(prop_name);
+        matches!(
+            self.resolve_property_access_inner(constraint, prop_name, Some(prop_atom)),
+            PropertyAccessResult::Success {
+                from_index_signature: false,
+                ..
+            }
+        )
+    }
+
+    /// Check whether `type_id` is a *finite* union of string-literal keys that
+    /// includes `prop_name` AND has at least two distinct keys. The two-keys
+    /// floor is what distinguishes the Exclude/Omit shape from a degenerate
+    /// `(A extends Narrowable ? ...)`-style conditional whose first argument
+    /// is a single literal — those are not exclusions and we should leave
+    /// them permissive.
+    fn application_first_arg_excludes_key(&self, type_id: TypeId, prop_name: &str) -> bool {
+        use crate::types::TypeData;
+        let key = match self.interner().lookup(type_id) {
+            Some(k) => k,
+            None => return false,
+        };
+        if let TypeData::Union(members) = key {
+            let members = self.interner().type_list(members);
+            let mut literal_count = 0usize;
+            let mut found_prop = false;
+            for &member in members.iter() {
+                if let Some(atom) = crate::visitor::literal_string(self.interner(), member) {
+                    literal_count += 1;
+                    if self.interner().resolve_atom(atom) == prop_name {
+                        found_prop = true;
+                    }
+                } else {
+                    return false;
+                }
+            }
+            return found_prop && literal_count >= 2;
+        }
+        false
+    }
+
+    /// Check if a mapped type has a string index signature (constraint includes `string`).
+    fn mapped_has_string_index(&self, mapped: &MappedType) -> bool {
+        use crate::types::{IntrinsicKind, TypeData};
+
+        let constraint = mapped.constraint;
+
+        // When the constraint is `keyof T` and T is an unconstrained type parameter,
+        // the evaluated result `string | number | symbol` is the theoretical keyof
+        // range, NOT an actual string index signature on the type. Reject these so
+        // property access on mapped types with unconstrained keys correctly reports
+        // TS2339 (property does not exist).
+        if let Some(TypeData::KeyOf(operand)) = self.interner().lookup(constraint)
+            && let Some(TypeData::TypeParameter(info)) = self.interner().lookup(operand)
+            && info.constraint.is_none()
+        {
+            return false;
+        }
+
+        // Evaluate keyof if needed
+        let evaluated = if let Some(TypeData::KeyOf(operand)) = self.interner().lookup(constraint) {
+            let keyof_type = self.interner().keyof(operand);
+            self.db
+                .evaluate_type_with_options(keyof_type, self.no_unchecked_indexed_access)
+        } else {
+            constraint
+        };
+
+        if evaluated == TypeId::STRING {
+            return true;
+        }
+
+        if let Some(TypeData::Union(members)) = self.interner().lookup(evaluated) {
+            let members = self.interner().type_list(members);
+            for &member in members.iter() {
+                if member == TypeId::STRING {
+                    return true;
+                }
+                if let Some(TypeData::Intrinsic(IntrinsicKind::String)) =
+                    self.interner().lookup(member)
+                {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(TypeData::Intrinsic(IntrinsicKind::String)) = self.interner().lookup(evaluated)
+        {
+            return true;
+        }
+
+        false
+    }
+
+    pub(crate) fn lookup_object_property<'props>(
+        &self,
+        shape_id: ObjectShapeId,
+        props: &'props [PropertyInfo],
+        prop_atom: Atom,
+    ) -> Option<&'props PropertyInfo> {
+        match self.interner().object_property_index(shape_id, prop_atom) {
+            PropertyLookup::Found(idx) => props.get(idx),
+            PropertyLookup::NotFound => None,
+            // Properties are sorted by Atom, use binary search for O(log N)
+            PropertyLookup::Uncached => props
+                .binary_search_by_key(&prop_atom, |p| p.name)
+                .ok()
+                .map(|idx| &props[idx]),
+        }
+    }
+
+    fn any_args_function(&self, return_type: TypeId) -> TypeId {
+        make_apparent_method_type(self.interner(), return_type)
+    }
+
+    fn method_result(&self, return_type: TypeId) -> PropertyAccessResult {
+        PropertyAccessResult::simple(self.any_args_function(return_type))
+    }
+
+    fn application_base_type_params(
+        &self,
+        base: TypeId,
+        symbol: Option<tsz_binder::SymbolId>,
+    ) -> Vec<TypeParamInfo> {
+        if crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
+            .is_some_and(|array_base| array_base == base)
+        {
+            let array_params =
+                crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
+            if !array_params.is_empty() {
+                return array_params.to_vec();
+            }
+        }
+
+        if let Some(sym_id) = symbol {
+            let symbol_ref = crate::types::SymbolRef(sym_id.0);
+            let symbol_params = self.resolver().get_type_params(symbol_ref);
+            let lazy_params = self
+                .resolver()
+                .symbol_to_def_id(symbol_ref)
+                .and_then(|def_id| self.resolver().get_lazy_type_params(def_id));
+            match (symbol_params, lazy_params) {
+                (Some(symbol), Some(lazy)) if !symbol.is_empty() && lazy.len() > symbol.len() => {
+                    return lazy;
+                }
+                (Some(symbol), _) if !symbol.is_empty() => return symbol,
+                (_, Some(lazy)) if !lazy.is_empty() => return lazy,
+                _ => {}
+            }
+        }
+
+        Vec::new()
+    }
+
+    fn instantiate_application_member_type(
+        &self,
+        member_type: TypeId,
+        type_params: &[TypeParamInfo],
+        type_args: &[TypeId],
+        app_type: TypeId,
+        infer_aware: bool,
+    ) -> TypeId {
+        let contains_declared_this = crate::contains_this_type(self.interner(), member_type);
+        let instantiated = if type_params.is_empty() {
+            member_type
+        } else {
+            let substitution = TypeSubstitution::from_args(self.interner(), type_params, type_args);
+            if infer_aware {
+                self.instantiate_type_with_infer_cached(member_type, &substitution)
+            } else {
+                self.instantiate_type_cached(member_type, &substitution)
+            }
+        };
+
+        // Do not rebind `ThisType` introduced by a type argument. For
+        // `Array<this>.push(...items: T[])`, instantiating `T` yields `this[]`;
+        // rebinding that `this` to the receiver application would incorrectly
+        // produce `Array<this>[]`.
+        if contains_declared_this {
+            self.substitute_this_type_cached(instantiated, app_type)
+        } else {
+            instantiated
+        }
+    }
+
+    /// Resolve property access on a generic Application type (e.g., `D<string>`) nominally.
+    ///
+    /// This preserves nominal identity for classes/interfaces instead of structurally
+    /// expanding them. The key difference:
+    /// - Type aliases: expand structurally (transparent)
+    /// - Classes/Interfaces: preserve nominal identity (opaque)
+    ///
+    /// For `D<string>.a`:
+    /// 1. Get Application's base (D) and args ([string])
+    /// 2. Resolve base to get its body (Object with properties)
+    /// 3. Find property 'a' in the body
+    /// 4. Instantiate property type T with arg string -> string
+    /// 5. Return instantiated property type (NOT the full structurally expanded type)
+    pub(super) fn resolve_application_property(
+        &self,
+        app_id: TypeApplicationId,
+        prop_name: &str,
+        prop_atom: Option<Atom>,
+    ) -> PropertyAccessResult {
+        let app = self.interner().type_application(app_id);
+        let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
+        let app_type = self.interner().application(app.base, app.args.clone());
+
+        // Get the base type (should be a Ref to class/interface/alias)
+        let base_key = match self.interner().lookup(app.base) {
+            Some(k) => k,
+            None => {
+                return PropertyAccessResult::PropertyNotFound {
+                    type_id: self.interner().application(app.base, app.args.clone()),
+                    property_name: prop_atom,
+                };
+            }
+        };
+
+        // Handle Object types (e.g., test array interface setup)
+        if let TypeData::Object(shape_id) = base_key {
+            let shape = self.interner().object_shape(shape_id);
+
+            // Try to find the property in the Object's properties
+            if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
+                let type_params = self.application_base_type_params(app.base, shape.symbol);
+
+                let final_type = self.instantiate_application_member_type(
+                    prop.type_id,
+                    &type_params,
+                    &app.args,
+                    app_type,
+                    true,
+                );
+
+                return PropertyAccessResult::simple(final_type);
+            }
+
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: self.interner().application(app.base, app.args.clone()),
+                property_name: prop_atom,
+            };
+        }
+
+        // Handle ObjectWithIndex types
+        if let TypeData::ObjectWithIndex(shape_id) = base_key {
+            let shape = self.interner().object_shape(ObjectShapeId(shape_id.0));
+
+            // Try to find the property in the ObjectWithIndex's properties
+            if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
+                let type_params = self.application_base_type_params(app.base, shape.symbol);
+
+                let final_type = self.instantiate_application_member_type(
+                    prop.type_id,
+                    &type_params,
+                    &app.args,
+                    app_type,
+                    true,
+                );
+
+                return PropertyAccessResult::simple(final_type);
+            }
+
+            // Check index signatures if property not found
+            if let Some(ref idx) = shape.string_index {
+                return PropertyAccessResult::from_index(
+                    self.add_undefined_if_unchecked(idx.value_type),
+                );
+            }
+
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: self.interner().application(app.base, app.args.clone()),
+                property_name: prop_atom,
+            };
+        }
+
+        // Handle Callable types (e.g., Array constructor with instance methods as properties)
+        if let TypeData::Callable(shape_id) = base_key {
+            let shape = self.interner().callable_shape(shape_id);
+
+            // Try to find the property in the Callable's properties
+            if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
+                let type_params = self.application_base_type_params(app.base, shape.symbol);
+
+                let final_type = self.instantiate_application_member_type(
+                    prop.type_id,
+                    &type_params,
+                    &app.args,
+                    app_type,
+                    true,
+                );
+
+                return PropertyAccessResult::simple(final_type);
+            }
+
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: self.interner().application(app.base, app.args.clone()),
+                property_name: prop_atom,
+            };
+        }
+
+        // Array<T> from merged lib declarations is represented as a structural
+        // intersection. Instantiating the base before member lookup keeps method
+        // parameters like push(...items: T[]) bound to the actual array element
+        // type instead of leaking the raw lib T into call checking.
+        if crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
+            .is_some_and(|array_base| array_base == app.base)
+            && matches!(base_key, TypeData::Intersection(_))
+        {
+            let type_params =
+                crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
+            if !type_params.is_empty() {
+                let substitution =
+                    TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                let instantiated_base = self.instantiate_type_cached(app.base, &substitution);
+                if instantiated_base != app.base {
+                    let previous_skip_this_binding = self.is_skip_this_binding();
+                    self.set_skip_this_binding(true);
+                    let result = self.resolve_property_access_inner(
+                        instantiated_base,
+                        prop_name,
+                        Some(prop_atom),
+                    );
+                    self.set_skip_this_binding(previous_skip_this_binding);
+                    return result;
+                }
+            }
+        }
+
+        // We only handle Lazy types (def_id references)
+        let TypeData::Lazy(def_id) = base_key else {
+            // For non-Lazy bases (e.g., TypeParameter), fall back to structural evaluation
+            let evaluated = self.db.evaluate_type_with_options(
+                self.interner().application(app.base, app.args.clone()),
+                self.no_unchecked_indexed_access,
+            );
+            return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
+        };
+
+        // Resolve the def_id to get the body type and type parameters.
+        // Try the full resolution chain via SymbolId first, then fall back
+        // to resolve_lazy directly (needed for built-in type aliases like
+        // Readonly, Partial, Required, etc. whose DefId may not have a
+        // SymbolId mapping in the solver database).
+        let (body_type, type_params) = match self.resolver().def_to_symbol_id(def_id) {
+            Some(sym_id) => {
+                let symbol_ref = crate::SymbolRef(sym_id.0);
+                let body = if let Some(inner_def_id) = self.resolver().symbol_to_def_id(symbol_ref)
+                {
+                    self.resolver().resolve_lazy(inner_def_id, self.interner())
+                } else {
+                    self.resolver()
+                        .resolve_symbol_ref(symbol_ref, self.interner())
+                };
+                let symbol_params = self.resolver().get_type_params(symbol_ref);
+                let lazy_params = self.resolver().get_lazy_type_params(def_id);
+                let params = match (symbol_params, lazy_params) {
+                    (Some(symbol), Some(lazy))
+                        if !symbol.is_empty() && lazy.len() > symbol.len() =>
+                    {
+                        Some(lazy)
+                    }
+                    (Some(symbol), _) if !symbol.is_empty() => Some(symbol),
+                    (_, Some(lazy)) if !lazy.is_empty() => Some(lazy),
+                    _ => None,
+                };
+                (body, params)
+            }
+            None => {
+                // Direct DefId resolution path for built-in mapped type aliases
+                let body = self.resolver().resolve_lazy(def_id, self.interner());
+                let params = self
+                    .resolver()
+                    .get_lazy_type_params(def_id)
+                    .filter(|p| !p.is_empty());
+                (body, params)
+            }
+        };
+
+        let Some(body_type) = body_type else {
+            // Resolution failed - fall back to structural evaluation
+            let evaluated = self.db.evaluate_type_with_options(
+                self.interner().application(app.base, app.args.clone()),
+                self.no_unchecked_indexed_access,
+            );
+            return self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom));
+        };
+
+        let Some(type_params) = type_params else {
+            // No type params - still rebind polymorphic `this` to the concrete application.
+            let resolved_body = if crate::contains_this_type(self.interner(), body_type) {
+                self.substitute_this_type_cached(body_type, app_type)
+            } else {
+                body_type
+            };
+            return self.resolve_property_access_inner(resolved_body, prop_name, Some(prop_atom));
+        };
+
+        // The body should be an Object type with properties
+        let body_key = match self.interner().lookup(body_type) {
+            Some(k) => k,
+            None => {
+                return PropertyAccessResult::PropertyNotFound {
+                    type_id: self.interner().application(app.base, app.args.clone()),
+                    property_name: prop_atom,
+                };
+            }
+        };
+
+        // Handle Object types (classes/interfaces)
+        match body_key {
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+                let shape = self.interner().object_shape(shape_id);
+
+                // Try to find the property in the shape
+                if let Some(prop) =
+                    self.lookup_object_property(shape_id, &shape.properties, prop_atom)
+                {
+                    // Instantiate both read and write types
+                    let instantiated_read_type = self.instantiate_application_member_type(
+                        prop.type_id,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
+                    let instantiated_write_type = self.instantiate_application_member_type(
+                        prop.write_type,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
+                    let read_type = self.optional_property_type(&PropertyInfo {
+                        name: prop.name,
+                        type_id: instantiated_read_type,
+                        write_type: instantiated_write_type,
+                        readonly: prop.readonly,
+                        optional: prop.optional,
+                        is_method: prop.is_method,
+                        is_class_prototype: prop.is_class_prototype,
+                        visibility: prop.visibility,
+                        parent_id: prop.parent_id,
+                        declaration_order: 0,
+                        is_string_named: false,
+                        is_symbol_named: false,
+                        single_quoted_name: false,
+                    });
+                    let write = (instantiated_write_type != instantiated_read_type)
+                        .then_some(instantiated_write_type);
+                    return PropertyAccessResult::Success {
+                        type_id: read_type,
+                        write_type: write,
+                        from_index_signature: false,
+                    };
+                }
+
+                // Property not found in explicit properties - check index signatures
+                if let Some(ref idx) = shape.string_index {
+                    // Found string index signature - instantiate the value type
+                    let instantiated_value = self.instantiate_application_member_type(
+                        idx.value_type,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
+
+                    return PropertyAccessResult::from_index(
+                        self.add_undefined_if_unchecked(instantiated_value),
+                    );
+                }
+
+                // Check numeric index signature for numeric property names
+                use crate::objects::index_signatures::IndexSignatureResolver;
+                let resolver = IndexSignatureResolver::new(self.interner());
+                if resolver.is_numeric_index_name(prop_name)
+                    && let Some(ref idx) = shape.number_index
+                {
+                    let instantiated_value = self.instantiate_application_member_type(
+                        idx.value_type,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
+
+                    return PropertyAccessResult::from_index(
+                        self.add_undefined_if_unchecked(instantiated_value),
+                    );
+                }
+
+                // Property not found
+                PropertyAccessResult::PropertyNotFound {
+                    type_id: self.interner().application(app.base, app.args.clone()),
+                    property_name: prop_atom,
+                }
+            }
+            // Mapped body types (e.g., Readonly<T> = { readonly [K in keyof T]: T[K] })
+            // Instantiate the mapped type's constraint and template with the Application's
+            // type arguments, then resolve the property on the resulting mapped type.
+            // This avoids re-evaluating the Application (which would fail with NoopResolver
+            // and trigger a false recursion-guard cycle).
+            TypeData::Mapped(mapped_id) => {
+                let mapped = self.interner().mapped_type(mapped_id);
+                let substitution =
+                    TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
+
+                // Use preserve_unsubstituted_type_params to prevent the TypeInstantiator
+                // from replacing unsubstituted type parameters (like the mapped key param)
+                // with their instantiated constraints. Without this, the mapped key param
+                // (e.g., `P` from `[P in keyof T]: T[P]`) would be replaced by its
+                // instantiated constraint when T is substituted, corrupting the template.
+                let inst_constraint =
+                    crate::instantiation::instantiate::instantiate_type_preserving(
+                        self.interner(),
+                        mapped.constraint,
+                        &substitution,
+                    );
+                let inst_template = crate::instantiation::instantiate::instantiate_type_preserving(
+                    self.interner(),
+                    mapped.template,
+                    &substitution,
+                );
+                let inst_name_type = mapped.name_type.map(|nt| {
+                    crate::instantiation::instantiate::instantiate_type_preserving(
+                        self.interner(),
+                        nt,
+                        &substitution,
+                    )
+                });
+
+                let new_mapped = MappedType {
+                    type_param: mapped.type_param,
+                    constraint: inst_constraint,
+                    name_type: inst_name_type,
+                    template: inst_template,
+                    readonly_modifier: mapped.readonly_modifier,
+                    optional_modifier: mapped.optional_modifier,
+                };
+                let new_mapped_type = self.interner().mapped(new_mapped);
+                let new_mapped_id = match self.interner().lookup(new_mapped_type) {
+                    Some(TypeData::Mapped(mid)) => mid,
+                    _ => {
+                        return PropertyAccessResult::PropertyNotFound {
+                            type_id: self.interner().application(app.base, app.args.clone()),
+                            property_name: prop_atom,
+                        };
+                    }
+                };
+
+                // Resolve property on the instantiated mapped type
+                if let Some(result) =
+                    self.resolve_mapped_property_lazy(new_mapped_id, prop_name, prop_atom)
+                {
+                    result
+                } else {
+                    // Lazy resolution failed — fall back to evaluating the mapped type
+                    let evaluated = self.db.evaluate_type_with_options(
+                        new_mapped_type,
+                        self.no_unchecked_indexed_access,
+                    );
+                    if evaluated != new_mapped_type {
+                        self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
+                    } else {
+                        PropertyAccessResult::PropertyNotFound {
+                            type_id: self.interner().application(app.base, app.args.clone()),
+                            property_name: prop_atom,
+                        }
+                    }
+                }
+            }
+            // For non-Object body types (e.g., type aliases to unions), fall back to evaluation
+            _ => {
+                let evaluated = self.db.evaluate_type_with_options(
+                    self.interner().application(app.base, app.args.clone()),
+                    self.no_unchecked_indexed_access,
+                );
+                self.resolve_property_access_inner(evaluated, prop_name, Some(prop_atom))
+            }
+        }
+    }
+
+    pub(crate) fn add_undefined_if_unchecked(&self, type_id: TypeId) -> TypeId {
+        if !self.no_unchecked_indexed_access || type_id == TypeId::UNDEFINED {
+            return type_id;
+        }
+        self.interner().union2(type_id, TypeId::UNDEFINED)
+    }
+
+    /// Build a successful index-signature property-access result that records
+    /// the original (pre-`noUncheckedIndexedAccess`) value type as the WRITE
+    /// type while widening the READ type with `| undefined` when NUIA is on.
+    /// `noUncheckedIndexedAccess` only widens reads; writes must still be
+    /// rejected when the source isn't part of the index signature's value
+    /// type — e.g. assigning `undefined` to `{[s: string]: boolean}["k"]`
+    /// must emit TS2322 even though the read type is `boolean | undefined`.
+    pub(crate) fn index_signature_result_with_nuia_write_type(
+        &self,
+        value_type: TypeId,
+    ) -> PropertyAccessResult {
+        if !self.no_unchecked_indexed_access || value_type == TypeId::UNDEFINED {
+            return PropertyAccessResult::from_index(value_type);
+        }
+        let read_type = self.add_undefined_if_unchecked(value_type);
+        if read_type == value_type {
+            return PropertyAccessResult::from_index(value_type);
+        }
+        PropertyAccessResult::Success {
+            type_id: read_type,
+            write_type: Some(value_type),
+            from_index_signature: true,
+        }
+    }
+
+    /// Resolve a value-level element access whose index expression has type
+    /// `any` against the receiver's applicable index signature.
+    ///
+    /// Type-level `T[any]` evaluates to `any` (handled by the index-access
+    /// evaluator). Value-level `obj[anyExpr]` is different in tsc: the
+    /// access flows through whichever index signature applies, so
+    /// `noUncheckedIndexedAccess` still widens reads to `T | undefined`
+    /// and writes still reject `undefined` against the un-widened slot
+    /// type. Without this, `strMap[null as any]` silently typechecks as
+    /// `any`, dropping the NUIA gate.
+    ///
+    /// Returns `None` when the receiver has no string or number index
+    /// signature; callers should fall back to the standard `T[any] = any`
+    /// behaviour in that case.
+    pub fn resolve_any_index_access(&self, obj_type: TypeId) -> Option<PropertyAccessResult> {
+        use crate::objects::index_signatures::IndexSignatureResolver;
+        let resolver = IndexSignatureResolver::new(self.interner());
+        // String index signatures cover string and numeric keys (number falls
+        // through to string when no number signature exists). Try string first
+        // and fall back to number-only.
+        let value_type = resolver
+            .resolve_string_index(obj_type)
+            .or_else(|| resolver.resolve_number_index(obj_type))?;
+        Some(self.index_signature_result_with_nuia_write_type(value_type))
+    }
+
+    pub(crate) fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
+        crate::utils::optional_property_type(self.interner(), prop)
+    }
+
+    pub(crate) fn optional_property_write_type(&self, prop: &PropertyInfo) -> TypeId {
+        let write = if prop.write_type == TypeId::NONE {
+            prop.type_id
+        } else {
+            prop.write_type
+        };
+        if prop.optional && !self.exact_optional_property_types {
+            self.interner().union2(write, TypeId::UNDEFINED)
+        } else {
+            write
+        }
+    }
+
+    fn resolve_apparent_property(
+        &self,
+        kind: IntrinsicKind,
+        owner_type: TypeId,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        match apparent_primitive_member_kind(self.interner(), kind, prop_name) {
+            Some(ApparentMemberKind::Value(type_id)) => PropertyAccessResult::simple(type_id),
+            Some(ApparentMemberKind::Method(return_type)) => self.method_result(return_type),
+            None => PropertyAccessResult::PropertyNotFound {
+                type_id: owner_type,
+                property_name: prop_atom,
+            },
+        }
+    }
+
+    pub(crate) fn resolve_object_member(
+        &self,
+        prop_name: &str,
+        _prop_atom: Atom,
+    ) -> Option<PropertyAccessResult> {
+        match apparent_object_member_kind(prop_name) {
+            Some(ApparentMemberKind::Value(type_id)) => Some(PropertyAccessResult::simple(type_id)),
+            Some(ApparentMemberKind::Method(return_type)) => Some(self.method_result(return_type)),
+            None => None,
+        }
+    }
+
+    /// Resolve properties on string type.
+    pub(crate) fn resolve_string_property(
+        &self,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        self.resolve_primitive_property(IntrinsicKind::String, TypeId::STRING, prop_name, prop_atom)
+    }
+
+    /// Resolve properties on number type.
+    pub(crate) fn resolve_number_property(
+        &self,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        self.resolve_primitive_property(IntrinsicKind::Number, TypeId::NUMBER, prop_name, prop_atom)
+    }
+
+    /// Resolve properties on boolean type.
+    pub(crate) fn resolve_boolean_property(
+        &self,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        self.resolve_primitive_property(
+            IntrinsicKind::Boolean,
+            TypeId::BOOLEAN,
+            prop_name,
+            prop_atom,
+        )
+    }
+
+    /// Resolve properties on bigint type.
+    pub(crate) fn resolve_bigint_property(
+        &self,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        self.resolve_primitive_property(IntrinsicKind::Bigint, TypeId::BIGINT, prop_name, prop_atom)
+    }
+
+    /// Helper to resolve properties on primitive types.
+    /// Extracted to reduce duplication across string/number/boolean/bigint property resolvers.
+    fn resolve_primitive_property(
+        &self,
+        kind: IntrinsicKind,
+        type_id: TypeId,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        // STEP 1: Try to get the boxed interface type from the resolver (e.g. Number for number)
+        // This allows us to use lib.d.ts definitions instead of just hardcoded lists
+        let boxed_loaded = if let Some(boxed_type) =
+            crate::def::resolver::TypeResolver::get_boxed_type(self.db, kind)
+        {
+            // Resolve the property on the boxed interface type
+            // This handles inheritance (e.g., String extends Object) automatically
+            // and allows user-defined augmentations to lib.d.ts to work
+            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+
+            // If the property was found (or we got a definitive answer like IsUnknown), return it.
+            if !result.is_not_found() {
+                return result;
+            }
+            true
+        } else {
+            false
+        };
+
+        // STEP 2: Fallback to hardcoded apparent members (bootstrapping/no-lib behavior).
+        // Mirrors the gating in `resolve_function_property`: when the boxed
+        // interface IS loaded but lacks a *version-specific* property, an
+        // absent property is a genuine "not in this lib" signal and the
+        // fallback must not paper over it. For es5-baseline members the
+        // fallback still fires so synthesized shapes that don't navigate to
+        // the boxed interface keep resolving them.
+        if boxed_loaded && crate::objects::apparent::is_post_es5_primitive_member(kind, prop_name) {
+            return PropertyAccessResult::PropertyNotFound {
+                type_id,
+                property_name: prop_atom,
+            };
+        }
+        self.resolve_apparent_property(kind, type_id, prop_name, prop_atom)
+    }
+
+    /// Resolve properties on symbol primitive type.
+    pub(crate) fn resolve_symbol_primitive_property(
+        &self,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        let boxed_loaded = if let Some(boxed_type) =
+            crate::def::resolver::TypeResolver::get_boxed_type(self.db, IntrinsicKind::Symbol)
+        {
+            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+            if !result.is_not_found() {
+                return result;
+            }
+            true
+        } else {
+            false
+        };
+
+        if boxed_loaded
+            && crate::objects::apparent::is_post_es5_primitive_member(
+                IntrinsicKind::Symbol,
+                prop_name,
+            )
+        {
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: TypeId::SYMBOL,
+                property_name: prop_atom,
+            };
+        }
+
+        self.resolve_apparent_property(IntrinsicKind::Symbol, TypeId::SYMBOL, prop_name, prop_atom)
+    }
+
+    /// Property access on `ReadonlyType(inner)`: routes array/tuple inners through `ReadonlyArray<T>` so mutating methods are absent.
+    pub(crate) fn resolve_readonly_type_property(
+        &self,
+        readonly_type: TypeId,
+        inner: TypeId,
+        prop_name: &str,
+        prop_atom: Option<Atom>,
+    ) -> PropertyAccessResult {
+        let inner_data = self.interner().lookup(inner);
+        let element_type = match inner_data {
+            Some(TypeData::Array(elem)) => Some(elem),
+            Some(TypeData::Tuple(_)) => Some(self.array_element_type(inner)),
+            _ => None,
+        };
+
+        let Some(elem) = element_type else {
+            return self.resolve_property_access_inner(inner, prop_name, prop_atom);
+        };
+
+        let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
+
+        if is_array_mutating_method(prop_name) {
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: readonly_type,
+                property_name: prop_atom,
+            };
+        }
+
+        if prop_name == "length" {
+            if let Some(length_type) = self.compute_tuple_length_type(inner) {
+                return PropertyAccessResult::simple(length_type);
+            }
+            return PropertyAccessResult::simple(TypeId::NUMBER);
+        }
+
+        if prop_name == "toLocaleString" {
+            return self.method_result(TypeId::STRING);
+        }
+
+        if let Some(TypeData::Tuple(elements_id)) = inner_data
+            && let Some(index_text) = crate::utils::canonicalize_numeric_name(prop_name)
+            && let Ok(index) = index_text.parse::<usize>()
+        {
+            let elements = self.interner().tuple_list(elements_id);
+            if let Some(element_type) = self.tuple_fixed_element_type(&elements, index) {
+                return PropertyAccessResult::simple(element_type);
+            }
+        }
+
+        use crate::objects::index_signatures::IndexSignatureResolver;
+        if IndexSignatureResolver::new(self.interner()).is_numeric_index_name(prop_name) {
+            let element_or_undefined = self.element_type_with_undefined(elem);
+            return PropertyAccessResult::from_index(element_or_undefined);
+        }
+
+        let readonly_array_base =
+            crate::relations::subtype::TypeResolver::get_readonly_array_base_type(self.db);
+
+        if let Some(readonly_base) = readonly_array_base {
+            let app_type = self.interner().application(readonly_base, vec![elem]);
+            let result = self.resolve_property_access_inner(app_type, prop_name, Some(prop_atom));
+            if result.is_success() {
+                return result;
+            }
+            if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                return result;
+            }
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: readonly_type,
+                property_name: prop_atom,
+            };
+        }
+
+        self.resolve_property_access_inner(inner, prop_name, Some(prop_atom))
+    }
+
+    /// Resolve properties on array type.
+    ///
+    /// Uses the Array<T> interface from lib.d.ts to resolve array methods.
+    /// Falls back to numeric index signature for numeric property names.
+    pub(crate) fn resolve_array_property(
+        &self,
+        array_type: TypeId,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        // For fixed-length tuples, .length returns literal numeric types
+        // instead of the generic `number` from the Array<T> interface. Optional
+        // elements contribute a range: `[number?]["length"]` is `0 | 1`.
+        if prop_name == "length"
+            && let Some(length_type) = self.compute_tuple_length_type(array_type)
+        {
+            return PropertyAccessResult::simple(length_type);
+        }
+
+        if prop_name == "toLocaleString" {
+            return self.method_result(TypeId::STRING);
+        }
+
+        if let Some(TypeData::Tuple(elements_id)) = self.interner().lookup(array_type)
+            && let Some(index_text) = crate::utils::canonicalize_numeric_name(prop_name)
+            && let Ok(index) = index_text.parse::<usize>()
+        {
+            let elements = self.interner().tuple_list(elements_id);
+            if let Some(element_type) = self.tuple_fixed_element_type(&elements, index) {
+                return PropertyAccessResult::simple(element_type);
+            }
+        }
+
+        let element_type = self.array_element_type(array_type);
+
+        // Try to use the Array<T> interface from lib.d.ts
+        let array_base = crate::relations::subtype::TypeResolver::get_array_base_type(self.db);
+
+        if let Some(array_base) = array_base {
+            // Create TypeApplication: Array<element_type>
+            // This triggers resolve_application_property which handles substitution correctly
+            let app_type = self.interner().application(array_base, vec![element_type]);
+
+            // Resolve property on the application type
+            let result = self.resolve_property_access_inner(app_type, prop_name, Some(prop_atom));
+
+            // If we found the property, simplify Application types back to arrays and return it
+            if !result.is_not_found() {
+                return self.simplify_array_application_in_result(result, array_base);
+            }
+        }
+
+        // Handle numeric index access (e.g., arr[0], arr["0"])
+        use crate::objects::index_signatures::IndexSignatureResolver;
+        let resolver = IndexSignatureResolver::new(self.interner());
+        if resolver.is_numeric_index_name(prop_name) {
+            let element_or_undefined = self.element_type_with_undefined(element_type);
+            return PropertyAccessResult::from_index(element_or_undefined);
+        }
+
+        // Fall back to Object prototype properties (constructor, valueOf, hasOwnProperty, etc.)
+        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+            return result;
+        }
+
+        // Property not found
+        PropertyAccessResult::PropertyNotFound {
+            type_id: array_type,
+            property_name: prop_atom,
+        }
+    }
+
+    /// Simplifies Array<T> Application types back to T[] array types in property access results.
+    ///
+    /// This is needed because when resolving properties on arrays like `.sort()`, `.map()`, etc.,
+    /// the type system returns Application types like `Array<T>` which should be simplified to `T[]`
+    /// to avoid exposing the full array interface structure in error messages.
+    fn simplify_array_application_in_result(
+        &self,
+        result: PropertyAccessResult,
+        array_base: TypeId,
+    ) -> PropertyAccessResult {
+        match result {
+            PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                from_index_signature,
+            } => {
+                let simplified_type = self.simplify_array_application(type_id, array_base);
+                let simplified_write =
+                    write_type.map(|wt| self.simplify_array_application(wt, array_base));
+                PropertyAccessResult::Success {
+                    type_id: simplified_type,
+                    write_type: simplified_write,
+                    from_index_signature,
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Recursively simplifies Array<T> Application types to T[] array types.
+    fn simplify_array_application(&self, type_id: TypeId, array_base: TypeId) -> TypeId {
+        // Intrinsics are never Application/Callable/Array/etc — pass through.
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner().type_application(app_id);
+                // Check if this is Array<T>
+                if app.base == array_base && app.args.len() == 1 {
+                    // Simplify Array<T> to T[]
+                    return self.interner().array(app.args[0]);
+                }
+                // Not an array application, return as-is
+                type_id
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                // Simplify function return types
+                let shape = self.interner().callable_shape(callable_id);
+                let mut simplified_call_sigs = Vec::new();
+                let mut simplified_construct_sigs = Vec::new();
+                let mut changed = false;
+
+                // Simplify call signatures
+                for sig in &shape.call_signatures {
+                    let simplified_return =
+                        self.simplify_array_application(sig.return_type, array_base);
+                    if simplified_return != sig.return_type {
+                        changed = true;
+                        let mut new_sig = sig.clone();
+                        new_sig.return_type = simplified_return;
+                        simplified_call_sigs.push(new_sig);
+                    } else {
+                        simplified_call_sigs.push(sig.clone());
+                    }
+                }
+
+                // Simplify construct signatures
+                for sig in &shape.construct_signatures {
+                    let simplified_return =
+                        self.simplify_array_application(sig.return_type, array_base);
+                    if simplified_return != sig.return_type {
+                        changed = true;
+                        let mut new_sig = sig.clone();
+                        new_sig.return_type = simplified_return;
+                        simplified_construct_sigs.push(new_sig);
+                    } else {
+                        simplified_construct_sigs.push(sig.clone());
+                    }
+                }
+
+                if changed {
+                    let mut new_shape = (*shape).clone();
+                    new_shape.call_signatures = simplified_call_sigs;
+                    new_shape.construct_signatures = simplified_construct_sigs;
+                    self.interner().callable(new_shape)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::Union(list_id)) => {
+                // Simplify union members
+                let members = self.interner().type_list(list_id);
+                let simplified_members: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| self.simplify_array_application(m, array_base))
+                    .collect();
+
+                // Check if any member changed
+                if simplified_members
+                    .iter()
+                    .zip(members.iter())
+                    .any(|(s, o)| s != o)
+                {
+                    self.interner().union(simplified_members)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                // Simplify intersection members
+                let members = self.interner().type_list(list_id);
+                let simplified_members: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| self.simplify_array_application(m, array_base))
+                    .collect();
+
+                // Check if any member changed
+                if simplified_members
+                    .iter()
+                    .zip(members.iter())
+                    .any(|(s, o)| s != o)
+                {
+                    self.interner().intersection(simplified_members)
+                } else {
+                    type_id
+                }
+            }
+            _ => type_id,
+        }
+    }
+
+    pub(crate) fn array_element_type(&self, array_type: TypeId) -> TypeId {
+        if array_type.is_intrinsic() {
+            return TypeId::ERROR;
+        }
+        match self.interner().lookup(array_type) {
+            Some(TypeData::Array(elem)) => elem,
+            Some(TypeData::Tuple(elements)) => {
+                let elements = self.interner().tuple_list(elements);
+                self.tuple_element_union(&elements)
+            }
+            _ => TypeId::ERROR, // Return ERROR instead of ANY for non-array/tuple types
+        }
+    }
+
+    fn tuple_element_union(&self, elements: &[TupleElement]) -> TypeId {
+        let mut members = Vec::new();
+        for elem in elements {
+            let mut ty = if elem.rest {
+                self.array_element_type(elem.type_id)
+            } else {
+                elem.type_id
+            };
+            if elem.optional {
+                ty = self.element_type_with_undefined(ty);
+            }
+            members.push(ty);
+        }
+        self.interner().union(members)
+    }
+
+    fn tuple_fixed_element_type(&self, elements: &[TupleElement], index: usize) -> Option<TypeId> {
+        self.tuple_fixed_element_type_inner(elements, index, 0)
+    }
+
+    fn tuple_fixed_element_type_inner(
+        &self,
+        elements: &[TupleElement],
+        index: usize,
+        depth: usize,
+    ) -> Option<TypeId> {
+        const MAX_TUPLE_SPREAD_DEPTH: usize = 64;
+
+        if depth > MAX_TUPLE_SPREAD_DEPTH {
+            return None;
+        }
+
+        let mut position = 0usize;
+        for elem in elements {
+            if elem.rest {
+                let rest_id = elem.type_id;
+                if rest_id.is_intrinsic() {
+                    return None;
+                }
+                let inner_list_id = match self.interner().lookup(rest_id) {
+                    Some(TypeData::Tuple(id)) => id,
+                    _ => return None,
+                };
+                let inner = self.interner().tuple_list(inner_list_id);
+                let rest_index = index.checked_sub(position)?;
+                if let Some(ty) = self.tuple_fixed_element_type_inner(&inner, rest_index, depth + 1)
+                {
+                    return Some(ty);
+                }
+                let inner_len = self.compute_tuple_fixed_length(rest_id)?;
+                position = position.checked_add(inner_len)?;
+            } else {
+                if position == index {
+                    let ty = if elem.optional {
+                        self.element_type_with_undefined(elem.type_id)
+                    } else {
+                        elem.type_id
+                    };
+                    return Some(ty);
+                }
+                position = position.checked_add(1)?;
+            }
+
+            if position > index {
+                return None;
+            }
+        }
+
+        None
+    }
+
+    fn element_type_with_undefined(&self, element_type: TypeId) -> TypeId {
+        self.interner().union2(element_type, TypeId::UNDEFINED)
+    }
+
+    /// Compute the fixed length of a tuple type, if it has one.
+    /// Returns `None` for arrays, variable-length tuples, or non-tuple types.
+    fn compute_tuple_fixed_length(&self, type_id: TypeId) -> Option<usize> {
+        const MAX_FIXED_LENGTH: usize = 1000;
+
+        if type_id.is_intrinsic() {
+            return None;
+        }
+        let list_id = match self.interner().lookup(type_id) {
+            Some(TypeData::Tuple(id)) => id,
+            _ => return None,
+        };
+
+        let elements = self.interner().tuple_list(list_id);
+        let mut total = 0usize;
+        let mut rest_type: Option<TypeId> = None;
+        let mut rest_count = 0;
+
+        for elem in elements.iter() {
+            if elem.rest {
+                rest_count += 1;
+                if rest_count > 1 {
+                    return None;
+                }
+                rest_type = Some(elem.type_id);
+            } else {
+                total += 1;
+                if total > MAX_FIXED_LENGTH {
+                    return None;
+                }
+            }
+        }
+
+        // Iteratively descend into single-rest chains (e.g., [T, ...Acc])
+        while let Some(rest_id) = rest_type.take() {
+            if rest_id.is_intrinsic() {
+                return None;
+            }
+            let inner_list_id = match self.interner().lookup(rest_id) {
+                Some(TypeData::Tuple(id)) => id,
+                _ => return None, // Rest spreads a non-tuple → variable length
+            };
+            let inner_elements = self.interner().tuple_list(inner_list_id);
+            let mut inner_rest_count = 0;
+            for elem in inner_elements.iter() {
+                if elem.rest {
+                    inner_rest_count += 1;
+                    if inner_rest_count > 1 {
+                        return None;
+                    }
+                    rest_type = Some(elem.type_id);
+                } else {
+                    total += 1;
+                    if total > MAX_FIXED_LENGTH {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        Some(total)
+    }
+
+    fn compute_tuple_length_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let (min, max) = self.compute_tuple_length_bounds(type_id)?;
+        if min == max {
+            return Some(self.interner().literal_number(max as f64));
+        }
+
+        let members = (min..=max)
+            .map(|len| self.interner().literal_number(len as f64))
+            .collect();
+        Some(self.interner().union(members))
+    }
+
+    fn compute_tuple_length_bounds(&self, type_id: TypeId) -> Option<(usize, usize)> {
+        const MAX_FIXED_LENGTH: usize = 1000;
+
+        if type_id.is_intrinsic() {
+            return None;
+        }
+        let list_id = match self.interner().lookup(type_id) {
+            Some(TypeData::Tuple(id)) => id,
+            _ => return None,
+        };
+
+        let elements = self.interner().tuple_list(list_id);
+        let mut min = 0usize;
+        let mut max = 0usize;
+        let mut rest_type: Option<TypeId> = None;
+        let mut rest_count = 0;
+
+        for elem in elements.iter() {
+            if elem.rest {
+                rest_count += 1;
+                if rest_count > 1 {
+                    return None;
+                }
+                rest_type = Some(elem.type_id);
+            } else {
+                if !elem.optional {
+                    min += 1;
+                }
+                max += 1;
+                if max > MAX_FIXED_LENGTH {
+                    return None;
+                }
+            }
+        }
+
+        while let Some(rest_id) = rest_type.take() {
+            if rest_id.is_intrinsic() {
+                return None;
+            }
+            let inner_list_id = match self.interner().lookup(rest_id) {
+                Some(TypeData::Tuple(id)) => id,
+                _ => return None,
+            };
+            let inner_elements = self.interner().tuple_list(inner_list_id);
+            let mut inner_rest_count = 0;
+            for elem in inner_elements.iter() {
+                if elem.rest {
+                    inner_rest_count += 1;
+                    if inner_rest_count > 1 {
+                        return None;
+                    }
+                    rest_type = Some(elem.type_id);
+                } else {
+                    if !elem.optional {
+                        min += 1;
+                    }
+                    max += 1;
+                    if max > MAX_FIXED_LENGTH {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        Some((min, max))
+    }
+
+    pub(super) fn resolve_function_property(
+        &self,
+        func_type: TypeId,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        // STEP 1: Consult the boxed `Function` interface from lib.d.ts FIRST so
+        // user augmentations (e.g., `interface Function { now(): string; }`)
+        // and target-specific lib differences win over the hardcoded list
+        // below. Mirrors the primitive resolver at `resolve_intrinsic_property`
+        // — boxed first, hardcoded only as a no-lib bootstrap.
+        //
+        // Robustness audit (PR #O, item 15 in
+        // `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`).
+        let boxed_function_loaded = if let Some(boxed_type) =
+            crate::def::resolver::TypeResolver::get_boxed_type(self.db, IntrinsicKind::Function)
+        {
+            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+            if !result.is_not_found() {
+                return result;
+            }
+            true
+        } else {
+            false
+        };
+
+        // STEP 2: Hardcoded well-known Function members (no-lib / bootstrap path).
+        // Reached when the boxed `Function` interface is unavailable (no lib loaded)
+        // or didn't resolve the property. We emit a structured trace event so
+        // drift (e.g. tests inadvertently bootstrapping with no-lib semantics)
+        // is visible at runtime — see robustness audit item 15 / PR #O.
+        //
+        // `name` is gated behind `!boxed_function_loaded`: it was added to the
+        // `Function` interface in lib.es2015.core.d.ts. When a lib older than
+        // es2015 is loaded explicitly, the boxed lookup correctly reports the
+        // property as absent, and the bootstrap fallback must not paper over
+        // that not-found result with the hardcoded `name => string` entry.
+        // Other entries here are core es5 members that legitimately fall
+        // back even when the boxed interface lookup misses (e.g. lookup on a
+        // synthesized constructor-signature intersection that does not
+        // navigate to the boxed `Function` interface).
+        let hardcoded_match = match prop_name {
+            "apply" | "call" | "bind" => Some(self.method_result(TypeId::ANY)),
+            "toString" => Some(self.method_result(TypeId::STRING)),
+            "name" if !boxed_function_loaded => Some(PropertyAccessResult::simple(TypeId::STRING)),
+            "length" => Some(PropertyAccessResult::simple(TypeId::NUMBER)),
+            "prototype" | "arguments" => Some(PropertyAccessResult::simple(TypeId::ANY)),
+            "caller" => Some(PropertyAccessResult::simple(
+                self.any_args_function(TypeId::ANY),
+            )),
+            _ => None,
+        };
+        if let Some(result) = hardcoded_match {
+            tracing::trace!(
+                target: "tsz_solver::function_hardcoded_fallback",
+                prop_name = prop_name,
+                "Function property resolved via hardcoded no-lib fallback"
+            );
+            return result;
+        }
+
+        if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+            return result;
+        }
+
+        PropertyAccessResult::PropertyNotFound {
+            type_id: func_type,
+            property_name: prop_atom,
+        }
+    }
+}

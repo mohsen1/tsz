@@ -1,0 +1,272 @@
+//! Solver-owned type construction facade.
+//!
+//! Keeps checker code on a narrow constructor surface so it cannot
+//! interact with raw type internals.
+
+use crate::caches::db::TypeDatabase;
+use crate::types::{
+    CallableShape, ConditionalType, FunctionShape, MappedType, ObjectFlags, ObjectShape,
+    PropertyInfo, TemplateSpan, TupleElement, TypeId, TypeParamInfo,
+};
+use tsz_binder::SymbolId;
+use tsz_common::interner::Atom;
+
+#[derive(Clone, Copy)]
+pub struct TypeFactory<'db> {
+    db: &'db dyn TypeDatabase,
+}
+
+impl<'db> TypeFactory<'db> {
+    pub(crate) fn new(db: &'db dyn TypeDatabase) -> Self {
+        Self { db }
+    }
+
+    #[inline]
+    pub fn literal_string(&self, value: &str) -> TypeId {
+        self.db.literal_string(value)
+    }
+
+    #[inline]
+    pub fn literal_number(&self, value: f64) -> TypeId {
+        self.db.literal_number(value)
+    }
+
+    #[inline]
+    pub fn literal_boolean(&self, value: bool) -> TypeId {
+        self.db.literal_boolean(value)
+    }
+
+    #[inline]
+    pub fn literal_bigint(&self, value: &str) -> TypeId {
+        self.db.literal_bigint(value)
+    }
+
+    #[inline]
+    pub fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId {
+        self.db.literal_bigint_with_sign(negative, digits)
+    }
+
+    #[inline]
+    pub fn literal_string_atom(&self, atom: Atom) -> TypeId {
+        self.db.literal_string_atom(atom)
+    }
+
+    #[inline]
+    pub fn union(&self, members: Vec<TypeId>) -> TypeId {
+        self.db.union(members)
+    }
+
+    #[inline]
+    pub fn union_from_slice(&self, members: &[TypeId]) -> TypeId {
+        self.db.union_from_slice(members)
+    }
+
+    #[inline]
+    pub fn union_preserve_order(&self, members: Vec<TypeId>) -> TypeId {
+        self.db.union_from_sorted_vec(members)
+    }
+
+    #[inline]
+    pub fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.db.union2(left, right)
+    }
+
+    #[inline]
+    pub fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId {
+        self.db.union3(first, second, third)
+    }
+
+    #[inline]
+    pub fn intersection(&self, members: Vec<TypeId>) -> TypeId {
+        self.db.intersection(members)
+    }
+
+    #[inline]
+    pub fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.db.intersection2(left, right)
+    }
+
+    /// Create a two-member intersection WITHOUT normalization (no callable/object merging).
+    /// Preserves the intersection form for display purposes.
+    #[inline]
+    pub fn intersection2_raw(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.db.intersect_types_raw2(left, right)
+    }
+
+    #[inline]
+    pub fn array(&self, element: TypeId) -> TypeId {
+        self.db.array(element)
+    }
+
+    #[inline]
+    pub fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
+        self.db.tuple(elements)
+    }
+
+    #[inline]
+    pub fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.db.object(properties)
+    }
+
+    #[inline]
+    pub fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.db.object_fresh(properties)
+    }
+
+    #[inline]
+    pub fn object_fresh_all_properties_context_sensitive(
+        &self,
+        properties: Vec<PropertyInfo>,
+    ) -> TypeId {
+        self.db.object_with_flags_and_symbol(
+            properties,
+            ObjectFlags::FRESH_LITERAL | ObjectFlags::ALL_PROPERTIES_CONTEXT_SENSITIVE,
+            None,
+        )
+    }
+
+    /// Create a fresh object type with display properties for error messages.
+    /// See `TypeInterner::object_fresh_with_display` for details.
+    #[inline]
+    pub fn object_fresh_with_display(
+        &self,
+        widened_properties: Vec<PropertyInfo>,
+        display_properties: Vec<PropertyInfo>,
+    ) -> TypeId {
+        self.db
+            .object_fresh_with_display(widened_properties, display_properties)
+    }
+
+    #[inline]
+    pub fn object_with_index(&self, shape: ObjectShape) -> TypeId {
+        self.db.object_with_index(shape)
+    }
+
+    /// Create an object whose declaration order should be preserved for
+    /// stable spread display.
+    #[inline]
+    pub fn object_preserve_declaration_order(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.db.object_with_flags_and_symbol(
+            properties,
+            ObjectFlags::PRESERVE_DECLARATION_ORDER,
+            None,
+        )
+    }
+
+    #[inline]
+    pub fn object_with_flags_and_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        self.db
+            .object_with_flags_and_symbol(properties, flags, symbol)
+    }
+
+    /// Create a non-fresh object type with nominal identity (symbol).
+    ///
+    /// Use this instead of `object_with_flags_and_symbol(props, ObjectFlags::empty(), sym)`
+    /// so callers don't need to import `ObjectFlags`.
+    #[inline]
+    pub fn object_with_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        self.db
+            .object_with_flags_and_symbol(properties, ObjectFlags::empty(), symbol)
+    }
+
+    /// Create a non-fresh object type with late-bound computed members.
+    ///
+    /// Use this instead of importing `ObjectFlags::HAS_LATE_BOUND_MEMBERS`
+    /// outside the solver.
+    #[inline]
+    pub fn object_with_late_bound_members(
+        &self,
+        properties: Vec<PropertyInfo>,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        self.db.object_with_flags_and_symbol(
+            properties,
+            ObjectFlags::HAS_LATE_BOUND_MEMBERS,
+            symbol,
+        )
+    }
+
+    #[inline]
+    pub fn function(&self, shape: FunctionShape) -> TypeId {
+        self.db.function(shape)
+    }
+
+    #[inline]
+    pub fn callable(&self, shape: CallableShape) -> TypeId {
+        self.db.callable(shape)
+    }
+
+    #[inline]
+    pub fn template_literal(&self, spans: Vec<TemplateSpan>) -> TypeId {
+        self.db.template_literal(spans)
+    }
+
+    #[inline]
+    pub fn conditional(&self, conditional: ConditionalType) -> TypeId {
+        self.db.conditional(conditional)
+    }
+
+    #[inline]
+    pub fn mapped(&self, mapped: MappedType) -> TypeId {
+        self.db.mapped(mapped)
+    }
+
+    #[inline]
+    pub fn reference(&self, symbol: crate::types::SymbolRef) -> TypeId {
+        self.db.reference(symbol)
+    }
+
+    #[inline]
+    pub fn lazy(&self, def_id: crate::def::DefId) -> TypeId {
+        self.db.lazy(def_id)
+    }
+
+    #[inline]
+    pub fn type_param(&self, info: TypeParamInfo) -> TypeId {
+        self.db.type_param(info)
+    }
+
+    #[inline]
+    pub fn type_query(&self, symbol: crate::types::SymbolRef) -> TypeId {
+        self.db.type_query(symbol)
+    }
+
+    #[inline]
+    pub fn enum_type(&self, def_id: crate::def::DefId, structural_type: TypeId) -> TypeId {
+        self.db.enum_type(def_id, structural_type)
+    }
+
+    #[inline]
+    pub fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
+        self.db.application(base, args)
+    }
+
+    #[inline]
+    pub fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId {
+        self.db.union_preserve_members(members)
+    }
+
+    #[inline]
+    pub fn readonly_type(&self, inner: TypeId) -> TypeId {
+        self.db.readonly_type(inner)
+    }
+
+    #[inline]
+    pub fn keyof(&self, inner: TypeId) -> TypeId {
+        self.db.keyof(inner)
+    }
+
+    #[inline]
+    pub fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        self.db.index_access(object_type, index_type)
+    }
+}

@@ -1,0 +1,532 @@
+//! String Interner for identifier deduplication.
+//!
+//! PERFORMANCE OPTIMIZATION: Intern strings into a global pool and pass around
+//! u32 indices (Atoms). This eliminates duplicate string allocations for common
+//! identifiers like "id", "value", "length", etc.
+//!
+//! Comparisons become integer comparisons (`atom_a` == `atom_b`) instead of string
+//! comparisons, which is significantly faster.
+
+use rustc_hash::{FxHashMap, FxHasher};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, RwLock};
+
+/// An interned string identifier.
+///
+/// Atoms are cheap to copy (just a u32) and can be compared with == in O(1).
+/// To get the actual string, use `Interner::resolve(atom)`.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default, PartialOrd, Ord,
+)]
+pub struct Atom(pub u32);
+
+impl Atom {
+    /// A sentinel value representing no atom / empty string.
+    pub const NONE: Self = Self(0);
+
+    /// Returns `Atom::NONE` - used for serde default.
+    #[must_use]
+    #[inline]
+    pub const fn none() -> Self {
+        Self::NONE
+    }
+
+    /// Check if this is the empty/none atom.
+    #[must_use]
+    #[inline]
+    pub const fn is_none(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Get the raw index value.
+    #[must_use]
+    #[inline]
+    pub const fn index(self) -> u32 {
+        self.0
+    }
+}
+
+const SHARD_BITS: u32 = 6;
+const SHARD_COUNT: usize = 64;
+const SHARD_MASK: u32 = 63;
+const SHARD_MASK_U64: u64 = 63;
+const COMMON_STRINGS: &[&str] = &[
+    // Keywords
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "import",
+    "in",
+    "instanceof",
+    "new",
+    "null",
+    "return",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "undefined",
+    "var",
+    "void",
+    "while",
+    "with",
+    "as",
+    "implements",
+    "interface",
+    "let",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "static",
+    "yield",
+    "any",
+    "boolean",
+    "number",
+    "string",
+    "symbol",
+    "type",
+    "from",
+    "of",
+    "async",
+    "await",
+    // Common identifiers
+    "id",
+    "name",
+    "value",
+    "length",
+    "key",
+    "index",
+    "item",
+    "data",
+    "error",
+    "result",
+    "response",
+    "request",
+    "options",
+    "config",
+    "props",
+    "state",
+    "children",
+    "onClick",
+    "onChange",
+    "onSubmit",
+    "constructor",
+    "prototype",
+    "toString",
+    "valueOf",
+    "hasOwnProperty",
+    "Array",
+    "Object",
+    "String",
+    "Number",
+    "Boolean",
+    "Function",
+    "Promise",
+    "Map",
+    "Set",
+    "Date",
+    "RegExp",
+    "Error",
+    "Symbol",
+    "console",
+    "log",
+    "warn",
+    "info",
+    "debug",
+    "document",
+    "window",
+    "global",
+    "process",
+    "module",
+    "exports",
+    "require",
+    "define",
+    "__dirname",
+    "__filename",
+];
+
+/// String interner that deduplicates strings and returns Atom handles.
+///
+/// # Example
+/// ```
+/// use tsz_common::interner::Interner;
+/// let mut interner = Interner::new();
+/// let a1 = interner.intern("hello");
+/// let a2 = interner.intern("hello");
+/// assert_eq!(a1, a2); // Same atom for same string
+/// assert_eq!(interner.resolve(a1), "hello");
+/// ```
+#[derive(Default, Clone, Debug)]
+pub struct Interner {
+    /// Map from string to atom index
+    map: FxHashMap<Arc<str>, Atom>,
+    /// Vector of all interned strings (index 0 is empty string)
+    strings: Vec<Arc<str>>,
+}
+
+impl Interner {
+    /// Create a new interner with the empty string pre-interned at index 0.
+    #[must_use]
+    pub fn new() -> Self {
+        let mut interner = Self {
+            map: FxHashMap::default(),
+            strings: Vec::with_capacity(1024), // Pre-allocate for common case
+        };
+        // Index 0 is reserved for empty/none
+        let empty: Arc<str> = Arc::from("");
+        interner.strings.push(Arc::clone(&empty));
+        interner.map.insert(empty, Atom::NONE);
+        interner
+    }
+
+    /// Intern a string, returning its Atom handle.
+    /// If the string was already interned, returns the existing Atom.
+    #[must_use]
+    #[inline]
+    pub fn intern(&mut self, s: &str) -> Atom {
+        if let Some(&atom) = self.map.get(s) {
+            return atom;
+        }
+        let atom = Atom(u32::try_from(self.strings.len()).unwrap_or(Atom::NONE.0));
+        let owned: Arc<str> = Arc::from(s);
+        self.strings.push(Arc::clone(&owned));
+        self.map.insert(owned, atom);
+        atom
+    }
+
+    /// Intern an owned String, avoiding allocation if possible.
+    #[must_use]
+    #[inline]
+    pub fn intern_owned(&mut self, s: String) -> Atom {
+        if let Some(&atom) = self.map.get(s.as_str()) {
+            return atom;
+        }
+        let atom = Atom(u32::try_from(self.strings.len()).unwrap_or(Atom::NONE.0));
+        let owned: Arc<str> = Arc::from(s.into_boxed_str());
+        self.strings.push(Arc::clone(&owned));
+        self.map.insert(owned, atom);
+        atom
+    }
+
+    /// Resolve an Atom back to its string value.
+    /// Returns empty string if atom is out of bounds (safety for error recovery).
+    #[must_use]
+    #[inline]
+    pub fn resolve(&self, atom: Atom) -> &str {
+        self.strings.get(atom.0 as usize).map_or("", AsRef::as_ref)
+    }
+
+    /// Try to resolve an Atom, returning None if invalid.
+    #[must_use]
+    #[inline]
+    pub fn try_resolve(&self, atom: Atom) -> Option<&str> {
+        self.strings.get(atom.0 as usize).map(AsRef::as_ref)
+    }
+
+    /// Get the number of interned strings.
+    #[must_use]
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.strings.len()
+    }
+
+    /// Check if the interner is empty (only has the empty string).
+    #[must_use]
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.strings.len() <= 1
+    }
+
+    /// Pre-intern common TypeScript keywords and identifiers.
+    /// Call this after creating the interner for better cache locality.
+    pub fn intern_common(&mut self) {
+        for s in COMMON_STRINGS {
+            let _ = self.intern(s);
+        }
+    }
+
+    /// Estimate the heap memory footprint of this interner in bytes.
+    ///
+    /// Accounts for the hash map, the strings vector, and the `Arc<str>`
+    /// allocations themselves (header + string bytes). Used for memory
+    /// diagnostics reporting.
+    #[must_use]
+    pub fn estimated_size_bytes(&self) -> usize {
+        use std::mem::size_of;
+
+        let mut size = size_of::<Self>();
+
+        // HashMap overhead: capacity * (key + value + metadata)
+        size += self.map.capacity() * (size_of::<Arc<str>>() + size_of::<Atom>() + 8);
+
+        // strings Vec capacity
+        size += self.strings.capacity() * size_of::<Arc<str>>();
+
+        // Actual string data behind each Arc<str> (Arc header + string bytes)
+        for s in &self.strings {
+            // Arc header (strong + weak counts) + string length
+            size += 16 + s.len();
+        }
+
+        size
+    }
+}
+
+// Custom serde for Interner: serialize only the `strings` Vec (the canonical
+// data); reconstruct the string→Atom `map` on deserialize. This keeps the
+// snapshot format minimal and stable: it's just a list of strings, atom
+// indices match positions, and the empty-string-at-index-0 invariant is
+// preserved by the existing `Vec` content rather than a special header.
+impl Serialize for Interner {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // Emit the strings as a Vec<&str>; serde's `&str` serialization is just
+        // the bytes, no Arc<str> overhead in the wire format.
+        let as_strs: Vec<&str> = self.strings.iter().map(AsRef::as_ref).collect();
+        as_strs.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Interner {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let strings_vec: Vec<String> = Deserialize::deserialize(deserializer)?;
+        let mut strings: Vec<Arc<str>> = Vec::with_capacity(strings_vec.len());
+        let mut map: FxHashMap<Arc<str>, Atom> = FxHashMap::default();
+        for (idx, s) in strings_vec.into_iter().enumerate() {
+            let arc: Arc<str> = Arc::from(s.into_boxed_str());
+            let atom = Atom(u32::try_from(idx).unwrap_or(Atom::NONE.0));
+            strings.push(Arc::clone(&arc));
+            map.insert(arc, atom);
+        }
+        Ok(Self { map, strings })
+    }
+}
+
+#[derive(Default)]
+struct ShardState {
+    map: FxHashMap<Arc<str>, Atom>,
+    strings: Vec<Arc<str>>,
+}
+
+struct InternerShard {
+    state: RwLock<ShardState>,
+}
+
+impl InternerShard {
+    #[must_use]
+    fn new() -> Self {
+        Self {
+            state: RwLock::new(ShardState::default()),
+        }
+    }
+}
+
+/// Sharded string interner for concurrent use.
+///
+/// Uses fixed buckets to reduce lock contention while keeping Atom lookups O(1).
+pub struct ShardedInterner {
+    shards: [InternerShard; SHARD_COUNT],
+}
+
+impl ShardedInterner {
+    /// Create a new sharded interner with the empty string pre-interned at index 0.
+    #[must_use]
+    pub fn new() -> Self {
+        let shards = std::array::from_fn(|_| InternerShard::new());
+
+        // Initialize empty string in shard 0 with safe lock handling
+        if let Ok(mut state) = shards[0].state.write() {
+            let empty: Arc<str> = Arc::from("");
+            state.strings.push(Arc::clone(&empty));
+            state.map.insert(empty, Atom::NONE);
+        }
+        // Note: If lock is poisoned during initialization, we continue anyway
+        // The empty string initialization is an optimization, not critical for correctness
+
+        Self { shards }
+    }
+
+    /// Intern a string, returning its Atom handle.
+    /// If the string was already interned, returns the existing Atom.
+    #[must_use]
+    #[inline]
+    pub fn intern(&self, s: &str) -> Atom {
+        if s.is_empty() {
+            return Atom::NONE;
+        }
+
+        let shard_idx = Self::shard_for(s);
+        let shard = &self.shards[shard_idx];
+
+        // PERF: Try read lock first — most intern calls are for already-interned strings.
+        // Read locks are shared (no contention), write locks are exclusive.
+        if let Ok(state) = shard.state.read()
+            && let Some(&atom) = state.map.get(s)
+        {
+            return atom;
+        }
+
+        let Ok(mut state) = shard.state.write() else {
+            return Atom::NONE;
+        };
+
+        // Double-check after acquiring write lock (another thread may have interned it)
+        if let Some(&atom) = state.map.get(s) {
+            return atom;
+        }
+
+        let Ok(local_index) = u32::try_from(state.strings.len()) else {
+            return Atom::NONE;
+        };
+        if local_index > (u32::MAX >> SHARD_BITS) {
+            // Return empty atom on overflow instead of panicking
+            return Atom::NONE;
+        }
+
+        let shard_idx_u32 = u32::try_from(shard_idx).unwrap_or(Atom::NONE.0);
+        let atom = Self::make_atom(local_index, shard_idx_u32);
+        let owned: Arc<str> = Arc::from(s);
+        state.strings.push(Arc::clone(&owned));
+        state.map.insert(owned, atom);
+        atom
+    }
+
+    /// Intern an owned String, avoiding allocation if possible.
+    #[must_use]
+    #[inline]
+    pub fn intern_owned(&self, s: String) -> Atom {
+        if s.is_empty() {
+            return Atom::NONE;
+        }
+
+        let shard_idx = Self::shard_for(&s);
+        let shard = &self.shards[shard_idx];
+        let Ok(mut state) = shard.state.write() else {
+            // If lock is poisoned, return a fallback atom
+            return Atom::NONE;
+        };
+
+        if let Some(&atom) = state.map.get(s.as_str()) {
+            return atom;
+        }
+
+        let Ok(local_index) = u32::try_from(state.strings.len()) else {
+            return Atom::NONE;
+        };
+        if local_index > (u32::MAX >> SHARD_BITS) {
+            // Return empty atom on overflow instead of panicking
+            return Atom::NONE;
+        }
+
+        let shard_idx_u32 = u32::try_from(shard_idx).unwrap_or(Atom::NONE.0);
+        let atom = Self::make_atom(local_index, shard_idx_u32);
+        let owned: Arc<str> = Arc::from(s);
+        state.strings.push(Arc::clone(&owned));
+        state.map.insert(owned, atom);
+        atom
+    }
+
+    /// Resolve an Atom back to its string value.
+    /// Returns empty string if atom is out of bounds (safety for error recovery).
+    #[must_use]
+    #[inline]
+    pub fn resolve(&self, atom: Atom) -> Arc<str> {
+        self.try_resolve(atom).unwrap_or_else(|| Arc::from(""))
+    }
+
+    /// Try to resolve an Atom, returning None if invalid.
+    #[must_use]
+    #[inline]
+    pub fn try_resolve(&self, atom: Atom) -> Option<Arc<str>> {
+        let (shard_idx, local_index) = Self::split_atom(atom);
+        let shard = self.shards.get(shard_idx)?;
+        let state = shard.state.read().ok()?; // Return None if lock is poisoned
+        state.strings.get(local_index).cloned()
+    }
+
+    /// Get the number of interned strings.
+    #[must_use]
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.shards
+            .iter()
+            .map(|shard| {
+                // Handle lock poisoning gracefully by returning 0 for failed shards
+                shard
+                    .state
+                    .read()
+                    .map(|state| state.strings.len())
+                    .unwrap_or(0)
+            })
+            .sum()
+    }
+
+    /// Check if the interner is empty (only has the empty string).
+    #[must_use]
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() <= 1
+    }
+
+    /// Pre-intern common TypeScript keywords and identifiers.
+    /// Call this after creating the interner for better cache locality.
+    pub fn intern_common(&self) {
+        for s in COMMON_STRINGS {
+            let _ = self.intern(s);
+        }
+    }
+
+    #[inline]
+    fn shard_for(s: &str) -> usize {
+        let mut hasher = FxHasher::default();
+        s.hash(&mut hasher);
+        usize::try_from(hasher.finish() & SHARD_MASK_U64).unwrap_or(0)
+    }
+
+    #[inline]
+    const fn make_atom(local_index: u32, shard_idx: u32) -> Atom {
+        Atom((local_index << SHARD_BITS) | (shard_idx & SHARD_MASK))
+    }
+
+    #[inline]
+    fn split_atom(atom: Atom) -> (usize, usize) {
+        if atom == Atom::NONE {
+            return (0, 0);
+        }
+
+        let raw = atom.0;
+        let shard_idx = usize::try_from(raw & SHARD_MASK).unwrap_or(0);
+        let local_index = usize::try_from(raw >> SHARD_BITS).unwrap_or(0);
+        (shard_idx, local_index)
+    }
+}
+
+impl Default for ShardedInterner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/interner_tests.rs"]
+mod tests;
