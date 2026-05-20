@@ -1118,14 +1118,6 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         .related
     }
 
-    /// Subtype check with explicit compiler flags.
-    ///
-    /// The `flags` parameter is the legacy packed `u16` bitmask consumed at the
-    /// relation boundary. New callers should use [`Self::is_subtype_of_with_policy`].
-    fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        self.is_subtype_of_with_policy(source, target, RelationPolicy::from_flags(flags))
-    }
-
     /// TypeScript assignability check with full compatibility rules (The Lawyer).
     ///
     /// This is distinct from `is_subtype_of`:
@@ -1165,14 +1157,6 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
             RelationContext::default(),
         )
         .related
-    }
-
-    /// Assignability check with explicit compiler flags.
-    ///
-    /// The `flags` parameter is the legacy packed `u16` bitmask consumed at the
-    /// relation boundary. New callers should use [`Self::is_assignable_to_with_policy`].
-    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        self.is_assignable_to_with_policy(source, target, RelationPolicy::from_flags(flags))
     }
 
     /// Look up a cached subtype result for the given key.

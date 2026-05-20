@@ -736,7 +736,7 @@ REGEX_LINE_COUNT_CHECKS = [
             ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs",
         ],
         re.compile(r"\bfn\s+is_(?:subtype_of|assignable_to)_with_flags\s*\("),
-        2,
+        0,
     ),
 ]
 
