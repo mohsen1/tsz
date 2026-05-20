@@ -7,6 +7,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
+use tsz_solver::types::TypeId;
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn construct_return_new_expression_type_text(
@@ -24,12 +25,7 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.get_type_via_symbol(new_expr.expression))?;
         let return_type =
             type_queries::construct_return_type_for_type(self.type_interner?, constructor_type)?;
-        if matches!(
-            return_type,
-            tsz_solver::types::TypeId::ANY
-                | tsz_solver::types::TypeId::UNKNOWN
-                | tsz_solver::types::TypeId::ERROR
-        ) {
+        if matches!(return_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
             return None;
         }
 
@@ -123,7 +119,22 @@ impl<'a> DeclarationEmitter<'a> {
                     func,
                     &symbol.escaped_name,
                 )
-                && let Some(type_text) = {
+            {
+                // Text-based reconstruction loses call-site refinements (e.g. index signatures
+                // derived from abstract constructor constraints). Prefer the checker's computed
+                // TypeId when it is non-trivial.
+                if self.type_interner.is_some()
+                    && self.type_cache.is_some()
+                    && let Some(call_type_id) = self.get_node_type_or_names(&[expr_idx])
+                    && !matches!(call_type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                {
+                    let type_text = self.print_type_id_for_inferred_declaration(call_type_id);
+                    if !type_text.is_empty() && !matches!(type_text.as_str(), "any" | "unknown") {
+                        return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
+                    }
+                }
+
+                if let Some(type_text) = {
                     let mut scratch = if std::ptr::eq(source_arena, self.arena)
                         && let (Some(type_cache), Some(type_interner), Some(binder)) =
                             (&self.type_cache, self.type_interner, self.binder)
@@ -179,9 +190,9 @@ impl<'a> DeclarationEmitter<'a> {
                             .expand_inexact_optional_alias_reference_text(source_arena, &type_text)
                             .unwrap_or(type_text),
                     )
+                } {
+                    return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
                 }
-            {
-                return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
             }
         }
 
@@ -296,9 +307,7 @@ impl<'a> DeclarationEmitter<'a> {
         let return_type_id = type_queries::get_return_type(interner, func_type_id)?;
         if matches!(
             return_type_id,
-            tsz_solver::types::TypeId::ANY
-                | tsz_solver::types::TypeId::UNKNOWN
-                | tsz_solver::types::TypeId::ERROR
+            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
         ) {
             return None;
         }
