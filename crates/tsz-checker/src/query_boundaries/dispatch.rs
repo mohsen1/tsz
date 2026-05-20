@@ -1,5 +1,6 @@
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 use tsz_solver::relations::subtype::TypeResolver;
-use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use super::common::{intersection_members, is_type_parameter_like, union_members};
 

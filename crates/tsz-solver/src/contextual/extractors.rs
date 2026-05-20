@@ -5,7 +5,7 @@
 //! They are used by [`super::ContextualTypeContext`] to implement
 //! bidirectional type inference.
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::relations::relation_queries::{
     RelationContext, RelationKind, RelationPolicy, query_relation,
 };

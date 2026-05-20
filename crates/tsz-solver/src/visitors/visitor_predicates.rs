@@ -12,8 +12,9 @@
 //!   Variants that unwrap through `ReadonlyType`, `NoInfer`, and `TypeParameter` constraints.
 //! - **Object classification**: `ObjectTypeKind` enum and `classify_object_type`.
 
+use crate::construction::TypeDatabase;
 use crate::types::{IntrinsicKind, ObjectShapeId};
-use crate::{TypeData, TypeDatabase, TypeId};
+use crate::{TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tsz_common::Atom;

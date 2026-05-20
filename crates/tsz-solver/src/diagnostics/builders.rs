@@ -10,7 +10,7 @@
 //! - [`SourceLocation`]: Tracks source positions for AST nodes
 
 use super::format::TypeFormatter;
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefinitionStore;
 use crate::diagnostics::{DiagnosticSeverity, SourceSpan, TypeDiagnostic, codes};
 use crate::types::TypeId;

@@ -1,7 +1,8 @@
 use super::*;
 use crate::TypeInterner;
+use crate::construction::TypeDatabase;
 use crate::def::resolver::TypeResolver;
-use crate::{TypeDatabase, types::SymbolRef};
+use crate::types::SymbolRef;
 
 // =============================================================================
 // Discriminant Detection Tests

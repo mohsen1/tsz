@@ -3,10 +3,11 @@
 //! This module contains the implementation of type query functions.
 //! The parent `mod.rs` re-exports everything; callers should use `type_queries::*`.
 
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::def::DefinitionStore;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::types::{IntrinsicKind, LiteralValue};
-use crate::{QueryDatabase, TypeData, TypeDatabase, TypeId, TypeParamInfo};
+use crate::{TypeData, TypeId, TypeParamInfo};
 
 use super::classifiers::get_lazy_def_id;
 use super::traversal::collect_property_name_atoms_for_diagnostics;

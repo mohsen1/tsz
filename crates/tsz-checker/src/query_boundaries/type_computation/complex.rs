@@ -1,4 +1,5 @@
-use tsz_solver::{QueryDatabase, TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 
 pub(crate) use super::super::common::{callable_shape_for_type, intersection_members, lazy_def_id};
 pub(crate) use tsz_solver::type_queries::{

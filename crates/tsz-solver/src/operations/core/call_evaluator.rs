@@ -1,3 +1,4 @@
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::contextual::extractors::extract_param_type_at_for_call;
 use crate::diagnostics::PendingDiagnostic;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
@@ -6,7 +7,6 @@ use crate::types::{
     ParamInfo, TypeData, TypeId, TypeListId, TypePredicate,
 };
 use crate::visitor::TypeVisitor;
-use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};

@@ -4,8 +4,9 @@
 //! class declarations, instance types, and abstract class handling.
 //! Extracted from `extended.rs` to keep individual files under the 2000 LOC limit.
 
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
-use crate::{TypeData, TypeDatabase, TypeId};
+use crate::{TypeData, TypeId};
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 

@@ -12,8 +12,8 @@
 
 use std::sync::Arc;
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
 use crate::objects::{PropertyCollectionResult, collect_properties};

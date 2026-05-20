@@ -1268,7 +1268,7 @@ fn test_array_base_display_properties_preserve_lib_order() {
     checker.ctx.set_actual_lib_file_count(lib_files.len());
     checker.prime_boxed_types();
 
-    let array_base = tsz_solver::TypeDatabase::get_array_base_type(checker.ctx.types)
+    let array_base = tsz_solver::construction::TypeDatabase::get_array_base_type(checker.ctx.types)
         .expect("expected registered Array<T> base");
     let display_props: Vec<_> = checker
         .ctx

@@ -1,10 +1,11 @@
 use super::*;
 use crate::TypeInterner;
+use crate::construction::TypeDatabase;
 use crate::relations::subtype::NoopResolver;
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::get_object_shape;
 use crate::types::SymbolRef;
-use crate::{DefId, TypeDatabase, TypeEvaluator};
+use crate::{DefId, TypeEvaluator};
 use tsz_binder::SymbolId;
 
 #[test]

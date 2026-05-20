@@ -22,7 +22,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{CallableShape, ObjectShape, PropertyInfo, TypeId, Visibility};
 
 pub(crate) fn commonjs_direct_export_supports_named_props(
-    types: &dyn tsz_solver::TypeDatabase,
+    types: &dyn tsz_solver::construction::TypeDatabase,
     direct_export_type: TypeId,
 ) -> bool {
     if matches!(
@@ -239,7 +239,7 @@ impl JsExportSurface {
     pub fn lookup_named_export(
         &self,
         name: &str,
-        types: &dyn tsz_solver::TypeDatabase,
+        types: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<TypeId> {
         let name_atom = types.intern_string(name);
         if let Some(prop) = self.named_exports.iter().find(|p| p.name == name_atom) {
@@ -252,7 +252,11 @@ impl JsExportSurface {
     }
 
     /// Check whether this surface has a named export with the given name.
-    pub fn has_named_export(&self, name: &str, types: &dyn tsz_solver::TypeDatabase) -> bool {
+    pub fn has_named_export(
+        &self,
+        name: &str,
+        types: &dyn tsz_solver::construction::TypeDatabase,
+    ) -> bool {
         self.lookup_named_export(name, types).is_some()
     }
 

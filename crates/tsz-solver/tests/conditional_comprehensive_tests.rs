@@ -1785,7 +1785,7 @@ fn test_property_collection_from_conditional_in_intersection() {
         fn resolve_lazy(
             &self,
             _def_id: crate::DefId,
-            _interner: &dyn crate::TypeDatabase,
+            _interner: &dyn crate::construction::TypeDatabase,
         ) -> Option<TypeId> {
             None
         }
@@ -1795,7 +1795,7 @@ fn test_property_collection_from_conditional_in_intersection() {
         fn resolve_ref(
             &self,
             _symbol: crate::types::SymbolRef,
-            _interner: &dyn crate::TypeDatabase,
+            _interner: &dyn crate::construction::TypeDatabase,
         ) -> Option<TypeId> {
             None
         }

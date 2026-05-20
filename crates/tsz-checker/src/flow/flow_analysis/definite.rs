@@ -1010,7 +1010,7 @@ impl<'a> CheckerState<'a> {
 /// and wraps its inner type as an array. For non-rest bindings, returns the element
 /// at the given index directly.
 fn resolve_tuple_binding_type(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
     elems: &[TupleElement],
     element_index: usize,
     is_rest: bool,

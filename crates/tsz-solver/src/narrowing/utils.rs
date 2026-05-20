@@ -4,10 +4,10 @@
 //! and standalone public utility functions for nullish/falsy type handling.
 
 use super::{DiscriminantInfo, NarrowingContext};
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId, TypeListId, TypeParamInfo};
 use crate::visitor::{TypeVisitor, is_object_like_type_through_type_constraints};
-use crate::{QueryDatabase, TypeDatabase};
 use tsz_common::interner::Atom;
 
 /// Visitor that narrows a type by filtering/intersecting with a narrower type.
