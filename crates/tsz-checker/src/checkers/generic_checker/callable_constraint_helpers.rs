@@ -210,27 +210,28 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::is_template_literal_type(self.ctx.types, index)
     }
 
-    /// Check if a constraint evaluates to a union where every member has call or
+    /// Check if a constraint is (or expands to) a union where every member has call or
     /// construct signatures.
     ///
-    /// When a constraint is an Application type like `ComponentType<P>` that expands
-    /// to `ComponentClass<P, any> | FunctionComponent<P>`, each union member is still
-    /// an Application type in the database. This helper evaluates each member before
-    /// checking callability, so `ComponentType<any>` is recognized as a callable
-    /// constraint and triggers TS2344 for non-callable type arguments.
-    pub(super) fn constraint_union_members_all_callable(
-        &mut self,
-        constraint_evaluated: TypeId,
-    ) -> bool {
+    /// Application types like `ComponentType<any>` store union members as Application nodes
+    /// in the database — neither the Application nor its unevaluated members satisfy
+    /// `is_callable_type`. This helper evaluates the input lazily (only when
+    /// `union_members` finds no direct union) and then evaluates each member individually,
+    /// so `ComponentType<any>` is recognised as a callable constraint.
+    pub(super) fn constraint_union_members_all_callable(&mut self, type_id: TypeId) -> bool {
         let db = self.ctx.types.as_type_database();
-        let Some(members) =
-            crate::query_boundaries::common::union_members(db, constraint_evaluated)
-        else {
-            return false;
+        let members = match crate::query_boundaries::common::union_members(db, type_id) {
+            Some(m) if !m.is_empty() => m,
+            Some(_) => return false,
+            None => {
+                let evaluated = self.evaluate_type_for_assignability(type_id);
+                let db = self.ctx.types.as_type_database();
+                match crate::query_boundaries::common::union_members(db, evaluated) {
+                    Some(m) if !m.is_empty() => m,
+                    _ => return false,
+                }
+            }
         };
-        if members.is_empty() {
-            return false;
-        }
         for &m in &members {
             let db = self.ctx.types.as_type_database();
             if query::is_callable_type(db, m) {
