@@ -1,7 +1,7 @@
 //! Flow-based definite assignment and declaration ordering checks.
 
 use crate::FlowAnalyzer;
-use crate::control_flow::type_guards::reference_is_in_class_property_initializer;
+use crate::control_flow::type_guards::reference_uses_outer_class_property_initializer_binding;
 use crate::query_boundaries::definite_assignment::should_report_variable_use_before_assignment;
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_binder::SymbolId;
@@ -51,8 +51,15 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
-        if reference_is_in_class_property_initializer(self.ctx.arena, idx) {
-            trace!("Class property initializer, returning declared type");
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.value_declaration.is_some()
+            && reference_uses_outer_class_property_initializer_binding(
+                self.ctx.arena,
+                idx,
+                symbol.value_declaration,
+            )
+        {
+            trace!("Class property initializer outer binding, returning declared type");
             return declared_type;
         }
 

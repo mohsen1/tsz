@@ -176,6 +176,57 @@ function functionField(input: string | undefined) {
 }
 
 #[test]
+fn nested_class_property_initializer_scopes_keep_local_and_this_context() {
+    let diagnostics = strict_diagnostics_with_libs(
+        r#"
+declare class Component<P, S = {}> {
+    readonly props: Readonly<{ children?: unknown }> & Readonly<P>;
+    state: Readonly<S>;
+}
+interface CoachMarkAnchorProps<C> {
+    anchorRef?: (anchor: C) => void;
+}
+type AnchorType<P> = Component<P>;
+
+class CoachMarkAnchorDecorator {
+    decorateComponent<P>(anchor: P) {
+        return class CoachMarkAnchor extends Component<CoachMarkAnchorProps<AnchorType<P>> & P, {}> {
+            private _onAnchorRef = (anchor: AnchorType<P>) => {
+                const anchorRef = this.props.anchorRef;
+                if (anchorRef) {
+                    anchorRef(anchor);
+                }
+            }
+        };
+    }
+}
+
+class C<T> {
+    data!: T;
+
+    x = <U>(a: U) => {
+        var y: T;
+        return y;
+    }
+}
+"#,
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2349),
+        "arrow fields should keep the class `this` context: {diagnostics:#?}"
+    );
+    let ts2454 = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2454 && message.contains("'y'"))
+        .count();
+    assert_eq!(
+        ts2454, 1,
+        "local variables inside nested field arrows should still get TS2454: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn class_static_blocks_keep_same_point_outer_parameter_narrowing() {
     let diagnostics = strict_diagnostics(
         r#"
