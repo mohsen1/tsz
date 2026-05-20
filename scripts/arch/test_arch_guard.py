@@ -1513,7 +1513,7 @@ class ArchGuardQueryBoundaryCommonReferenceTests(unittest.TestCase):
         self.assertTrue(any("#8225" in name for name in names))
 
     def test_real_count_passes_at_pinned_cap(self):
-        """The pinned cap must match the live count (no off-by-one)."""
+        """The pinned cap must match the live count (no slack)."""
         for entry in self.arch_guard.QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS:
             name, search_roots, exclude_path_prefixes, max_references = entry
             hits = self.arch_guard.scan_query_boundary_common_reference_count(
@@ -1523,6 +1523,13 @@ class ArchGuardQueryBoundaryCommonReferenceTests(unittest.TestCase):
                 hits,
                 [],
                 f"{name}: cap is too tight — guard fires at the live count.",
+            )
+            self.assertNotEqual(
+                self.arch_guard.scan_query_boundary_common_reference_count(
+                    search_roots, exclude_path_prefixes, max_references - 1
+                ),
+                [],
+                f"{name}: cap has slack and should be ratcheted to the live count.",
             )
 
 
