@@ -44,9 +44,8 @@ COMMON_DIR="$(git -C "$ROOT" rev-parse --git-common-dir)"
 GIT_DIR="$(git -C "$ROOT" rev-parse --git-dir)"
 COMMON_REAL="$(cd "$COMMON_DIR" && pwd -P)"
 GIT_REAL="$(cd "$GIT_DIR" && pwd -P)"
-if [[ "$COMMON_REAL" != "$GIT_REAL" && ! -e "$ROOT/TypeScript/tests/cases" ]]; then
-  echo "hint=worktree can usually reuse the primary TypeScript corpus with scripts/setup/link-ts-submodule.sh"
-fi
+PRIMARY_REPO="$(cd "$COMMON_REAL/.." && pwd -P)"
+PRIMARY_TS="$PRIMARY_REPO/TypeScript"
 
 echo ""
 echo "== local cargo cache presence =="
@@ -57,6 +56,34 @@ for dir in .target .target-bench target; do
     echo "$dir=missing"
   fi
 done
+
+echo ""
+echo "== TypeScript reuse sources =="
+if [[ -d "$PRIMARY_TS/tests/cases" ]]; then
+  echo "primary=$PRIMARY_REPO ts-populated"
+else
+  echo "primary=$PRIMARY_REPO ts-missing-or-unpopulated"
+fi
+
+TS_SOURCE_COUNT=0
+while IFS= read -r wt; do
+  [[ -n "$wt" ]] || continue
+  [[ "$wt" != "$ROOT" ]] || continue
+  if [[ -d "$wt/TypeScript/tests/cases" ]]; then
+    TS_SOURCE_COUNT=$((TS_SOURCE_COUNT + 1))
+    echo "source=$wt"
+  fi
+done < <(git -C "$ROOT" worktree list --porcelain | awk '/^worktree / { print substr($0, 10) }')
+
+if [[ "$COMMON_REAL" != "$GIT_REAL" && ! -e "$ROOT/TypeScript/tests/cases" ]]; then
+  if [[ -d "$PRIMARY_TS/tests/cases" ]]; then
+    echo "hint=run scripts/setup/link-ts-submodule.sh"
+  elif (( TS_SOURCE_COUNT > 0 )); then
+    echo "hint=run scripts/setup/link-ts-submodule.sh --source <source-path-above>"
+  else
+    echo "hint=no populated TypeScript source found; run scripts/setup/setup-ts-submodule.sh in the primary checkout first"
+  fi
+fi
 
 echo ""
 echo "== reusable worktree signals =="

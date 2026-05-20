@@ -106,6 +106,12 @@ pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
 }
 
+/// Check whether a constraint is, or evaluates to, a union whose members all
+/// carry call or construct signatures.
+pub(crate) fn constraint_expands_to_callable_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::constraint_expands_to_callable_union(db, type_id)
+}
+
 /// Check if a type has construct signatures or is a constructor function.
 pub(crate) fn is_constructor_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_constructor_like_type(db, type_id)
