@@ -760,8 +760,11 @@ fn collect_simple_module_requests_from_text(
         if kind == SyntaxKind::EndOfFileToken {
             break;
         }
-        let token_text = (kind == SyntaxKind::StringLiteral)
-            .then(|| strip_scanned_string_literal(scanner.get_token_text_ref()));
+        let token_text = if kind == SyntaxKind::StringLiteral {
+            Some(strip_scanned_string_literal(scanner.get_token_text_ref())?)
+        } else {
+            None
+        };
         tokens.push(DiscoveryToken {
             kind,
             text: token_text,
@@ -832,8 +835,12 @@ fn collect_simple_module_requests_from_text(
     Some(requests)
 }
 
-fn strip_scanned_string_literal(text: &str) -> String {
-    text.trim_matches(|ch| ch == '"' || ch == '\'').to_string()
+fn strip_scanned_string_literal(text: &str) -> Option<String> {
+    let value = text.trim_matches(|ch| ch == '"' || ch == '\'');
+    if value.contains('\\') {
+        return None;
+    }
+    Some(value.to_string())
 }
 
 fn skip_ambient_module_body_without_dependencies(

@@ -1105,6 +1105,31 @@ export interface LocalOnly {}
 }
 
 #[test]
+fn simple_module_request_scanner_falls_back_for_escaped_static_specifiers() {
+    let text = r#"
+import "./d\u0065p";
+export { value } from "./r\u0065exp";
+"#;
+    assert!(
+        collect_simple_module_requests_from_text(text).is_none(),
+        "escaped module specifiers must fall back so the parser can decode them"
+    );
+
+    let requests = collect_module_requests_from_text(std::path::Path::new("index.ts"), text);
+    let actual: Vec<_> = requests
+        .iter()
+        .map(|(specifier, kind, _, _)| (specifier.as_str(), *kind))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            ("./dep", tsz::module_resolver::ImportKind::EsmImport),
+            ("./reexp", tsz::module_resolver::ImportKind::EsmReExport),
+        ]
+    );
+}
+
+#[test]
 fn simple_module_request_scanner_handles_ambient_modules_conservatively() {
     let simple = collect_simple_module_requests_from_text(
         r#"
