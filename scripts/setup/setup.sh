@@ -116,10 +116,10 @@ fi
 # ── 2. TypeScript submodule ─────────────────────────────────────────────────
 step "TypeScript submodule"
 
-# Worktree fast-path: share the primary checkout's TypeScript via symlink to
+# Worktree fast-path: share a populated TypeScript checkout via symlink to
 # avoid materialising a duplicate ~250–500 MB checkout per worktree. No-op in
-# the primary checkout, when already symlinked, or when the primary is
-# uninitialised (we fall through to the normal init below in that case).
+# the primary checkout, when already symlinked, or when no populated source is
+# available (we fall through to the normal init below in that case).
 COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || true)
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || true)
 IS_WORKTREE=false
