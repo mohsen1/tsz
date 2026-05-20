@@ -437,6 +437,13 @@ pub enum IRNode {
         end_label: u32,
     },
 
+    /// `_a.trys.push([start, catch, , end])`
+    GeneratorTryPushCatch {
+        start_label: u32,
+        catch_label: u32,
+        end_label: u32,
+    },
+
     /// `if (condition) return [3 /*break*/, target_label];`
     /// Used in async state machines for conditional branching.
     IfBreak {
@@ -1162,6 +1169,7 @@ impl IRNode {
             | Self::GeneratorLabel
             | Self::GeneratorTryPush { .. }
             | Self::GeneratorTryPushFinally { .. }
+            | Self::GeneratorTryPushCatch { .. }
             | Self::Raw(_)
             | Self::Comment { .. }
             | Self::TrailingComment(_)
@@ -1354,6 +1362,39 @@ impl IRNode {
             left: Box::new(target),
             operator: Cow::Borrowed("="),
             right: Box::new(value),
+        }
+    }
+
+    /// Create the `_a.trys.push([...])` IR for a state-machine try region.
+    /// Picks the variant that matches the sparse-slot shape expected by tsc:
+    /// `[s, c, f, e]`, `[s, c, , e]`, or `[s, , f, e]`.
+    pub fn generator_try_push(
+        start_label: u32,
+        catch_label: Option<u32>,
+        finally_label: Option<u32>,
+        end_label: u32,
+    ) -> Self {
+        match (catch_label, finally_label) {
+            (Some(catch_label), Some(finally_label)) => Self::GeneratorTryPush {
+                start_label,
+                catch_label,
+                finally_label,
+                end_label,
+            },
+            (Some(catch_label), None) => Self::GeneratorTryPushCatch {
+                start_label,
+                catch_label,
+                end_label,
+            },
+            (None, Some(finally_label)) => Self::GeneratorTryPushFinally {
+                start_label,
+                finally_label,
+                end_label,
+            },
+            (None, None) => panic!(
+                "generator_try_push requires at least one handler (catch or finally); \
+                 a handler-less try has no runtime entry"
+            ),
         }
     }
 
