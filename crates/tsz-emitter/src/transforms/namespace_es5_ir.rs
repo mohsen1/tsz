@@ -962,6 +962,13 @@ impl<'a> NamespaceES5Transformer<'a> {
                 let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
                 let is_class_like = self.is_class_like_member(stmt_idx);
                 let is_namespace_like_stmt = is_namespace_like(self.arena, stmt_node);
+                let next_erases_runtime = stmts
+                    .nodes
+                    .iter()
+                    .copied()
+                    .skip_while(|&idx| idx != stmt_idx)
+                    .nth(1)
+                    .is_some_and(|next_idx| self.namespace_statement_erases_runtime(next_idx));
                 let trailing_standalone = if is_class_like || is_namespace_like_stmt {
                     Vec::new()
                 } else {
@@ -1053,8 +1060,10 @@ impl<'a> NamespaceES5Transformer<'a> {
                     // statement kinds.)
                 }
 
-                for c in trailing_standalone {
-                    result.push(c);
+                if !next_erases_runtime {
+                    for c in trailing_standalone {
+                        result.push(c);
+                    }
                 }
 
                 // For class-like members the class sub-emitter handles its own
@@ -1173,6 +1182,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             k if k == syntax_kind_ext::EXPORT_DECLARATION && !force_export => {
                 // Handle export declarations by extracting the inner declaration
                 if let Some(export_data) = self.arena.get_export_decl(member_node) {
+                    if self.namespace_statement_erases_runtime(export_data.export_clause) {
+                        return None;
+                    }
                     self.transform_namespace_member(ns_name, export_data.export_clause, true)
                 } else {
                     None
@@ -1195,12 +1207,17 @@ impl<'a> NamespaceES5Transformer<'a> {
                 self.transform_enum_in_namespace(ns_name, member_idx, force_export)
             }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                if self.import_equals_uses_external_module_ref(member_idx) {
+                    return None;
+                }
                 if force_export {
                     self.transform_import_equals_exported(ns_name, member_idx)
                 } else {
                     self.transform_import_equals_in_namespace(ns_name, member_idx)
                 }
             }
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => None,
+            k if k == syntax_kind_ext::NAMED_EXPORTS => None,
             k if !force_export
                 && (k == syntax_kind_ext::INTERFACE_DECLARATION
                     || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION) =>
@@ -1210,6 +1227,42 @@ impl<'a> NamespaceES5Transformer<'a> {
             _ if !force_export => self.namespace_member_ast_ref_if_non_empty(member_idx),
             _ => None,
         }
+    }
+
+    fn namespace_statement_erases_runtime(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return true;
+        };
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => self
+                .arena
+                .get_export_decl(member_node)
+                .is_none_or(|export_data| {
+                    self.namespace_statement_erases_runtime(export_data.export_clause)
+                }),
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION
+                || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                || k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::NAMED_EXPORTS =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.import_equals_uses_external_module_ref(member_idx)
+            }
+            _ => false,
+        }
+    }
+
+    fn import_equals_uses_external_module_ref(&self, import_idx: NodeIndex) -> bool {
+        let Some(import) = self.arena.get_import_decl_at(import_idx) else {
+            return false;
+        };
+        self.arena.get(import.module_specifier).is_some_and(|node| {
+            node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                || node.kind == SyntaxKind::StringLiteral as u16
+        })
     }
 
     fn transform_import_equals_in_namespace(
