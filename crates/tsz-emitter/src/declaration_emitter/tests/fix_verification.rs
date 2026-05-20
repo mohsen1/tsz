@@ -1764,10 +1764,10 @@ const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumbe
     );
 
     for expected in [
-        r#"declare const explicitStringOrNumber: "string" | "number";"#,
-        r#"declare const explicitStringOrBoolean: "string" | "boolean";"#,
-        r#"declare const explicitBooleanOrNumber: "number" | "boolean";"#,
-        r#"declare const explicitStringOrBooleanOrNumber: "string" | "number" | "boolean";"#,
+        r#"declare const explicitStringOrNumber: "string";"#,
+        r#"declare const explicitStringOrBoolean: "string";"#,
+        r#"declare const explicitBooleanOrNumber: "number";"#,
+        r#"declare const explicitStringOrBooleanOrNumber: "string";"#,
         "declare const inferredStringOrNumber: string;",
         "declare const inferredStringOrBoolean: string;",
         "declare const inferredBooleanOrNumber: string;",
