@@ -1063,6 +1063,79 @@ function f2(item: A | B | undefined) {
 }
 
 #[test]
+fn test_event_like_correlated_alias_call_expands_literal_name_result() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface EventMap {
+    click: PointerEvent;
+    scroll: Event;
+}
+type EventSpec<K extends keyof EventMap> = { [P in K]: {
+    readonly name: P;
+    readonly once?: boolean;
+    readonly callback: (ev: EventMap[P]) => void;
+}}[K];
+function createEvent<K extends keyof EventMap>({ name, once = false, callback }: EventSpec<K>): EventSpec<K> {
+    return { name, once, callback };
+}
+const clickEvent = createEvent({
+    name: "click",
+    callback: ev => console.log(ev),
+});
+"#,
+    );
+
+    assert!(
+        output.contains("declare const clickEvent: {\n    readonly name: \"click\";"),
+        "Expected concrete event alias application to expand into an object literal: {output}"
+    );
+    assert!(
+        output.contains("readonly callback: (ev: PointerEvent) => void;"),
+        "Expected callback parameter to resolve through the literal event name: {output}"
+    );
+    assert!(
+        !output.contains("declare const clickEvent: EventSpec<\"click\">;"),
+        "Did not expect declaration emit to preserve the concrete correlated alias: {output}"
+    );
+}
+
+#[test]
+fn test_event_like_correlated_alias_call_expands_renamed_type_parameter() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface EventMap {
+    ready: Event;
+}
+type ListenerEntry<Key extends keyof EventMap> = { [EventName in Key]: {
+    readonly name: EventName;
+    readonly once?: boolean;
+    readonly callback: (ev: EventMap[EventName]) => void;
+}}[Key];
+function makeListener<Key extends keyof EventMap>(entry: ListenerEntry<Key>): ListenerEntry<Key> {
+    return entry;
+}
+const readyEvent = makeListener({
+    name: "ready",
+    callback: ev => console.log(ev),
+});
+"#,
+    );
+
+    assert!(
+        output.contains("declare const readyEvent: {\n    readonly name: \"ready\";"),
+        "Expected renamed mapped type parameter to expand structurally: {output}"
+    );
+    assert!(
+        output.contains("readonly callback: (ev: Event) => void;"),
+        "Expected renamed event callback parameter to remain resolved: {output}"
+    );
+    assert!(
+        !output.contains("declare const readyEvent: ListenerEntry<\"ready\">;"),
+        "Did not expect declaration emit to preserve renamed concrete event alias: {output}"
+    );
+}
+
+#[test]
 fn test_function_return_prefers_object_literal_over_return_type_wrapper() {
     let source = r#"
     function f1(s: string) {
