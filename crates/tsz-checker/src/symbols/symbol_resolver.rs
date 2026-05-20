@@ -502,11 +502,12 @@ impl<'a> CheckerState<'a> {
         //
         // Phase 3 of the merge intentionally EXCLUDES file_locals belonging to
         // external-module lib files unless the name appears in the lib's
-        // `global_augmentations` map (`crates/tsz-binder/src/state/lib_merge.rs`,
-        // around the `is_external_module && !global_augmentations.contains_key`
-        // check). This prevents module-scoped names like the `class Iterator`
-        // in `es2025.iterator.d.ts` from contaminating the global scope of
-        // user code that doesn't explicitly augment.
+        // `global_augmentations` map (filtered via
+        // `BinderState::file_local_is_globally_visible` in
+        // `crates/tsz-binder/src/state/lib_merge.rs`). This prevents
+        // module-scoped names like the `class Iterator` in
+        // `es2025.iterator.d.ts` from contaminating the global scope of user
+        // code that doesn't explicitly augment.
         //
         // BUT: some lookups DO need access to those module-scoped lib symbols
         // (e.g. when generators.rs walks the iterator chain). The fallback
@@ -604,10 +605,7 @@ impl<'a> CheckerState<'a> {
                         && self
                             .ctx
                             .get_binder_for_file(symbol.decl_file_idx as usize)
-                            .is_some_and(|binder| {
-                                binder.is_external_module()
-                                    && !binder.global_augmentations.contains_key(name)
-                            })
+                            .is_some_and(|binder| !binder.file_local_is_globally_visible(name))
                         && !self
                             .ctx
                             .get_arena_for_file(symbol.decl_file_idx)
@@ -1164,8 +1162,7 @@ impl<'a> CheckerState<'a> {
             if owner_is_declaration_file {
                 return false;
             }
-            owner_binder.is_external_module()
-                && !owner_binder.global_augmentations.contains_key(name)
+            !owner_binder.file_local_is_globally_visible(name)
         };
         if let Some(local_sym_id) =
             self.ctx

@@ -1766,8 +1766,13 @@ impl ProgramContext {
         let mut declared_modules_capacity = 0usize;
         let mut expando_capacity = 0usize;
         for binder in self.all_binders.iter() {
-            for (name, _) in binder.file_locals.iter() {
-                *file_locals_name_counts.entry(name.as_str()).or_default() += 1;
+            if binder.contributes_to_global_index() {
+                for (name, _) in binder.file_locals.iter() {
+                    if !binder.file_local_is_globally_visible(name) {
+                        continue;
+                    }
+                    *file_locals_name_counts.entry(name.as_str()).or_default() += 1;
+                }
             }
             if !has_skeleton_module_exports {
                 module_exports_capacity += binder.module_exports.len();
@@ -1822,18 +1827,23 @@ impl ProgramContext {
             .collect();
 
         for (file_idx, binder) in self.all_binders.iter().enumerate() {
-            for (name, &sym_id) in binder.file_locals.iter() {
-                file_locals_index
-                    .entry(name.to_string())
-                    .or_insert_with(|| {
-                        Vec::with_capacity(
-                            file_locals_name_counts
-                                .get(name.as_str())
-                                .copied()
-                                .unwrap_or(1),
-                        )
-                    })
-                    .push((file_idx, sym_id));
+            if binder.contributes_to_global_index() {
+                for (name, &sym_id) in binder.file_locals.iter() {
+                    if !binder.file_local_is_globally_visible(name) {
+                        continue;
+                    }
+                    file_locals_index
+                        .entry(name.to_string())
+                        .or_insert_with(|| {
+                            Vec::with_capacity(
+                                file_locals_name_counts
+                                    .get(name.as_str())
+                                    .copied()
+                                    .unwrap_or(1),
+                            )
+                        })
+                        .push((file_idx, sym_id));
+                }
             }
             for (module_spec, exports) in binder.module_exports.iter() {
                 // Phase 2 step 4: skip the per-binder module_binder_index

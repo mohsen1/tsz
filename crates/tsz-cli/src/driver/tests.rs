@@ -1133,6 +1133,233 @@ fn test_compile_project_keeps_unimported_external_module_type_alias_unresolved()
 }
 
 #[test]
+fn test_compile_project_keeps_unimported_external_module_alias_unresolved_renamed() {
+    // Same structural rule as the canonical repro, with a different name
+    // choice. Locks in that the cross-file file_locals filter is keyed by
+    // is_external_module + global_augmentations, never by the spelling.
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015",
+    "declaration": true
+  },
+  "files": ["LookupHelpers.ts", "Consumer.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("LookupHelpers.ts"),
+        "export type Lookup<K> = K extends string ? K : never;\n",
+    )
+    .expect("write LookupHelpers.ts");
+    fs::write(
+        dir.path().join("Consumer.ts"),
+        "export type Result<P> = Lookup<P>;\n",
+    )
+    .expect("write Consumer.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_NAME && diag.message_text.contains("Lookup")
+        }),
+        "Expected TS2304 for unimported external-module type alias 'Lookup', got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_compile_project_keeps_unimported_external_module_class_unresolved() {
+    // Adjacent case: a class exported from one module is not visible as a
+    // type or value in a sibling module without an import.
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015"
+  },
+  "files": ["Widget.ts", "App.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("Widget.ts"),
+        "export class Widget { value: number = 0; }\n",
+    )
+    .expect("write Widget.ts");
+    fs::write(
+        dir.path().join("App.ts"),
+        "export function makeWidget(): Widget { return new Widget(); }\n",
+    )
+    .expect("write App.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    // Both the type-position reference and the value-position reference are
+    // unresolved; tsc emits TS2304 for both. Assert at least the type-position
+    // diagnostic surfaces — it's the same code path as the issue repro.
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_NAME && diag.message_text.contains("Widget")
+        }),
+        "Expected TS2304 for unimported external-module class 'Widget', got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_compile_project_resolves_imported_external_module_type_alias() {
+    // Negative case: with a proper `import`, the cross-module alias resolves
+    // normally and no TS2304 is emitted.
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015"
+  },
+  "files": ["Helpers.ts", "Consumer.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("Helpers.ts"),
+        "export type StringKeyOf<TObj> = Extract<string, keyof TObj>;\n",
+    )
+    .expect("write Helpers.ts");
+    fs::write(
+        dir.path().join("Consumer.ts"),
+        "import { StringKeyOf } from \"./Helpers\";\n\
+         export type RowToColumns<TColumns> = { [TName in StringKeyOf<TColumns>]: any };\n",
+    )
+    .expect("write Consumer.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let unresolved_string_key_of: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_NAME && d.message_text.contains("StringKeyOf")
+        })
+        .collect();
+    assert!(
+        unresolved_string_key_of.is_empty(),
+        "With an explicit import the cross-module type alias must resolve; got: {unresolved_string_key_of:?}"
+    );
+}
+
+#[test]
+fn test_compile_project_script_files_share_top_level_types() {
+    // Positive case: in non-module (script) files, top-level types are part
+    // of the shared global scope and must remain cross-file visible. Without
+    // this, the filter would over-correct and break TypeScript script-mode
+    // semantics.
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015"
+  },
+  "files": ["globals.ts", "consumer.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    // No top-level import/export ⇒ script-mode (non-module).
+    fs::write(
+        dir.path().join("globals.ts"),
+        "type GlobalAlias = { tag: \"global\" };\n",
+    )
+    .expect("write globals.ts");
+    fs::write(
+        dir.path().join("consumer.ts"),
+        "var v: GlobalAlias = { tag: \"global\" };\n",
+    )
+    .expect("write consumer.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let unresolved: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_NAME && d.message_text.contains("GlobalAlias")
+        })
+        .collect();
+    assert!(
+        unresolved.is_empty(),
+        "Script-mode globals must remain cross-file visible; got TS2304 for GlobalAlias: {unresolved:?}"
+    );
+}
+
+#[test]
+fn test_compile_project_declare_global_in_external_module_is_visible_cross_file() {
+    // Positive case: `declare global { type X = ... }` from one external
+    // module is visible without an import in another file — that's exactly
+    // what `declare global` is for. The filter must let augmentation entries
+    // pass while excluding sibling module-local entries.
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015"
+  },
+  "files": ["augment.ts", "consumer.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("augment.ts"),
+        "export {};\ndeclare global {\n  type MyGlobal = { kind: \"global\" };\n}\n",
+    )
+    .expect("write augment.ts");
+    fs::write(
+        dir.path().join("consumer.ts"),
+        "export const v: MyGlobal = { kind: \"global\" };\n",
+    )
+    .expect("write consumer.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let unresolved: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::CANNOT_FIND_NAME && d.message_text.contains("MyGlobal")
+        })
+        .collect();
+    assert!(
+        unresolved.is_empty(),
+        "`declare global` types must remain cross-file visible; got TS2304: {unresolved:?}"
+    );
+}
+
+#[test]
 fn test_compile_project_mixin_constructor_object_does_not_emit_ts2510() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(

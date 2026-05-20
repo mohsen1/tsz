@@ -40,6 +40,47 @@ impl BinderState {
         false
     }
 
+    /// Like `is_inside_namespace`, but treats the `declare global { ... }`
+    /// wrapper as "not a namespace" so callers can distinguish
+    /// `declare global { type X = ... }` (X is a global augmentation) from
+    /// `declare global { namespace JSX { type X } }` (X is `JSX.X`).
+    ///
+    /// `is_inside_namespace` reports `true` for both because the
+    /// `declare global` clause parses as an identifier-named
+    /// `MODULE_DECLARATION`. This walker skips past that wrapper.
+    pub(crate) fn is_inside_non_global_namespace(arena: &NodeArena, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..32 {
+            let Some(ext) = arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent_node) = arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(parent_module) = arena.get_module(parent_node)
+                && let Some(name_node) = arena.get(parent_module.name)
+            {
+                // The parser always materializes the `global` keyword as an
+                // `Identifier` node with `escaped_text == "global"` (see
+                // `state_declarations.rs::parse_module_or_namespace_declaration`),
+                // so a non-Identifier name here means the enclosing module is
+                // string-literal-named (ambient module) — not a namespace.
+                if name_node.kind != SyntaxKind::Identifier as u16 {
+                    return false;
+                }
+                if parent_node.is_global_augmentation() {
+                    current = parent_idx;
+                    continue;
+                }
+                return true;
+            }
+            current = parent_idx;
+        }
+        false
+    }
+
     fn is_inside_ambient_module(arena: &NodeArena, idx: NodeIndex) -> bool {
         let mut current = idx;
         // Walk up through the AST looking for an ambient ancestor

@@ -430,18 +430,17 @@ impl BinderState {
         // Phase 3: Update file_locals with remapped IDs and track lib symbol IDs
         for lib_ctx in lib_contexts {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
+            // Lib `file_locals` is large (thousands of entries); hoist the
+            // module-vs-script check so non-module lib files skip the
+            // per-entry visibility probe entirely. External-module lib files
+            // still contribute only their `declare global` symbols.
+            if !lib_ctx.binder.contributes_to_global_index() {
+                continue;
+            }
+            let lib_is_module = lib_ctx.binder.is_external_module;
 
             for (name, &local_id) in lib_ctx.binder.file_locals.iter() {
-                // When a lib file is an external module (has `export {}`), its
-                // file_locals contain module-scoped declarations that must NOT
-                // pollute the global scope. Only merge symbols that originate
-                // from `declare global { ... }` blocks (tracked in
-                // global_augmentations).  This prevents e.g. the module-scoped
-                // `class Iterator` in es2025.iterator.d.ts from contaminating
-                // the global `Iterator` interface from es2015.iterable.d.ts.
-                if lib_ctx.binder.is_external_module
-                    && !lib_ctx.binder.global_augmentations.contains_key(name)
-                {
+                if lib_is_module && !lib_ctx.binder.global_augmentations.contains_key(name) {
                     continue;
                 }
 

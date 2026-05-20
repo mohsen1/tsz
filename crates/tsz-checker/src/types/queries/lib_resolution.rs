@@ -282,11 +282,12 @@ pub(crate) fn resolve_name_to_lib_symbol(
     all_binders: Option<&[std::sync::Arc<tsz_binder::BinderState>]>,
     lib_contexts: &[crate::context::LibContext],
 ) -> Option<tsz_binder::SymbolId> {
-    // Tier 1: primary binder file_locals (O(1))
+    // Tier 1: primary binder file_locals (O(1)).
     if let Some(sym) = primary_binder.file_locals.get(name) {
         return Some(sym);
     }
-    // Tier 2: global file_locals index (O(1))
+    // Tier 2: global file_locals index (O(1)). The index is filtered at
+    // build time so it only contains cross-file-visible entries.
     if let Some(idx) = global_file_locals_index {
         if let Some(entries) = idx.get(name)
             && let Some(&(_file_idx, sym_id)) = entries.first()
@@ -294,8 +295,12 @@ pub(crate) fn resolve_name_to_lib_symbol(
             return Some(sym_id);
         }
     } else if let Some(binders) = all_binders {
-        // Tier 2b: O(N) binder scan only when no global index
+        // Tier 2b: O(N) binder scan when no global index is available; apply
+        // the same visibility filter as the index path.
         for binder in binders {
+            if !binder.file_local_is_globally_visible(name) {
+                continue;
+            }
             if let Some(found_sym) = binder.file_locals.get(name) {
                 return Some(found_sym);
             }

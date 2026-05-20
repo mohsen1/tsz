@@ -570,11 +570,16 @@ impl<'a> CheckerContext<'a> {
         };
 
         for (file_idx, binder) in binders.iter().enumerate() {
-            for (name, &sym_id) in binder.file_locals.iter() {
-                file_locals_index
-                    .entry(name.to_string())
-                    .or_default()
-                    .push((file_idx, sym_id));
+            if binder.contributes_to_global_index() {
+                for (name, &sym_id) in binder.file_locals.iter() {
+                    if !binder.file_local_is_globally_visible(name) {
+                        continue;
+                    }
+                    file_locals_index
+                        .entry(name.to_string())
+                        .or_default()
+                        .push((file_idx, sym_id));
+                }
             }
             for (module_spec, exports) in binder.module_exports.iter() {
                 // Build module_binder_index: module_spec -> [binder_idx]

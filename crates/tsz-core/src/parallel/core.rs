@@ -3447,14 +3447,16 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     let mut lib_name_to_global: FxHashMap<Atom, SymbolId> = FxHashMap::default();
     let mut lib_global_file_locals: Vec<(String, SymbolId)> = Vec::new();
     for lib_binder in &lib_binders {
+        // Lib `file_locals` is large (thousands of entries); hoist the
+        // module-vs-script check so non-module lib files skip the per-entry
+        // visibility probe entirely.
+        if !lib_binder.contributes_to_global_index() {
+            continue;
+        }
         let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
+        let lib_is_module = lib_binder.is_external_module;
         for (name, &local_id) in lib_binder.file_locals.iter() {
-            // When a lib file is an external module (has `export {}`), its
-            // file_locals contain module-scoped declarations that must NOT
-            // pollute the global scope. Only include symbols that originate
-            // from `declare global { ... }` blocks.
-            if lib_binder.is_external_module && !lib_binder.global_augmentations.contains_key(name)
-            {
+            if lib_is_module && !lib_binder.global_augmentations.contains_key(name) {
                 continue;
             }
             if let Some(&global_id) = lib_symbol_remap.get(&(lib_binder_ptr, local_id)) {

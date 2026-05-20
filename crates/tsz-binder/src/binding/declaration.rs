@@ -1031,19 +1031,14 @@ impl BinderState {
             // Check if exported BEFORE allocating symbol
             let is_exported = Self::has_export_modifier(arena, alias.modifiers.as_ref());
 
-            // If we're inside a global augmentation block, track this as an augmentation
-            // that should merge with lib.d.ts symbols at type resolution time.
-            //
-            // Skip when the type alias is nested inside a named non-global namespace
-            // (e.g. `declare global { namespace JSX { type Element = any; } }`).
-            // Those are namespace members (`JSX.Element`), not augmentations of a
-            // top-level global type — recording them by their bare name corrupts
-            // lib types that share the name. For example, lib.dom.d.ts's
-            // `interface Element` constraint check on
-            // `NodeListOf<HTMLElementTagNameMap[K]>` would otherwise emit
-            // spurious TS2344. Type aliases inside a namespace can never
-            // participate in global interface merging anyway.
-            if self.in_global_augmentation && !Self::is_inside_namespace(arena, idx) {
+            // Inside `declare global { ... }`, record top-level type aliases
+            // as augmentations so they merge with lib types and surface as
+            // global names cross-file. Skip type aliases nested inside a
+            // named non-global namespace (e.g. `declare global { namespace
+            // JSX { type Element = any } }`): those are `JSX.Element`, not a
+            // top-level augmentation, and recording them by their bare name
+            // would corrupt same-named lib types.
+            if self.in_global_augmentation && !Self::is_inside_non_global_namespace(arena, idx) {
                 Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
                     .or_default()
@@ -1624,6 +1619,27 @@ impl BinderState {
     /// This is used by the checker to determine if ES module semantics apply.
     pub const fn is_external_module(&self) -> bool {
         self.is_external_module
+    }
+
+    /// Returns `true` when a `file_locals` entry with `name` from this binder
+    /// belongs in the cross-file global scope.
+    ///
+    /// In an external-module file, only `declare global { ... }` entries
+    /// (recorded in `global_augmentations`) are global; module-local
+    /// declarations populate `file_locals` for same-file resolution but
+    /// must not leak to sibling files. Script files (no top-level
+    /// import/export) share one global scope, so all their entries qualify.
+    pub fn file_local_is_globally_visible(&self, name: &str) -> bool {
+        !self.is_external_module || self.global_augmentations.contains_key(name)
+    }
+
+    /// Returns `true` when this binder has at least one `file_locals` entry
+    /// that belongs in the cross-file global scope — i.e. it's a script
+    /// file, or an external-module file with at least one `declare global`
+    /// augmentation. Used to short-circuit the cross-file iteration entirely
+    /// when an external module has no augmentations (the common case).
+    pub fn contributes_to_global_index(&self) -> bool {
+        !self.is_external_module || !self.global_augmentations.is_empty()
     }
 
     /// Check if a module specifier likely refers to an existing module that can be augmented.
