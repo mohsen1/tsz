@@ -1898,6 +1898,78 @@ fn class_computed_property() {
 }
 
 #[test]
+fn computed_field_typed_initializer_continuation_reports_ts1005() {
+    let source = "class C {\n    [e]: number = 0\n    [e2]: number\n}";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+    let colon_pos = source
+        .rfind(": number")
+        .expect("expected second type annotation") as u32;
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED && diag.start == colon_pos),
+        "expected TS1005 at the continuation type annotation colon, got {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        ),
+        "continuation type annotation should not cascade into TS1068, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn computed_field_method_like_continuation_reports_ts1005_before_outer_block() {
+    let source = "class C {\n    [e] = 0\n    [e2]() { }\n}";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+    let block_pos = source.find("{ }").expect("expected recovered method body") as u32;
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED && diag.start == block_pos),
+        "expected TS1005 at the recovered method body brace, got {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "method-like continuation should still recover the body as an outer block, got {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        ),
+        "method-like continuation should not cascade into TS1068, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn computed_field_followed_by_bare_block_reports_ts1068() {
+    let source = "class C {\n    ['a'] = 0\n    {}\n}";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+    let block_pos = source.find("{}").expect("expected recovered block") as u32;
+
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+                && diag.start == block_pos
+        }),
+        "bare block after a computed field initializer should report TS1068, got {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPECTED),
+        "bare block recovery should not degrade to TS1005, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn class_getter_setter() {
     // `class Foo { get x() { return 1; } set x(v: number) {} }`
     let (parser, root) = parse_source("class Foo { get x() { return 1; } set x(v: number) {} }");
