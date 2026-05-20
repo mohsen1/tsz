@@ -4,10 +4,10 @@
 //! and standalone public utility functions for nullish/falsy type handling.
 
 use super::{DiscriminantInfo, NarrowingContext};
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId, TypeListId, TypeParamInfo};
 use crate::visitor::{TypeVisitor, is_object_like_type_through_type_constraints};
-use crate::{QueryDatabase, TypeDatabase};
 use tsz_common::interner::Atom;
 
 /// Visitor that narrows a type by filtering/intersecting with a narrower type.
@@ -502,7 +502,12 @@ fn remove_nullish_inner(
             && let Some(type_params) = db.get_lazy_type_params(def_id)
             && let Some(resolved) = db.resolve_lazy(def_id, types)
         {
-            let instantiated = crate::instantiate_generic(types, resolved, &type_params, &app.args);
+            let instantiated = crate::instantiation::instantiate::instantiate_generic(
+                types,
+                resolved,
+                &type_params,
+                &app.args,
+            );
             if instantiated != type_id {
                 return remove_nullish_inner(types, query_db, instantiated);
             }

@@ -27,7 +27,7 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
 use tsz_parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 use tsz_solver::types::TypeId;
 
 /// Kind of inlay hint.

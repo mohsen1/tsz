@@ -1,6 +1,7 @@
 //! JSX checker query boundaries.
 
-use tsz_solver::{DefinitionStore, QueryDatabase, TypeDatabase, TypeId, TypeParamInfo};
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::{DefinitionStore, TypeId, TypeParamInfo};
 
 pub(crate) struct SingleArgTypeApplication {
     pub(crate) base: TypeId,

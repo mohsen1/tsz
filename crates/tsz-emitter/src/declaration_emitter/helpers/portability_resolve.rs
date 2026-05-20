@@ -1301,7 +1301,7 @@ impl<'a> DeclarationEmitter<'a> {
         #[allow(clippy::too_many_arguments)]
         fn check_named_type(
             emitter: &DeclarationEmitter<'_>,
-            interner: &tsz_solver::TypeInterner,
+            interner: &tsz_solver::construction::TypeInterner,
             binder: &BinderState,
             current_file_path: &str,
             cache: &crate::type_cache_view::TypeCacheView,

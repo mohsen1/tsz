@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::objects::apparent::apparent_primitive_shape;
 use crate::operations::iterators::{get_iterator_info, target_has_non_iterable_property_shape};
 use crate::types::{FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, TypeId};

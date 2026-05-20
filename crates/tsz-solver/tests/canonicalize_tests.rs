@@ -1,5 +1,5 @@
 use super::*;
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::{DefId, DefKind};
 use crate::intern::TypeInterner;
 use crate::relations::subtype::{TypeEnvironment, TypeResolver};

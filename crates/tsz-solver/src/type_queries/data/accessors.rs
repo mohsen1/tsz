@@ -6,7 +6,7 @@
 use super::content_predicates::{
     get_array_element_type, get_intersection_members, get_tuple_elements, get_union_members,
 };
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::{DefKind, DefinitionStore};
 use crate::types::{
     LiteralValue, ObjectShape, PropertyInfo, TupleElement, TypeData, TypeId, Visibility,
