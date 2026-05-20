@@ -208,6 +208,52 @@ fn new_target_es5_derived_constructor_body_capture_precedes_super_capture() {
 }
 
 #[test]
+fn new_target_es5_derived_constructor_keeps_body_and_field_captures() {
+    let output = emit_es5(
+        "class B {}\n\
+         class D extends B {\n\
+             x = new.target;\n\
+             constructor(value = new.target) {\n\
+                 super();\n\
+                 const body = new.target;\n\
+             }\n\
+         }\n",
+    );
+
+    let captures: Vec<_> = output
+        .match_indices("var _newTarget = this.constructor;")
+        .map(|(idx, _)| idx)
+        .collect();
+    assert_eq!(
+        captures.len(),
+        2,
+        "Derived constructor should emit separate `new.target` captures for constructor scope and moved field initializers.\nOutput:\n{output}"
+    );
+
+    let super_capture = output.find("var _this = _super.call(this) || this;").unwrap_or_else(|| {
+        panic!("Derived constructor should still capture the super return value.\nOutput:\n{output}")
+    });
+    let field_initializer = output.find("_this.x = _newTarget;").unwrap_or_else(|| {
+        panic!("Moved field initializer should read the post-super capture.\nOutput:\n{output}")
+    });
+    let body_read = output.find("var body = _newTarget;").unwrap_or_else(|| {
+        panic!("Constructor body should still read a `new.target` capture.\nOutput:\n{output}")
+    });
+
+    assert!(
+        captures[0] < super_capture
+            && super_capture < captures[1]
+            && captures[1] < field_initializer
+            && field_initializer < body_read,
+        "Constructor-scope capture should precede super(), and moved field initializer capture should follow super() before field/body reads.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("new.target"),
+        "ES5 output must not retain raw `new.target` syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn new_target_es5_class_field_initializers_capture_default_constructor() {
     let output = emit_es5(
         "class C {\n\

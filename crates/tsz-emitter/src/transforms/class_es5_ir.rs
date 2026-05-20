@@ -2578,7 +2578,11 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.moved_instance_initializers_contain_new_target(&instance_props);
             if constructor_scope_contains_new_target {
                 ctor_body.insert(0, Self::class_constructor_new_target_capture_ir());
-            } else if moved_initializers_contain_new_target {
+            }
+            if moved_initializers_contain_new_target
+                && (!constructor_scope_contains_new_target
+                    || (self.has_extends && !self.extends_null))
+            {
                 self.insert_class_new_target_capture(&mut ctor_body);
             }
         } else {
