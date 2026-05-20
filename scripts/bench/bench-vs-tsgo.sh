@@ -1926,6 +1926,8 @@ export_results_json() {
     TS_TOOLBELT_DIR_VALUE="$TS_TOOLBELT_DIR" \
     TS_ESSENTIALS_DIR_VALUE="$TS_ESSENTIALS_DIR" \
     BENCHMARKS_RUN_VALUE="$BENCHMARKS_RUN" \
+    BENCH_SHARD_LABEL_VALUE="${TSZ_BENCH_SHARD_LABEL:-}" \
+    BENCH_SHARD_FILTER_VALUE="${TSZ_BENCH_SHARD_FILTER:-$FILTER}" \
     COMPATIBILITY_JSONL_VALUE="$PROJECT_COMPATIBILITY_JSONL" \
     BENCHMARK_SOURCES_JSONL_VALUE="${BENCHMARK_SOURCES_JSONL:-}" \
     PROJECT_OWNER_FAMILIES_JSON_VALUE="$project_owner_families_json" \
@@ -2517,6 +2519,10 @@ const payload = {
   measurement_profile: currentMeasurementProfile,
   validation: {
     hyperfine_exit_codes_required: true,
+  },
+  shard: {
+    label: firstNonEmpty(process.env.BENCH_SHARD_LABEL_VALUE, process.env.FILTER_VALUE),
+    filter: firstNonEmpty(process.env.BENCH_SHARD_FILTER_VALUE, process.env.FILTER_VALUE),
   },
   quick_mode: process.env.QUICK_MODE_VALUE === "true",
   filter: process.env.FILTER_VALUE || null,

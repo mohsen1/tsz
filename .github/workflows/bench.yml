@@ -925,6 +925,8 @@ jobs:
           set -euo pipefail
 
           export TSZ="$GITHUB_WORKSPACE/.target-bench/dist/tsz"
+          export TSZ_BENCH_SHARD_LABEL='${{ matrix.label }}'
+          export TSZ_BENCH_SHARD_FILTER='${{ matrix.filter }}'
           if [[ '${{ matrix.label }}' == 'projects' ]]; then
             export NEXTJS_BENCHMARK_ENABLED=1
           fi
@@ -1020,6 +1022,7 @@ jobs:
           fi
           node scripts/bench/merge-results.mjs \
             "$GITHUB_WORKSPACE/bench-results.json" \
+            --require-runner-signature \
             --compat-jsonl "$GITHUB_WORKSPACE/.target/project-compile-guard/project-compatibility.jsonl" \
             "${json_files[@]}"
 
