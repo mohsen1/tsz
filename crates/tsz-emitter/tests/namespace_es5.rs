@@ -124,6 +124,10 @@ fn test_commonjs_exported_namespace_erases_type_only_imports_and_reexports() {
         "Runtime namespace members should still emit. Got:\n{output}"
     );
     assert!(
+        output.contains("M.M_A = M;"),
+        "Internal runtime import-equals aliases should still emit. Got:\n{output}"
+    );
+    assert!(
         !output.contains("// interface")
             && !output.contains("// type")
             && !output.contains("// Reexports"),
