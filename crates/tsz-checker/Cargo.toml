@@ -74,6 +74,10 @@ name = "object_literal_getter_widening_tests"
 path = "tests/object_literal_getter_widening_tests.rs"
 
 [[test]]
+name = "object_union_assignability_fast_path_tests"
+path = "tests/object_union_assignability_fast_path_tests.rs"
+
+[[test]]
 name = "optional_chain_literal_nullish_ts2339_tests"
 path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 
@@ -348,6 +352,10 @@ path = "tests/reserved_await_multiple_ts1262_tests.rs"
 [[test]]
 name = "interface_heritage_display_tests"
 path = "tests/interface_heritage_display_tests.rs"
+
+[[test]]
+name = "ts2430_tests"
+path = "tests/ts2430_tests.rs"
 
 [[test]]
 name = "ts2540_readonly_tests"
@@ -1440,6 +1448,10 @@ path = "tests/ts2321_ts2859_tests.rs"
 [[test]]
 name = "deeply_nested_conditional_mapped_recursion_tests"
 path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
+
+[[test]]
+name = "type_parameter_canonical_typeid_tests"
+path = "tests/type_parameter_canonical_typeid_tests.rs"
 
 [lints]
 workspace = true
