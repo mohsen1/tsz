@@ -485,12 +485,11 @@ impl<'a> CheckerState<'a> {
             || crate::query_boundaries::common::is_index_access_type(self.ctx.types, index_type)
             || crate::query_boundaries::common::is_conditional_type(self.ctx.types, index_type)
             || crate::query_boundaries::common::is_generic_application(self.ctx.types, index_type)
-            || crate::query_boundaries::common::union_members(self.ctx.types, index_type)
-                .is_some_and(|members| {
-                    members
-                        .iter()
-                        .any(|&member| self.is_generic_index_type(member))
-                })
+            || query::union_members(self.ctx.types, index_type).is_some_and(|members| {
+                members
+                    .iter()
+                    .any(|&member| self.is_generic_index_type(member))
+            })
             || self.intersection_has_generic_index(index_type)
     }
 
