@@ -172,7 +172,7 @@ pub use tsz_emitter::context;
 // LoweringPass - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::lowering;
 
-// Declaration file emitter - re-exported from tsz-emitter workspace crate
+#[cfg(feature = "dts")]
 pub use tsz_emitter::declaration_emitter;
 
 // JavaScript transforms - re-exported from tsz-emitter workspace crate
