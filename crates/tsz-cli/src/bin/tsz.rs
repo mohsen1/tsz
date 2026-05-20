@@ -348,6 +348,10 @@ fn actual_main(mut args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         }
     }
 
+    if args.sound_report_only {
+        std::process::exit(EXIT_SUCCESS);
+    }
+
     let has_errors = result
         .diagnostics
         .iter()
@@ -902,6 +906,7 @@ const BOOLEAN_FLAGS: &[&str] = &[
     "--noImplicitReturns",
     "--noFallthroughCasesInSwitch",
     "--sound",
+    "--soundReportOnly",
     "--noUncheckedIndexedAccess",
     "--noImplicitOverride",
     "--noPropertyAccessFromIndexSignature",
@@ -1406,6 +1411,7 @@ const KNOWN_TSC_OPTIONS: &[&str] = &[
     "--skipDefaultLibCheck",
     "--skipLibCheck",
     "--sound",
+    "--soundReportOnly",
     "--sourceMap",
     "--sourceRoot",
     "--stopBuildOnErrors",
