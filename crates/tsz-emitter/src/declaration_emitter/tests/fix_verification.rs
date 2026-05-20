@@ -2101,12 +2101,7 @@ fn fix_predicate_pattern2_does_not_rewrite_unrelated_union_shapes() {
     );
 }
 
-// === Tests for returned-function-expression recursive unrolling (issue #8683) ===
-//
-// Structural rule: when a function's return expression is itself a function
-// expression or arrow function, the DTS emitter must recursively compute
-// that returned function's full signature (including its own type parameters
-// and shadowing renames) instead of giving up with `any`.
+// Tests for returned-function-expression recursive unrolling (issue #8683)
 
 #[test]
 fn fix_returned_arrow_chain_three_levels_no_shadowing() {
