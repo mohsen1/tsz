@@ -843,6 +843,13 @@ impl<'a> ES5ClassTransformer<'a> {
         result
     }
 
+    fn convert_expression_this_captured(&self, idx: NodeIndex) -> IRNode {
+        let converter = self.make_converter().with_this_captured(true);
+        let result = converter.convert_expression(idx);
+        self.collect_from_converter(&converter);
+        result
+    }
+
     /// Convert an AST statement to IR in static context (super uses `_super.X` not `_super.prototype.X`)
     fn convert_statement_static(&self, idx: NodeIndex) -> IRNode {
         let converter = self
@@ -2510,8 +2517,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 {
                     return None;
                 }
-                self.property_initializer_has_equals(member_node, prop_data)
-                    .then_some(member_idx)
+                (self.use_define_for_class_fields
+                    || self.property_initializer_has_equals(member_node, prop_data))
+                .then_some(member_idx)
             })
             .collect();
 
@@ -3472,6 +3480,22 @@ impl<'a> ES5ClassTransformer<'a> {
         self.get_method_name_ir(name_idx)
     }
 
+    pub(super) fn get_field_define_property_name_ir(&self, name_idx: NodeIndex) -> IRMethodName {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return self.get_method_name_ir(name_idx);
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return self.get_method_name_ir(name_idx);
+        }
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return self.get_method_name_ir(name_idx);
+        };
+        if let Some(temp) = self.computed_prop_temp_map.get(&computed.expression) {
+            return IRMethodName::Computed(Box::new(IRNode::id(temp.clone())));
+        }
+        self.get_method_name_ir(name_idx)
+    }
+
     fn render_ir_expression(&self, expr: &IRNode) -> String {
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_target_es5(true);
@@ -3489,10 +3513,8 @@ impl<'a> ES5ClassTransformer<'a> {
         let prop_node = self.arena.get(prop_idx)?;
         let prop_data = self.arena.get_property_decl(prop_node)?;
 
-        if prop_data.initializer.is_none() {
-            return None;
-        }
-        if !self.property_initializer_has_equals(prop_node, prop_data) {
+        let has_initializer_equals = self.property_initializer_has_equals(prop_node, prop_data);
+        if !self.use_define_for_class_fields && !has_initializer_equals {
             return None;
         }
 
@@ -3504,14 +3526,23 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let prop_name = self.get_property_name_ir(prop_data.name)?;
 
-        let value = self
-            .convert_async_arrow_property_initializer(prop_data.initializer)
-            .unwrap_or_else(|| self.convert_expression(prop_data.initializer));
+        let value = if has_initializer_equals {
+            self.convert_async_arrow_property_initializer(prop_data.initializer)
+                .unwrap_or_else(|| {
+                    if use_this {
+                        self.convert_expression_this_captured(prop_data.initializer)
+                    } else {
+                        self.convert_expression(prop_data.initializer)
+                    }
+                })
+        } else {
+            IRNode::void_0()
+        };
 
         if self.use_define_for_class_fields {
             Some(IRNode::DefineProperty {
                 target: Box::new(receiver),
-                property_name: self.get_method_name_ir(prop_data.name),
+                property_name: self.get_field_define_property_name_ir(prop_data.name),
                 descriptor: IRPropertyDescriptor {
                     get: None,
                     set: None,
