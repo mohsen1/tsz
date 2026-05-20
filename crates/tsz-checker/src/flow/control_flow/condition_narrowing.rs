@@ -9,7 +9,8 @@ use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId, TypeofKind};
+use tsz_solver::TypeId;
+use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
     fn union_logical_condition_branches(&self, types: Vec<TypeId>) -> TypeId {

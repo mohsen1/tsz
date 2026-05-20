@@ -377,20 +377,23 @@ recovery. There is no session picker, campaign loop, or random-pick script.
 
 ## 20.75) Memory-Guarded Execution (`scripts/safe-run.sh`)
 - **All long-running or memory-intensive commands MUST be wrapped with `scripts/safe-run.sh`.**
-- This includes: full conformance runs, `cargo nextest run` (full suite), `cargo build --release`, and any multi-worker test runner.
+- This includes: `cargo nextest run` (full suite), `cargo build --release`, and any multi-worker test runner.
+- CI-only full conformance/snapshot jobs are also memory-guarded when run by
+  maintainers, but this section does not override the local "never run full
+  conformance" rule above.
 - The wrapper monitors the process tree's total RSS and kills it if it exceeds the limit (default: 75% of system RAM).
 - Overhead is negligible — one `ps` call every 5 seconds.
 - Quick, filtered runs (`--filter`, `--max`) and `cargo check` generally don't need the wrapper.
 
 ```bash
-# Wrap any heavy command
+# Wrap heavy allowed local commands
 scripts/safe-run.sh cargo nextest run
-scripts/safe-run.sh ./scripts/conformance/conformance.sh run
-scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
+scripts/safe-run.sh cargo build --release
+scripts/safe-run.sh ./scripts/conformance/conformance.sh run --filter mappedTypeRelationships --verbose
 
 # Custom limit (absolute MB or percentage of RAM)
 scripts/safe-run.sh --limit 8192 -- cargo nextest run --cargo-profile release
-scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run
+scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run --filter mappedTypeRelationships
 
 # Debug memory usage
 scripts/safe-run.sh --verbose -- cargo build

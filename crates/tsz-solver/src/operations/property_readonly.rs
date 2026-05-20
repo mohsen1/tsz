@@ -3,7 +3,7 @@
 //! Contains standalone functions for checking if properties are readonly
 //! across different type kinds (objects, index signatures, mapped types, etc.).
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::types::{
     CallableShapeId, MappedModifier, ObjectShapeId, PropertyInfo, TypeData, TypeId,

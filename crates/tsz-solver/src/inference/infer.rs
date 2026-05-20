@@ -10,7 +10,7 @@
 //! - Best common type calculation
 //! - Efficient unification with path compression
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
@@ -256,7 +256,7 @@ impl InferenceContextCacheStatistics {
 pub(crate) struct InferenceContext<'a> {
     pub(crate) interner: &'a dyn TypeDatabase,
     /// Type resolver for semantic lookups (e.g., base class queries)
-    pub(crate) resolver: Option<&'a dyn crate::TypeResolver>,
+    pub(crate) resolver: Option<&'a dyn crate::relations::subtype::TypeResolver>,
     /// Memoized subtype checks used by BCT and bound validation.
     pub(crate) subtype_cache: RefCell<FxHashMap<(TypeId, TypeId), bool>>,
     /// Active subtype checks used for coinductive cycle breaking in the
@@ -365,7 +365,7 @@ impl<'a> InferenceContext<'a> {
 
     pub fn with_resolver(
         interner: &'a dyn TypeDatabase,
-        resolver: &'a dyn crate::TypeResolver,
+        resolver: &'a dyn crate::relations::subtype::TypeResolver,
     ) -> Self {
         InferenceContext {
             interner,
@@ -1487,7 +1487,7 @@ impl<'a> InferenceContext<'a> {
 }
 
 /// Returns `true` when `ty` is or structurally contains an `IndexAccess` type.
-fn type_contains_index_access(db: &dyn crate::TypeDatabase, ty: TypeId) -> bool {
+fn type_contains_index_access(db: &dyn crate::construction::TypeDatabase, ty: TypeId) -> bool {
     if ty.is_intrinsic() {
         return false;
     }

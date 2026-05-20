@@ -1401,7 +1401,10 @@ impl<'a> CheckerState<'a> {
     /// Application types carry their type arguments from annotations — the literals in those
     /// args represent declared types, not fresh expression values, and must never be text-widened
     /// in `rewrite_{source,target}_display_for_non_literal_*` calls.
-    fn type_displays_as_application(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+    fn type_displays_as_application(
+        db: &dyn tsz_solver::construction::TypeDatabase,
+        ty: TypeId,
+    ) -> bool {
         // Direct Application: Application(Lazy(Foo), [args])
         if crate::query_boundaries::common::is_generic_application(db, ty) {
             return true;

@@ -3,7 +3,7 @@ use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn check_source_with_libs(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

@@ -15,10 +15,10 @@
 #   --verbose      Print memory usage on each check
 #
 # Examples:
-#   scripts/safe-run.sh cargo test
+#   scripts/safe-run.sh cargo nextest run
 #   scripts/safe-run.sh --limit 8192 -- cargo build
-#   scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run
-#   scripts/safe-run.sh --verbose -- cargo test --release
+#   scripts/safe-run.sh --limit 50% -- ./scripts/conformance/conformance.sh run --filter mappedTypeRelationships
+#   scripts/safe-run.sh --verbose -- cargo nextest run --cargo-profile release
 
 set -uo pipefail
 

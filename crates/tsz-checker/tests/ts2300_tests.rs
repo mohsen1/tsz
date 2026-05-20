@@ -9,7 +9,7 @@ use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     tsz_checker::test_utils::load_compiled_lib_files(&[

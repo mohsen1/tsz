@@ -1,4 +1,5 @@
-use tsz_solver::{TupleListId, TypeDatabase, TypeId};
+use tsz_solver::construction::TypeDatabase;
+use tsz_solver::{TupleListId, TypeId};
 
 /// Returns `true` when `type_id`'s outer shape performs fresh tuple synthesis
 /// on evaluation. Used to attribute the `tuple_too_large` flag to the alias

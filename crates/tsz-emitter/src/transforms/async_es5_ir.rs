@@ -68,6 +68,8 @@ mod discovery;
 mod loop_control;
 #[path = "async_es5_ir_state.rs"]
 mod state;
+#[path = "async_es5_ir_try_region.rs"]
+mod try_region;
 
 use loop_control::AsyncLoopControlTargets;
 pub use state::AsyncTransformState;
@@ -75,6 +77,7 @@ use state::{
     ForInAssignmentTarget, ForInSuspendedElementIndex, ForInSuspendedObject,
     SuspendedAssignmentTarget,
 };
+use try_region::{TryRegionPlaceholders, TryRegionResolution, patch_try_region_placeholders};
 
 #[path = "async_es5_ir_opcodes.rs"]
 pub mod opcodes;
@@ -4667,92 +4670,63 @@ impl<'a> AsyncES5Transformer<'a> {
         let has_finally =
             try_data.finally_block.is_some() && self.arena.get(try_data.finally_block).is_some();
 
-        // Reserve labels
-        let catch_label = if has_catch {
-            Some(self.state.next_label())
-        } else {
-            None
-        };
-        let finally_label = if has_finally {
-            Some(self.state.next_label())
-        } else {
-            None
-        };
-        let end_label = self.state.next_label();
-
-        // Build try-op instruction: _a.trys.push([currentLabel, catchLabel, finallyLabel, endLabel])
-        let mut try_op_labels = vec![IRNode::NumericLiteral(current_label.to_string().into())];
-        if let Some(cl) = catch_label {
-            try_op_labels.push(IRNode::NumericLiteral(cl.to_string().into()));
+        if !has_catch && !has_finally {
+            self.process_block_or_statement_in_async(
+                try_data.try_block,
+                cases,
+                current_statements,
+                current_label,
+            );
+            return;
         }
-        if let Some(fl) = finally_label {
-            if catch_label.is_none() {
-                try_op_labels.push(IRNode::Undefined); // placeholder for missing catch
-            }
-            try_op_labels.push(IRNode::NumericLiteral(fl.to_string().into()));
-        }
-        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::CallExpr {
-            callee: Box::new(IRNode::PropertyAccess {
-                object: Box::new(IRNode::PropertyAccess {
-                    object: Box::new(IRNode::Identifier("_a".to_string().into())),
-                    property: "trys".to_string().into(),
-                }),
-                property: "push".to_string().into(),
-            }),
-            arguments: vec![IRNode::ArrayLiteral(try_op_labels)],
-        })));
 
-        // Process try block
+        // Sentinels share `next_loop_exit_placeholder` so the patch sweep cannot
+        // collide with loop-exit placeholders still living in a surrounding loop.
+        let placeholders = TryRegionPlaceholders {
+            catch_slot: self.next_loop_exit_placeholder(),
+            finally_slot: self.next_loop_exit_placeholder(),
+            end_slot: self.next_loop_exit_placeholder(),
+            exit_break: self.next_loop_exit_placeholder(),
+        };
+        let start_label = *current_label;
+        let cases_start = cases.len();
+
+        current_statements.push(IRNode::generator_try_push(
+            start_label,
+            has_catch.then_some(placeholders.catch_slot),
+            has_finally.then_some(placeholders.finally_slot),
+            placeholders.end_slot,
+        ));
+
         self.process_block_or_statement_in_async(
             try_data.try_block,
             cases,
             current_statements,
             current_label,
         );
+        current_statements.push(Self::generator_break_statement(placeholders.exit_break));
 
-        // Break to finally or end
-        let jump_target = finally_label.unwrap_or(end_label);
-        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
-            IRNode::GeneratorOp {
-                opcode: opcodes::BREAK,
-                value: Some(Box::new(IRNode::NumericLiteral(
-                    jump_target.to_string().into(),
-                ))),
-                comment: Some("break".to_string().into()),
-            },
-        ))));
-
-        // Catch block
-        if let Some(cl) = catch_label {
+        let catch_label = if has_catch {
+            let cl = self.state.next_label();
             cases.push(IRGeneratorCase {
                 label: *current_label,
                 statements: std::mem::take(current_statements),
             });
             *current_label = cl;
 
-            // Extract catch variable name
             if let Some(catch_node) = self.arena.get(try_data.catch_clause)
                 && let Some(catch_data) = self.arena.get_catch_clause(catch_node)
             {
-                // Declare catch variable: e_1 = _a.sent()
                 if catch_data.variable_declaration.is_some() {
                     let catch_var_name =
                         self.get_catch_variable_name(catch_data.variable_declaration);
                     if !catch_var_name.is_empty() {
+                        // tsc binds the exception via `_a.sent()`, not `_a[1]`.
                         current_statements.push(IRNode::ExpressionStatement(Box::new(
-                            IRNode::BinaryExpr {
-                                left: Box::new(IRNode::Identifier(catch_var_name.into())),
-                                operator: "=".to_string().into(),
-                                right: Box::new(IRNode::ElementAccess {
-                                    object: Box::new(IRNode::Identifier("_a".to_string().into())),
-                                    index: Box::new(IRNode::NumericLiteral("1".to_string().into())),
-                                }),
-                            },
+                            IRNode::assign(IRNode::id(catch_var_name), IRNode::GeneratorSent),
                         )));
                     }
                 }
-
-                // Process catch block body
                 self.process_block_or_statement_in_async(
                     catch_data.block,
                     cases,
@@ -4761,28 +4735,20 @@ impl<'a> AsyncES5Transformer<'a> {
                 );
             }
 
-            // Break to finally or end
-            let jump_target = finally_label.unwrap_or(end_label);
-            current_statements.push(IRNode::ReturnStatement(Some(Box::new(
-                IRNode::GeneratorOp {
-                    opcode: opcodes::BREAK,
-                    value: Some(Box::new(IRNode::NumericLiteral(
-                        jump_target.to_string().into(),
-                    ))),
-                    comment: Some("break".to_string().into()),
-                },
-            ))));
-        }
+            current_statements.push(Self::generator_break_statement(placeholders.exit_break));
+            Some(cl)
+        } else {
+            None
+        };
 
-        // Finally block
-        if let Some(fl) = finally_label {
+        let finally_label = if has_finally {
+            let fl = self.state.next_label();
             cases.push(IRGeneratorCase {
                 label: *current_label,
                 statements: std::mem::take(current_statements),
             });
             *current_label = fl;
 
-            // Process finally block body
             self.process_block_or_statement_in_async(
                 try_data.finally_block,
                 cases,
@@ -4790,7 +4756,6 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_label,
             );
 
-            // End finally: return [7]
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
                     opcode: opcodes::END_FINALLY,
@@ -4798,9 +4763,38 @@ impl<'a> AsyncES5Transformer<'a> {
                     comment: Some("endfinally".to_string().into()),
                 },
             ))));
+            Some(fl)
+        } else {
+            None
+        };
+
+        // End label is allocated last so its number is past every interior resume.
+        let end_label = self.state.next_label();
+
+        let resolution = TryRegionResolution {
+            placeholders,
+            catch_label,
+            finally_label,
+            end_label,
+            // Breaks from try/catch must target the region's end label even when
+            // a finally exists; tsc's `__generator` driver detects the active try
+            // entry on a `[3 /*break*/, end]` op, pushes the pending break onto
+            // `_.ops`, then jumps to the finally label. After `[7 /*endfinally*/]`
+            // pops `_.ops`, the driver resumes the original break against an
+            // empty `_.trys` stack and lands at `end`. Breaking directly to the
+            // finally label would jump there without pushing onto `_.ops`, so
+            // `endfinally` would pop an empty stack and the state machine would
+            // wedge.
+            exit_target: end_label,
+        };
+        let cases_tail = cases[cases_start..]
+            .iter_mut()
+            .flat_map(|case| case.statements.iter_mut())
+            .chain(current_statements.iter_mut());
+        for stmt in cases_tail {
+            patch_try_region_placeholders(stmt, &resolution);
         }
 
-        // Flush and start end label
         if !current_statements.is_empty() {
             cases.push(IRGeneratorCase {
                 label: *current_label,

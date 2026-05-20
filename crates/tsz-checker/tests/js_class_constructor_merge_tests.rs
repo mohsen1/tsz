@@ -5,7 +5,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn check_project(files: &[(&str, &str)]) -> Vec<(String, Vec<u32>)> {
     let mut arenas = Vec::with_capacity(files.len());

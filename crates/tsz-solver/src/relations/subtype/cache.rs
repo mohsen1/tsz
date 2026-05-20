@@ -9,7 +9,7 @@
 //! - Pre-evaluation intrinsic checks (Object/Function interfaces)
 //! - Meta-type evaluation bridging
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
@@ -462,7 +462,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             false
         };
 
-        let def_pair = if both_same_base_app {
+        // For conditional type aliases that are same-base-app with identical
+        // arguments, we still enter the def_guard (unlike non-conditional
+        // same-base-app where def_pair = None). This implements tsc's recursion
+        // identity mechanism for self-comparisons while still allowing
+        // `DeepReadonly<number>` vs `DeepReadonly<string>` to compare the
+        // differing arguments instead of cycling on the alias DefId alone.
+        let is_cond_same_base_app = both_same_base_app
+            && if let (Some(s_app_id), Some(t_app_id)) = (s_app_id, t_app_id) {
+                let s_app = self.interner.type_application(s_app_id);
+                let t_app = self.interner.type_application(t_app_id);
+                s_app.args == t_app.args && self.is_conditional_alias_base_inline(s_app.base)
+            } else {
+                false
+            };
+        let def_pair = if both_same_base_app && !is_cond_same_base_app {
             None
         } else if let (Some(s_def), Some(t_def)) = (s_def_id, t_def_id) {
             Some((s_def, t_def))
@@ -956,5 +970,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Not both Application types — fall back to coinductive assumption
             self.cycle_result()
         }
+    }
+
+    /// Check whether an Application base TypeId belongs to a conditional type alias.
+    ///
+    /// First checks the pre-populated `conditional_alias_bases` cache (fast path).
+    /// Falls back to resolving the DefId's body when the cache hasn't been populated
+    /// yet (e.g., when the subtype check runs before the alias has been evaluated).
+    pub(crate) fn is_conditional_alias_base_inline(&self, base: TypeId) -> bool {
+        if self.interner.is_conditional_alias_base(base) {
+            return true;
+        }
+        let Some(def_id) = lazy_def_id(self.interner, base) else {
+            return false;
+        };
+        if !matches!(
+            self.resolver.get_def_kind(def_id),
+            Some(crate::def::DefKind::TypeAlias)
+        ) {
+            return false;
+        }
+        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
+            return false;
+        };
+        if matches!(self.interner.lookup(body), Some(TypeData::Conditional(_))) {
+            self.interner.mark_conditional_alias_base(base);
+            return true;
+        }
+        false
     }
 }
