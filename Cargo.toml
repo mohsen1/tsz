@@ -24,7 +24,7 @@ tsz-binder = { path = "crates/tsz-binder", version = "0.1.9" }
 tsz-solver = { path = "crates/tsz-solver", version = "0.1.9" }
 tsz-lowering = { path = "crates/tsz-lowering", version = "0.1.9" }
 tsz-checker = { path = "crates/tsz-checker", version = "0.1.9" }
-tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.9" }
+tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.9", default-features = false }
 tsz-lsp = { path = "crates/tsz-lsp", version = "0.1.9" }
 
 # External dependencies (shared versions)
