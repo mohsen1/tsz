@@ -49,6 +49,7 @@ pub mod recursion;
 pub mod relations;
 #[cfg(test)]
 mod sound_prototype;
+pub mod ts_type_flags;
 pub mod type_queries;
 // type_resolver moved into def/resolver.rs
 pub mod types;

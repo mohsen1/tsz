@@ -62,7 +62,8 @@ and failure-family counts.
 
 The exact conformance snapshot does not by itself mean the conformance runway
 is fully retired. `scripts/conformance/conformance-accepted-regressions.txt`
-remains a separate gate-strictness artifact and must be kept empty or
+remains a separate gate-strictness artifact and is currently empty; the CI
+fallback floor is exact at `12,582`, so any future accepted regression must be
 explicitly justified by current CI evidence before agents treat conformance
 cleanup as complete.
 
