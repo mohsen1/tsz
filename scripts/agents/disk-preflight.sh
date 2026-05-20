@@ -70,6 +70,9 @@ done
 
 echo ""
 echo "== TypeScript reuse sources =="
+if [[ -d "$ROOT/TypeScript/tests/cases" ]]; then
+  echo "current=$ROOT ts-populated"
+fi
 if [[ -d "$PRIMARY_TS/tests/cases" ]]; then
   echo "primary=$PRIMARY_REPO ts-populated"
 else

@@ -16,14 +16,11 @@ import {
   extractBenchRunnerRows,
   extractCompileGuardRows,
   extractFixtureSourceRows,
+  rowRequiresFixtureSource,
 } from "./project-row-summary.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
-const GENERATED_ROWS_WITH_FIXTURE_SOURCES = new Set([
-  "vite-vanilla-ts-app",
-  "nextjs-fresh-app",
-]);
 const ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL = new Map([
   ["utility-types", "utility-types-project"],
   ["rxjs", "rxjs-project"],
@@ -113,6 +110,9 @@ const requiredRows = sortedUnique(REQUIRED_PROJECT_ROWS);
 const compileCanaryRows = sortedUnique(COMPILE_CANARY_PROJECT_ROWS);
 const allTrackedRows = sortedUnique([...requiredRows, ...compileCanaryRows]);
 const projectRowsByName = new Map(PROJECT_ROW_DEFINITIONS.map((row) => [row.name, row]));
+const fixtureSourceMetadataRows = PROJECT_ROW_DEFINITIONS
+  .filter(rowRequiresFixtureSource)
+  .map((row) => row.name);
 const pinnedSourceRows = PROJECT_ROW_DEFINITIONS
   .filter((row) => row.repo !== undefined || row.ref !== undefined)
   .map((row) => row.name);
@@ -181,7 +181,7 @@ const fixtureSourceRows = extractFixtureSourceRows(
 );
 assert.deepEqual(
   fixtureSourceRows,
-  sortedUnique([...pinnedSourceRows, ...GENERATED_ROWS_WITH_FIXTURE_SOURCES]),
+  sortedUnique(fixtureSourceMetadataRows),
   "project-fixtures.sh fixture source rows drifted from scripts/bench/project-rows.mjs",
 );
 assert.deepEqual(

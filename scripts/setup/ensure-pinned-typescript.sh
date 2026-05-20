@@ -7,7 +7,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VERSIONS_FILE="$ROOT_DIR/scripts/conformance/typescript-versions.json"
 
 usage() {
-    cat <<'EOF'
+    local stream="${1:-1}"
+    cat >&"$stream" <<'EOF'
 Usage: ./scripts/setup/ensure-pinned-typescript.sh <project_dir>
 
 Ensures a project directory has a TypeScript installation matching the
@@ -21,7 +22,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 if [ $# -ne 1 ]; then
-    usage
+    usage 2
     exit 2
 fi
 

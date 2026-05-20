@@ -9,7 +9,8 @@
 set -euo pipefail
 
 usage() {
-  cat <<'USAGE'
+  local stream="${1:-1}"
+  cat >&"$stream" <<'USAGE'
 usage: scripts/agents/show-goal.sh <AgentName> [--no-fetch]
 
 Examples:
@@ -24,14 +25,14 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
-  usage
+  usage 2
   exit 1
 fi
 
 AGENT="$1"
 if [[ "$AGENT" == --* ]]; then
   echo "unknown argument: $AGENT" >&2
-  usage
+  usage 2
   exit 1
 fi
 
@@ -39,7 +40,7 @@ NO_FETCH=false
 if [[ $# -eq 2 ]]; then
   case "$2" in
     --no-fetch) NO_FETCH=true ;;
-    *) echo "unknown argument: $2" >&2; usage; exit 1 ;;
+    *) echo "unknown argument: $2" >&2; usage 2; exit 1 ;;
   esac
 fi
 

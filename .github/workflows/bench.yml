@@ -712,7 +712,7 @@ jobs:
               exit 1
             fi
 
-            echo "Waiting for Cloud Build benchmark prep artifact..."
+            echo "Waiting for Cloud Build benchmark prep artifact (build=${cloudbuild_id:-none}, status=${status:-unknown}, target=${target_sha}, elapsed=${SECONDS}s)..."
             sleep 30
           done
 
@@ -818,6 +818,7 @@ jobs:
               --format='value(status)' 2>/dev/null || true
           }
           cloudbuild_id="${{ needs.bench-prepare-cloudbuild.outputs.build_id }}"
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
 
           deadline=$((SECONDS + 9000))
           while true; do
@@ -861,7 +862,7 @@ jobs:
               exit 1
             fi
 
-            echo "Waiting for Cloud Build benchmark prep artifact..."
+            echo "Waiting for Cloud Build benchmark prep artifact (build=${cloudbuild_id:-none}, status=${status:-unknown}, target=${target_sha}, elapsed=${SECONDS}s)..."
             sleep 30
           done
 
