@@ -530,7 +530,7 @@ WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS = [
     (
         "Workspace Clippy suppressions must not grow (#9446)",
         [ROOT / "crates"],
-        107,
+        79,
     ),
 ]
 

@@ -4,8 +4,12 @@
 //! compatibility layer for the tsz compiler. It wraps the core `tsz` library
 //! with wasm-bindgen bindings.
 
-// wasm_bindgen functions cannot be `const fn` — the proc macro doesn't support it.
-#![allow(clippy::missing_const_for_fn)]
+// wasm_bindgen 0.2.x does not support const fn; expect here so this fails when const fn
+// support lands and the suppression becomes unnecessary.
+#![expect(
+    clippy::missing_const_for_fn,
+    reason = "wasm_bindgen proc macro does not support const fn"
+)]
 
 // Initialize panic hook for WASM to prevent worker crashes
 #[cfg(target_arch = "wasm32")]

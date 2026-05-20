@@ -162,7 +162,10 @@ pub const DIRECTORY_SEPARATOR: char = '/';
 pub const ALT_DIRECTORY_SEPARATOR: char = '\\';
 
 /// Determines whether a charCode corresponds to `/` or `\`.
-#[allow(clippy::missing_const_for_fn)] // wasm_bindgen does not support const fn
+#[expect(
+    clippy::missing_const_for_fn,
+    reason = "wasm_bindgen proc macro does not support const fn"
+)]
 #[wasm_bindgen(js_name = isAnyDirectorySeparator)]
 pub fn is_any_directory_separator(char_code: u32) -> bool {
     char_code == DIRECTORY_SEPARATOR as u32 || char_code == ALT_DIRECTORY_SEPARATOR as u32
@@ -301,7 +304,10 @@ pub fn to_file_name_lower_case(x: &str) -> String {
 // =============================================================================
 
 /// Check if character is a line break (LF, CR, LS, PS).
-#[allow(clippy::missing_const_for_fn)] // wasm_bindgen does not support const fn
+#[expect(
+    clippy::missing_const_for_fn,
+    reason = "wasm_bindgen proc macro does not support const fn"
+)]
 #[wasm_bindgen(js_name = isLineBreak)]
 pub fn is_line_break(ch: u32) -> bool {
     ch == CharacterCodes::LINE_FEED

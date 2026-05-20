@@ -2,7 +2,6 @@
     clippy::match_same_arms,
     clippy::collapsible_if,
     clippy::doc_markdown,
-    clippy::missing_const_for_fn,
     clippy::type_complexity
 )]
 
@@ -118,7 +117,7 @@ fn document_symbol_budget_account(symbols: &mut Vec<DocumentSymbol>) {
     });
 }
 
-fn document_symbol_node_may_emit_direct(kind: u16) -> bool {
+const fn document_symbol_node_may_emit_direct(kind: u16) -> bool {
     matches!(
         kind,
         k if k == syntax_kind_ext::FUNCTION_DECLARATION
@@ -1725,7 +1724,11 @@ impl<'a> DocumentSymbolProvider<'a> {
     /// this is a stub — JSDoc AST plumbing would need to flow through
     /// the parser to the LSP to implement properly.
     #[allow(clippy::unused_self)]
-    fn apply_jsdoc_typedefs(&self, _statements: &[NodeIndex], _symbols: &mut [DocumentSymbol]) {
+    const fn apply_jsdoc_typedefs(
+        &self,
+        _statements: &[NodeIndex],
+        _symbols: &mut [DocumentSymbol],
+    ) {
         // TODO: when the parser exposes JSDoc nodes, walk them for
         // `@typedef T` and append `DocumentSymbol { name: T, kind:
         // SymbolKind::Struct }` entries. Until then this is a no-op.

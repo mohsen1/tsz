@@ -2531,8 +2531,7 @@ impl<'a> TypeFormatter<'a> {
         def_name
     }
 
-    #[allow(clippy::missing_const_for_fn)] // Can't be const with &self in stable Rust
-    fn qualify_namespace_name_if_needed(
+    const fn qualify_namespace_name_if_needed(
         &self,
         _sym_id: SymbolId,
         _original_name: &str,

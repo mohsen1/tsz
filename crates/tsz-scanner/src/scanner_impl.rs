@@ -146,10 +146,11 @@ pub struct ScannerState {
 }
 
 #[wasm_bindgen]
-#[allow(clippy::missing_const_for_fn)]
+#[expect(
+    clippy::missing_const_for_fn,
+    reason = "wasm_bindgen proc macro does not support const fn"
+)]
 impl ScannerState {
-    /// Exported scanner accessors are JS bindings and cannot be made `const`
-    /// because `#[wasm_bindgen]` methods in this crate are non-`const`.
     /// Create a new scanner state with the given text.
     /// ZERO-COPY: No Vec<char> allocation, works directly with UTF-8 bytes.
     #[wasm_bindgen(constructor)]
