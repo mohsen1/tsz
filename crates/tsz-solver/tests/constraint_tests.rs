@@ -1627,17 +1627,31 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
         ..Default::default()
     });
 
+    // Expected: [string, unknown][]
+    // tsc picks sig 1 (first matching overload) with T = unknown (index-sig value
+    // position is NOT a propagation target for `any`), so the return is [string, unknown][].
+    let expected_return = {
+        let str_elem = TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        };
+        let unk_elem = TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: None,
+            optional: false,
+            rest: false,
+        };
+        interner.array(interner.tuple(vec![str_elem, unk_elem]))
+    };
+
     let result = evaluator.resolve_call(callable, &[TypeId::ANY]);
-    // Sig 1 should succeed with T = unknown, so return type = [string, unknown][]
-    // NOT [string, any][]
     match result {
         CallResult::Success(ret) => {
-            // The return type should NOT be [string, any][]
-            // Check: the array element should not be a tuple containing `any`
-            let bad_return = return_sig2;
-            assert_ne!(
-                ret, bad_return,
-                "Callable with any arg: expected [string,unknown][], not [string,any][]"
+            assert_eq!(
+                ret, expected_return,
+                "Callable with any arg: expected [string,unknown][], got {ret:?}"
             );
         }
         other => panic!("Expected Success, got {other:?}"),
