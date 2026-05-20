@@ -1268,7 +1268,7 @@ impl<'a> CheckerState<'a> {
             let resolved = self.resolve_type_for_property_access(resolved);
 
             // Check if the resolved type has a number index signature (array-like)
-            let resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+            let resolver = tsz_solver::objects::IndexSignatureResolver::new(self.ctx.types);
             if let Some(elem) = resolver.resolve_number_index(resolved) {
                 element_types.push(elem);
             }
@@ -1300,7 +1300,7 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_lazy_type(contextual);
         let resolved = self.evaluate_type_with_env(resolved);
         let resolved = self.resolve_type_for_property_access(resolved);
-        let resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+        let resolver = tsz_solver::objects::IndexSignatureResolver::new(self.ctx.types);
         resolver.resolve_number_index(resolved)
     }
 }

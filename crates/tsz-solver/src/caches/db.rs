@@ -3,13 +3,13 @@
 //! This trait isolates solver logic from concrete storage so we can
 //! swap in a query system (e.g., Salsa) without touching core logic.
 
-use crate::ObjectLiteralBuilder;
 use crate::caches::instantiation_cache::InstantiationCacheKey;
 use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::intern::type_factory::TypeFactory;
 use crate::narrowing;
+use crate::objects::ObjectLiteralBuilder;
 use crate::objects::element_access::{ElementAccessEvaluator, ElementAccessResult};
 use crate::relations::relation_queries::{
     RelationContext, RelationKind, RelationPolicy, query_relation,
@@ -1060,7 +1060,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         literal_index: Option<usize>,
     ) -> TypeId {
         match self.resolve_element_access(object_type, index_type, literal_index) {
-            crate::element_access::ElementAccessResult::Success(type_id) => type_id,
+            ElementAccessResult::Success(type_id) => type_id,
             _ => TypeId::ERROR,
         }
     }

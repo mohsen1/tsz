@@ -859,7 +859,7 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_lazy_type(type_id);
         let resolved = self.evaluate_type_with_env(resolved);
         let resolved = self.resolve_type_for_property_access(resolved);
-        let resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+        let resolver = tsz_solver::objects::IndexSignatureResolver::new(self.ctx.types);
         resolver.resolve_number_index(resolved)
     }
 
