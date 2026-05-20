@@ -491,6 +491,10 @@ impl<'a> CheckerState<'a> {
             return Some(kind);
         }
 
+        if let Some(kind) = self.direct_lexical_type_only_marker_for_identifier(idx) {
+            return Some(kind);
+        }
+
         let sym_id = self.resolve_identifier_symbol(idx)?;
         let mut visited = AliasCycleTracker::new();
         let target = self.resolve_alias_symbol(sym_id, &mut visited);
@@ -677,6 +681,54 @@ impl<'a> CheckerState<'a> {
         // that case.
         if saw_unclassified_cross_file_type_only {
             return Some(TypeOnlyKind::Export);
+        }
+
+        None
+    }
+
+    /// Prefer the nearest lexical alias's own `type` marker before following
+    /// import resolution to a target symbol.
+    fn direct_lexical_type_only_marker_for_identifier(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<TypeOnlyKind> {
+        use tsz_binder::symbol_flags;
+
+        let name = self.ctx.arena.get_identifier_at(idx)?.escaped_text.as_str();
+        let lib_binders = self.get_lib_binders();
+        let sym_id = self.ctx.binder.resolve_name_with_filter(
+            name,
+            self.ctx.arena,
+            idx,
+            &lib_binders,
+            |_| true,
+        )?;
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+
+        if !(symbol.has_any_flags(symbol_flags::ALIAS) && symbol.is_type_only) {
+            return None;
+        }
+
+        let arena = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arc| &**arc)
+            .or_else(|| {
+                self.ctx
+                    .resolve_symbol_file_index(sym_id)
+                    .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            })
+            .unwrap_or(self.ctx.arena);
+
+        for &decl in &symbol.declarations {
+            if decl.is_none() {
+                continue;
+            }
+            if let Some(kind) = Self::find_direct_type_only_marker(arena, decl) {
+                return Some(kind);
+            }
         }
 
         None
