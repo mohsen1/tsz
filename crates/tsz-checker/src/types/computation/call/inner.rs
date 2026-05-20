@@ -266,7 +266,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .get(call.expression)
-                    .map_or(false, |n| n.kind == SyntaxKind::Identifier as u16);
+                    .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
                 if is_identifier {
                     self.ctx
                         .binder

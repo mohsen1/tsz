@@ -1,4 +1,4 @@
-//! Tests for recursive generic const arrow functions (BLOCK_SCOPED_VARIABLE symbols).
+//! Tests for recursive generic const arrow functions (`BLOCK_SCOPED_VARIABLE` symbols).
 //!
 //! When a const arrow function recursively calls itself with type arguments, the
 //! checker must preserve the recursive call as `App(Lazy(def_id), type_args)` rather
