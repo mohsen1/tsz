@@ -67,7 +67,6 @@ function runnerEnvironmentSummary(data) {
 
   const env = data?.runner_environment;
   if (!env || typeof env !== "object") {
-    parts.push("runner hardware metadata unavailable for this artifact");
     return parts.join(" · ");
   }
 
