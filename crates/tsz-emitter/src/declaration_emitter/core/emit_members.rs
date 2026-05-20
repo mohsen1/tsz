@@ -2461,6 +2461,27 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                         continue;
                     }
+                    // When an exported variable has a class expression initializer with no
+                    // explicit type annotation, tsc synthesizes a class declaration using the
+                    // binding name. Covers namespace-exported class expressions:
+                    // `export const C = class { }`, `export const C = class C { }`,
+                    // generic class expressions, and class expressions with heritage.
+                    // (Top-level `export const` goes through emit_exported_variable instead.)
+                    if is_exported
+                        && decl.type_annotation.is_none()
+                        && self.emit_js_named_class_expression_declaration(
+                            decl.name,
+                            decl.initializer,
+                            is_exported,
+                        )
+                    {
+                        if let Some(dn) = self.arena.get(decl_idx) {
+                            let skip_end =
+                                self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);
+                            self.skip_comments_in_node(dn.pos, skip_end);
+                        }
+                        continue;
+                    }
                 }
 
                 // When emitting a non-exported variable statement purely because of
