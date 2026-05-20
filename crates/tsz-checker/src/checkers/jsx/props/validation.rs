@@ -1024,8 +1024,8 @@ impl<'a> CheckerState<'a> {
         {
             let alias_evaluated = self.evaluate_type_with_env(alias_hint);
             if alias_evaluated != TypeId::ERROR
-                && self.is_assignable_to(alias_evaluated, normalized)
-                && self.is_assignable_to(normalized, alias_evaluated)
+                && self.diagnostic_relation_boolean_guard(alias_evaluated, normalized)
+                && self.diagnostic_relation_boolean_guard(normalized, alias_evaluated)
             {
                 self.ctx.types.store_display_alias(normalized, alias_hint);
             }
@@ -1725,7 +1725,7 @@ impl<'a> CheckerState<'a> {
             // Build target: IntrinsicAttributes & spread_type
             let target = self.ctx.types.factory().intersection2(ia_type, spread_type);
 
-            if !self.is_assignable_to(spread_type, target) {
+            if !self.diagnostic_relation_boolean_guard(spread_type, target) {
                 let spread_name = self.format_type(spread_type);
                 let target_name = format!("IntrinsicAttributes & {spread_name}");
                 let message = format_message(
@@ -1862,8 +1862,8 @@ impl<'a> CheckerState<'a> {
             if evaluated != display_type && evaluated != TypeId::ERROR {
                 if let Some(alias_hint) = alias_hint {
                     let alias_evaluated = self.evaluate_type_with_env(alias_hint);
-                    if self.is_assignable_to(alias_evaluated, evaluated)
-                        && self.is_assignable_to(evaluated, alias_evaluated)
+                    if self.diagnostic_relation_boolean_guard(alias_evaluated, evaluated)
+                        && self.diagnostic_relation_boolean_guard(evaluated, alias_evaluated)
                     {
                         self.ctx.types.store_display_alias(evaluated, alias_hint);
                     }
@@ -1890,7 +1890,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<bool> {
         if !initializer_is_bare_string_literal
             || original_property_type == expected_type
-            || self.is_assignable_to(actual_type, expected_type)
+            || self.diagnostic_relation_boolean_guard(actual_type, expected_type)
         {
             return None;
         }
