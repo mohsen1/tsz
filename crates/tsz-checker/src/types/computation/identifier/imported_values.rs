@@ -44,18 +44,46 @@ impl<'a> CheckerState<'a> {
         let preferred_value_decl = self
             .preferred_value_declaration(target_sym_id, target_value_decl, &target_declarations)
             .unwrap_or(target_value_decl);
-        let value_type = self
+        let target_has_type_annotation = self
             .ctx
-            .cached_cross_file_symbol_type(target_sym_id, target_file_idx as u32)
-            .map(|(cached_type, _)| cached_type)
-            .filter(|cached_type| *cached_type != TypeId::UNKNOWN && *cached_type != TypeId::ERROR)
-            .unwrap_or_else(|| {
-                self.type_of_value_declaration_for_cross_file_symbol(
-                    target_sym_id,
-                    preferred_value_decl,
-                    target_file_idx,
-                )
-            });
+            .get_arena_for_file(target_file_idx as u32)
+            .get(preferred_value_decl)
+            .and_then(|node| {
+                self.ctx
+                    .get_arena_for_file(target_file_idx as u32)
+                    .get_variable_declaration(node)
+            })
+            .is_some_and(|decl| decl.type_annotation.is_some());
+
+        let value_type = if target_has_type_annotation {
+            let declared = self.type_of_value_declaration_for_cross_file_symbol(
+                target_sym_id,
+                preferred_value_decl,
+                target_file_idx,
+            );
+            if declared != TypeId::UNKNOWN && declared != TypeId::ERROR {
+                declared
+            } else {
+                self.ctx
+                    .cached_cross_file_symbol_type(target_sym_id, target_file_idx as u32)
+                    .map(|(cached_type, _)| cached_type)
+                    .unwrap_or(declared)
+            }
+        } else {
+            self.ctx
+                .cached_cross_file_symbol_type(target_sym_id, target_file_idx as u32)
+                .map(|(cached_type, _)| cached_type)
+                .filter(|cached_type| {
+                    *cached_type != TypeId::UNKNOWN && *cached_type != TypeId::ERROR
+                })
+                .unwrap_or_else(|| {
+                    self.type_of_value_declaration_for_cross_file_symbol(
+                        target_sym_id,
+                        preferred_value_decl,
+                        target_file_idx,
+                    )
+                })
+        };
 
         (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR).then_some(value_type)
     }

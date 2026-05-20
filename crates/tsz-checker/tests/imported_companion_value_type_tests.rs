@@ -229,6 +229,46 @@ const value: string = Factory.create()
 }
 
 #[test]
+fn imported_value_applies_cross_file_generic_alias_annotation_arguments() {
+    let diagnostics = check(
+        &[
+            (
+                "a.ts",
+                r#"
+type Box<T> = {
+  value: T
+  use(value: T): T
+}
+
+export const Boxed: Box<{ name: string }> = {
+  value: { name: "ok" },
+  use(value) {
+    return value
+  },
+}
+"#,
+            ),
+            (
+                "b.ts",
+                r#"
+import { Boxed } from "./a.js"
+
+type IsAny<T> = 0 extends (1 & T) ? true : false
+const notAny: false = null as any as IsAny<typeof Boxed.value>
+const value: { name: string } = Boxed.value
+"#,
+            ),
+        ],
+        "b.ts",
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "generic alias annotation should instantiate Box<{{ name: string }}> without collapsing to any, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn import_type_alias_survives_local_value_with_same_name() {
     let diagnostics = check(
         &[

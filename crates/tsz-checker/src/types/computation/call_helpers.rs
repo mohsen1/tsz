@@ -824,19 +824,11 @@ impl<'a> CheckerState<'a> {
             && let Some(alias_symbol) = delegate_binder.get_symbol(alias_sym_id)
             && alias_symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)
         {
-            for &alias_decl in &alias_symbol.declarations {
-                let Some(alias_node) = target_arena.get(alias_decl) else {
-                    continue;
-                };
-                let Some(alias_data) = target_arena.get_type_alias(alias_node) else {
-                    continue;
-                };
-                let alias_body_type = checker.get_type_from_type_node(alias_data.type_node);
-                let alias_body_type = checker.resolve_ref_type(alias_body_type);
-                if alias_body_type != TypeId::UNKNOWN && alias_body_type != TypeId::ERROR {
-                    Self::leave_cross_arena_delegation();
-                    return alias_body_type;
-                }
+            let annotation_type = checker.get_type_from_type_node(var_decl.type_annotation);
+            let annotation_type = checker.evaluate_type_with_resolution(annotation_type);
+            if annotation_type != TypeId::UNKNOWN && annotation_type != TypeId::ERROR {
+                Self::leave_cross_arena_delegation();
+                return annotation_type;
             }
         }
         let mut result = checker.type_of_value_declaration_with_mode(decl_idx, true);
