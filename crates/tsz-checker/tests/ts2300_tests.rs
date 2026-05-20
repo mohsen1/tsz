@@ -1339,3 +1339,36 @@ fn same_file_merging_interfaces_no_ts2300() {
         "Two separate interface declarations merge — no TS2300 expected"
     );
 }
+
+#[test]
+fn reexport_plus_own_augmentation_keeps_third_file_augmentation_conflict() {
+    let source_ts = r#"export interface User {
+    id: number;
+}
+"#;
+    let test_ts = r#"export { User } from "./source";
+declare module "./source" {
+    interface User {
+        email?: string;
+    }
+}
+"#;
+    let augment_test_ts = r#"import "./test";
+declare module "./test" {
+    type User = { external: true };
+}
+"#;
+
+    let ts2300 = check_for_ts2300_multi_file(
+        &[
+            ("source.ts", source_ts),
+            ("test.ts", test_ts),
+            ("augment-test.ts", augment_test_ts),
+        ],
+        "augment-test.ts",
+    );
+    assert!(
+        !ts2300.is_empty(),
+        "third-file augmentation of the current re-exported name must still produce TS2300"
+    );
+}
