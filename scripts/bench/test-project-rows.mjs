@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
@@ -55,6 +56,25 @@ function assertNoDuplicates(label, values) {
 
 function readRepoFile(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+}
+
+function shellFixtureSources(rowName, env = {}) {
+  const script = `
+set -euo pipefail
+source "${path.join(ROOT, "scripts/bench/project-fixtures.sh")}"
+tsz_project_fixture_sources "${rowName}"
+`;
+  const result = spawnSync("bash", ["-lc", script], {
+    cwd: ROOT,
+    env: { ...process.env, ...env },
+    encoding: "utf8",
+  });
+  assert.equal(
+    result.status,
+    0,
+    `tsz_project_fixture_sources ${rowName} failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  return result.stdout.trim().split(/\r?\n/).filter(Boolean);
 }
 
 function extractAll(text, pattern) {
@@ -169,3 +189,21 @@ assert.deepEqual(
   [],
   "project-fixtures.sh fixture source rows must be defined in scripts/bench/project-rows.mjs",
 );
+
+for (const rowName of pinnedSourceRows) {
+  const row = projectRowsByName.get(rowName);
+  const sources = shellFixtureSources(rowName);
+  assert.equal(sources.length, 1, `${rowName} should emit exactly one fixture source`);
+  const [, repository, ref] = sources[0].split("|");
+  assert.equal(repository, row.repo, `${rowName} fixture source repository drifted from project-rows.mjs`);
+  assert.equal(ref, row.ref, `${rowName} fixture source ref drifted from project-rows.mjs`);
+}
+
+{
+  const row = projectRowsByName.get("type-fest-project");
+  const overrideRef = "feedfacecafebeef";
+  const sources = shellFixtureSources(row.name, { [row.ref_env]: overrideRef });
+  const [, repository, ref] = sources[0].split("|");
+  assert.equal(repository, row.repo, "repo env default should still come from project-rows.mjs");
+  assert.equal(ref, overrideRef, "fixture source should honor shell ref overrides");
+}
