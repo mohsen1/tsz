@@ -38,12 +38,22 @@ FORCE=false
 UNLINK=false
 QUIET=false
 
+usage() {
+  cat <<'USAGE'
+Usage:
+  scripts/setup/link-ts-submodule.sh           # symlink TypeScript/ to the primary checkout
+  scripts/setup/link-ts-submodule.sh --force   # ignore dirty state in the local TypeScript/
+  scripts/setup/link-ts-submodule.sh --unlink  # remove the symlink so a real submodule can be restored
+  scripts/setup/link-ts-submodule.sh --quiet   # suppress info output
+USAGE
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --force)   FORCE=true; shift ;;
     --unlink)  UNLINK=true; shift ;;
     --quiet)   QUIET=true; shift ;;
-    -h|--help) sed -n '2,/^[^#]/{ /^#/s/^# \?//p; }' "$0"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
     *)         echo "Unknown option: $1 (try --help)" >&2; exit 1 ;;
   esac
 done
