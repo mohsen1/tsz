@@ -2540,13 +2540,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
     }
 
-    /// Whether the underlying subtype checker exceeded its recursion depth limit.
+    /// Whether any recursion limit (depth or iteration count) was exceeded.
     ///
-    /// When true, the relation result is unreliable because the checker gave up
-    /// before reaching a definitive answer. The caller should emit TS2859
-    /// ("Excessive complexity comparing types").
+    /// Use [`iteration_exceeded`] to choose between TS2859 (complexity) and
+    /// TS2321 (stack depth).
     pub const fn depth_exceeded(&self) -> bool {
         self.subtype.depth_exceeded()
+    }
+
+    /// Whether the iteration (relation-count) budget was exhausted.
+    ///
+    /// When true → TS2859 "Excessive complexity comparing types".
+    /// When false but `depth_exceeded()` → TS2321 "Excessive stack depth".
+    pub const fn iteration_exceeded(&self) -> bool {
+        self.subtype.iteration_exceeded()
     }
 }
 

@@ -1433,5 +1433,9 @@ path = "tests/mixin_any_base_index_sig_tests.rs"
 name = "stage3_lib_namespace_resolution_tests"
 path = "tests/stage3_lib_namespace_resolution_tests.rs"
 
+[[test]]
+name = "ts2321_ts2859_tests"
+path = "tests/ts2321_ts2859_tests.rs"
+
 [lints]
 workspace = true

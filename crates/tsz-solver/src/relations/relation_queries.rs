@@ -267,7 +267,10 @@ pub struct RelationContext<'a> {
 pub struct RelationResult {
     pub kind: RelationKind,
     pub related: bool,
+    /// Stack-depth limit (nesting) was exceeded → TS2321 "Excessive stack depth".
     pub depth_exceeded: bool,
+    /// Iteration-count budget was exhausted → TS2859 "Excessive complexity".
+    pub iteration_exceeded: bool,
 }
 
 impl RelationResult {
@@ -364,42 +367,67 @@ pub fn query_relation_with_overrides<
     )
     .entered();
 
-    let (related, depth_exceeded) = match kind {
+    let (related, depth_exceeded, iteration_exceeded) = match kind {
         RelationKind::Assignable => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
             let related = checker.is_assignable_with_overrides(source, target, overrides);
-            (related, checker.depth_exceeded())
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
         }
         RelationKind::AssignableBivariantCallbacks => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
             let _ = overrides;
             let related = checker.is_assignable_to_bivariant_callback(source, target);
-            (related, checker.depth_exceeded())
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
         }
         RelationKind::Subtype => {
             let mut checker = configured_subtype_checker(interner, resolver, policy, context);
             let related = checker.is_subtype_of(source, target);
-            (related, checker.depth_exceeded())
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
         }
         RelationKind::Overlap => {
             let checker = configured_subtype_checker(interner, resolver, policy, context);
-            (checker.are_types_overlapping(source, target), false)
+            let related = checker.are_types_overlapping(source, target);
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
         }
         RelationKind::RedeclarationIdentical => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
+            let related = checker.are_types_identical_for_redeclaration(source, target);
             (
-                checker.are_types_identical_for_redeclaration(source, target),
-                false,
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
             )
         }
     };
 
-    tracing::debug!(related, depth_exceeded, "query_relation result");
+    tracing::debug!(
+        related,
+        depth_exceeded,
+        iteration_exceeded,
+        "query_relation result"
+    );
 
     RelationResult {
         kind,
         related,
         depth_exceeded,
+        iteration_exceeded,
     }
 }
 
