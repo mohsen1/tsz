@@ -1947,6 +1947,38 @@ const value = maybe || fallback;
 }
 
 #[test]
+fn test_short_circuit_keeps_uncovered_fallback_for_broad_falsy_primitives() {
+    let output = emit_dts_with_binding(
+        r#"
+export let s: string;
+export let n: number;
+export let b: boolean;
+export const stringOrNumber = s || 1;
+export const stringOrString = s || "fallback";
+export const numberOrString = n || "fallback";
+export const booleanOrString = b || "fallback";
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const stringOrNumber: string | number;"),
+        "Expected broad string left operand to keep an uncovered number fallback: {output}"
+    );
+    assert!(
+        output.contains("export declare const stringOrString: string;"),
+        "Expected broad string left operand to cover string literal fallback: {output}"
+    );
+    assert!(
+        output.contains("export declare const numberOrString: number | string;"),
+        "Expected broad number left operand to keep an uncovered string fallback: {output}"
+    );
+    assert!(
+        output.contains("export declare const booleanOrString: true | string;"),
+        "Expected broad boolean left operand to narrow to true and keep fallback: {output}"
+    );
+}
+
+#[test]
 fn test_short_circuit_drops_right_for_truthy_function_expression() {
     let output = emit_dts_with_binding(
         r#"

@@ -42,11 +42,7 @@ impl<'a> DeclarationEmitter<'a> {
         let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
 
         let include_right_parts = if operator == SyntaxKind::BarBarToken as u16 {
-            let include_right_parts = left_parts
-                .iter()
-                .any(|part| Self::short_circuit_or_excludes_left_type(&part.text));
-            left_parts.retain(|part| !Self::short_circuit_or_excludes_left_type(&part.text));
-            include_right_parts
+            Self::filter_short_circuit_or_left_parts(&mut left_parts, &right_parts)
         } else {
             let include_right_parts = left_parts
                 .iter()
@@ -280,6 +276,64 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(decl_node.pos);
         }
         self.arena.get(expr_idx).map(|node| node.pos)
+    }
+
+    fn filter_short_circuit_or_left_parts(
+        left_parts: &mut Vec<ShortCircuitTypePart>,
+        right_parts: &[ShortCircuitTypePart],
+    ) -> bool {
+        let mut include_right_parts = false;
+        let mut retained = Vec::with_capacity(left_parts.len());
+
+        for mut part in left_parts.drain(..) {
+            let trimmed = part.text.trim();
+            if Self::short_circuit_or_excludes_left_type(trimmed) {
+                include_right_parts = true;
+                continue;
+            }
+
+            if trimmed == "boolean" {
+                part.text = "true".to_string();
+                include_right_parts = true;
+            } else if Self::short_circuit_or_broad_primitive_needs_right(trimmed, right_parts) {
+                include_right_parts = true;
+            }
+
+            retained.push(part);
+        }
+
+        *left_parts = retained;
+        include_right_parts
+    }
+
+    fn short_circuit_or_broad_primitive_needs_right(
+        type_text: &str,
+        right_parts: &[ShortCircuitTypePart],
+    ) -> bool {
+        match type_text {
+            "string" => !right_parts
+                .iter()
+                .all(|part| Self::short_circuit_string_covers(part.text.trim())),
+            "number" => !right_parts
+                .iter()
+                .all(|part| Self::short_circuit_number_covers(part.text.trim())),
+            "bigint" => !right_parts
+                .iter()
+                .all(|part| Self::short_circuit_bigint_covers(part.text.trim())),
+            _ => false,
+        }
+    }
+
+    fn short_circuit_string_covers(type_text: &str) -> bool {
+        type_text == "string" || Self::is_short_circuit_string_literal_type(type_text)
+    }
+
+    fn short_circuit_number_covers(type_text: &str) -> bool {
+        type_text == "number" || Self::is_short_circuit_number_literal_type(type_text)
+    }
+
+    fn short_circuit_bigint_covers(type_text: &str) -> bool {
+        type_text == "bigint" || Self::is_short_circuit_bigint_literal_type(type_text)
     }
 
     fn short_circuit_or_excludes_left_type(type_text: &str) -> bool {
