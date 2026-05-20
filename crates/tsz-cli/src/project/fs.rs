@@ -466,6 +466,33 @@ fn path_to_pattern(base_dir: &Path, path: &Path) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
+/// Compute a relative path from `base` to `path`, collapsing common prefix
+/// components and emitting `..` for each remaining component of `base`.
+///
+/// Returns `None` only when both paths are absolute and share no common prefix
+/// (e.g. different drive letters on Windows).
+pub fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let path_components: Vec<Component<'_>> = path.components().collect();
+    let base_components: Vec<Component<'_>> = base.components().collect();
+    let common_len = path_components
+        .iter()
+        .zip(base_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    if common_len == 0 && path.is_absolute() && base.is_absolute() {
+        return None;
+    }
+    let mut result = PathBuf::new();
+    for _ in common_len..base_components.len() {
+        result.push("..");
+    }
+    for component in &path_components[common_len..] {
+        result.push(component);
+    }
+    Some(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

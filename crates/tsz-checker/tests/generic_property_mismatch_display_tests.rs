@@ -1,5 +1,7 @@
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::test_utils::{check_source, check_source_diagnostics, diagnostic_code_messages};
+use tsz_common::common::ScriptTarget;
+use tsz_common::options::checker::CheckerOptions;
 
 fn ts2322_diagnostic(source: &str) -> Diagnostic {
     let diagnostics: Vec<Diagnostic> = check_source_diagnostics(source)
@@ -26,6 +28,17 @@ fn has_related(diagnostic: &Diagnostic, expected: &str) -> bool {
     related_messages(diagnostic)
         .iter()
         .any(|message| message.contains(expected))
+}
+
+fn check_es2015(source: &str) -> Vec<(u32, String)> {
+    diagnostic_code_messages(check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    ))
 }
 
 #[test]
@@ -224,5 +237,70 @@ target = source;
             "Property 'a' is missing in type '{}' but required in type '{ a: string; }'."
         ),
         "expected nested missing property under direct property path, got {diagnostic:#?}"
+    );
+}
+
+#[test]
+fn generic_class_property_array_display_uses_owner_type_arg() {
+    let diagnostics = check_es2015(
+        r#"
+class MyList<T> {
+    public size: number;
+    public data: T[];
+    constructor(n: number) {
+        this.size = n;
+        this.data = [] as any;
+    }
+    public clone() {
+        return new MyList<T>(this.size);
+    }
+}
+declare let a: MyList<string>;
+var d: MyList<number> = a.clone();
+"#,
+    );
+
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("MyList<string>")),
+        "expected generic class display to recover T from T[] member declaration, got: {messages:#?}",
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("MyList<string[]>")),
+        "generic class display should not use the raw T[] property type as the owner argument: {messages:#?}",
+    );
+}
+
+#[test]
+fn construct_only_generic_interface_display_keeps_type_arg() {
+    let diagnostics = check_es2015(
+        r#"
+interface I1<T> { new (arg: T): object };
+function f2<T>(args: T) {
+    var v1!: { [index: string]: I1<T> };
+    var v2 = v1['test'];
+    var y = v2(args);
+}
+"#,
+    );
+
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2348)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Value of type 'I1<T>' is not callable")),
+        "expected TS2348 to preserve the construct-only interface application, got: {messages:#?}",
     );
 }

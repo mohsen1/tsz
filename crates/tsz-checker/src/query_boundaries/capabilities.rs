@@ -28,7 +28,7 @@ pub enum FeatureGate {
     AwaitUsingDeclaration,
     /// Top-level `await using` (requires specific module + target)
     TopLevelAwaitUsing,
-    /// Top-level `await` expression (requires same module + target as TopLevelAwaitUsing)
+    /// Top-level `await` expression (requires same module + target as `TopLevelAwaitUsing`)
     TopLevelAwait,
     /// `resolveJsonModule` option validity
     ResolveJsonModule,
@@ -255,8 +255,7 @@ impl EnvironmentCapabilities {
             b"IterableIterator" => Some(FeatureGate::Generators),
             b"AsyncIterableIterator" => Some(FeatureGate::AsyncGenerators),
             b"TypedPropertyDescriptor" => Some(FeatureGate::ExperimentalDecorators),
-            b"Promise" => Some(FeatureGate::AsyncFunction),
-            b"Awaited" => Some(FeatureGate::AsyncFunction),
+            b"Promise" | b"Awaited" => Some(FeatureGate::AsyncFunction),
             _ => None,
         }
     }

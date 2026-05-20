@@ -116,6 +116,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if let Some(source_text) = self.source_text {
             transformer.set_source_text(source_text);
         }
+        transformer.set_module_kind(self.module_kind);
         self.configure_async_disposable_context(&mut transformer);
         let inner = transformer.transform_async_generator_inner_function(
             inner_name,
@@ -463,6 +464,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        async_transformer.set_module_kind(self.module_kind);
                         self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
@@ -489,16 +491,21 @@ impl<'a> ES5ClassTransformer<'a> {
                             method_data.body,
                         )
                     } else {
-                        let local_class_alias =
-                            self.get_class_alias_for_static_method(method_data.body);
-                        let mut mbody = self.convert_block_body_with_alias_static(
+                        let this_capture_alias = self.this_capture_alias_for_body(
                             method_data.body,
-                            local_class_alias,
+                            Some(&method_data.parameters),
+                        );
+                        let mut mbody = self.convert_block_body_static_with_this_capture_alias(
+                            method_data.body,
+                            this_capture_alias.clone(),
                         );
                         if !static_destructuring.is_empty() {
                             let mut full = static_destructuring;
                             full.append(&mut mbody);
                             mbody = full;
+                        }
+                        if let Some(alias) = this_capture_alias {
+                            mbody.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
                         }
                         if self
                             .member_contains_new_target(method_data.body, &method_data.parameters)
@@ -600,6 +607,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        async_transformer.set_module_kind(self.module_kind);
                         self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
@@ -960,7 +968,8 @@ impl<'a> ES5ClassTransformer<'a> {
                         if self.use_define_for_class_fields {
                             deferred_static_prop_inits.push(IRNode::DefineProperty {
                                 target: Box::new(IRNode::id(self.class_name.clone())),
-                                property_name: self.get_method_name_ir(prop_data.name),
+                                property_name: self
+                                    .get_field_define_property_name_ir(prop_data.name),
                                 descriptor: IRPropertyDescriptor {
                                     get: None,
                                     set: None,

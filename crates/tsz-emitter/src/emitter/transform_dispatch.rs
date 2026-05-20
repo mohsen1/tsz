@@ -340,6 +340,7 @@ impl<'a> Printer<'a> {
                 }
                 let system_export_fold = self.pending_system_namespace_export_fold.take();
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                 ns_emitter.set_const_enum_facts(
                     self.const_enum_values.clone(),
                     self.const_enum_import_aliases.clone(),
@@ -436,6 +437,7 @@ impl<'a> Printer<'a> {
                                 self.arena,
                                 !merges_with_default_func,
                             );
+                            ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                             ns_emitter.set_const_enum_facts(
                                 self.const_enum_values.clone(),
                                 self.const_enum_import_aliases.clone(),
@@ -1321,6 +1323,7 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                 ns_emitter.set_const_enum_facts(
                     self.const_enum_values.clone(),
                     self.const_enum_import_aliases.clone(),
@@ -1539,6 +1542,7 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                 ns_emitter.set_const_enum_facts(
                     self.const_enum_values.clone(),
                     self.const_enum_import_aliases.clone(),
@@ -1589,6 +1593,7 @@ impl<'a> Printer<'a> {
                             .map(|ident| ident.escaped_text.clone())
                     });
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                    ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                     ns_emitter.set_const_enum_facts(
                         self.const_enum_values.clone(),
                         self.const_enum_import_aliases.clone(),

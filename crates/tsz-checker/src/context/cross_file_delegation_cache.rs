@@ -21,10 +21,25 @@ impl Default for CrossFileDelegationCache {
 }
 
 impl CrossFileDelegationCache {
+    /// Clears all caches, including the arena-stable `declaration_node_types` map.
+    /// Use only when the entire checker session is torn down (not between files).
     #[inline]
     pub fn clear(&mut self) {
         self.symbol_types.clear();
         self.declaration_node_types.clear();
+    }
+
+    /// Clears only the file-local `symbol_types` cache.
+    ///
+    /// `declaration_node_types` is keyed by `(arena_ptr, NodeIndex, mode)`.  Each
+    /// [`NodeArena`] is a distinct heap object, so its pointer value is unique per
+    /// source file.  Entries for file A cannot be returned by a lookup for file B,
+    /// which means the map is safe to keep across a `switch_to_file` boundary.
+    /// Preserving it avoids re-deriving cross-file declaration types on every
+    /// subsequent delegation into the same foreign file.
+    #[inline]
+    pub fn clear_file_local(&mut self) {
+        self.symbol_types.clear();
     }
 
     #[inline]
@@ -64,7 +79,7 @@ impl CrossFileDelegationCache {
         mode: u8,
     ) -> Option<TypeId> {
         self.declaration_node_types
-            .get(&(arena as *const NodeArena as usize, decl_idx, mode))
+            .get(&(Self::arena_ptr(arena), decl_idx, mode))
             .map(|entry| *entry)
     }
 
@@ -76,9 +91,12 @@ impl CrossFileDelegationCache {
         mode: u8,
         type_id: TypeId,
     ) {
-        self.declaration_node_types.insert(
-            (arena as *const NodeArena as usize, decl_idx, mode),
-            type_id,
-        );
+        self.declaration_node_types
+            .insert((Self::arena_ptr(arena), decl_idx, mode), type_id);
+    }
+
+    #[inline]
+    fn arena_ptr(arena: &NodeArena) -> usize {
+        arena as *const NodeArena as usize
     }
 }

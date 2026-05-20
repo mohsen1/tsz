@@ -1351,6 +1351,39 @@ const fn is_assignment_operator(token: u16) -> bool {
     )
 }
 
+/// Returns `true` if a dynamic `import()` argument is a plain string literal
+/// (or a no-substitution template), meaning the specifier can be inlined
+/// directly into the lowered form without a temporary variable.
+pub(crate) fn dynamic_import_arg_is_string_like(arena: &NodeArena, arg: NodeIndex) -> bool {
+    arena.get(arg).is_some_and(|node| {
+        node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || node.end <= node.pos
+    })
+}
+
+/// Returns `true` if a call-expression argument at `idx` should be emitted
+/// (i.e. is not a synthetic/empty placeholder).
+pub(crate) fn call_argument_should_emit(arena: &NodeArena, idx: NodeIndex) -> bool {
+    if idx.is_none() {
+        return false;
+    }
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+    if node.end <= node.pos || node.kind == SyntaxKind::Unknown as u16 {
+        return false;
+    }
+    arena
+        .get_identifier(node)
+        .is_none_or(|ident| !ident.escaped_text.is_empty())
+}
+
+/// Emit a dynamic `import(specifier)` as the CommonJS `Promise.resolve().then(...)` form.
+pub(crate) fn dynamic_import_cjs_form(specifier: &str) -> String {
+    format!("Promise.resolve().then(function () {{ return __importStar(require({specifier})); }})")
+}
+
 #[cfg(test)]
 #[path = "../../tests/emit_utils.rs"]
 mod tests;
