@@ -256,6 +256,38 @@ fn downlevel_define_typed_only_field_emits_void0_define_property() {
     );
 }
 
+#[test]
+fn es5_define_computed_field_temp_hoists_before_user_vars() {
+    let output = print_with_printer_options(
+        "var x = \"p\";\nclass A {\n    [x] = 14;\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    let temp_decl = output
+        .find("var _a;")
+        .unwrap_or_else(|| panic!("Missing computed field temp declaration.\nOutput:\n{output}"));
+    let user_var = output
+        .find("var x = \"p\";")
+        .unwrap_or_else(|| panic!("Missing user variable declaration.\nOutput:\n{output}"));
+    let class_decl = output
+        .find("var A =")
+        .unwrap_or_else(|| panic!("Missing lowered class declaration.\nOutput:\n{output}"));
+
+    assert!(
+        temp_decl < user_var && user_var < class_decl,
+        "Computed field temp should be hoisted before top-level user vars.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("var _a;").count(),
+        1,
+        "Computed field temp should be declared once.\nOutput:\n{output}"
+    );
+}
+
 /// Without `useDefineForClassFields`, a typed-only field has no runtime
 /// effect and must not produce any assignment. This guards against the
 /// fix above accidentally widening to all targets.
