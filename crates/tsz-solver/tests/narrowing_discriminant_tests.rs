@@ -1411,10 +1411,10 @@ fn undistributed_intersection_non_exhaustive_switch_keeps_remaining() {
 
     // Exclude only "a" — opt_two-component must survive
     let result = ctx.narrow_by_excluding_discriminant_values(undistributed, &[kind], &[kind_a]);
-    assert_ne!(
-        result,
-        TypeId::NEVER,
-        "non-exhaustive: OptionTwo component must survive"
+    let expected = interner.intersection(vec![kind_k_obj, opt_two]);
+    assert_eq!(
+        result, expected,
+        "non-exhaustive: narrowing must remove only the excluded OptionOne component"
     );
 }
 
@@ -1440,14 +1440,10 @@ fn undistributed_intersection_true_branch_narrows_to_matching_member() {
 
     // True branch: kind === "a" must keep only the component where kind: "a" is satisfied
     let narrowed = ctx.narrow_by_discriminant_for_type(undistributed, &[kind], kind_a, true);
-    assert_ne!(
-        narrowed,
-        TypeId::NEVER,
-        "true branch must not narrow to never"
-    );
-    assert_ne!(
-        narrowed, undistributed,
-        "true branch must narrow away opt_two component"
+    let expected = interner.intersection(vec![kind_k_obj, opt_one]);
+    assert_eq!(
+        narrowed, expected,
+        "true branch must keep only the OptionOne component"
     );
 }
 
