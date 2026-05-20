@@ -244,7 +244,7 @@ declare global {
 declare function FlatList(props: {}, ref: any): ReactNode;
 const _a = <FlatList />;
 "#;
-    let codes: Vec<u32> = check_source(source, "test.tsx", opts.clone())
+    let codes: Vec<u32> = check_source(source, "test.tsx", opts)
         .into_iter()
         .map(|d| d.code)
         .collect();
@@ -448,7 +448,7 @@ const RenderString = ({ title }: { title: string }) => title;
 const _a = <RenderString />;
 const _b = <RenderString title="hi" />;
 "#;
-    let codes: Vec<u32> = check_source(source, "test.tsx", opts.clone())
+    let codes: Vec<u32> = check_source(source, "test.tsx", opts)
         .into_iter()
         .map(|d| d.code)
         .collect();
