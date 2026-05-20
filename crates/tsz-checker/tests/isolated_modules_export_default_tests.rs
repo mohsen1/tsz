@@ -17,7 +17,7 @@ use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn compile_with_isolated_modules(
     files: &[(&str, &str)],

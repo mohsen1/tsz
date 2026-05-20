@@ -8,7 +8,7 @@ use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn has_error_code(source: &str, code: u32) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

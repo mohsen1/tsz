@@ -2,7 +2,7 @@
 //!
 //! See the parent [`contextual`](super) module for overview documentation.
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::contextual::extractors::{
     ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
     PropertyExtractor, RestOrOptionalTailPositionExtractor, RestParameterExtractor,
@@ -31,9 +31,12 @@ pub struct ContextualTypeContext<'a> {
 /// Evaluatable wrappers such as `ConstructorParameters<T>` are normalized first so
 /// generic call round-2 contextual typing doesn't pass the whole tuple application
 /// through as a single argument type.
-pub fn rest_argument_element_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn rest_argument_element_type(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
     fn rest_argument_element_type_inner(
-        db: &dyn crate::TypeDatabase,
+        db: &dyn crate::construction::TypeDatabase,
         type_id: TypeId,
         depth: usize,
     ) -> TypeId {
@@ -515,11 +518,13 @@ impl<'a> ContextualTypeContext<'a> {
         // discards instantiated parameter types like `Iterable<readonly [K, V]>`,
         // which in turn breaks nested generic call contextual typing.
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
-            if let Some(shape) = crate::get_contextual_signature_for_arity_with_compat_checker(
-                self.interner,
-                expected,
-                arg_count,
-            ) {
+            if let Some(shape) =
+                crate::operations::get_contextual_signature_for_arity_with_compat_checker(
+                    self.interner,
+                    expected,
+                    arg_count,
+                )
+            {
                 return extract_param_type_at_for_call(
                     self.interner,
                     &shape.params,
@@ -796,7 +801,7 @@ impl<'a> ContextualTypeContext<'a> {
     /// with the application arguments, and retry the `ThisType` extraction.
     pub fn get_this_type_from_marker_with_resolver(
         &self,
-        resolver: &dyn crate::TypeResolver,
+        resolver: &dyn crate::relations::subtype::TypeResolver,
     ) -> Option<TypeId> {
         // First try the simple extraction (no expansion needed).
         if let Some(result) = self.get_this_type_from_marker() {
@@ -845,8 +850,12 @@ impl<'a> ContextualTypeContext<'a> {
                 && let Some(body) = resolver.resolve_lazy(def_id, self.interner)
             {
                 let type_params = resolver.get_lazy_type_params(def_id).unwrap_or_default();
-                let expanded =
-                    crate::instantiate_generic(self.interner, body, &type_params, &app.args);
+                let expanded = crate::instantiation::instantiate::instantiate_generic(
+                    self.interner,
+                    body,
+                    &type_params,
+                    &app.args,
+                );
                 let expanded_ctx = ContextualTypeContext::with_expected_and_options(
                     self.interner,
                     expanded,
@@ -864,7 +873,7 @@ impl<'a> ContextualTypeContext<'a> {
     #[inline]
     pub fn get_this_type_from_marker_expanding(
         &self,
-        resolver: &dyn crate::TypeResolver,
+        resolver: &dyn crate::relations::subtype::TypeResolver,
     ) -> Option<TypeId> {
         self.get_this_type_from_marker_with_resolver(resolver)
     }
@@ -889,9 +898,10 @@ impl<'a> ContextualTypeContext<'a> {
 
         // Handle Application explicitly - unwrap to base type
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
-            if let Some(shape) =
-                crate::get_contextual_signature_with_compat_checker(self.interner, expected)
-            {
+            if let Some(shape) = crate::operations::get_contextual_signature_with_compat_checker(
+                self.interner,
+                expected,
+            ) {
                 return Some(shape.return_type);
             }
             let app = self.interner.type_application(app_id);

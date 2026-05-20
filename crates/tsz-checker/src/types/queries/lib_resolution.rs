@@ -1288,7 +1288,8 @@ mod tests {
     use crate::query_boundaries::type_construction::TypeInterner;
     use crate::state::CheckerState;
     use tsz_binder::BinderState;
-    use tsz_solver::{QueryDatabase, TypeParamInfo};
+    use tsz_solver::TypeParamInfo;
+    use tsz_solver::construction::QueryDatabase;
 
     #[test]
     fn keyword_syntax_maps_string() {

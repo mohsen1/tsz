@@ -348,6 +348,10 @@ fn actual_main(mut args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
         }
     }
 
+    if args.sound_report_only {
+        std::process::exit(EXIT_SUCCESS);
+    }
+
     let has_errors = result
         .diagnostics
         .iter()
@@ -423,7 +427,7 @@ fn run_batch_mode() -> Result<()> {
         // The checker thread-locals hold NodeIndex-keyed caches that similarly get
         // stale when a new AST arena reuses the same indices.
         tsz_solver::construction::clear_thread_local_cache();
-        tsz_solver::reset_subtype_thread_local_state();
+        tsz_solver::relations::subtype::reset_subtype_thread_local_state();
         tsz::checker::clear_all_thread_local_state();
 
         let project_path = std::path::Path::new(project_dir);
@@ -902,6 +906,7 @@ const BOOLEAN_FLAGS: &[&str] = &[
     "--noImplicitReturns",
     "--noFallthroughCasesInSwitch",
     "--sound",
+    "--soundReportOnly",
     "--noUncheckedIndexedAccess",
     "--noImplicitOverride",
     "--noPropertyAccessFromIndexSignature",
@@ -1406,6 +1411,7 @@ const KNOWN_TSC_OPTIONS: &[&str] = &[
     "--skipDefaultLibCheck",
     "--skipLibCheck",
     "--sound",
+    "--soundReportOnly",
     "--sourceMap",
     "--sourceRoot",
     "--stopBuildOnErrors",

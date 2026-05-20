@@ -1,6 +1,7 @@
 //! Definite assignment analysis (TS2454), TDZ analysis, and flow-based type narrowing.
 
 use crate::FlowAnalyzer;
+use crate::query_boundaries::assignability::are_types_overlapping_with_env;
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype_with_env, tuple_elements_for_type, union_members_for_type,
 };
@@ -363,7 +364,146 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Narrow source binding via narrowed discriminant bindings.
+        // When `const { kind } = s; if (kind === "a") { s.a; }`, narrowing of `kind`
+        // should also narrow `s` to the union variant where `kind` matches.
+        if let Some(source_narrowed) =
+            self.narrow_source_via_destructured_bindings(&analyzer, idx, narrowed, flow_node)
+        {
+            return source_narrowed;
+        }
+
         narrowed
+    }
+
+    /// Narrow a source binding when one of its destructured discriminant bindings is narrowed.
+    ///
+    /// When `const { kind } = s` and flow narrowing has narrowed `kind` to a literal
+    /// (e.g., inside `if (kind === "a")`), the source binding `s` should be narrowed to
+    /// the union variant where `kind` matches.
+    ///
+    /// Handles simple (`{ kind }`) and renamed (`{ kind: k }`) top-level destructuring.
+    /// Nested destructuring (`{ inner: { kind } }`) is intentionally excluded — tsc does
+    /// not narrow the source binding for nested paths.
+    fn narrow_source_via_destructured_bindings(
+        &self,
+        analyzer: &FlowAnalyzer<'_>,
+        idx: NodeIndex,
+        declared_type: TypeId,
+        flow_node: tsz_binder::FlowNodeId,
+    ) -> Option<TypeId> {
+        // Only identifiers can be sources of destructured bindings.
+        let source_sym = self.get_symbol_for_identifier(idx)?;
+
+        // Collect const destructured bindings whose source resolves to this identifier.
+        let bound_from_source: Vec<(SymbolId, String)> = self
+            .ctx
+            .destructured_binding_sources
+            .iter()
+            .filter_map(|(&binding_sym, (source_node, prop_name))| {
+                let node_source_sym = self
+                    .ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, *source_node)
+                    .or_else(|| self.ctx.binder.get_node_symbol(*source_node))?;
+                if node_source_sym != source_sym {
+                    return None;
+                }
+                // Correlated narrowing is only sound for const bindings.
+                let info = self.ctx.destructured_bindings.get(&binding_sym)?;
+                if !info.is_const {
+                    return None;
+                }
+                Some((binding_sym, prop_name.clone()))
+            })
+            .collect();
+
+        if bound_from_source.is_empty() {
+            return None;
+        }
+
+        let union_members = union_members_for_type(self.ctx.types, declared_type)?;
+        let initial_count = union_members.len();
+        let mut remaining = union_members;
+
+        for (binding_sym, prop_name) in &bound_from_source {
+            // tsc only correlates top-level single-property destructuring.
+            // Nested paths like `inner.kind` (from `const { inner: { kind } } = s`)
+            // do NOT narrow the source binding in tsc — skip them.
+            if prop_name.contains('.') {
+                continue;
+            }
+
+            let Some(&binding_initial) = self.ctx.symbol_types.get(binding_sym) else {
+                continue;
+            };
+
+            // Locate the binding element's identifier node for flow analysis.
+            let Some(binding_sym_data) = self.ctx.binder.symbols.get(*binding_sym) else {
+                continue;
+            };
+            let binding_ref = binding_sym_data.value_declaration;
+            if binding_ref.is_none() {
+                continue;
+            }
+            // `value_declaration` for a destructured binding points to the identifier
+            // node inside the binding element (e.g. `ok` in `{ ok = true }`), NOT the
+            // binding element itself. Navigate up to the parent BINDING_ELEMENT to check
+            // for a default initializer, which breaks source-discriminant correlation.
+            let parent_has_default_init = self
+                .ctx
+                .arena
+                .parent_of(binding_ref)
+                .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+                .is_some_and(|parent_node| {
+                    parent_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                        && self
+                            .ctx
+                            .arena
+                            .get_binding_element(parent_node)
+                            .is_some_and(|elem| elem.initializer.is_some())
+                });
+            if parent_has_default_init {
+                continue;
+            }
+
+            let binding_narrowed = analyzer.get_flow_type(binding_ref, binding_initial, flow_node);
+            if binding_narrowed == binding_initial {
+                continue;
+            }
+
+            // Keep members whose discriminant property overlaps with the narrowed binding type.
+            // Using structural overlap (not mutual subtype) covers:
+            //   - simple case: member_prop "a" overlaps narrowed "a"
+            //   - multi-literal: member_prop "a" overlaps narrowed "a" | "b"
+            //   - exclusion: member_prop "c" does NOT overlap narrowed "a" | "b"
+            remaining.retain(|&member| {
+                let member_prop_ty =
+                    match find_property_in_object_by_str(self.ctx.types, member, prop_name) {
+                        Some(prop) => prop.type_id,
+                        None => return true, // Property absent — keep member.
+                    };
+                let env = self.ctx.type_env.borrow();
+                are_types_overlapping_with_env(
+                    self.ctx.types,
+                    &env,
+                    member_prop_ty,
+                    binding_narrowed,
+                    self.ctx.strict_null_checks(),
+                )
+            });
+        }
+
+        if remaining.len() == initial_count {
+            return None;
+        }
+        if remaining.is_empty() {
+            return Some(TypeId::NEVER);
+        }
+        Some(tsz_solver::utils::union_or_single(
+            self.ctx.types,
+            remaining,
+        ))
     }
 
     /// Narrow a destructured binding element's type using flow conditions on the source property.
@@ -1010,7 +1150,7 @@ impl<'a> CheckerState<'a> {
 /// and wraps its inner type as an array. For non-rest bindings, returns the element
 /// at the given index directly.
 fn resolve_tuple_binding_type(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
     elems: &[TupleElement],
     element_index: usize,
     is_rest: bool,

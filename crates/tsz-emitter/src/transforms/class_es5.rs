@@ -268,6 +268,70 @@ impl<'a> ClassES5Emitter<'a> {
         self.emit_class_internal(class_idx, Some(name))
     }
 
+    /// Emit a class expression as an IIFE expression and return structured parts
+    /// so callers can build the outer comma-expression pattern:
+    ///
+    /// ```js
+    /// (_classTemp = IIFE, _propTemp = propNameExpr, _classTemp)
+    /// ```
+    ///
+    /// Returns `(iife_expr, computed_prop_decls, computed_prop_init_exprs)` where:
+    /// - `iife_expr` is the rendered `/** @class */ (function () { ... }())` expression
+    /// - `computed_prop_decls` are temp names to hoist as `var _a, ...;`
+    /// - `computed_prop_init_exprs` are structured assignment IR nodes like `_a = x`
+    pub fn emit_class_as_iife_expr(
+        &mut self,
+        class_idx: NodeIndex,
+        name: &str,
+    ) -> (String, Vec<String>, Vec<IRNode>) {
+        self.transformer.set_emit_computed_props_outside(true);
+        let ir_opt = self
+            .transformer
+            .transform_class_to_ir_with_name(class_idx, Some(name));
+        self.transformer.set_emit_computed_props_outside(false);
+
+        let Some(ir) = ir_opt else {
+            return (String::new(), Vec::new(), Vec::new());
+        };
+
+        let IRNode::ES5ClassIIFE {
+            name: ir_name,
+            binding_name: _,
+            base_class,
+            super_param,
+            body,
+            weakmap_decls: _,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+            weakmap_inits: _,
+            leading_comment: _,
+            deferred_static_blocks: _,
+            deferred_block_class_alias: _,
+        } = ir
+        else {
+            return (
+                self.emit_class_ir(class_idx, Some(name), ir),
+                Vec::new(),
+                Vec::new(),
+            );
+        };
+
+        let mut printer = self.make_ir_printer();
+        printer.emit_es5_class_expression(
+            &ir_name,
+            base_class.as_deref(),
+            super_param.as_deref(),
+            &body,
+        );
+        let iife_expr = printer.take_output();
+
+        (
+            iife_expr,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+        )
+    }
+
     /// Emit a class declaration with a different outer binding name while
     /// preserving the class's own lexical name inside the generated IIFE.
     pub fn emit_class_with_binding_name(

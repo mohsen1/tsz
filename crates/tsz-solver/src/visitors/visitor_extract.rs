@@ -4,14 +4,16 @@
 //! using the visitor pattern. Each function takes a `TypeDatabase` and `TypeId` and returns
 //! the relevant data if the type matches the expected variant.
 
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
     ObjectShapeId, OrderedFloat, StringIntrinsicKind, TemplateLiteralId, TemplateSpan, TupleListId,
     TypeApplicationId, TypeListId, TypeParamInfo,
 };
 use crate::visitor::TypeVisitor;
-use crate::{SymbolRef, TypeData, TypeDatabase, TypeId, TypeSubstitution, instantiate_type};
+use crate::{SymbolRef, TypeData, TypeId};
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 use tsz_common::interner::Atom;

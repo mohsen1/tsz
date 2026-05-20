@@ -11,7 +11,7 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::time::Duration;
-use tsz_solver::{TypeInterner, construction::QueryCache};
+use tsz_solver::construction::{QueryCache, TypeInterner};
 
 /// Generate a TypeScript file with N top-level declarations.
 /// Mix of functions, classes, interfaces, type aliases — realistic variety.

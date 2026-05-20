@@ -10,7 +10,8 @@
 //! - Interface merge type classification
 //! - Augmentation target classification
 
-use crate::{TypeData, TypeDatabase, TypeId};
+use crate::construction::TypeDatabase;
+use crate::{TypeData, TypeId};
 
 // =============================================================================
 // Excess Properties Classification

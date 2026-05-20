@@ -1,5 +1,6 @@
 use super::*;
-use tsz_solver::{SymbolRef, TypeInterner, TypeParamInfo, Visibility};
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{SymbolRef, TypeParamInfo, Visibility};
 
 #[test]
 fn exposes_state_checking_boundary_queries() {

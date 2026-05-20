@@ -8,6 +8,7 @@ _TSZ_CI_GITHUB_SUITES=(
   lint
   unit
   unit-shard
+  lsp-e2e
   wasm
   wasm-web
   wasm-all
@@ -162,6 +163,11 @@ ci_suite_caches() {
       ;;
     unit-shard)
       # Downloads the nextest archive directly from GCS.
+      echo ""
+      ;;
+    lsp-e2e)
+      # Reuses the dist-fast `tsz-lsp` binary artifact and a Node protocol
+      # driver; no TypeScript corpus or Cargo cache is needed in this job.
       echo ""
       ;;
     conformance)

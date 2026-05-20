@@ -6,7 +6,7 @@ use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 const DEFAULT_ES2015_LIBS: &[&str] = &[
     "lib.es6.d.ts",

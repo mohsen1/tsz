@@ -54,7 +54,7 @@ use tsz::lsp::highlighting::semantic_tokens::SemanticTokensProvider;
 use tsz::lsp::position::{LineMap, Position, Range};
 use tsz::lsp::rename::file_rename::FileRenameProvider;
 use tsz::lsp::rename::linked_editing::LinkedEditingProvider;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 impl Server {
     fn tsserver_call_hierarchy_name_kind(name: &str, kind: &str) -> (String, String) {

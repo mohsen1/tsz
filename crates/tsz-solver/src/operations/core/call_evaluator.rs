@@ -1,3 +1,4 @@
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::contextual::extractors::extract_param_type_at_for_call;
 use crate::diagnostics::PendingDiagnostic;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
@@ -6,7 +7,6 @@ use crate::types::{
     ParamInfo, TypeData, TypeId, TypeListId, TypePredicate,
 };
 use crate::visitor::TypeVisitor;
-use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};
@@ -80,7 +80,7 @@ pub trait AssignabilityChecker {
     /// This is used during inference constraint collection to compute the variance
     /// of type parameters in type alias Applications. The checker implements this
     /// to provide its full resolver context.
-    fn type_resolver(&self) -> Option<&dyn crate::TypeResolver> {
+    fn type_resolver(&self) -> Option<&dyn crate::relations::subtype::TypeResolver> {
         None
     }
 

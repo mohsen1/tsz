@@ -6,9 +6,10 @@
 //! - Trivial single-type-param fast path
 //! - Placeholder normalization
 
+use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{TypeInstantiator, TypeSubstitution, instantiate_generic};
+use crate::relations::subtype::TypeResolver;
 use crate::types::{TypeData, TypeId};
-use crate::{TypeDatabase, TypeResolver};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tsz_common::Atom;
 
@@ -30,7 +31,7 @@ pub(crate) fn unique_placeholder_name(buf: &mut String) {
 /// or a union containing a primitive. Used to preserve literal types during inference
 /// when the constraint implies literals should be kept (e.g., `T extends string`).
 fn constraint_is_primitive_type_with_resolver(
-    interner: &dyn crate::QueryDatabase,
+    interner: &dyn crate::construction::QueryDatabase,
     resolver: &dyn TypeResolver,
     type_id: TypeId,
 ) -> bool {
@@ -38,7 +39,7 @@ fn constraint_is_primitive_type_with_resolver(
 }
 
 fn literal_preservation_constraint_target(
-    interner: &dyn crate::QueryDatabase,
+    interner: &dyn crate::construction::QueryDatabase,
     resolver: &dyn TypeResolver,
     type_id: TypeId,
     depth: u32,
@@ -76,7 +77,7 @@ fn literal_preservation_constraint_target(
 }
 
 fn constraint_is_primitive_type_inner(
-    interner: &dyn crate::QueryDatabase,
+    interner: &dyn crate::construction::QueryDatabase,
     resolver: &dyn TypeResolver,
     type_id: TypeId,
     depth: u32,
@@ -136,7 +137,7 @@ fn infer_type_name(interner: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom>
 }
 
 fn type_implies_literals_for_constraint(
-    interner: &dyn crate::QueryDatabase,
+    interner: &dyn crate::construction::QueryDatabase,
     resolver: &dyn TypeResolver,
     type_id: TypeId,
     depth: u32,
@@ -184,7 +185,7 @@ fn type_implies_literals_for_constraint(
 }
 
 fn type_contains_infer_name(
-    interner: &dyn crate::QueryDatabase,
+    interner: &dyn crate::construction::QueryDatabase,
     resolver: &dyn TypeResolver,
     type_id: TypeId,
     infer_name: Atom,
@@ -264,7 +265,7 @@ fn type_contains_infer_name(
 }
 
 fn source_type_preserves_literal_inference(
-    interner: &dyn crate::QueryDatabase,
+    interner: &dyn crate::construction::QueryDatabase,
     resolver: &dyn TypeResolver,
     source: TypeId,
     depth: u32,
@@ -274,7 +275,7 @@ fn source_type_preserves_literal_inference(
 }
 
 fn conditional_infer_constraint_preserves_literals(
-    interner: &dyn crate::QueryDatabase,
+    interner: &dyn crate::construction::QueryDatabase,
     resolver: &dyn TypeResolver,
     conditional_id: crate::types::ConditionalTypeId,
     depth: u32,
@@ -294,7 +295,7 @@ fn conditional_infer_constraint_preserves_literals(
 }
 
 fn infer_match_preserves_literals(
-    interner: &dyn crate::QueryDatabase,
+    interner: &dyn crate::construction::QueryDatabase,
     resolver: &dyn TypeResolver,
     source: TypeId,
     target: TypeId,
@@ -427,7 +428,7 @@ fn infer_match_preserves_literals(
 /// `T`'s constraint is object-shaped, but its index value is governed by primitive-
 /// constrained `U`, so fresh literal property values must not be widened away.
 fn constraint_contains_primitive_constrained_type_param(
-    interner: &dyn crate::QueryDatabase,
+    interner: &dyn crate::construction::QueryDatabase,
     resolver: &dyn TypeResolver,
     type_id: TypeId,
     depth: u32,
@@ -488,7 +489,7 @@ fn instantiate_call_type(
     substitution: &TypeSubstitution,
     actual_this_type: Option<TypeId>,
 ) -> TypeId {
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         if let Some(actual_this_type) = actual_this_type {
             let mut instantiator = TypeInstantiator::new(interner, substitution);
             instantiator.this_type = Some(actual_this_type);
@@ -514,7 +515,7 @@ mod return_context_feedback;
 /// and object properties. Used to detect discriminated union constraints like
 /// `{ kind: "a" } | { kind: "b" }` where the literal property types should
 /// prevent widening of the corresponding argument properties.
-fn type_implies_literals_deep(db: &dyn crate::TypeDatabase, type_id: TypeId) -> bool {
+fn type_implies_literals_deep(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -> bool {
     // Intrinsic IDs are not literal types EXCEPT for `BOOLEAN_TRUE` (14) /
     // `BOOLEAN_FALSE` (15) which are reserved intrinsic IDs that lookup as
     // `TypeData::Literal(Boolean(_))`. All other intrinsics fall to `_ => false`.
@@ -546,7 +547,7 @@ fn type_implies_literals_deep(db: &dyn crate::TypeDatabase, type_id: TypeId) -> 
 /// Used to detect when a type parameter (e.g., `TContext`) is referenced inside another
 /// type parameter's constraint (e.g., `TMethods` extends Record<string, (ctx: `TContext`) => unknown>).
 pub(super) fn type_references_placeholder(
-    db: &dyn crate::TypeDatabase,
+    db: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
     placeholder: TypeId,
 ) -> bool {

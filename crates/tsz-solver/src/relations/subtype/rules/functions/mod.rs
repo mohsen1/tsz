@@ -51,7 +51,7 @@ pub(super) fn erase_type_params_to_any(type_params: &[TypeParamInfo]) -> TypeSub
 /// `FunctionShape`. Used by the N×M signature comparison path.
 pub(super) fn erase_call_sig_to_any(
     sig: &CallSignature,
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
 ) -> FunctionShape {
     use crate::instantiation::instantiate::instantiate_type;
     if sig.type_params.is_empty() {
@@ -91,7 +91,7 @@ pub(super) fn erase_call_sig_to_any(
 /// `FunctionShape`. Used by the N×M signature comparison path.
 pub(super) fn erase_fn_shape_to_any(
     f: &FunctionShape,
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
 ) -> FunctionShape {
     use crate::instantiation::instantiate::instantiate_type;
     if f.type_params.is_empty() {

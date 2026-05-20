@@ -1,7 +1,7 @@
 use super::*;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn has_code(diags: &[crate::diagnostics::Diagnostic], code: u32) -> bool {
     diags.iter().any(|d| d.code == code)

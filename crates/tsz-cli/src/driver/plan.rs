@@ -245,8 +245,11 @@ pub(super) fn apply_cli_overrides_with_config_options(
     if let Some(val) = args.allow_unused_labels {
         options.checker.allow_unused_labels = Some(val);
     }
-    if args.sound {
+    if args.sound || args.sound_report_only {
         options.checker.sound_mode = true;
+    }
+    if args.sound_report_only {
+        options.checker.sound_report_only = true;
     }
     if args.experimental_decorators {
         options.checker.experimental_decorators = true;
