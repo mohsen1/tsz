@@ -9,6 +9,14 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+/// Facts extracted from a class component's construct signature in one walk:
+/// the instance `.props` field and the first constructor parameter type.
+#[derive(Default, Clone, Copy)]
+struct JsxClassComponentConstructFacts {
+    props_field: Option<TypeId>,
+    first_param: Option<TypeId>,
+}
+
 impl<'a> CheckerState<'a> {
     pub(in crate::checkers_domain::jsx) fn file_has_jsx_unicode_escape_parse_error(&self) -> bool {
         let Some(source) = self.current_jsx_source_text() else {
@@ -136,9 +144,25 @@ impl<'a> CheckerState<'a> {
         &mut self,
         component_type: TypeId,
     ) -> Option<TypeId> {
+        self.jsx_class_component_construct_return_facts(component_type)
+            .props_field
+    }
+
+    /// Walk the construct signatures of `component_type` and return both the
+    /// instance `.props` field type and the first constructor parameter type
+    /// from the same chosen signature. The JSX validator wants both signals to
+    /// decide whether to display the class.props wrapper or the LMA-projected
+    /// constructor parameter; folding them into one walk avoids walking
+    /// construct signatures twice per JSX element on the hot path.
+    fn jsx_class_component_construct_return_facts(
+        &mut self,
+        component_type: TypeId,
+    ) -> JsxClassComponentConstructFacts {
         use crate::query_boundaries::common::PropertyAccessResult;
 
-        let sigs = crate::query_boundaries::common::construct_signatures_for_type(
+        let mut facts = JsxClassComponentConstructFacts::default();
+
+        let Some(sigs) = crate::query_boundaries::common::construct_signatures_for_type(
             self.ctx.types,
             component_type,
         )
@@ -148,7 +172,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 evaluated,
             )
-        })?;
+        }) else {
+            return facts;
+        };
 
         for sig in sigs.iter().filter(|sig| !sig.params.is_empty()) {
             let instance_type = sig.return_type;
@@ -160,11 +186,13 @@ impl<'a> CheckerState<'a> {
             if let PropertyAccessResult::Success { type_id, .. } = props_access
                 && !matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
             {
-                return Some(type_id);
+                facts.props_field = Some(type_id);
+                facts.first_param = sig.params.first().map(|p| p.type_id);
+                return facts;
             }
         }
 
-        None
+        facts
     }
 
     fn compact_jsx_readonly_display(display: String) -> String {
@@ -769,8 +797,9 @@ impl<'a> CheckerState<'a> {
                     );
                 } else {
                     // TS2786: component return type must be valid JSX element
-                    let class_props_from_construct =
-                        self.get_class_component_props_from_construct_return(component_type);
+                    let construct_facts =
+                        self.jsx_class_component_construct_return_facts(component_type);
+                    let class_props_from_construct = construct_facts.props_field;
                     let has_readonly_construct_props = self
                         .jsx_component_type_has_readonly_construct_props(resolved_component_type);
                     // Also skip for React class components whose constructor return exposes
@@ -801,11 +830,34 @@ impl<'a> CheckerState<'a> {
                         .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
                     let preferred_props_display =
                         self.get_jsx_component_props_display_text(tag_name_idx);
-                    let display_target = self.build_jsx_display_target_with_preferred_props(
-                        props_type,
-                        Some(resolved_component_type),
-                        preferred_props_display.as_deref(),
-                    );
+                    // `props_type` (re-instantiated at the JSX recovery site) and
+                    // `construct_facts.first_param` (interned at class declaration time) can
+                    // be different `TypeId` slots for the same alias — compare through
+                    // `evaluate_type_with_env` so true aliasing isn't missed. When
+                    // `JSX.LibraryManagedAttributes` projects props into `Defaultize<...>`,
+                    // the two diverge structurally; keep the LMA display in that case.
+                    let class_props_display_target = class_props_from_construct
+                        .filter(|&class_props| {
+                            class_props != props_type
+                                && construct_facts.first_param.is_some_and(|ctor_param| {
+                                    ctor_param == props_type
+                                        || self.evaluate_type_with_env(ctor_param)
+                                            == self.evaluate_type_with_env(props_type)
+                                })
+                        })
+                        .map(|class_props| {
+                            Self::compact_jsx_readonly_display(self.build_jsx_display_target(
+                                class_props,
+                                Some(resolved_component_type),
+                            ))
+                        });
+                    let display_target = class_props_display_target.clone().unwrap_or_else(|| {
+                        self.build_jsx_display_target_with_preferred_props(
+                            props_type,
+                            Some(resolved_component_type),
+                            preferred_props_display.as_deref(),
+                        )
+                    });
                     self.check_jsx_attributes_against_props(
                         jsx_opening.attributes,
                         props_type,
@@ -821,10 +873,12 @@ impl<'a> CheckerState<'a> {
                     let generic_spread_props_type =
                         class_props_from_construct.unwrap_or(props_type);
                     let generic_spread_display_target =
-                        Self::compact_jsx_readonly_display(self.build_jsx_display_target(
-                            generic_spread_props_type,
-                            Some(resolved_component_type),
-                        ));
+                        class_props_display_target.unwrap_or_else(|| {
+                            Self::compact_jsx_readonly_display(self.build_jsx_display_target(
+                                generic_spread_props_type,
+                                Some(resolved_component_type),
+                            ))
+                        });
                     self.check_jsx_generic_spread_attrs_assignability(
                         jsx_opening.attributes,
                         generic_spread_props_type,
