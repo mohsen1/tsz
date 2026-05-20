@@ -1,5 +1,8 @@
 //! Direct cross-file query fast paths that avoid constructing child checkers.
 
+#[path = "cross_file_direct_paths.rs"]
+mod paths;
+
 use super::cross_file_direct_actual_lib::{
     allow_actual_lib_declaration_proof_bypass, allow_generic_actual_lib_direct_fallback,
     is_direct_actual_lib_value_interface_name, iterator_object_has_global_augmentations,
@@ -7,6 +10,12 @@ use super::cross_file_direct_actual_lib::{
 use super::source_alias_attribution::record_source_alias_rejection_kinds;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
+pub(crate) use paths::{
+    DeclarationFileCacheClass, classify_declaration_file_for_cache,
+    is_builtin_lib_declaration_arena, is_builtin_lib_file_name,
+    is_direct_actual_lib_declaration_arena, is_dom_builtin_lib_declaration_arena,
+    is_external_package_declaration_file_name,
+};
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_common::perf_counters::{
     CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome,
@@ -62,124 +71,6 @@ const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
 
 fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
     DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS.contains(&name)
-}
-
-fn file_basename(file_name: &str) -> &str {
-    file_name.rsplit(['/', '\\']).next().unwrap_or(file_name)
-}
-
-pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
-    let basename = file_basename(file_name);
-    if basename.starts_with("lib.") && basename.ends_with(".d.ts") {
-        return true;
-    }
-
-    let stem = basename
-        .strip_suffix(".generated.d.ts")
-        .or_else(|| basename.strip_suffix(".d.ts"))
-        .unwrap_or(basename);
-
-    stem == "lib"
-        || stem == "scripthost"
-        || stem == "decorators"
-        || stem == "decorators.legacy"
-        || stem == "dom"
-        || stem.starts_with("dom.")
-        || stem == "webworker"
-        || stem.starts_with("webworker.")
-        || stem == "esnext"
-        || stem.starts_with("esnext.")
-        || (stem.starts_with("es") && stem.as_bytes().get(2).is_some_and(u8::is_ascii_digit))
-}
-
-pub(crate) fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
-    arena.source_files.first().is_some_and(|source_file| {
-        if !source_file.is_declaration_file {
-            return false;
-        }
-        is_builtin_lib_file_name(&source_file.file_name)
-    })
-}
-
-fn is_dom_like_builtin_lib_file_name(file_name: &str) -> bool {
-    let basename = file_basename(file_name);
-    let stem = basename
-        .strip_suffix(".generated.d.ts")
-        .or_else(|| basename.strip_suffix(".d.ts"))
-        .unwrap_or(basename);
-    let stem = stem.strip_prefix("lib.").unwrap_or(stem);
-
-    stem == "dom"
-        || stem.starts_with("dom.")
-        || stem == "webworker"
-        || stem.starts_with("webworker.")
-}
-
-pub(crate) fn is_dom_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
-    arena.source_files.first().is_some_and(|source_file| {
-        if !source_file.is_declaration_file {
-            return false;
-        }
-        let basename = file_basename(&source_file.file_name);
-        let stem = basename
-            .strip_suffix(".generated.d.ts")
-            .or_else(|| basename.strip_suffix(".d.ts"))
-            .unwrap_or(basename);
-        let stem = stem.strip_prefix("lib.").unwrap_or(stem);
-        stem == "dom" || stem.starts_with("dom.")
-    })
-}
-
-pub(crate) fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool {
-    arena.source_files.first().is_some_and(|source_file| {
-        if !source_file.is_declaration_file {
-            return false;
-        }
-        is_builtin_lib_file_name(&source_file.file_name)
-            && !is_dom_like_builtin_lib_file_name(&source_file.file_name)
-    })
-}
-
-pub(crate) fn is_external_package_declaration_file_name(file_name: &str) -> bool {
-    let mut components = file_name
-        .split(['/', '\\'])
-        .filter(|component| !component.is_empty());
-    while let Some(component) = components.next() {
-        if component == "node_modules" {
-            return components.next().is_some();
-        }
-    }
-    false
-}
-
-/// Delegated arena class for cross-arena symbol-type cache routing.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum DeclarationFileCacheClass {
-    UserSource,
-    DomOrExternalPackage,
-    /// Excluded because `shared_actual_lib_delegation_cache` already dedups
-    /// these symbols across virtual programs.
-    NonDomBuiltinLib,
-}
-
-pub(crate) fn classify_declaration_file_for_cache(
-    file_name: &str,
-    is_declaration_file: bool,
-) -> DeclarationFileCacheClass {
-    if !is_declaration_file {
-        return DeclarationFileCacheClass::UserSource;
-    }
-    if is_builtin_lib_file_name(file_name) {
-        return if is_dom_like_builtin_lib_file_name(file_name) {
-            DeclarationFileCacheClass::DomOrExternalPackage
-        } else {
-            DeclarationFileCacheClass::NonDomBuiltinLib
-        };
-    }
-    if is_external_package_declaration_file_name(file_name) {
-        return DeclarationFileCacheClass::DomOrExternalPackage;
-    }
-    DeclarationFileCacheClass::NonDomBuiltinLib
 }
 
 fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
@@ -974,6 +865,38 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn source_file_type_node_is_explicit_unknown(
+        arena: &NodeArena,
+        mut node_idx: NodeIndex,
+    ) -> bool {
+        for _ in 0..10 {
+            let Some(node) = arena.get(node_idx) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+                && let Some(wrapped) = arena.get_wrapped_type(node)
+            {
+                node_idx = wrapped.type_node;
+                continue;
+            }
+            if node.kind == tsz_scanner::SyntaxKind::UnknownKeyword as u16 {
+                return true;
+            }
+            return node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && arena.get_type_ref(node).is_some_and(|type_ref| {
+                    type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_none_or(|args| args.nodes.is_empty())
+                        && arena
+                            .get(type_ref.type_name)
+                            .and_then(|name_node| arena.get_identifier(name_node))
+                            .is_some_and(|ident| ident.escaped_text == "unknown")
+                });
+        }
+        false
+    }
+
     pub(super) fn source_file_type_node_is_option_bag_lowerable<'b>(
         arena: &'b NodeArena,
         delegate_binder: &BinderState,
@@ -1390,6 +1313,17 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn external_declaration_body_uses_local_array_shadow(
+        arena: &NodeArena,
+        delegate_binder: &BinderState,
+        root: NodeIndex,
+    ) -> bool {
+        ["Array", "ReadonlyArray"].iter().any(|name| {
+            delegate_binder.file_locals.get(name).is_some()
+                && Self::source_file_type_node_contains_identifier_name(arena, root, name)
+        })
+    }
+
     fn source_file_interface_declarations_are_direct_lowerable_with_seen<'b>(
         declarations: &[(NodeIndex, &'b NodeArena)],
         delegate_binder: &BinderState,
@@ -1569,46 +1503,23 @@ impl<'a> CheckerState<'a> {
             record_direct_source_file_type_alias_lowering_outcome(outcome);
         };
 
-        let Some(target_file_idx) = target_file_idx else {
-            record(DirectSourceFileTypeAliasLoweringOutcome::MissingTargetFile);
-            return None;
-        };
+        let target_file_idx = target_file_idx?;
         let (symbol_arena_arc, delegate_binder_arc) = {
-            let Some(symbol_arena_arc) = self
-                .ctx
-                .all_arenas
-                .as_ref()
-                .and_then(|arenas| arenas.get(target_file_idx))
-                .cloned()
-            else {
-                record(DirectSourceFileTypeAliasLoweringOutcome::MissingArenaOrBinder);
-                return None;
-            };
-            let Some(delegate_binder_arc) = self
-                .ctx
-                .all_binders
-                .as_ref()
-                .and_then(|binders| binders.get(target_file_idx))
-                .cloned()
-            else {
-                record(DirectSourceFileTypeAliasLoweringOutcome::MissingArenaOrBinder);
-                return None;
-            };
+            let symbol_arena_arc = self.ctx.all_arenas.as_ref()?.get(target_file_idx)?.clone();
+            let delegate_binder_arc = self.ctx.all_binders.as_ref()?.get(target_file_idx)?.clone();
             (symbol_arena_arc, delegate_binder_arc)
         };
         let symbol_arena = symbol_arena_arc.as_ref();
         let delegate_binder = delegate_binder_arc.as_ref();
-        if !allow_source_file_arena || !is_direct_lowering_source_file_arena(symbol_arena) {
-            record(DirectSourceFileTypeAliasLoweringOutcome::SourceFileArenaNotAllowed);
+        let direct_source_file_arena =
+            allow_source_file_arena && is_direct_lowering_source_file_arena(symbol_arena);
+        let direct_external_declaration_arena = is_direct_lowering_declaration_arena(symbol_arena);
+        if !direct_source_file_arena && !direct_external_declaration_arena {
             return None;
         }
 
-        let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
-            record(DirectSourceFileTypeAliasLoweringOutcome::MissingSymbol);
-            return None;
-        };
+        let symbol = delegate_binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
-            record(DirectSourceFileTypeAliasLoweringOutcome::NotTypeAlias);
             return None;
         }
         if symbol.flags
@@ -1619,36 +1530,37 @@ impl<'a> CheckerState<'a> {
                 | symbol_flags::NAMESPACE_MODULE)
             != 0
         {
-            record(DirectSourceFileTypeAliasLoweringOutcome::DisallowedMergeFlags);
             return None;
         }
         if symbol.declarations.len() != 1 {
-            record(DirectSourceFileTypeAliasLoweringOutcome::MultipleDeclarations);
             return None;
         }
 
         let name = symbol.escaped_name.clone();
         let decl_idx = symbol.declarations[0];
         if !Self::lib_type_alias_declaration_name_matches(symbol_arena, decl_idx, &name) {
-            record(DirectSourceFileTypeAliasLoweringOutcome::NameMismatch);
             return None;
         }
-        let Some(decl_node) = symbol_arena.get(decl_idx) else {
-            record(DirectSourceFileTypeAliasLoweringOutcome::MissingTypeAliasNode);
-            return None;
-        };
-        let Some(type_alias) = symbol_arena.get_type_alias(decl_node) else {
-            record(DirectSourceFileTypeAliasLoweringOutcome::MissingTypeAliasNode);
-            return None;
-        };
+        let decl_node = symbol_arena.get(decl_idx)?;
+        let type_alias = symbol_arena.get_type_alias(decl_node)?;
         let type_param_names = Self::type_alias_type_param_names(symbol_arena, type_alias);
+        if direct_external_declaration_arena
+            && Self::external_declaration_body_uses_local_array_shadow(
+                symbol_arena,
+                delegate_binder,
+                type_alias.type_node,
+            )
+        {
+            return None;
+        }
         let body_is_direct_lowerable = if type_param_names.is_empty() {
             Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
-                || Self::source_file_type_node_is_non_generic_local_alias_chain_lowerable(
-                    symbol_arena,
-                    delegate_binder,
-                    type_alias.type_node,
-                )
+                || (direct_source_file_arena
+                    && Self::source_file_type_node_is_non_generic_local_alias_chain_lowerable(
+                        symbol_arena,
+                        delegate_binder,
+                        type_alias.type_node,
+                    ))
         } else {
             Self::source_file_type_node_is_generic_scope_independent(
                 symbol_arena,
@@ -1674,7 +1586,6 @@ impl<'a> CheckerState<'a> {
             type_alias.type_node,
             &name,
         ) {
-            record(DirectSourceFileTypeAliasLoweringOutcome::TypeQueryOrSelfReference);
             return None;
         }
 
@@ -1684,8 +1595,12 @@ impl<'a> CheckerState<'a> {
             symbol_arena,
             type_alias,
         );
-        if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {
-            record(DirectSourceFileTypeAliasLoweringOutcome::UnknownOrError);
+        let explicit_external_unknown_alias = direct_external_declaration_arena
+            && type_param_names.is_empty()
+            && Self::source_file_type_node_is_explicit_unknown(symbol_arena, type_alias.type_node);
+        if alias_type == TypeId::ERROR
+            || (alias_type == TypeId::UNKNOWN && !explicit_external_unknown_alias)
+        {
             return None;
         }
 
@@ -1702,7 +1617,6 @@ impl<'a> CheckerState<'a> {
             .definition_store
             .register_type_to_def(alias_type, def_id);
 
-        record(DirectSourceFileTypeAliasLoweringOutcome::Success);
         Some((alias_type, params))
     }
 

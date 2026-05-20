@@ -5,6 +5,7 @@
 
 mod core;
 pub mod dep_graph;
+pub(crate) mod diagnostics;
 mod lib_snapshot;
 pub mod residency;
 pub mod skeleton;
@@ -12,5 +13,6 @@ pub mod skeleton;
 // Re-export everything from submodules for backward compatibility
 pub use self::core::*;
 pub use dep_graph::*;
+pub use diagnostics::collect_reexported_module_augmentation_enum_conflict_diagnostics;
 pub use residency::*;
 pub use skeleton::*;
