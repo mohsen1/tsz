@@ -1060,11 +1060,14 @@ impl<'a> CheckerState<'a> {
                     .map(|sym_id| self.ctx.get_canonical_lib_def_id(type_name, sym_id))
                 })
         };
+        // For the single-arena path all declarations share self.ctx.arena, so
+        // the (NodeIndex, arena_ptr) key always resolves to the same arena.
+        let single_arena_ptr = self.ctx.arena as *const NodeArena as usize;
         let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
-            computed_names.get(&expr_idx).copied()
+            computed_names.get(&(expr_idx, single_arena_ptr)).copied()
         };
         let computed_symbol_name_resolver =
-            |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
+            |expr_idx: NodeIndex| computed_symbol_names.contains(&(expr_idx, single_arena_ptr));
         let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
             prewarmed_type_params
                 .get(&def_id)
@@ -1553,11 +1556,22 @@ impl<'a> CheckerState<'a> {
                         })
                 };
 
-                let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
-                    computed_names.get(&expr_idx).copied()
-                };
-                let computed_symbol_name_resolver =
-                    |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
+                // Arena-aware resolvers: the key is (NodeIndex, arena_ptr). In
+                // lower_merged_interface_declarations_with_symbol, each declaration
+                // is lowered with its own NodeArena via TypeLowering::with_arena(),
+                // so self.arena at resolver call time IS the correct decl_arena.
+                let computed_name_resolver_with_arena =
+                    |expr_idx: NodeIndex,
+                     arena: *const tsz_parser::parser::node::NodeArena|
+                     -> Option<tsz_common::Atom> {
+                        computed_names.get(&(expr_idx, arena as usize)).copied()
+                    };
+                let computed_symbol_name_resolver_with_arena =
+                    |expr_idx: NodeIndex,
+                     arena: *const tsz_parser::parser::node::NodeArena|
+                     -> bool {
+                        computed_symbol_names.contains(&(expr_idx, arena as usize))
+                    };
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
                     prewarmed_lazy_type_params
                         .get(&def_id)
@@ -1574,8 +1588,10 @@ impl<'a> CheckerState<'a> {
                 .with_type_param_bindings(type_param_bindings)
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver)
-                .with_computed_name_resolver(&computed_name_resolver)
-                .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
+                .with_computed_name_resolver_with_arena(&computed_name_resolver_with_arena)
+                .with_computed_symbol_name_resolver_with_arena(
+                    &computed_symbol_name_resolver_with_arena,
+                )
                 .with_preferred_self_reference(
                     symbol.escaped_name.clone(),
                     self.ctx.get_or_create_def_id(sym_id),

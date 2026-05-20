@@ -58,9 +58,19 @@ pub struct TypeLowering<'a> {
     /// expressions (e.g., `[k]` where k is a unique symbol) to property name atoms.
     /// Used when the lowering can't determine the name from AST alone.
     pub(super) computed_name_resolver: Option<&'a NodeIndexResolver<'a, Atom>>,
+    /// Arena-aware variant of `computed_name_resolver`. When set, receives
+    /// `(expr_idx, arena_ptr)` so the resolver can distinguish the same `NodeIndex`
+    /// value from different arenas (cross-arena merged-interface lowering).
+    /// Takes precedence over `computed_name_resolver` when both are set.
+    pub(super) computed_name_resolver_with_arena:
+        Option<&'a dyn Fn(NodeIndex, *const NodeArena) -> Option<Atom>>,
     /// Optional metadata resolver for computed property expressions whose resolved
     /// property name came from a symbol-valued computed name.
     pub(super) computed_symbol_name_resolver: Option<&'a dyn Fn(NodeIndex) -> bool>,
+    /// Arena-aware variant of `computed_symbol_name_resolver`. Takes precedence
+    /// over `computed_symbol_name_resolver` when both are set.
+    pub(super) computed_symbol_name_resolver_with_arena:
+        Option<&'a dyn Fn(NodeIndex, *const NodeArena) -> bool>,
     /// Optional resolver for lazy type parameter metadata. This is used when
     /// a lowered lazy reference omits type arguments but all parameters have defaults.
     pub(super) lazy_type_params_resolver: Option<&'a LazyTypeParamsResolver<'a>>,
@@ -370,7 +380,9 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: resolvers.def_id_resolver,
             value_resolver: resolvers.value_resolver,
             computed_name_resolver: None,
+            computed_name_resolver_with_arena: None,
             computed_symbol_name_resolver: None,
+            computed_symbol_name_resolver_with_arena: None,
             lazy_type_params_resolver: None,
             builtin_iterator_return_type: None,
             prefer_name_def_id_resolution: false,
@@ -484,7 +496,9 @@ impl<'a> TypeLowering<'a> {
             def_id_resolver: self.def_id_resolver,
             value_resolver: self.value_resolver,
             computed_name_resolver: self.computed_name_resolver,
+            computed_name_resolver_with_arena: self.computed_name_resolver_with_arena,
             computed_symbol_name_resolver: self.computed_symbol_name_resolver,
+            computed_symbol_name_resolver_with_arena: self.computed_symbol_name_resolver_with_arena,
             lazy_type_params_resolver: self.lazy_type_params_resolver,
             builtin_iterator_return_type: self.builtin_iterator_return_type,
             prefer_name_def_id_resolution: self.prefer_name_def_id_resolution,
@@ -746,12 +760,35 @@ impl<'a> TypeLowering<'a> {
         self
     }
 
+    /// Arena-aware computed property name resolver. Receives `(expr_idx,
+    /// arena_ptr)` where `arena_ptr` is the currently-active declaration
+    /// arena. Use this instead of `with_computed_name_resolver` when
+    /// processing cross-arena merged interfaces, where the same `NodeIndex`
+    /// value can refer to different nodes in different arenas.
+    pub fn with_computed_name_resolver_with_arena(
+        mut self,
+        resolver: &'a dyn Fn(NodeIndex, *const NodeArena) -> Option<Atom>,
+    ) -> Self {
+        self.computed_name_resolver_with_arena = Some(resolver);
+        self
+    }
+
     /// Set metadata for computed property names that are symbol-valued.
     pub fn with_computed_symbol_name_resolver(
         mut self,
         resolver: &'a dyn Fn(NodeIndex) -> bool,
     ) -> Self {
         self.computed_symbol_name_resolver = Some(resolver);
+        self
+    }
+
+    /// Arena-aware variant of `with_computed_symbol_name_resolver`. Receives
+    /// `(expr_idx, arena_ptr)` alongside the node index.
+    pub fn with_computed_symbol_name_resolver_with_arena(
+        mut self,
+        resolver: &'a dyn Fn(NodeIndex, *const NodeArena) -> bool,
+    ) -> Self {
+        self.computed_symbol_name_resolver_with_arena = Some(resolver);
         self
     }
 
@@ -2422,8 +2459,15 @@ impl<'a> TypeLowering<'a> {
                 return Some(self.interner.intern_string(&symbol_name));
             }
             // Try the computed name resolver for user-defined computed properties
-            // (e.g., [k] where k is a unique symbol variable)
-            if let Some(resolver) = self.computed_name_resolver
+            // (e.g., [k] where k is a unique symbol variable). The arena-aware
+            // variant takes precedence: it distinguishes the same NodeIndex value
+            // across different arenas (cross-arena merged-interface lowering).
+            let arena_ptr: *const NodeArena = self.arena;
+            if let Some(resolver) = self.computed_name_resolver_with_arena
+                && let Some(name) = resolver(computed.expression, arena_ptr)
+            {
+                return Some(name);
+            } else if let Some(resolver) = self.computed_name_resolver
                 && let Some(name) = resolver(computed.expression)
             {
                 return Some(name);
@@ -2458,6 +2502,10 @@ impl<'a> TypeLowering<'a> {
             .is_some()
         {
             return true;
+        }
+        let arena_ptr: *const NodeArena = self.arena;
+        if let Some(resolver) = self.computed_symbol_name_resolver_with_arena {
+            return resolver(computed.expression, arena_ptr);
         }
         self.computed_symbol_name_resolver
             .is_some_and(|resolver| resolver(computed.expression))

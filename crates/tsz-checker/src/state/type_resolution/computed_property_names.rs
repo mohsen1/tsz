@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn precompute_computed_property_names(
         &mut self,
         declarations: &[NodeIndex],
-    ) -> rustc_hash::FxHashMap<NodeIndex, tsz_common::Atom> {
+    ) -> rustc_hash::FxHashMap<(NodeIndex, usize), tsz_common::Atom> {
         let declarations_with_arenas: Vec<_> = declarations
             .iter()
             .map(|&decl_idx| (decl_idx, self.ctx.arena))
@@ -84,9 +84,10 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn precompute_computed_property_names_in_arenas(
         &mut self,
         declarations: &[(NodeIndex, &NodeArena)],
-    ) -> rustc_hash::FxHashMap<NodeIndex, tsz_common::Atom> {
+    ) -> rustc_hash::FxHashMap<(NodeIndex, usize), tsz_common::Atom> {
         let mut map = rustc_hash::FxHashMap::default();
         for &(decl_idx, decl_arena) in declarations {
+            let arena_key = decl_arena as *const NodeArena as usize;
             let Some(node) = decl_arena.get(decl_idx) else {
                 continue;
             };
@@ -117,7 +118,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(name) =
                     self.resolve_computed_property_name_in_arena(decl_arena, name_idx)
                 {
-                    map.insert(computed.expression, self.ctx.types.intern_string(&name));
+                    map.insert(
+                        (computed.expression, arena_key),
+                        self.ctx.types.intern_string(&name),
+                    );
                 }
             }
         }
@@ -127,7 +131,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn precompute_symbol_named_computed_property_names(
         &mut self,
         declarations: &[NodeIndex],
-    ) -> rustc_hash::FxHashSet<NodeIndex> {
+    ) -> rustc_hash::FxHashSet<(NodeIndex, usize)> {
         let declarations_with_arenas: Vec<_> = declarations
             .iter()
             .map(|&decl_idx| (decl_idx, self.ctx.arena))
@@ -138,9 +142,10 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn precompute_symbol_named_computed_property_names_in_arenas(
         &mut self,
         declarations: &[(NodeIndex, &NodeArena)],
-    ) -> rustc_hash::FxHashSet<NodeIndex> {
+    ) -> rustc_hash::FxHashSet<(NodeIndex, usize)> {
         let mut set = rustc_hash::FxHashSet::default();
         for &(decl_idx, decl_arena) in declarations {
+            let arena_key = decl_arena as *const NodeArena as usize;
             let Some(node) = decl_arena.get(decl_idx) else {
                 continue;
             };
@@ -171,7 +176,7 @@ impl<'a> CheckerState<'a> {
                     .resolve_computed_property_name_in_arena(decl_arena, name_idx)
                     .is_some_and(|name| name.starts_with("__unique_"))
                 {
-                    set.insert(computed.expression);
+                    set.insert((computed.expression, arena_key));
                 }
             }
         }
