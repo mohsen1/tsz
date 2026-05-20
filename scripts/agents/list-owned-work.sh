@@ -26,6 +26,11 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
+if [[ $# -gt 1 ]]; then
+  echo "Unknown option: $2 (try --help)" >&2
+  exit 2
+fi
+
 if [[ $# -eq 0 || "${1:-}" == "--all" ]]; then
   SELECTED=("${AGENTS[@]}")
 else
