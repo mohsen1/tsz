@@ -213,8 +213,6 @@ pub use visitors::visitor::{
 };
 
 pub use caches::db::{QueryDatabase, TypeDatabase};
-pub use canonicalize::Canonicalizer;
-pub use classes::inheritance::InheritanceGraph;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use contextual::{
