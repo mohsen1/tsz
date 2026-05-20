@@ -349,32 +349,61 @@ impl<'a> CheckerContext<'a> {
     /// `SymbolId` of the standard-library `Promise` declaration, if loaded.
     ///
     /// Looks only at actual lib contexts. Cloned lib symbols are handled by
-    /// `sym_id_is_lib_promise`, which combines provenance with the well-known
+    /// `sym_id_is_current_cloned_lib_promise`, which requires the symbol id to
+    /// be resolved through this file's binder before matching the well-known
     /// global name.
     pub fn lib_promise_sym_id(&self) -> Option<SymbolId> {
         self.actual_lib_global_type_symbol_id("Promise")
     }
 
+    /// `Lazy(DefId)` for the standard-library `Promise` declaration, if loaded.
+    ///
+    /// Use this when constructing `Promise<T>` types. It canonicalizes the
+    /// per-lib symbol id through the well-known global name before creating the
+    /// lazy reference, avoiding numeric `SymbolId` collisions across lib arenas.
+    pub fn lib_promise_type_ref(&self) -> Option<tsz_solver::TypeId> {
+        let sym_id = self.actual_lib_global_type_symbol_id("Promise")?;
+        let def_id = self.get_canonical_lib_def_id("Promise", sym_id);
+        Some(self.types.lazy(def_id))
+    }
+
     /// True when `sym_id` is the standard-library `Promise` symbol.
     pub fn sym_id_is_lib_promise(&self, sym_id: SymbolId) -> bool {
         self.lib_promise_sym_id() == Some(sym_id)
-            || self.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                symbol.escaped_name.as_str() == "Promise"
-                    && self.symbol_is_from_actual_or_cloned_lib(sym_id)
-            })
+    }
+
+    /// True when `sym_id` is the current binder's cloned standard-library
+    /// `Promise` symbol.
+    pub fn sym_id_is_current_cloned_lib_promise(&self, sym_id: SymbolId) -> bool {
+        self.binder.lib_symbol_ids.contains(&sym_id)
+            && self
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name.as_str() == "Promise")
     }
 
     fn sym_id_is_lib_promise_like(&self, sym_id: SymbolId) -> bool {
         self.actual_lib_global_type_symbol_id("PromiseLike") == Some(sym_id)
-            || self.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                symbol.escaped_name.as_str() == "PromiseLike"
-                    && self.symbol_is_from_actual_or_cloned_lib(sym_id)
-            })
+    }
+
+    fn sym_id_is_current_cloned_lib_promise_like(&self, sym_id: SymbolId) -> bool {
+        self.binder.lib_symbol_ids.contains(&sym_id)
+            && self
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name.as_str() == "PromiseLike")
     }
 
     /// True when `sym_id` is the standard-library `Promise` or `PromiseLike` symbol.
     pub fn sym_id_is_lib_promise_or_promise_like(&self, sym_id: SymbolId) -> bool {
         self.sym_id_is_lib_promise(sym_id) || self.sym_id_is_lib_promise_like(sym_id)
+    }
+
+    /// True when `sym_id` is a current-binder clone of the standard-library
+    /// `Promise` or `PromiseLike` symbol.
+    pub fn sym_id_is_current_cloned_lib_promise_or_promise_like(&self, sym_id: SymbolId) -> bool {
+        self.sym_id_is_current_cloned_lib_promise(sym_id)
+            || self.sym_id_is_current_cloned_lib_promise_like(sym_id)
     }
 
     /// Structural predicate for suppressing the simple-object
