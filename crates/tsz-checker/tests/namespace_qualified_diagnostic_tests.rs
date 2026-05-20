@@ -59,6 +59,100 @@ let useIt: T;
 }
 
 #[test]
+fn typeof_missing_namespace_value_member_reports_ts2339() {
+    let source = r#"
+namespace Ns {
+    export const value = 1;
+}
+
+type T = typeof Ns.Missing;
+let useIt: T;
+"#;
+    let diags = get_diagnostics(source);
+
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2339 && message == "Property 'Missing' does not exist on type 'typeof Ns'."
+        }),
+        "`typeof Ns.Missing` should use value-space TS2339, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2694),
+        "`typeof Ns.Missing` should not report type-space TS2694, got: {diags:?}"
+    );
+}
+
+#[test]
+fn import_equals_to_non_exported_namespace_member_reports_ts2694() {
+    // `import X = NS.Y` over a local namespace must keep the
+    // exported-member diagnostic (TS2694/TS2724), not the typeof-only
+    // TS2339 path that `typeof Ns.Missing` uses.
+    let source = r#"
+namespace Ns {
+    export class Exported {}
+    class NotExported {}
+}
+import Alias = Ns.NotExported;
+var x: Alias;
+"#;
+    let diags = get_diagnostics(source);
+
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2694 || *code == 2724),
+        "`import Alias = Ns.NotExported` should report TS2694/TS2724, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2339),
+        "import-equals path must not emit typeof-only TS2339, got: {diags:?}"
+    );
+}
+
+#[test]
+fn import_equals_uses_iteration_var_name_independent_rule() {
+    // Verify the fix isn't keyed on any user-chosen identifier name —
+    // swapping `Ns`/`NotExported` for unrelated names still yields the
+    // exported-member diagnostic, not TS2339.
+    let source = r#"
+namespace Outer {
+    export class Public {}
+    class Private {}
+}
+import Q = Outer.Private;
+var y: Q;
+"#;
+    let diags = get_diagnostics(source);
+
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2694 || *code == 2724),
+        "import-equals over local namespace should report TS2694/TS2724 regardless of identifier names, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2339),
+        "import-equals path must not emit typeof-only TS2339, got: {diags:?}"
+    );
+}
+
+#[test]
+fn plain_missing_namespace_type_member_still_reports_ts2694() {
+    let source = r#"
+namespace Ns {
+    export const value = 1;
+}
+
+type T = Ns.Missing;
+let useIt: T;
+"#;
+    let diags = get_diagnostics(source);
+
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2694 && message == "Namespace 'Ns' has no exported member 'Missing'."
+        }),
+        "`Ns.Missing` in type space should still report TS2694, got: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2741_qualifies_both_sides_when_classes_collide_across_namespaces() {
     // Two namespaces each declare a class named `A` with different required
     // properties. The assignment mentions both via qualified names, and the
