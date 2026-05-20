@@ -316,6 +316,9 @@ mod ts2498_tests;
 #[path = "../tests/ts2540_readonly_tests.rs"]
 mod ts2540_readonly_tests;
 #[cfg(test)]
+#[path = "../tests/ts2542_readonly_index_coemission_tests.rs"]
+mod ts2542_readonly_index_coemission_tests;
+#[cfg(test)]
 #[path = "../tests/ts2558_new_type_args_tests.rs"]
 mod ts2558_new_type_args_tests;
 #[cfg(test)]

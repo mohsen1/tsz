@@ -253,6 +253,10 @@ impl<'a> ElementAccessEvaluator<'a> {
                 }
                 false
             }
+            Some(TypeData::ReadonlyType(inner)) => {
+                // Readonly-wrapping does not add or remove an index signature.
+                self.should_report_no_index_signature(inner, index_type)
+            }
             _ => false,
         }
     }
