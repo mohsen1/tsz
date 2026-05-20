@@ -15,24 +15,154 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let (alias_name, name_type) = Self::single_string_literal_alias_application(type_text)?;
         let alias_type_node = self.find_type_alias_type_node_in_arena(source_arena, alias_name)?;
-        let alias_text = self
-            .source_slice_from_arena(source_arena, alias_type_node)
-            .or_else(|| self.emit_type_node_text_from_arena(source_arena, alias_type_node))?;
-        if !alias_text.contains("readonly name:")
-            || !alias_text.contains("readonly callback:")
-            || !alias_text.contains("DocumentEventMap")
-        {
-            return None;
-        }
+        let event_map_name = Self::event_map_name_for_mapped_indexed_discriminant_alias(
+            source_arena,
+            alias_type_node,
+            "name",
+            "callback",
+        )?;
         let callback_param_type = self
             .call_object_callback_parameter_type_text(call)
             .or_else(|| {
                 let event_name = name_type.trim_matches('"');
-                self.global_interface_member_type_text("DocumentEventMap", event_name)
+                self.global_interface_member_type_text(&event_map_name, event_name)
             })?;
         Some(format!(
             "{{\n    readonly name: {name_type};\n    readonly once?: boolean;\n    readonly callback: (ev: {callback_param_type}) => void;\n}}"
         ))
+    }
+
+    fn event_map_name_for_mapped_indexed_discriminant_alias(
+        source_arena: &NodeArena,
+        alias_type_node: NodeIndex,
+        discriminant_name: &str,
+        callback_name: &str,
+    ) -> Option<String> {
+        let indexed = source_arena
+            .get(alias_type_node)
+            .and_then(|node| source_arena.get_indexed_access_type(node))?;
+        let mapped = source_arena
+            .get(indexed.object_type)
+            .and_then(|node| source_arena.get_mapped_type(node))?;
+        let type_param = source_arena.get_type_parameter_at(mapped.type_parameter)?;
+        let mapped_key_name =
+            Self::identifier_or_type_reference_name(source_arena, type_param.name)?;
+        let mapped_constraint_name =
+            Self::identifier_or_type_reference_name(source_arena, type_param.constraint)?;
+        if Self::identifier_or_type_reference_name(source_arena, indexed.index_type).as_deref()
+            != Some(mapped_constraint_name.as_str())
+            || !Self::type_node_has_discriminant_property(
+                source_arena,
+                mapped.type_node,
+                discriminant_name,
+                &mapped_key_name,
+            )
+        {
+            return None;
+        }
+        Self::type_node_callback_event_map_name(
+            source_arena,
+            mapped.type_node,
+            callback_name,
+            &mapped_key_name,
+        )
+    }
+
+    fn type_node_has_discriminant_property(
+        source_arena: &NodeArena,
+        type_node: NodeIndex,
+        discriminant_name: &str,
+        discriminant_type_name: &str,
+    ) -> bool {
+        let Some(type_node_data) = source_arena.get(type_node) else {
+            return false;
+        };
+        let Some(type_literal) = source_arena.get_type_literal(type_node_data) else {
+            return false;
+        };
+        type_literal
+            .members
+            .nodes
+            .iter()
+            .copied()
+            .any(|member_idx| {
+                let Some(signature) = source_arena
+                    .get(member_idx)
+                    .and_then(|member| source_arena.get_signature(member))
+                else {
+                    return false;
+                };
+                Self::identifier_or_type_reference_name(source_arena, signature.type_annotation)
+                    .as_deref()
+                    == Some(discriminant_type_name)
+                    && source_arena
+                        .get(signature.name)
+                        .and_then(|name_node| source_arena.get_identifier(name_node))
+                        .is_some_and(|ident| ident.escaped_text == discriminant_name)
+            })
+    }
+
+    fn type_node_callback_event_map_name(
+        source_arena: &NodeArena,
+        type_node: NodeIndex,
+        callback_name: &str,
+        index_type_name: &str,
+    ) -> Option<String> {
+        let type_literal = source_arena
+            .get(type_node)
+            .and_then(|node| source_arena.get_type_literal(node))?;
+        for member_idx in type_literal.members.nodes.iter().copied() {
+            let signature = source_arena
+                .get(member_idx)
+                .and_then(|member| source_arena.get_signature(member))?;
+            if source_arena
+                .get(signature.name)
+                .and_then(|name_node| source_arena.get_identifier(name_node))
+                .is_none_or(|ident| ident.escaped_text != callback_name)
+            {
+                continue;
+            }
+            let function_type = source_arena
+                .get(signature.type_annotation)
+                .and_then(|node| source_arena.get_function_type(node))?;
+            let first_param_idx = *function_type.parameters.nodes.first()?;
+            let first_param = source_arena
+                .get(first_param_idx)
+                .and_then(|node| source_arena.get_parameter(node))?;
+            let indexed = source_arena
+                .get(first_param.type_annotation)
+                .and_then(|node| source_arena.get_indexed_access_type(node))?;
+            if Self::identifier_or_type_reference_name(source_arena, indexed.index_type).as_deref()
+                != Some(index_type_name)
+            {
+                continue;
+            }
+            let map_name = source_arena
+                .get(indexed.object_type)
+                .and_then(|node| source_arena.get_type_ref(node))
+                .and_then(|type_ref| source_arena.get(type_ref.type_name))
+                .and_then(|name_node| source_arena.get_identifier(name_node))
+                .map(|ident| ident.escaped_text.clone())?;
+            return Some(map_name);
+        }
+        None
+    }
+
+    fn identifier_or_type_reference_name(
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        let type_node = source_arena.get(type_idx)?;
+        if type_node.kind == SyntaxKind::Identifier as u16 {
+            return source_arena
+                .get_identifier(type_node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+        let type_ref = source_arena.get_type_ref(type_node)?;
+        source_arena
+            .get(type_ref.type_name)
+            .and_then(|name_node| source_arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.clone())
     }
 
     pub(in crate::declaration_emitter) fn single_string_literal_alias_application(

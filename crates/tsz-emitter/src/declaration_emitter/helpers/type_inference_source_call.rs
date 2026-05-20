@@ -196,6 +196,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
         type_text = Self::replace_whole_words_in_text(&type_text, &substitutions);
         type_text = Self::simplify_string_literal_template_type_text(&type_text);
+        if let Some(expanded) =
+            self.event_like_correlated_alias_return_text(source_arena, &type_text, call)
+        {
+            type_text = expanded;
+        }
         type_text = Self::expand_literal_key_mapped_type_text(&type_text).unwrap_or(type_text);
         if type_param_names
             .iter()
