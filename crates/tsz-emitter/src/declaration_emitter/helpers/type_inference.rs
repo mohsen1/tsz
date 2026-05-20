@@ -254,6 +254,13 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     ReturnPart::Verbatim(member_idx) => {
                         let member_node = self.arena.get(*member_idx)?;
+                        if member_node.kind == syntax_kind_ext::TYPE_LITERAL
+                            && let Some(type_text) =
+                                self.emit_type_node_text_from_arena(self.arena, *member_idx)
+                        {
+                            parts.push(type_text.trim().to_string());
+                            continue;
+                        }
                         let raw = self.get_source_slice(member_node.pos, member_node.end)?;
                         // The parser's `end` can extend past the closing
                         // delimiter into the next significant token (e.g.

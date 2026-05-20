@@ -63,9 +63,17 @@ impl<'a> CheckerState<'a> {
         &mut self,
         arg_idx: tsz_parser::parser::NodeIndex,
     ) -> Option<TypeId> {
+        let name = self.type_arg_identifier_name(arg_idx)?;
+        self.hidden_conditional_infer_constraint_type_for_name(arg_idx, &name)
+    }
+
+    pub(super) fn hidden_conditional_infer_constraint_type_for_name(
+        &mut self,
+        arg_idx: tsz_parser::parser::NodeIndex,
+        name: &str,
+    ) -> Option<TypeId> {
         use tsz_parser::parser::syntax_kind_ext;
 
-        let name = self.type_arg_identifier_name(arg_idx)?;
         let arg_node = self.ctx.arena.get(arg_idx)?;
         let mut current = arg_idx;
         for _ in 0..30 {
@@ -86,7 +94,7 @@ impl<'a> CheckerState<'a> {
                     let mut constraints = Vec::new();
                     self.collect_infer_constraints_from_extends_type(
                         cond.extends_type,
-                        &name,
+                        name,
                         &mut constraints,
                     );
                     constraints.retain(|&constraint| {
