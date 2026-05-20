@@ -84,11 +84,29 @@ pub trait TypePredicateCache {
     fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
 }
 
+/// Narrow signal for tuple-size overflow discovered during solver evaluation.
+///
+/// Keeping this out of [`TypeDatabase`] avoids growing the general storage
+/// interface for a diagnostic side channel used by large tuple synthesis.
+pub trait TypeTupleLimitSignal {
+    /// Atomically read and clear the "tuple too large" flag.
+    ///
+    /// Returns `true` if a tuple spread was aborted because the synthesized
+    /// element count would exceed `MAX_REPRESENTABLE_TUPLE_LENGTH`. The checker
+    /// uses this to emit `TS2799` instead of `TS2589`.
+    fn take_tuple_too_large(&self) -> bool {
+        false
+    }
+
+    /// Mark that a tuple spread synthesis was aborted due to the element-count limit.
+    fn mark_tuple_too_large(&self) {}
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
 /// into concrete storage structures directly.
-pub trait TypeDatabase: TypePredicateCache {
+pub trait TypeDatabase: TypePredicateCache + TypeTupleLimitSignal {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
     fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {
@@ -264,18 +282,6 @@ pub trait TypeDatabase: TypePredicateCache {
     /// complexity limit during evaluation rather than initial construction.
     fn mark_union_too_complex(&self) {}
 
-    /// Atomically read and clear the "tuple too large" flag.
-    ///
-    /// Returns `true` if a tuple spread was aborted because the synthesized element
-    /// count would exceed `MAX_REPRESENTABLE_TUPLE_LENGTH`. The checker uses this
-    /// to emit TS2799 instead of TS2589.
-    fn take_tuple_too_large(&self) -> bool {
-        false
-    }
-
-    /// Mark that a tuple spread synthesis was aborted due to the element-count limit.
-    fn mark_tuple_too_large(&self) {}
-
     /// Get the base class type for a symbol (class/interface).
     /// Returns the `TypeId` of the extends clause, or None if the symbol doesn't extend anything.
     /// This is used by the BCT algorithm to find common base classes.
@@ -391,6 +397,16 @@ impl TypePredicateCache for TypeInterner {
 
     fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
         self.contains_type_query_cache.insert(type_id, result);
+    }
+}
+
+impl TypeTupleLimitSignal for TypeInterner {
+    fn take_tuple_too_large(&self) -> bool {
+        Self::take_tuple_too_large(self)
+    }
+
+    fn mark_tuple_too_large(&self) {
+        self.set_tuple_too_large();
     }
 }
 
@@ -710,14 +726,6 @@ impl TypeDatabase for TypeInterner {
 
     fn mark_union_too_complex(&self) {
         self.set_union_too_complex();
-    }
-
-    fn take_tuple_too_large(&self) -> bool {
-        Self::take_tuple_too_large(self)
-    }
-
-    fn mark_tuple_too_large(&self) {
-        self.set_tuple_too_large();
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
