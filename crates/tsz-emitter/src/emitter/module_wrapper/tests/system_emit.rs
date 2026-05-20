@@ -25,6 +25,60 @@ fn emit_system_es2015(source: &str) -> String {
 }
 
 #[test]
+fn system_dotted_namespace_export_folds_outer_namespace_only() {
+    let output = emit_system_es2015(
+        r#""use strict";
+export namespace A.B.C {
+    export function foo() {}
+}
+
+export function bar() {
+    return A.B.C.foo();
+}
+"#,
+    );
+    let expected = r#"System.register([], function (exports_1, context_1) {
+    "use strict";
+    var A;
+    var __moduleName = context_1 && context_1.id;
+    function bar() {
+        return A.B.C.foo();
+    }
+    exports_1("bar", bar);
+    return {
+        setters: [],
+        execute: function () {
+            (function (A) {
+                var B;
+                (function (B) {
+                    var C;
+                    (function (C) {
+                        function foo() { }
+                        C.foo = foo;
+                    })(C = B.C || (B.C = {}));
+                })(B = A.B || (A.B = {}));
+            })(A || (exports_1("A", A = {})));
+        }
+    };
+});
+"#;
+
+    assert_eq!(output, expected);
+    assert!(
+        output.contains("var A;\n    var __moduleName = context_1 && context_1.id;"),
+        "System output should hoist the outer dotted namespace binding before functions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"bar\", bar);"),
+        "System output should export the top-level function outside execute.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("})(A || (exports_1(\"A\", A = {})));"),
+        "Dotted exported namespace should fold only the outer namespace into the System export call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_es5_default_class_export_uses_hoisted_assignment_iife() {
     let source = "export default class A { method() { return 42; } }\n";
     let (parser, root) = parse_test_source(source);
