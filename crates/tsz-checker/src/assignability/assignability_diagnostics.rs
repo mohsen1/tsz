@@ -964,7 +964,9 @@ impl<'a> CheckerState<'a> {
                 let structural_target =
                     crate::query_boundaries::common::enum_member_type(self.ctx.types, target)
                         .unwrap_or(target);
-                return Some(self.is_assignable_to(source_literal, structural_target));
+                return Some(
+                    self.diagnostic_relation_boolean_guard(source_literal, structural_target),
+                );
             }
             return None;
         }
