@@ -873,6 +873,17 @@ impl<'a> CheckerState<'a> {
                             source_prop.name,
                             nested_target,
                         );
+                        // When the resolved property type is a direct recursive
+                        // self-reference to one of the intersection members (e.g.
+                        // `User.parent: User` in `User & { admin: boolean }`), widen it
+                        // to the full outer intersection so nested literals are checked
+                        // against all members, not just the recursive member alone.
+                        let nested_target =
+                            tsz_solver::utils::widen_if_recursive_intersection_member(
+                                self.ctx.types,
+                                nested_target,
+                                resolved_target,
+                            );
                         if self.check_nested_object_literal_excess_properties(
                             source_prop.name,
                             Some(nested_target),
@@ -2823,6 +2834,92 @@ const a: Attribute = {
             ts2353[0].message_text.contains("'autoIncrement'"),
             "TS2353 should mention 'autoIncrement', got: {}",
             ts2353[0].message_text
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Recursive intersection excess-property tests (issue #8687)
+    //
+    // Structural rule: when `interface A { p?: A }` is a member of `A & B`,
+    // a nested literal for `p` must be checked against `A & B`, not just `A`.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ts2353_no_false_positive_for_recursive_intersection_nested_literal() {
+        // `parent` is `User | undefined` in User, but the target is `UserGroup`
+        // (= User & { admin: boolean }).  A nested literal that includes `admin`
+        // must NOT trigger TS2353.
+        let diags = check_source_diagnostics(
+            r#"
+interface User { name: string; parent?: User; }
+type UserGroup = User & { admin: boolean; }
+const u: UserGroup = { name: "Alice", admin: true, parent: { name: "Bob", admin: false } };
+"#,
+        );
+        let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+        assert!(
+            ts2353.is_empty(),
+            "expected no TS2353 for valid nested intersection literal, got: {ts2353:?}"
+        );
+    }
+
+    #[test]
+    fn ts2353_no_false_positive_recursive_intersection_renamed_type_param() {
+        // Variant with differently-named interface to prove the fix is not
+        // keyed on the name "User".
+        let diags = check_source_diagnostics(
+            r#"
+interface Node { value: number; child?: Node; }
+type AnnotatedNode = Node & { label: string; }
+const n: AnnotatedNode = { value: 1, label: "root", child: { value: 2, label: "leaf" } };
+"#,
+        );
+        let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+        assert!(
+            ts2353.is_empty(),
+            "expected no TS2353 for valid recursive annotated node, got: {ts2353:?}"
+        );
+    }
+
+    #[test]
+    fn ts2353_still_reports_genuinely_excess_property_on_recursive_intersection() {
+        // Even with a recursive intersection target, a truly extra property
+        // (one that's in neither member) must still cause TS2353.
+        let diags = check_source_diagnostics(
+            r#"
+interface User { name: string; parent?: User; }
+type UserGroup = User & { admin: boolean; }
+const u: UserGroup = { name: "Alice", admin: true, parent: { name: "Bob", admin: false, extra: 99 } };
+"#,
+        );
+        let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+        assert_eq!(
+            ts2353.len(),
+            1,
+            "expected exactly one TS2353 for 'extra', got: {ts2353:?}"
+        );
+        assert!(
+            ts2353[0].message_text.contains("'extra'"),
+            "TS2353 should mention 'extra', got: {}",
+            ts2353[0].message_text
+        );
+    }
+
+    #[test]
+    fn ts2353_no_false_positive_recursive_intersection_via_type_alias() {
+        // Same structural pattern through an explicit type alias rather than a
+        // direct interface reference, to confirm alias indirection is handled.
+        let diags = check_source_diagnostics(
+            r#"
+interface Category { name: string; parent?: Category; }
+type TaggedCategory = Category & { tag: string; }
+const c: TaggedCategory = { name: "root", tag: "top", parent: { name: "child", tag: "mid" } };
+"#,
+        );
+        let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+        assert!(
+            ts2353.is_empty(),
+            "expected no TS2353 for valid tagged recursive category, got: {ts2353:?}"
         );
     }
 }
