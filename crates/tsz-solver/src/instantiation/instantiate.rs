@@ -282,11 +282,22 @@ pub struct TypeInstantiator<'a> {
     depth: u32,
     max_depth: u32,
     depth_exceeded: bool,
+    /// Cached: `true` when every key in `substitution.map` is a solver
+    /// inference variable (`__infer_*`). The substitution is immutable for the
+    /// lifetime of the instantiator, so this is computed once at construction.
+    substitution_is_inference_only: bool,
 }
 
 impl<'a> TypeInstantiator<'a> {
     /// Create a new instantiator.
     pub fn new(interner: &'a dyn TypeDatabase, substitution: &'a TypeSubstitution) -> Self {
+        let substitution_is_inference_only = !substitution.map.is_empty()
+            && substitution.map.keys().all(|key| {
+                interner
+                    .resolve_atom_ref(*key)
+                    .as_ref()
+                    .starts_with("__infer_")
+            });
         TypeInstantiator {
             interner,
             substitution,
@@ -302,11 +313,31 @@ impl<'a> TypeInstantiator<'a> {
             depth: 0,
             max_depth: MAX_INSTANTIATION_DEPTH,
             depth_exceeded: false,
+            substitution_is_inference_only,
         }
     }
 
     fn is_shadowed(&self, name: Atom) -> bool {
         self.shadowed.contains(&name)
+    }
+
+    /// Whether the unmapped-TypeParameter constraint-fallback at
+    /// `instantiate_inner` is safe to apply for `name`.
+    ///
+    /// When the substitution binds only inference variables (`__infer_*`) and
+    /// `name` is user-defined, the parameter belongs to a different generic
+    /// scope, so walking its constraint with this foreign substitution would
+    /// expand `T[K]`-style constraints into unions and collapse
+    /// `keyof (A | B)` to `never` (#8725). In that case the parameter must
+    /// stay put.
+    fn should_apply_constraint_fallback(&self, name: Atom) -> bool {
+        if !self.substitution_is_inference_only {
+            return true;
+        }
+        self.interner
+            .resolve_atom_ref(name)
+            .as_ref()
+            .starts_with("__infer_")
     }
 
     /// Extract the element type from an array-like type (Array, ReadonlyType(Array),
@@ -734,7 +765,9 @@ impl<'a> TypeInstantiator<'a> {
                     );
                     substituted
                 } else {
-                    if !self.preserve_unsubstituted_type_params {
+                    if !self.preserve_unsubstituted_type_params
+                        && self.should_apply_constraint_fallback(info.name)
+                    {
                         // No direct substitution found. If the type parameter has a constraint
                         // that references substituted type parameters, instantiate the constraint.
                         // Example: Actions extends ActionsObject<State>, with {State: number}

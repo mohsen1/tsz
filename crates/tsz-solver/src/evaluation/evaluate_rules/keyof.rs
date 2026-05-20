@@ -290,6 +290,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(TypeData::TemplateLiteral(_)) => {
                 return self.apparent_primitive_keyof(IntrinsicKind::String);
             }
+            // Generic indexed-access operand `T[K]` where the *index* is generic
+            // must keep `keyof` deferred. Eagerly resolving `T[K]` through K's
+            // constraint expands to a union of T's value shapes (e.g. `{a1}|{b1}`),
+            // and `keyof (A | B) = keyof A & keyof B` collapses disjoint key
+            // sets to `never` — exposing user code to spurious TS2345 (#8725).
+            //
+            // tsc keeps `keyof T[K]` as a deferred IndexType whose apparent type
+            // is `string | number | symbol`. We mirror that by returning
+            // `TypeData::KeyOf(operand)` here; downstream relation/apparent-type
+            // paths already handle deferred keyofs.
+            Some(TypeData::IndexAccess(_, index))
+                if crate::type_queries::contains_type_parameters_db(self.interner(), index) =>
+            {
+                return self.interner().keyof(operand);
+            }
             Some(TypeData::Union(_members)) => {
                 let narrowed_operand = crate::type_queries::prune_impossible_object_union_members(
                     self.interner(),
