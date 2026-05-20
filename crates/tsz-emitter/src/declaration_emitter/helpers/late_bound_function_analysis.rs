@@ -904,14 +904,17 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(" {");
         self.write_line();
         self.increase_indent();
-        let has_export_aliases = namespace_members
-            .iter()
-            .any(|member| member.namespace_member_name.is_none());
         let mut export_aliases: Vec<(String, String)> = Vec::new();
         let mut reserved_member_names: FxHashSet<String> = namespace_members
             .iter()
             .filter_map(|member| member.namespace_member_name.clone())
             .collect();
+        // In TS emit, direct-named members get `export var` when reserved-word siblings
+        // require aliasing — so that all accessible properties remain visible as `foo.prop`.
+        let ts_has_aliased_members = !self.source_is_js_file
+            && namespace_members
+                .iter()
+                .any(|member| member.namespace_member_name.is_none());
         let mut synthetic_member_count = 0usize;
         let mut emitted_keyword_export_alias = false;
         for member in namespace_members {
@@ -957,10 +960,7 @@ impl<'a> DeclarationEmitter<'a> {
                 synthetic_name
             };
             self.write_indent();
-            if export_alias.is_none()
-                && has_export_aliases
-                && member.namespace_member_name.is_some()
-            {
+            if ts_has_aliased_members && export_alias.is_none() {
                 self.write("export ");
             }
             if self.source_is_js_file {

@@ -94,12 +94,7 @@ impl<'a> DeclarationEmitter<'a> {
                 (member_text, initializer, local_name, export_alias)
             })
             .collect::<Vec<_>>();
-        let has_export_aliases = planned_members
-            .iter()
-            .any(|(_, _, _, export_alias)| export_alias.is_some());
-
         for (_member_text, initializer, local_name, export_alias) in planned_members {
-            let emit_export = export_alias.is_none() && has_export_aliases;
             if let Some(init_node) = self.arena.get(initializer) {
                 if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                     || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
@@ -108,17 +103,12 @@ impl<'a> DeclarationEmitter<'a> {
                         if let Some(jsdoc) = self.function_like_jsdoc_for_node(initializer) {
                             self.emit_multiline_jsdoc_comment(&jsdoc);
                         }
-                        self.emit_js_namespace_function_member_text(
-                            &local_name,
-                            func,
-                            initializer,
-                            emit_export,
-                        );
+                        self.emit_js_namespace_function_member_text(&local_name, func, initializer);
                     }
                 } else if let Some(type_text) =
                     self.js_namespace_value_member_type_text(initializer)
                 {
-                    self.emit_js_namespace_value_member_text(&local_name, &type_text, emit_export);
+                    self.emit_js_namespace_value_member_text(&local_name, &type_text);
                 }
             }
             if let Some((local_name, exported_name)) = export_alias {
@@ -143,12 +133,8 @@ impl<'a> DeclarationEmitter<'a> {
         name: &str,
         func: &FunctionData,
         initializer: NodeIndex,
-        emit_export: bool,
     ) {
         self.write_indent();
-        if emit_export {
-            self.write("export ");
-        }
         self.write("function ");
         self.write(name);
         if let Some(type_params) = func.type_parameters.as_ref()
@@ -174,16 +160,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
-    fn emit_js_namespace_value_member_text(
-        &mut self,
-        name: &str,
-        type_text: &str,
-        emit_export: bool,
-    ) {
+    fn emit_js_namespace_value_member_text(&mut self, name: &str, type_text: &str) {
         self.write_indent();
-        if emit_export {
-            self.write("export ");
-        }
         self.write("let ");
         self.write(name);
         self.write(": ");
