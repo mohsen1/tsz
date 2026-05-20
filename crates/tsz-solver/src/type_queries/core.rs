@@ -61,6 +61,55 @@ pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     )
 }
 
+/// Check whether a constraint is, or evaluates to, a union whose members all
+/// carry call or construct signatures.
+///
+/// Application aliases such as `ComponentType<any>` can evaluate to unions
+/// whose members are still application-shaped. Evaluate both the constraint and
+/// each union member before deciding, so TS2344 callers can treat the
+/// constraint as callable without owning the structural walk in checker code.
+pub fn constraint_expands_to_callable_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(members) = union_members_or_evaluated_union_members(db, type_id) else {
+        return false;
+    };
+    !members.is_empty()
+        && members
+            .iter()
+            .all(|&member| type_has_call_or_construct_signature_after_eval(db, member))
+}
+
+fn union_members_or_evaluated_union_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<TypeId>> {
+    if let Some(TypeData::Union(list_id)) = db.lookup(type_id) {
+        let members = db.type_list(list_id);
+        return (!members.is_empty()).then(|| members.to_vec());
+    }
+
+    let evaluated = evaluate_type(db, type_id);
+    if evaluated == type_id {
+        return None;
+    }
+    let Some(TypeData::Union(list_id)) = db.lookup(evaluated) else {
+        return None;
+    };
+    let members = db.type_list(list_id);
+    (!members.is_empty()).then(|| members.to_vec())
+}
+
+fn type_has_call_or_construct_signature_after_eval(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_has_call_or_construct_signature(db, type_id) {
+        return true;
+    }
+    let evaluated = evaluate_type(db, type_id);
+    evaluated != type_id && type_has_call_or_construct_signature(db, evaluated)
+}
+
+fn type_has_call_or_construct_signature(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_callable_type(db, type_id) || super::data::get_callable_shape_for_type(db, type_id).is_some()
+}
+
 /// Check if a type has call signatures (not just construct signatures).
 ///
 /// Returns `true` for `Function` types and `Callable` types that have at least
