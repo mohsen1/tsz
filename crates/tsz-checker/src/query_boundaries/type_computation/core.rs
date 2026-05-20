@@ -1,4 +1,5 @@
-use tsz_solver::{NullishFilter, PropertyInfo, TypeDatabase, TypeId, TypeResolver};
+use tsz_solver::narrowing::NullishFilter;
+use tsz_solver::{PropertyInfo, TypeDatabase, TypeId, TypeResolver};
 
 /// Re-export of the solver's binary operation result type.
 ///
@@ -47,7 +48,7 @@ pub(crate) fn write_target_logical_result_type(
     left_type: TypeId,
     right_type: TypeId,
 ) -> Option<WriteTargetLogicalResult> {
-    let ctx = tsz_solver::NarrowingContext::new(db);
+    let ctx = tsz_solver::narrowing::NarrowingContext::new(db);
     let left_result = match operator {
         WriteTargetLogicalOperator::LogicalOr => {
             let truthy_left = ctx.narrow_by_truthiness(left_type);

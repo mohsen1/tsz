@@ -21,9 +21,9 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::NarrowingContext;
 use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
+use tsz_solver::narrowing::NarrowingContext;
 
 impl<'a> CheckerState<'a> {
     /// Merge overflow flags into the checker context (sticky: only ever sets to `true`).

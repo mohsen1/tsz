@@ -509,7 +509,7 @@ pub struct CheckerContext<'a> {
 
     /// Shared cache for narrowing operations (type resolution, property lookup).
     /// Reused across flow analysis passes to prevent O(N^2) behavior in CFA chains.
-    pub narrowing_cache: tsz_solver::NarrowingCache,
+    pub narrowing_cache: tsz_solver::narrowing::NarrowingCache,
 
     /// Cache for `is_narrowable_identifier` results.
     /// This is pure (depends only on AST structure), so it never needs invalidation.
