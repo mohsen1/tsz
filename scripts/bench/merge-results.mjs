@@ -346,6 +346,11 @@ function collectProjectCompatibilityFailures(rows) {
       }
       if (!isNonEmptyStringArray(row.compatibility.known_blockers)) {
         failures.push(`${row.name}: red/yellow compatibility.known_blockers must name at least one blocker`);
+      } else if (
+        isNonEmptyString(row.compatibility.first_failure_class) &&
+        row.compatibility.first_failure_class.trim() !== row.compatibility.known_blockers.find(isNonEmptyString).trim()
+      ) {
+        failures.push(`${row.name}: red/yellow compatibility.first_failure_class must match the first known blocker`);
       }
     }
   }
