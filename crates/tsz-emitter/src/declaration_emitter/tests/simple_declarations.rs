@@ -8169,6 +8169,62 @@ foo.default = 2;
         output.contains("let _default: number;\n    export { _default as default };"),
         "Expected reserved expando property to use local alias plus export specifier: {output}"
     );
+    assert!(
+        !output.contains("export let x:"),
+        "Ordinary member must not be re-exported with an `export` keyword when an aliased \
+         sibling member is also present: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_static_properties_merged_namespace_renamed_ordinary_member() {
+    // Any ordinary identifier sibling of a reserved-keyword expando must emit
+    // without an `export` modifier — the rule is structural, not name-specific.
+    let output = emit_js_dts(
+        r#"
+function thing() {}
+thing.alpha = 1;
+thing.class = 2;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace thing {\n    let alpha: number;"),
+        "Ordinary expando property must emit as a bare `let` member: {output}"
+    );
+    assert!(
+        output.contains("let _class: number;\n    export { _class as class };"),
+        "Reserved-keyword expando must use a synthetic local plus explicit export specifier: {output}"
+    );
+    assert!(
+        !output.contains("export let alpha:"),
+        "Ordinary member must not be re-exported with an `export` keyword: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_static_properties_merged_namespace_reserved_between_ordinary() {
+    // Sandwich an ordinary member between a leading ordinary and a trailing
+    // reserved-keyword sibling so the test pins the rule across declaration
+    // order: ordinary members must never carry an `export` keyword prefix,
+    // regardless of where they appear relative to the aliased sibling.
+    let output = emit_js_dts(
+        r#"
+function bag() {}
+bag.before = 1;
+bag.default = 2;
+bag.after = 3;
+"#,
+    );
+
+    assert!(
+        output.contains("let _default: number;\n    export { _default as default };"),
+        "Reserved expando must keep its synthetic local + explicit export specifier: {output}"
+    );
+    assert!(
+        !output.contains("export let "),
+        "No expando member must be prefixed with the `export` keyword inside the ambient namespace: {output}"
+    );
 }
 
 #[test]

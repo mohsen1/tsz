@@ -54,7 +54,7 @@ impl<'a> DeclarationEmitter<'a> {
             .into_iter()
             .filter_map(|(member_name, initializer)| {
                 self.get_identifier_text(member_name)
-                    .map(|member_text| (member_name, member_text, initializer))
+                    .map(|member_text| (member_text, initializer))
             })
             .collect::<Vec<_>>();
         if members.is_empty() {
@@ -76,12 +76,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut reserved_member_names = members
             .iter()
-            .map(|(_, member_text, _)| member_text.clone())
+            .map(|(member_text, _)| member_text.clone())
             .collect::<FxHashSet<_>>();
         let mut emitted_keyword_export_alias = false;
         let planned_members = members
             .into_iter()
-            .map(|(_member_name, member_text, initializer)| {
+            .map(|(member_text, initializer)| {
                 let (local_name, export_alias) = self.js_static_namespace_member_local_name(
                     &member_text,
                     &mut reserved_member_names,
@@ -91,15 +91,15 @@ impl<'a> DeclarationEmitter<'a> {
                     emitted_keyword_export_alias |=
                         Self::is_js_static_reserved_binding_name(&member_text);
                 }
-                (member_text, initializer, local_name, export_alias)
+                (initializer, local_name, export_alias)
             })
             .collect::<Vec<_>>();
-        let has_export_aliases = planned_members
-            .iter()
-            .any(|(_, _, _, export_alias)| export_alias.is_some());
 
-        for (_member_text, initializer, local_name, export_alias) in planned_members {
-            let emit_export = export_alias.is_none() && has_export_aliases;
+        // `tsc` treats members of an ambient (`declare namespace`) expando block
+        // as implicitly visible, so ordinary members stay bare; only
+        // reserved-keyword siblings need an explicit `export { local as exported }`
+        // specifier.
+        for (initializer, local_name, export_alias) in planned_members {
             if let Some(init_node) = self.arena.get(initializer) {
                 if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                     || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
@@ -108,17 +108,12 @@ impl<'a> DeclarationEmitter<'a> {
                         if let Some(jsdoc) = self.function_like_jsdoc_for_node(initializer) {
                             self.emit_multiline_jsdoc_comment(&jsdoc);
                         }
-                        self.emit_js_namespace_function_member_text(
-                            &local_name,
-                            func,
-                            initializer,
-                            emit_export,
-                        );
+                        self.emit_js_namespace_function_member_text(&local_name, func, initializer);
                     }
                 } else if let Some(type_text) =
                     self.js_namespace_value_member_type_text(initializer)
                 {
-                    self.emit_js_namespace_value_member_text(&local_name, &type_text, emit_export);
+                    self.emit_js_namespace_value_member_text(&local_name, &type_text);
                 }
             }
             if let Some((local_name, exported_name)) = export_alias {
@@ -143,12 +138,8 @@ impl<'a> DeclarationEmitter<'a> {
         name: &str,
         func: &FunctionData,
         initializer: NodeIndex,
-        emit_export: bool,
     ) {
         self.write_indent();
-        if emit_export {
-            self.write("export ");
-        }
         self.write("function ");
         self.write(name);
         if let Some(type_params) = func.type_parameters.as_ref()
@@ -174,16 +165,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
-    fn emit_js_namespace_value_member_text(
-        &mut self,
-        name: &str,
-        type_text: &str,
-        emit_export: bool,
-    ) {
+    fn emit_js_namespace_value_member_text(&mut self, name: &str, type_text: &str) {
         self.write_indent();
-        if emit_export {
-            self.write("export ");
-        }
         self.write("let ");
         self.write(name);
         self.write(": ");
