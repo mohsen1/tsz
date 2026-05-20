@@ -146,8 +146,8 @@ accept(a, b);
 }
 
 /// tsc rule: a genuinely incompatible assignment to a deeply nested conditional
-/// type must still produce an error — the recursion identity bail-out must
-/// only fire when the same alias is seen twice, not suppress genuine mismatches.
+/// type must still produce an error. Recursion identity must not suppress
+/// different application arguments.
 #[test]
 fn deeply_nested_conditional_type_still_errors_on_mismatch() {
     let source = r#"
@@ -157,12 +157,34 @@ declare const good: DeepReadonly<{ a: number }>;
 const bad: DeepReadonly<{ a: string }> = good;
 "#;
     let codes = check_source_codes(source);
-    // This should still produce TS2322 — the types have incompatible leaf values.
-    // We don't assert it does (tsc's recursion guard may also bail compatible here),
-    // but we DO assert no TS2589 appears.
+    assert!(
+        codes.contains(&2322),
+        "DeepReadonly leaf mismatch must still produce TS2322. Got: {codes:?}"
+    );
     assert!(
         !codes.contains(&2589),
         "DeepReadonly mismatch test must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn nested_record_conditional_type_still_errors_on_leaf_mismatch() {
+    let source = r#"
+type NestedRecord<K extends string, V> = K extends `${infer A}.${infer B}`
+    ? { [X in A]: NestedRecord<B, V> }
+    : { [X in K]: V };
+
+declare const numberRecord: NestedRecord<"a.b", number>;
+const stringRecord: NestedRecord<"a.b", string> = numberRecord;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "NestedRecord leaf mismatch must still produce TS2322. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2589),
+        "NestedRecord mismatch test must not produce TS2589. Got: {codes:?}"
     );
 }
 
