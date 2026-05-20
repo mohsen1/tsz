@@ -389,7 +389,7 @@ fn test_no_direct_type_queries_data_access_outside_query_boundaries() {
 }
 
 /// Architecture contract: checker code outside `query_boundaries/` and `tests/`
-/// must not construct `tsz_solver::RelationPolicy` or `tsz_solver::RelationContext`
+/// must not construct `tsz_solver::relations::relation_queries::RelationPolicy` or `tsz_solver::relations::relation_queries::RelationContext`
 /// directly.
 ///
 /// These solver-internal policy types should only be constructed inside
@@ -430,8 +430,8 @@ fn test_no_direct_relation_policy_construction_outside_query_boundaries() {
             if trimmed.starts_with("//") {
                 continue;
             }
-            if line.contains("tsz_solver::RelationPolicy")
-                || line.contains("tsz_solver::RelationContext")
+            if line.contains("tsz_solver::relations::relation_queries::RelationPolicy")
+                || line.contains("tsz_solver::relations::relation_queries::RelationContext")
             {
                 violations.push(format!("{}:{}: {}", rel, line_index + 1, trimmed));
             }

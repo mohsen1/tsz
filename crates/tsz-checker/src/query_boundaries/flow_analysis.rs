@@ -223,13 +223,13 @@ pub(crate) fn are_types_mutually_subtype(
 pub(crate) fn is_assignable(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
     let _span = tracing::trace_span!("flow_assignable", src = source.0, tgt = target.0,).entered();
 
-    tsz_solver::query_relation(
+    tsz_solver::relations::relation_queries::query_relation(
         db,
         source,
         target,
-        tsz_solver::RelationKind::Assignable,
-        tsz_solver::RelationPolicy::default(),
-        tsz_solver::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationKind::Assignable,
+        tsz_solver::relations::relation_queries::RelationPolicy::default(),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
 }
@@ -239,15 +239,15 @@ pub(crate) fn is_assignable_strict_null(
     source: TypeId,
     target: TypeId,
 ) -> bool {
-    tsz_solver::query_relation(
+    tsz_solver::relations::relation_queries::query_relation(
         db,
         source,
         target,
-        tsz_solver::RelationKind::Assignable,
-        tsz_solver::RelationPolicy::from_flags(
+        tsz_solver::relations::relation_queries::RelationKind::Assignable,
+        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
             tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
         ),
-        tsz_solver::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
 }
@@ -318,14 +318,14 @@ pub(crate) fn is_assignable_with_env(
         flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
     }
 
-    tsz_solver::query_relation_with_resolver(
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         env,
         source,
         target,
-        tsz_solver::RelationKind::Assignable,
-        tsz_solver::RelationPolicy::from_flags(flags),
-        tsz_solver::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationKind::Assignable,
+        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
 }
@@ -429,14 +429,14 @@ fn types_are_subtype_with_env(
         flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
     }
 
-    tsz_solver::query_relation_with_resolver(
+    tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db,
         env,
         source,
         target,
-        tsz_solver::RelationKind::Subtype,
-        tsz_solver::RelationPolicy::from_flags(flags),
-        tsz_solver::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationKind::Subtype,
+        tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags),
+        tsz_solver::relations::relation_queries::RelationContext::default(),
     )
     .is_related()
 }
