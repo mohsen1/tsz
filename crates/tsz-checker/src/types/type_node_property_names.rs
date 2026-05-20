@@ -353,10 +353,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         // `: symbol` parses as SyntaxKind::SymbolKeyword (a keyword type node), which is
         // never unique symbol. `: unique symbol` parses as TYPE_OPERATOR + SymbolKeyword.
-        if let Some(ann_node) = arena.get(type_annotation) {
-            if ann_node.kind == SyntaxKind::SymbolKeyword as u16 {
-                return true;
-            }
+        if let Some(ann_node) = arena.get(type_annotation)
+            && ann_node.kind == SyntaxKind::SymbolKeyword as u16
+        {
+            return true;
         }
 
         // Fallback: handle `symbol` written as a TypeReference (rare but possible in some
