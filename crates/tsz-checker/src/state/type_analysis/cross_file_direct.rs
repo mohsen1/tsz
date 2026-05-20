@@ -1555,11 +1555,12 @@ impl<'a> CheckerState<'a> {
         }
         let body_is_direct_lowerable = if type_param_names.is_empty() {
             Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
-                || Self::source_file_type_node_is_non_generic_local_alias_chain_lowerable(
-                    symbol_arena,
-                    delegate_binder,
-                    type_alias.type_node,
-                )
+                || (direct_source_file_arena
+                    && Self::source_file_type_node_is_non_generic_local_alias_chain_lowerable(
+                        symbol_arena,
+                        delegate_binder,
+                        type_alias.type_node,
+                    ))
         } else {
             Self::source_file_type_node_is_generic_scope_independent(
                 symbol_arena,
