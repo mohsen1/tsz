@@ -129,6 +129,10 @@ pub mod query {
 /// These perform type computation and should be accessed through
 /// `query_boundaries` in the checker crate, not imported directly.
 pub mod computation {
+    use crate::caches::db::TypeDatabase;
+    use crate::types::TypeId;
+    use tsz_common::interner::Atom;
+
     // Subtype/assignability relations
     pub use crate::relations::compat::CompatChecker;
     pub use crate::relations::lawyer::AnyPropagationRules;
@@ -136,6 +140,22 @@ pub mod computation {
         AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
         are_types_structurally_identical, is_subtype_of,
     };
+
+    pub fn are_types_structurally_identical_in_param_scope<R: TypeResolver>(
+        interner: &dyn TypeDatabase,
+        resolver: &R,
+        a: TypeId,
+        b: TypeId,
+        param_names: &[Atom],
+    ) -> bool {
+        crate::relations::subtype::are_types_structurally_identical_in_param_scope(
+            interner,
+            resolver,
+            a,
+            b,
+            param_names,
+        )
+    }
 
     // Evaluation
     pub use crate::evaluation::evaluate::{
