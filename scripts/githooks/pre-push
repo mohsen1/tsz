@@ -21,6 +21,7 @@ if [ "${TSZ_SKIP_HOOKS:-}" = "1" ]; then exit 0; fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../" && pwd)"
 CLEAN_SCRIPT="$SCRIPT_DIR/../setup/clean.sh"
+SAFE_RUN_SCRIPT="$SCRIPT_DIR/../safe-run.sh"
 STAMP_FILE="$ROOT_DIR/.git/pre-commit-passed"
 
 # ─── Test gate: only for pushes to main/master ────────────────────────────────
@@ -64,7 +65,7 @@ if [ "$PUSHING_TO_MAIN" = "true" ] && [ "${TSZ_SKIP_PUSH_TESTS:-}" != "1" ]; the
         ALL_CRATES="-p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder -p tsz-solver -p tsz-checker -p tsz-lowering -p tsz-emitter -p tsz-lsp"
 
         if cargo nextest --version >/dev/null 2>&1; then
-            TEST_OUTPUT=$(cargo nextest run --profile precommit --no-tests=pass $ALL_CRATES 2>&1) || {
+            TEST_OUTPUT=$("$SAFE_RUN_SCRIPT" cargo nextest run --profile precommit --no-tests=pass $ALL_CRATES 2>&1) || {
                 echo ""
                 echo "$TEST_OUTPUT" | tail -30
                 echo ""
@@ -74,7 +75,7 @@ if [ "$PUSHING_TO_MAIN" = "true" ] && [ "${TSZ_SKIP_PUSH_TESTS:-}" != "1" ]; the
             }
             echo "$TEST_OUTPUT" | tail -5
         else
-            TEST_OUTPUT=$(cargo test $ALL_CRATES 2>&1) || {
+            TEST_OUTPUT=$("$SAFE_RUN_SCRIPT" cargo test $ALL_CRATES 2>&1) || {
                 echo ""
                 echo "$TEST_OUTPUT" | tail -30
                 echo ""
