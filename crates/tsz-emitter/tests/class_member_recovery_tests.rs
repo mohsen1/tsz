@@ -179,7 +179,11 @@ fn downlevel_assign_typed_only_field_emits_nothing() {
 }
 
 #[test]
-fn native_define_typed_only_public_field_emits_nothing() {
+fn native_define_typed_public_field_erases_annotation_keeps_declaration() {
+    // With useDefineForClassFields=true and ES2022+ target, tsc preserves class
+    // field declarations (as `prop;`) even when the field has only a type annotation
+    // and no initializer. The type annotation is erased; the field declaration remains
+    // so that native defineProperty semantics are applied.
     let output = print_with_printer_options(
         "class Test {\n    prop: number;\n    bare;\n    #privateProp: number;\n}\n",
         PrinterOptions {
@@ -190,8 +194,12 @@ fn native_define_typed_only_public_field_emits_nothing() {
     );
 
     assert!(
-        !output.contains("prop;"),
-        "Typed-only public field should be erased in native class-field emit.\nOutput:\n{output}"
+        output.contains("prop;"),
+        "Typed public field should keep its bare declaration for native defineProperty semantics.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("prop: number"),
+        "Type annotation should be erased from the emitted field declaration.\nOutput:\n{output}"
     );
     assert!(
         output.contains("bare;"),

@@ -94,12 +94,8 @@ impl<'a> DeclarationEmitter<'a> {
                 (member_text, initializer, local_name, export_alias)
             })
             .collect::<Vec<_>>();
-        let has_export_aliases = planned_members
-            .iter()
-            .any(|(_, _, _, export_alias)| export_alias.is_some());
-
         for (_member_text, initializer, local_name, export_alias) in planned_members {
-            let emit_export = export_alias.is_none() && has_export_aliases;
+            let emit_export = false;
             if let Some(init_node) = self.arena.get(initializer) {
                 if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                     || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
