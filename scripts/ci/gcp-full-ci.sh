@@ -896,6 +896,8 @@ for path in test_dir.rglob("*"):
     if not path.is_file():
         continue
     path_str = path.as_posix()
+    if path.name.startswith("._"):
+        continue
     if path.suffix not in source_suffixes:
         continue
     if path_str.endswith(declaration_suffixes):
