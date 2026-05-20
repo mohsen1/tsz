@@ -5,6 +5,11 @@
 
 ## Doc Status
 
+`docs/plan/ROADMAP.md` owns project sequencing and active priorities. This file
+is a Sound Mode appendix under that roadmap: it can define the product contract,
+implementation facts, and future design notes, but it does not make Sound Mode
+active critical-path work unless an issue/PR is explicitly assigned.
+
 This file currently mixes four jobs:
 
 1. current implementation status
