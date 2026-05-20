@@ -11,6 +11,10 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["dts"]
+dts = []
+
 [dependencies]
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
