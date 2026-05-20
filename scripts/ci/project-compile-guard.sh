@@ -409,7 +409,7 @@ ensure_type_challenges_assertion_tsc() {
   fi
 
   echo "Installing scripts Node dependencies for Type Challenges assertion classifier"
-  (cd scripts && npm install --silent)
+  (cd scripts && npm install --silent --include=dev)
   if [[ ! -x scripts/node_modules/.bin/tsc ]]; then
     echo "warn: scripts Node install did not provide tsc; Type Challenges assertion classifier will report tsc unavailable" >&2
   fi
