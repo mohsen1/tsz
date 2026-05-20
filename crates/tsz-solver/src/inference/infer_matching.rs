@@ -1055,7 +1055,7 @@ impl<'a> InferenceContext<'a> {
 
                 if target_is_type_param {
                     // Collect all remaining source params into a tuple
-                    let mut tuple_elements = Vec::new();
+                    let mut tuple_elements = Vec::with_capacity(source_params.size_hint().0);
                     for source_param in source_params.by_ref() {
                         tuple_elements.push(TupleElement {
                             type_id: source_param.type_id,
@@ -1793,7 +1793,7 @@ impl<'a> InferenceContext<'a> {
         source: &str,
         spans: &[TemplateSpan],
     ) -> Option<Vec<(InferenceVar, String)>> {
-        let mut bindings = Vec::new();
+        let mut bindings = Vec::with_capacity(spans.len());
         let mut pos = 0;
 
         for (i, span) in spans.iter().enumerate() {
