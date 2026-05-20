@@ -507,9 +507,14 @@ fn instantiate_call_type(
 mod contextual_signature_instantiation;
 mod inference_helpers;
 mod normalization;
+pub mod request;
 mod resolve;
+pub mod result;
 mod return_context;
 mod return_context_feedback;
+
+pub use request::GenericCallRequest;
+pub use result::GenericCallResult;
 
 /// Check if a type contains literal types — recursing into unions, intersections,
 /// and object properties. Used to detect discriminated union constraints like

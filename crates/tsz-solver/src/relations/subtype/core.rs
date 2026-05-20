@@ -2749,6 +2749,35 @@ pub fn are_types_structurally_identical<R: TypeResolver>(
     canon_a == canon_b
 }
 
+/// Check if two types are structurally identical with an outer type-parameter
+/// scope visible to both sides.
+///
+/// This generalizes [`are_types_structurally_identical`] for callers comparing
+/// type expressions whose `TypeData::TypeParameter` references are bound
+/// outside the supplied types — for example, constraints attached to merged
+/// interface declarations, where each declaration's `T` resolves to a distinct
+/// underlying `TypeParameter` `TypeId` even though both should be treated as
+/// the "same" positional parameter under tsc's declaration-merge rule.
+///
+/// `param_names` lists the outer-scope parameter names in declaration order.
+/// References to those names inside `a` or `b` are rewritten to the matching
+/// `BoundParameter(n)` before structural equality is checked.
+pub fn are_types_structurally_identical_in_param_scope<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    a: TypeId,
+    b: TypeId,
+    param_names: &[tsz_common::interner::Atom],
+) -> bool {
+    if a == b {
+        return true;
+    }
+    let mut canonicalizer = crate::canonicalize::Canonicalizer::new(interner, resolver);
+    let canon_a = canonicalizer.canonicalize_with_param_scope(a, param_names);
+    let canon_b = canonicalizer.canonicalize_with_param_scope(b, param_names);
+    canon_a == canon_b
+}
+
 /// Convenience function for one-off subtype checks routed through a `QueryDatabase`.
 /// The `QueryDatabase` enables Salsa memoization when available.
 pub fn is_subtype_of_with_db(db: &dyn QueryDatabase, source: TypeId, target: TypeId) -> bool {
