@@ -1186,7 +1186,11 @@ impl<'a> NamespaceES5Transformer<'a> {
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 self.transform_enum_in_namespace(ns_name, member_idx, force_export)
             }
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => None,
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                if self.import_equals_target_is_external_module(member_idx) {
+                    return None;
+                }
                 if force_export {
                     self.transform_import_equals_exported(ns_name, member_idx)
                 } else {
@@ -1202,6 +1206,16 @@ impl<'a> NamespaceES5Transformer<'a> {
             _ if !force_export => self.namespace_member_ast_ref_if_non_empty(member_idx),
             _ => None,
         }
+    }
+
+    fn import_equals_target_is_external_module(&self, import_idx: NodeIndex) -> bool {
+        self.arena
+            .get_import_decl_at(import_idx)
+            .and_then(|import| self.arena.get(import.module_specifier))
+            .is_some_and(|target| {
+                target.kind == SyntaxKind::StringLiteral as u16
+                    || target.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+            })
     }
 
     fn transform_import_equals_in_namespace(

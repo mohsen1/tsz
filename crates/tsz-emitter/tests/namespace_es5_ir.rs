@@ -522,6 +522,49 @@ fn test_namespace_es5_multiple_exports() {
 }
 
 #[test]
+fn test_namespace_es5_erases_internal_external_imports() {
+    let output = transform_and_emit_commonjs(
+        r#"export namespace M {
+    export var value = 0;
+    import * as M2 from "M2";
+    import M4 from "M4";
+    import M6 = require("M6");
+    export import M5 = require("M5");
+    export import Local = M;
+}"#,
+    );
+
+    assert!(
+        !output.contains("import * as M2"),
+        "Namespace-body external namespace imports should not emit inside ES5 IIFEs.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("import M4"),
+        "Namespace-body external default imports should not emit inside ES5 IIFEs.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("M.M5"),
+        "Namespace-body export import require aliases should not create namespace assignments.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("M6"),
+        "Namespace-body import require aliases should not emit local variables.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("undefined"),
+        "Erased namespace-body imports should not leave placeholder output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("M.Local = M;"),
+        "Entity-name namespace aliases should continue to emit when they target runtime values.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("M.value = 0;"),
+        "Runtime namespace members should still emit around erased imports.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_namespace_es5_transformer_set_commonjs() {
     let mut parser = ParserState::new(
         "test.ts".to_string(),
