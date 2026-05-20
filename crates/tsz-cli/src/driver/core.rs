@@ -1442,7 +1442,7 @@ fn compile_inner(
 
     // Update dependencies in the cache
     if let Some(ref mut c) = effective_cache {
-        c.update_dependencies(dependencies, outfile_bundle_dependencies);
+        c.update_dependencies(dependencies, outfile_bundle_dependencies.clone());
     }
 
     // Separate binary files from regular sources - binary files get TS1490
@@ -1944,6 +1944,7 @@ fn compile_inner(
             declaration_dir: declaration_dir.as_deref(),
             dirty_paths: dirty_paths.as_ref(),
             outfile_bundle_paths: Some(&outfile_bundle_paths),
+            outfile_bundle_dependencies: Some(&outfile_bundle_dependencies),
             type_caches: type_caches_ref,
         })?;
         diagnostics.extend(emit_diags);
