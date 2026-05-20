@@ -707,6 +707,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = self.application_base_def_id(s_app.base)?;
 
+        // Conditional type aliases require structural expansion with recursion identity
+        // tracking (tsc's `getRecursionIdentity` mechanism). The variance fast path
+        // would directly compare type arguments (e.g., `number vs string`) and return
+        // False before the recursion identity counter can fire — which would produce a
+        // false error for deeply recursive conditionals like `NestedRecord<K,V>` where
+        // tsc intentionally returns compatible after a fixed nesting depth.
+        if self.is_conditional_alias_base_inline(s_app.base) {
+            return None;
+        }
+
         // Arity normalization: when both applications share the same base but have
         // different arg counts (e.g., Generator<T, void, any> vs Generator<T>),
         // fill in type parameter defaults to normalize both to the same arity.
