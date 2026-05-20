@@ -247,13 +247,6 @@ pub use narrowing::{
     narrow_by_typeof, remove_nullish, remove_nullish_query, remove_undefined, split_nullish_type,
     type_contains_undefined,
 };
-pub use objects::{
-    ApparentMemberKind, ElementAccessEvaluator, ElementAccessResult, IndexKind,
-    IndexSignatureResolver, ObjectLiteralBuilder, PropertyCollectionResult, apparent,
-    apparent_object_member_kind, apparent_primitive_member_kind, apparent_primitive_members,
-    apparent_primitive_shape, collect_properties, element_access, index_signatures,
-    literal_value_intrinsic_kind,
-};
 #[cfg(test)]
 pub(crate) use operations::compound_assignment::{
     fallback_compound_assignment_result, is_compound_assignment_operator,

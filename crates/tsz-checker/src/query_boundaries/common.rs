@@ -7,6 +7,7 @@ use tsz_solver::{
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::TypeInterner;
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
+pub(crate) use tsz_solver::objects::{IndexKind, IndexSignatureResolver};
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
 pub(crate) use tsz_solver::type_queries::{
@@ -14,10 +15,9 @@ pub(crate) use tsz_solver::type_queries::{
     is_remapped_mapped_index_access, remapped_mapped_index_access_result,
 };
 pub(crate) use tsz_solver::{
-    FunctionShape, IndexKind, IndexSignatureResolver, IntrinsicKind, MappedType, ObjectFlags,
-    OptionalPropertyChainKey, ParamInfo, PendingDiagnostic, PendingDiagnosticBuilder,
-    QueryDatabase, SourceLocation, SubtypeFailureReason, TypeEnvironment, TypeFormatter,
-    TypeResolver,
+    FunctionShape, IntrinsicKind, MappedType, ObjectFlags, OptionalPropertyChainKey, ParamInfo,
+    PendingDiagnostic, PendingDiagnosticBuilder, QueryDatabase, SourceLocation,
+    SubtypeFailureReason, TypeEnvironment, TypeFormatter, TypeResolver,
     computation::{ContextualTypeContext, TypeSubstitution, instantiate_generic},
 };
 
