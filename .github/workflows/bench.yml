@@ -234,16 +234,23 @@ jobs:
             prep_prefix="${BENCH_TARGET_SHA}"
           fi
 
+          rm -f bench-prep.env bench-prep.tar
           if gcloud storage cp \
             "gs://tsz-ci_cloudbuild/bench-prep/${prep_prefix}/bench-prep.env" \
-            bench-prep.env >/dev/null 2>&1; then
+            bench-prep.env >/dev/null 2>&1 && \
+            gcloud storage cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/${prep_prefix}/bench-prep.tar" \
+              bench-prep.tar >/dev/null 2>&1; then
             # shellcheck disable=SC1091
             source bench-prep.env
             if [[ "${BENCH_TARGET_SHA:-}" == "${{ env.BENCH_TARGET_SHA }}" &&
-                  "${BENCH_BUILD_DATE:-}" == "$(date -u +%F)" ]]; then
+                  "${BENCH_BUILD_DATE:-}" == "$(date -u +%F)" ]] && \
+                tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null && \
+                tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null; then
               echo "Cloud Build prep artifact already exists for ${BENCH_TARGET_SHA}; skipping submit."
               exit 0
             fi
+            echo "Existing Cloud Build prep artifact is incomplete or stale; submitting a fresh build."
           fi
 
           submit_output="$(gcloud builds submit \

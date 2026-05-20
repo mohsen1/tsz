@@ -37,4 +37,10 @@ assert.match(
   "benchmark prep path should report the expected target and exit immediately",
 );
 
+assert.match(
+  workflow,
+  /gs:\/\/tsz-ci_cloudbuild\/bench-prep\/\$\{prep_prefix\}\/bench-prep\.env[\s\S]+gs:\/\/tsz-ci_cloudbuild\/bench-prep\/\$\{prep_prefix\}\/bench-prep\.tar[\s\S]+tar -tf bench-prep\.tar \.target-bench\/dist\/tsz[\s\S]+tar -tf bench-prep\.tar \.target-bench\/dist\/\.bench-pgo-optimized[\s\S]+Cloud Build prep artifact already exists/,
+  "Cloud Build prep reuse should only skip submit after validating both the env and tar artifacts",
+);
+
 console.log("bench workflow Cloud Build prep artifact tests passed");
