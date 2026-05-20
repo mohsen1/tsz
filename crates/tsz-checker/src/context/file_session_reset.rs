@@ -420,7 +420,7 @@ impl<'a> CheckerContext<'a> {
         self.symbol_instance_types =
             crate::context::SymbolTypeCache::with_capacity(binder.symbols.len());
         self.enum_namespace_types.clear();
-        self.lib_delegation_cache.clear_file_local();
+        self.lib_delegation_cache.clear();
         self.var_decl_types.clear();
         self.merged_value_types.clear();
         // SymbolId↔DefId mapping caches. The forward map is keyed
