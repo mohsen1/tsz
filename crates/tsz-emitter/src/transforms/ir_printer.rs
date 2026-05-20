@@ -63,6 +63,9 @@ pub struct IRPrinter<'a> {
     suppress_function_trailing_extraction: bool,
     /// Tracks when the last emitted IR node wrote a trailing line comment.
     last_emit_ended_with_line_comment: bool,
+    /// Source range end for nested AST arrow comments that should be left for
+    /// an IR-owned semicolon/trailing-comment site.
+    ast_arrow_comment_defer_end: Option<u32>,
     /// Name of the current ES5 class IIFE constructor, used to force constructor
     /// empty-body formatting without affecting nested function declarations.
     current_class_iife_name: Option<String>,
@@ -327,6 +330,7 @@ impl<'a> IRPrinter<'a> {
             transforms: None,
             suppress_function_trailing_extraction: false,
             last_emit_ended_with_line_comment: false,
+            ast_arrow_comment_defer_end: None,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
@@ -354,6 +358,7 @@ impl<'a> IRPrinter<'a> {
             transforms: None,
             suppress_function_trailing_extraction: false,
             last_emit_ended_with_line_comment: false,
+            ast_arrow_comment_defer_end: None,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
@@ -381,6 +386,7 @@ impl<'a> IRPrinter<'a> {
             transforms: None,
             suppress_function_trailing_extraction: false,
             last_emit_ended_with_line_comment: false,
+            ast_arrow_comment_defer_end: None,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
             in_namespace_iife_body: false,
@@ -1009,7 +1015,11 @@ impl<'a> IRPrinter<'a> {
                 if needs_paren {
                     self.write("(");
                 }
+                let prev_ast_arrow_comment_defer_end = self.ast_arrow_comment_defer_end;
+                self.ast_arrow_comment_defer_end =
+                    self.source_text.map(|source| source.len() as u32);
                 self.emit_node(expr);
+                self.ast_arrow_comment_defer_end = prev_ast_arrow_comment_defer_end;
                 if needs_paren {
                     self.write(")");
                 }
@@ -2199,7 +2209,23 @@ impl<'a> IRPrinter<'a> {
                 if let Some(arena) = self.arena {
                     let mut printer = self.build_nested_ast_printer(arena);
                     self.configure_ast_printer_namespace(&mut printer);
-                    printer.emit(*idx);
+                    if let Some(defer_end) = self.ast_arrow_comment_defer_end {
+                        if let Some((comment_start, comment_end)) =
+                            printer.rightmost_concise_arrow_deferred_comment_range(*idx, defer_end)
+                        {
+                            printer.with_arrow_concise_body_trailing_comments_deferred(
+                                comment_start,
+                                comment_end,
+                                |printer| {
+                                    printer.emit(*idx);
+                                },
+                            );
+                        } else {
+                            printer.emit(*idx);
+                        }
+                    } else {
+                        printer.emit(*idx);
+                    }
                     let trimmed = printer.get_output().trim();
                     if !trimmed.is_empty() {
                         self.write_embedded_output(trimmed);
