@@ -92,12 +92,15 @@ pub(crate) fn type_application(
     tsz_solver::type_queries::get_type_application(db, type_id)
 }
 
-pub(crate) fn is_index_access_type(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+pub(crate) fn is_index_access_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
     tsz_solver::type_queries::is_index_access_type(db, type_id)
 }
 
 pub(crate) fn contains_index_access_type(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
 ) -> bool {
     tsz_solver::type_queries::contains_index_access_type(db, type_id)
