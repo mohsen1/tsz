@@ -110,27 +110,45 @@ function readFixture(path) {
   return normalizeRuns(JSON.parse(fs.readFileSync(path, "utf8")));
 }
 
-function readActiveRuns(repository, maxRuns) {
+function readRunsForStatus(repository, status, maxRuns, fetchJson) {
+  const runs = [];
+  for (let page = 1; runs.length < maxRuns && page <= 10; page += 1) {
+    const payload = fetchJson([
+      "api",
+      "-H",
+      "Accept: application/vnd.github+json",
+      `repos/${repository}/actions/runs?status=${status}&per_page=100&page=${page}`,
+    ]);
+    const pageRuns = normalizeRuns(payload);
+    runs.push(...pageRuns.slice(0, Math.max(0, maxRuns - runs.length)));
+    if (pageRuns.length < 100) break;
+  }
+
+  return runs;
+}
+
+export function readActiveRuns(repository, maxRuns, fetchJson = runGhJson) {
   if (!repository) {
     throw new Error("REPOSITORY or GITHUB_REPOSITORY is required");
   }
 
+  const runsByStatus = ACTIVE_STATUSES.map((status) =>
+    readRunsForStatus(repository, status, maxRuns, fetchJson),
+  );
   const runs = [];
-  for (const status of ACTIVE_STATUSES) {
-    for (let page = 1; runs.length < maxRuns && page <= 10; page += 1) {
-      const payload = runGhJson([
-        "api",
-        "-H",
-        "Accept: application/vnd.github+json",
-        `repos/${repository}/actions/runs?status=${status}&per_page=100&page=${page}`,
-      ]);
-      const pageRuns = normalizeRuns(payload);
-      runs.push(...pageRuns.slice(0, Math.max(0, maxRuns - runs.length)));
-      if (pageRuns.length < 100) break;
+  for (let index = 0; runs.length < maxRuns; index += 1) {
+    let addedRun = false;
+    for (const statusRuns of runsByStatus) {
+      if (index < statusRuns.length) {
+        runs.push(statusRuns[index]);
+        addedRun = true;
+        if (runs.length >= maxRuns) break;
+      }
     }
+    if (!addedRun) break;
   }
 
-  return runs.slice(0, maxRuns);
+  return runs;
 }
 
 function timestamp(run, keys) {

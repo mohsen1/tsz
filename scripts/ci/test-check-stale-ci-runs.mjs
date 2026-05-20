@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { formatReport, staleRunFindings } from "./check-stale-ci-runs.mjs";
+import { formatReport, readActiveRuns, staleRunFindings } from "./check-stale-ci-runs.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -115,6 +115,38 @@ assert.deepEqual(
   })], { now: NOW, staleMinutes: 45 }),
   [],
 );
+
+{
+  const fetchedStatuses = [];
+  const activeRuns = readActiveRuns("owner/repo", 3, (args) => {
+    const endpoint = args[args.length - 1];
+    const status = /[?&]status=([^&]+)/.exec(endpoint)?.[1];
+    fetchedStatuses.push(status);
+    return {
+      workflow_runs: status === "queued"
+        ? [run({
+          id: 20,
+          status: "queued",
+          created_at: "2026-05-20T11:00:00Z",
+          run_started_at: null,
+          updated_at: "2026-05-20T11:30:00Z",
+        })]
+        : [
+          run({ id: 10, status: "in_progress" }),
+          run({ id: 11, status: "in_progress" }),
+          run({ id: 12, status: "in_progress" }),
+          run({ id: 13, status: "in_progress" }),
+        ],
+    };
+  });
+
+  assert.deepEqual(fetchedStatuses, ["in_progress", "queued"]);
+  assert.deepEqual(activeRuns.map((activeRun) => activeRun.id), [10, 20, 11]);
+  assert.ok(
+    staleRunFindings(activeRuns, { now: NOW, staleMinutes: 45 })
+      .some((finding) => finding.id === 20),
+  );
+}
 
 const report = formatReport(staleRunFindings([run()], { now: NOW, staleMinutes: 45 }), {
   staleMinutes: 45,
