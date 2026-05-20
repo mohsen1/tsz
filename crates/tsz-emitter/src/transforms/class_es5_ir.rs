@@ -1861,15 +1861,6 @@ impl<'a> ES5ClassTransformer<'a> {
         self.convert_block_body_with_alias_impl(block_idx, class_alias, false)
     }
 
-    /// Convert a block body to IR statements in static context
-    fn convert_block_body_with_alias_static(
-        &self,
-        block_idx: NodeIndex,
-        class_alias: Option<String>,
-    ) -> Vec<IRNode> {
-        self.convert_block_body_with_alias_impl(block_idx, class_alias, true)
-    }
-
     fn convert_block_body_with_alias_impl(
         &self,
         block_idx: NodeIndex,
@@ -3890,28 +3881,6 @@ impl<'a> ES5ClassTransformer<'a> {
             heritage_clauses,
         )?;
         Some(self.convert_expression(expr_idx))
-    }
-
-    /// Check if a static method body contains arrow functions with `class_alias`,
-    /// and return the alias if found
-    fn get_class_alias_for_static_method(&self, body_idx: NodeIndex) -> Option<String> {
-        if let Some(ref transforms) = self.transforms {
-            // Get all arrow function nodes in the method body
-            let arrow_indices = self.collect_arrow_functions_in_block(body_idx);
-            // Check if any arrow function has a class_alias directive
-            for &arrow_idx in &arrow_indices {
-                if let Some(dir) = transforms.get(arrow_idx)
-                    && let crate::context::transform::TransformDirective::ES5ArrowFunction {
-                        class_alias,
-                        ..
-                    } = dir
-                    && let Some(alias) = class_alias
-                {
-                    return Some(alias.to_string());
-                }
-            }
-        }
-        None
     }
 
     /// Collect all arrow function node indices in a block

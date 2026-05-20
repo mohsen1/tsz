@@ -489,16 +489,21 @@ impl<'a> ES5ClassTransformer<'a> {
                             method_data.body,
                         )
                     } else {
-                        let local_class_alias =
-                            self.get_class_alias_for_static_method(method_data.body);
-                        let mut mbody = self.convert_block_body_with_alias_static(
+                        let this_capture_alias = self.this_capture_alias_for_body(
                             method_data.body,
-                            local_class_alias,
+                            Some(&method_data.parameters),
+                        );
+                        let mut mbody = self.convert_block_body_static_with_this_capture_alias(
+                            method_data.body,
+                            this_capture_alias.clone(),
                         );
                         if !static_destructuring.is_empty() {
                             let mut full = static_destructuring;
                             full.append(&mut mbody);
                             mbody = full;
+                        }
+                        if let Some(alias) = this_capture_alias {
+                            mbody.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
                         }
                         if self
                             .member_contains_new_target(method_data.body, &method_data.parameters)
