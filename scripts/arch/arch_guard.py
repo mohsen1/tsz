@@ -510,7 +510,7 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        3397,
+        3395,
     ),
 ]
 
@@ -523,6 +523,14 @@ QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS = [
         "Checker query boundary: module-level lint allowances must not grow (#8225)",
         ROOT / "crates" / "tsz-checker" / "src" / "query_boundaries" / "mod.rs",
         104,
+    ),
+]
+
+WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS = [
+    (
+        "Workspace Clippy suppressions must not grow (#9446)",
+        [ROOT / "crates"],
+        107,
     ),
 ]
 
@@ -1370,6 +1378,10 @@ _QUERY_BOUNDARY_ALLOWANCE_TOKEN_PATTERN = re.compile(
     r"\b(?:dead_code|private_interfaces|clippy::[A-Za-z0-9_]+)\b"
 )
 
+_CLIPPY_ALLOW_ATTR_PATTERN = re.compile(
+    r"#!?\[(?:allow|expect)\([^)\n]*clippy::"
+)
+
 
 def scan_query_boundary_module_allowance_count(
     file_path: pathlib.Path,
@@ -1409,6 +1421,54 @@ def scan_query_boundary_module_allowance_count(
             f"total query_boundaries module-level lint allowance entries: "
             f"{len(matches)} (cap {max_allowances}; scope the allowance to the "
             f"item that needs it or intentionally bump the #8225 cap)"
+        )
+        return hits
+    return []
+
+
+def scan_workspace_clippy_allow_count(
+    search_roots: list[pathlib.Path],
+    max_count: int,
+) -> list[str]:
+    """Count Clippy suppression attribute lines workspace-wide (#9446).
+
+    Covers `#[allow(clippy::...)]`, `#![allow(clippy::...)]`, and
+    `#[expect(clippy::...)]`, including test files.  Each cleanup PR must lower
+    the cap; any PR adding a new suppression must intentionally bump it with an
+    explanation.
+    """
+    matching: list[tuple[str, int]] = []
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                rel = path.relative_to(base).as_posix()
+            parts = set(rel.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if line.lstrip().startswith("//"):
+                    continue
+                if _CLIPPY_ALLOW_ATTR_PATTERN.search(line):
+                    matching.append((rel, line_no))
+
+    if len(matching) > max_count:
+        matching.sort()
+        hits = [
+            f"clippy suppression #{i + 1}: {rel}:{line_no}"
+            for i, (rel, line_no) in enumerate(matching)
+        ]
+        hits.append(
+            f"total Clippy suppression attribute lines: {len(matching)} "
+            f"(cap {max_count}; lower the cap when removing a suppression, "
+            f"or bump it intentionally and explain why — #9446)"
         )
         return hits
     return []
@@ -2801,6 +2861,16 @@ def main() -> int:
         max_allowances,
     ) in QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS:
         hits = scan_query_boundary_module_allowance_count(file_path, max_allowances)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
+        search_roots,
+        max_count,
+    ) in WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS:
+        hits = scan_workspace_clippy_allow_count(search_roots, max_count)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
