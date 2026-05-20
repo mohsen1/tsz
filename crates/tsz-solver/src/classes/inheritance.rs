@@ -225,9 +225,9 @@ impl InheritanceGraph {
 
         // Standard Depth-First Left-to-Right traversal for TypeScript
         // (Note: Python uses C3, but TS is simpler)
-        let mut mro = Vec::new();
-        let mut visited = FxHashSet::default();
-        let mut queue = VecDeque::new();
+        let mut mro = Vec::with_capacity(nodes.len());
+        let mut visited = FxHashSet::with_capacity_and_hasher(nodes.len(), Default::default());
+        let mut queue = VecDeque::with_capacity(nodes.len());
 
         queue.push_back(symbol_id);
 
