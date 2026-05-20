@@ -466,7 +466,7 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
 }
 
 /// Helper: build `T<X extends {x:any}> = Application(pick_def, [X, 'x'])` where
-/// pick_def expands to `{[P in K]: T[P]}`. Registers everything in env.
+/// `pick_def` expands to `{[P in K]: T[P]}`. Registers everything in env.
 fn build_pick_alias_env(
     interner: &TypeInterner,
     env: &mut TypeEnvironment,
@@ -532,7 +532,7 @@ const INDEXED_ACCESS_OBJECT_VARIANCE: Variance = Variance::COVARIANT
     .union(Variance::REJECTION_UNRELIABLE);
 
 /// Rule: when T's type parameter X appears as the object of an indexed access
-/// (X[K] in a mapped type with non-literal K), variance is REJECTION_UNRELIABLE.
+/// (X[K] in a mapped type with non-literal K), variance is `REJECTION_UNRELIABLE`.
 /// For concrete unrelated args A and B, T<A> must NOT be assignable to T<B> even
 /// though both evaluate to the same structural type via Pick<_,'x'> = {x:string}.
 /// Matches tsc: `b = a` with `b: T<B>` and `a: T<A>` is TS2322.
@@ -611,7 +611,7 @@ fn test_indexed_access_object_variance_rejects_concrete_unrelated_args_renamed_p
     );
 }
 
-/// When source args contain type parameters (not concrete types), REJECTION_UNRELIABLE
+/// When source args contain type parameters (not concrete types), `REJECTION_UNRELIABLE`
 /// does not force rejection: expanded forms may introduce implicit index signatures.
 /// The check falls through to structural expansion without crashing.
 #[test]

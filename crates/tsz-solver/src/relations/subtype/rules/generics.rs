@@ -20,9 +20,12 @@ use crate::visitor::{
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 
-fn args_contain_type_parameters(interner: &dyn crate::TypeDatabase, args: &[TypeId]) -> bool {
+fn args_contain_type_parameters(
+    interner: &dyn crate::construction::TypeDatabase,
+    args: &[TypeId],
+) -> bool {
     args.iter()
-        .any(|arg| crate::contains_type_parameters(interner, *arg))
+        .any(|arg| crate::visitor::contains_type_parameters(interner, *arg))
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
@@ -829,10 +832,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // For non-mapped types with all-concrete args, variance failures are
         // definitive: incompatible type args means incompatible generic types.
         let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
-        if any_checked && !all_ok && !needs_structural_fallback && !rejection_unreliable {
-            if !args_contain_type_parameters(self.interner, &s_args) {
-                return Some(SubtypeResult::False);
-            }
+        if any_checked
+            && !all_ok
+            && !needs_structural_fallback
+            && !rejection_unreliable
+            && !args_contain_type_parameters(self.interner, &s_args)
+        {
+            return Some(SubtypeResult::False);
         }
 
         // NOTE: A previous heuristic tried to trust invariant variance rejection
