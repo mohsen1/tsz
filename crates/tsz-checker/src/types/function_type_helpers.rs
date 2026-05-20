@@ -723,10 +723,7 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .chain(self.ctx.binder.file_locals.get("Promise"))
         {
-            if self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                !self.symbol_has_standard_lib_origin(sym_id)
-                    && symbol.escaped_name.as_str() == "Promise"
-            }) {
+            if !self.ctx.sym_id_is_lib_promise(sym_id) {
                 return false;
             }
         }
@@ -825,16 +822,10 @@ impl<'a> CheckerState<'a> {
             // Check if the body's base is Promise
             return self.is_global_promise_type(body_base)
                 || match query::classify_promise_type(self.ctx.types, body_base) {
-                    query::PromiseTypeKind::Lazy(body_def_id) => {
-                        if let Some(body_sym_id) = self.ctx.def_to_symbol_id(body_def_id)
-                            && let Some(body_symbol) = self.ctx.binder.get_symbol(body_sym_id)
-                        {
-                            body_symbol.escaped_name == "Promise"
-                                && self.symbol_has_standard_lib_origin(body_sym_id)
-                        } else {
-                            false
-                        }
-                    }
+                    query::PromiseTypeKind::Lazy(body_def_id) => self
+                        .ctx
+                        .def_to_symbol_id(body_def_id)
+                        .is_some_and(|body_sym_id| self.ctx.sym_id_is_lib_promise(body_sym_id)),
                     _ => false,
                 };
         }
@@ -930,7 +921,11 @@ impl<'a> CheckerState<'a> {
                 is_async,
                 function_is_generator,
             );
-            if !self.should_skip_no_implicit_return_check(ts7030_check_type, has_type_annotation) {
+            if !self.should_skip_no_implicit_return_check(
+                ts7030_check_type,
+                has_type_annotation,
+                function_is_generator,
+            ) {
                 // TSC points TS7030 to: return type annotation > function name > node itself
                 let error_node = if has_type_annotation {
                     type_annotation

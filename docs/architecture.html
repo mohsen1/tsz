@@ -444,20 +444,20 @@ li {
 <nav class="sidebar" id="sidebar">
   <div class="sidebar-title">How tsz Works</div>
   <a href="#intro">Introduction</a>
-  <a href="#pipeline">1. The Pipeline</a>
-  <a href="#trace">2. Full Trace</a>
+  <a href="#pipeline">Pipeline</a>
+  <a href="#trace">Trace</a>
   <a href="#trace-scanner" class="sub">Scanner</a>
   <a href="#trace-parser" class="sub">Parser</a>
   <a href="#trace-binder" class="sub">Binder</a>
   <a href="#trace-checker" class="sub">Checker</a>
   <a href="#trace-solver" class="sub">Solver</a>
   <a href="#trace-diagnostic" class="sub">Diagnostic</a>
-  <a href="#memory">3. Memory Architecture</a>
-  <a href="#types">4. The Type System</a>
-  <a href="#judge-lawyer">5. Judge &amp; Lawyer</a>
-  <a href="#crates">6. Crate Map</a>
-  <a href="#principles">7. Design Principles</a>
-  <a href="#glossary">8. Glossary</a>
+  <a href="#memory">Memory Model</a>
+  <a href="#types">Type Model</a>
+  <a href="#judge-lawyer">Judge &amp; Lawyer</a>
+  <a href="#crates">Crate Map</a>
+  <a href="#principles">Working Rules</a>
+  <a href="#glossary">Glossary</a>
 </nav>
 
 <!-- ── Content ── -->
@@ -466,37 +466,28 @@ li {
 <!-- ════════════════════════════════════════════ -->
 <header id="intro">
   <h1>How tsz Works</h1>
-  <p class="page-subtitle">An architectural guide for contributors</p>
+  <p class="page-subtitle">A practical guide for contributors</p>
   <p class="page-description">
-    tsz (Project Zang) is a TypeScript compiler written in Rust, targeting exact parity
-    with <code>tsc</code>. This document explains
-    how source code flows through the compiler, what data structures it produces at each
-    stage, and how the type system works internally. This document is source-grounded:
-    struct names, constant values, and function signatures are real. Where implementation
-    is still migrating toward the target architecture, sections below call out
-    <em>current state</em> versus <em>target state</em>.
+    tsz is a TypeScript-compatible compiler and checker written in Rust. Its goal is to
+    match <code>tsc</code> where compatibility matters: diagnostics, spans, inference,
+    emitted output, and the edge cases TypeScript users already rely on. This page is a map
+    for reading and changing the codebase. It follows source text as it
+    becomes tokens, AST nodes, symbols, type answers, diagnostics, and output. The crate and
+    type names below are real. The core query-boundary rules are enforced by architecture
+    tests; the remaining caveat is that the Checker is still a large orchestration layer
+    with other cleanup and performance migrations around it.
   </p>
 </header>
 
-<div class="callout">
-  <div class="callout-title">Current State vs Target State</div>
-  <p>
-    This page describes both the architecture target and the practical state of the codebase.
-    Some checker paths still contain transitional logic that is being moved behind solver
-    query boundaries.
-  </p>
-  <p>
-    Ongoing cleanup work is tracked in <code>docs/todos/architecture-purity.md</code>.
-  </p>
-</div>
-
 <!-- ════════════════════════════════════════════ -->
-<h2 id="pipeline">1. The Pipeline at a Glance</h2>
+<h2 id="pipeline">Pipeline at a Glance</h2>
 
 <p>
-  tsz compiles TypeScript through six sequential stages. Each stage has a single
-  responsibility, consumes the output of the previous stage, and is forbidden from
-  reaching backward into a previous stage's internals.
+  The easiest way to read tsz is as a pipeline:
+  <strong>Scanner &rarr; Parser &rarr; Binder &rarr; Checker &harr; Solver &rarr; Emitter</strong>.
+  That is the right mental model for most changes, but it is not a claim that every current
+  code path is perfectly layered. The important query-boundary rules are now guarded, while
+  the checker still carries a lot of traversal, reporting, and project-state plumbing.
 </p>
 
 <div class="diagram">
@@ -551,18 +542,18 @@ li {
 </div>
 
   <p>
-    The arrow between Checker and Solver is bidirectional in practice: the Checker walks
-    the AST and asks the Solver questions ("is type A assignable to type B?"), then the
-    Solver returns answers. The target architecture is that the Checker only decides
-    <em>where</em> to ask and how to report results. Current implementation still has
-    some checker-side semantic fast paths and narrowing logic while migration continues.
+    The main ownership split is simple: the Checker decides what needs checking and where
+    to report the result; the Solver should answer type questions such as assignability,
+    inference, instantiation, evaluation, and narrowing. That split is guarded through
+    <code>query_boundaries</code> and architecture tests for the main relation and type-data
+    access paths.
   </p>
 
 <h3>Responsibility Matrix</h3>
 
 <p>
-  Every piece of code in the compiler should answer exactly one of these questions.
-  If you're unsure where something belongs, this table is the decision guide.
+  Most compiler changes can be placed by asking what question the code is answering. Use this
+  table as a guide for new work, not as proof that every legacy path already follows it.
 </p>
 
 <table>
@@ -578,7 +569,7 @@ li {
     <tr>
       <td><strong>WHAT</strong> is the type?</td>
       <td><span class="label solver">Solver</span></td>
-      <td>Target owner of all type relations, inference, evaluation, instantiation, and narrowing. Migration in progress for remaining checker-side semantics.</td>
+      <td>Owner of type relations, inference, evaluation, instantiation, and narrowing APIs used through query boundaries.</td>
     </tr>
     <tr>
       <td><strong>WHERE</strong> to report?</td>
@@ -596,19 +587,21 @@ li {
 <hr>
 
 <!-- ════════════════════════════════════════════ -->
-<h2 id="trace">2. The Full Trace: <code>let x: string = 42</code></h2>
+<h2 id="trace">A Trace Through the Compiler: <code>let x: string = 42</code></h2>
 
 <p>
-  To understand how the compiler works, let's follow a single line of TypeScript through
-  every stage. This example is simple but exercises the full pipeline: it declares a variable
-  with a type annotation and an initializer that doesn't match, producing a diagnostic.
+  A tiny wrong assignment is easier to follow than an abstract compiler tour. This example
+  declares a variable with a type annotation and an initializer that does not match, so it
+  exercises scanning, parsing, binding, type checking, solver queries, and diagnostic output.
 </p>
 
 <pre><code><span class="kw">let</span> x: <span class="ty">string</span> = <span class="num">42</span>;</code></pre>
 
 <p>
   This should produce: <code>TS2322: Type 'number' is not assignable to type 'string'</code>,
-  with the error span pointing at <code>42</code>. Here's exactly how that happens.
+  with the error span pointing at <code>42</code>. The trace below shows the intended data
+  flow. The useful responsibility split is: checker drives traversal and reporting; solver
+  owns the type answer.
 </p>
 
 <!-- ── Step 1: Scanner ── -->
@@ -881,10 +874,10 @@ Symbol {
   <div class="callout">
     <div class="callout-title">Architecture rule</div>
     <p>
-      The checker never matches on <code>TypeKey</code> variants or does structural type
-      comparison itself. It asks the Solver and trusts the answer. If you find yourself
-      writing <code>match types.lookup(type_id) { ... }</code> in checker code, that logic
-      belongs in the Solver.
+      New checker code should not match on <code>TypeKey</code> variants or do structural
+      type comparison itself. Prefer asking the Solver through the query boundary. If you
+      find yourself writing <code>match types.lookup(type_id) { ... }</code> in checker code,
+      that logic probably belongs in the Solver.
     </p>
   </div>
 </div>
@@ -962,19 +955,19 @@ Symbol {
 
   <p>
     The diagnostic includes the error code (TS2322), the file path, the line and column,
-    and the message. This must match <code>tsc</code> exactly&mdash;same code, same span,
-    same message text&mdash;for the conformance test to pass.
+    and the message. Conformance compares this fingerprint against <code>tsc</code>, so
+    compatibility work pays attention to the code, span, and message text.
   </p>
 
   <div class="callout">
     <div class="callout-title">The TS2322 pipeline</div>
     <p>
       TS2322 ("Type 'X' is not assignable to type 'Y'") is the most common diagnostic.
-      Its path is strictly controlled: <strong>relation first</strong> (Solver determines
+      Its intended path is: <strong>relation first</strong> (Solver determines
       assignability), <strong>reason second</strong> (Solver explains why), <strong>location
       last</strong> (Checker picks the span and formats the message). New TS2322/TS2345/TS2416
-      work must go through the <code>query_boundaries</code> assignability gateway, and
-      remaining legacy call sites are being migrated.
+      work must go through the <code>query_boundaries</code> assignability gateway; architecture
+      tests guard this path against direct compatibility-checker shortcuts.
     </p>
   </div>
 </div>
@@ -982,21 +975,22 @@ Symbol {
 <hr>
 
 <!-- ════════════════════════════════════════════ -->
-<h2 id="memory">3. Memory Architecture</h2>
+<h2 id="memory">Memory Model</h2>
 
 <p>
-  tsz uses <strong>arena allocation</strong> for all major data structures. Instead of
-  allocating each AST node, symbol, or type on the heap individually, data is stored
-  in contiguous arrays and referenced by lightweight <code>u32</code> handles. This
-  eliminates fragmentation, enables O(1) access, and plays well with CPU caches.
+  Most important compiler objects in tsz live in arenas: large contiguous arrays addressed
+  by small handles. Instead of passing pointers to AST nodes, symbols, strings, flow nodes,
+  and types, the compiler usually passes values such as <code>NodeIndex</code>,
+  <code>SymbolId</code>, <code>Atom</code>, <code>FlowNodeId</code>, and
+  <code>TypeId</code>.
 </p>
 
 <h3>Identity Handles</h3>
 
 <p>
-  Every major entity in the compiler has a <code>u32</code>-based identity handle. This
-  is the fundamental performance trick: comparing two types, two symbols, or two strings
-  is always a single integer comparison.
+  The handles are cheap to copy, easy to store in tables, and stable for the lifetime of a
+  compilation. They also make common comparisons cheap: after strings and types are interned,
+  equality is usually an integer comparison instead of a structural walk.
 </p>
 
 <table>
@@ -1092,13 +1086,14 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 <hr>
 
 <!-- ════════════════════════════════════════════ -->
-<h2 id="types">4. The Type System</h2>
+<h2 id="types">Type Model</h2>
 
 <p>
-  The Solver represents every TypeScript type as a <code>TypeData</code> variant, interned
-  into the global <code>TypeInterner</code>. When two different parts of the program create
-  the same type, the interner returns the same <code>TypeId</code>. This deduplication means
-  the compiler never has two copies of the same type in memory, and equality is always O(1).
+  The solver represents TypeScript types as <code>TypeData</code> values and interns them
+  behind <code>TypeId</code> handles. A useful shorthand is: <code>TypeData</code> is the
+  shape, and <code>TypeId</code> is the stable handle to the canonical shape. If two parts
+  of the program construct the same type, the interner can hand back the same
+  <code>TypeId</code>.
 </p>
 
 <h3>TypeData Variants</h3>
@@ -1183,13 +1178,13 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 <hr>
 
 <!-- ════════════════════════════════════════════ -->
-<h2 id="judge-lawyer">5. The Judge &amp; Lawyer Model</h2>
+<h2 id="judge-lawyer">The Judge &amp; Lawyer Model</h2>
 
 <p>
-  TypeScript is intentionally unsound. It allows things like bivariant function parameters,
-  <code>any</code> silencing structural mismatches, and excess property checking that depends
-  on object literal "freshness." These aren't bugs&mdash;they're deliberate design choices
-  that make the language more ergonomic at the cost of type safety.
+  TypeScript compatibility is not the same thing as a small, sound type theory. The language
+  intentionally allows things like bivariant method parameters, <code>any</code> flowing
+  through mismatches, and excess property checks that depend on whether an object literal is
+  still "fresh." tsz models that split with two layers.
 </p>
 
 <p>
@@ -1251,21 +1246,20 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 </table>
 
 <p>
-  This separation means tsz can reason about <em>actual</em> type safety (what the Judge
-  thinks) while still producing the same diagnostics as <code>tsc</code> (what the Lawyer
-  decides after applying compatibility rules). It also makes it possible to implement a
-  hypothetical "strict mode" in the future that uses only the Judge.
+  This separation gives the solver a strict core while still allowing <code>tsc</code>
+  compatibility rules to override the strict answer where TypeScript requires it.
 </p>
 
 <hr>
 
 <!-- ════════════════════════════════════════════ -->
-<h2 id="crates">6. Crate Map</h2>
+<h2 id="crates">Crate Map</h2>
 
 <p>
-  tsz is organized as a Cargo workspace with 12 crates. The dependency direction is
-  strictly one-way: downstream crates depend on upstream ones, never the reverse. This
-  is enforced by CI.
+  Once you know what kind of work a change is doing, the crate map tells you where to look.
+  tsz is a Cargo workspace, and its dependencies mostly follow the same direction as the
+  pipeline: shared foundations first, then syntax, binding, type work, checking, output,
+  and user-facing integrations.
 </p>
 
 <h3>Dependency Graph</h3>
@@ -1365,7 +1359,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 
 <h3>Boundary Rules</h3>
 
-<p>The following cross-layer imports are <strong>forbidden</strong> and enforced by CI:</p>
+<p>The following cross-layer imports are treated as architecture violations and are checked by CI:</p>
 
 <ul>
   <li>Checker must not import <code>TypeKey</code> or use raw interner APIs from Solver</li>
@@ -1377,25 +1371,22 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 <hr>
 
 <!-- ════════════════════════════════════════════ -->
-<h2 id="principles">7. Design Principles</h2>
+<h2 id="principles">Working Rules</h2>
 
-<h3>Solver-First</h3>
+<h3>Put Type Semantics in the Solver</h3>
 <p>
   If code computes type semantics&mdash;subtyping, inference, evaluation, narrowing,
-  instantiation&mdash;it belongs in the Solver. The Checker is a thin orchestration
-  layer that walks the AST and asks the Solver questions. This is the architectural
-  target; remaining checker-side semantic logic is technical debt being paid down.
-  Keeping semantics in Solver prevents logic duplication and ensures there is one source
-  of truth for "what does this type mean?"
+  instantiation&mdash;it belongs behind Solver APIs. The Checker walks syntax, decides
+  which questions to ask, and reports diagnostics. New work should use the existing query
+  boundary helpers instead of reaching into solver internals.
 </p>
 
-<h3>Arena Everything</h3>
+<h3>Prefer Handles on Hot Paths</h3>
 <p>
   AST nodes, symbols, flow graph nodes, and types are all arena-allocated and referenced
-  by <code>u32</code> handles. No per-operation heap allocation on hot paths. This gives
-  cache-friendly linear memory layouts, zero fragmentation, and O(1) access by index.
-  The tradeoff is that individual items can't be freed until the entire arena is dropped,
-  but compiler passes are batch operations so this is fine.
+  by small handles. That keeps hot paths cheap and makes identity explicit. The tradeoff is
+  that individual items usually live until the owning arena is dropped, which is a good fit
+  for compiler passes.
 </p>
 
 <h3>One Type Universe</h3>
@@ -1406,13 +1397,12 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   This keeps type equality as a fast integer comparison.
 </p>
 
-<h3>tsc Parity Above All</h3>
+<h3>Measure Compatibility Against <code>tsc</code></h3>
 <p>
-  The absolute target is matching <code>tsc</code> behavior exactly. This includes diagnostics
-  (same error code, same span, same message), inference results, compatibility decisions,
-  narrowing behavior, and edge cases. When there's a conflict between "what makes sense" and
-  "what tsc does," tsc wins. Correctness is measured by the conformance test suite, which
-  compares every diagnostic fingerprint against the official TypeScript output.
+  The target is <code>tsc</code>-compatible behavior. That includes diagnostic codes and
+  spans, inference results, compatibility decisions, narrowing behavior, and edge cases.
+  When the intuitive rule differs from what TypeScript actually does, conformance work
+  follows <code>tsc</code>.
 </p>
 
 <h3>Lazy Resolution</h3>
@@ -1424,18 +1414,18 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   caches the result.
 </p>
 
-<h3>No Cross-Layer Leakage</h3>
+<h3>Respect Layer Boundaries</h3>
 <p>
-  Each pipeline stage has strict boundaries that are enforced by CI. The Binder can't import
-  the Solver. The Emitter can't import the Checker. The Checker can't construct raw solver
-  types. This one-way dependency direction prevents architectural drift: new code must fit
-  into the existing responsibility model rather than taking shortcuts.
+  Some boundaries are enforced by CI, and others are maintained by review and convention.
+  Binder code should not make semantic type decisions. Emitter code should not invent
+  type-checking rules. Checker code should avoid constructing raw solver internals when a
+  query API exists.
 </p>
 
 <hr>
 
 <!-- ════════════════════════════════════════════ -->
-<h2 id="glossary">8. Glossary</h2>
+<h2 id="glossary">Glossary</h2>
 
 <p>
   This glossary explains terms used throughout the codebase and this document. If you're
@@ -1492,7 +1482,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   gets). Every subsequent occurrence of <code>x</code> anywhere in the program gets the
   same <code>Atom(47)</code>. This means comparing two identifiers for equality is just
   comparing two integers, which is O(1) regardless of string length. Defined in
-  <code>tsz-common/src/interner.rs</code>.
+  <code>crates/tsz-common/src/interner/mod.rs</code>.
 </p>
 
 <!-- ── B ── -->
@@ -1662,7 +1652,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
   type structure. This happens recursively: if the array's methods reference <code>T</code>,
   those get substituted too. The solver caches instantiation results so that
   <code>Array&lt;string&gt;</code> used in two different places produces the same
-  <code>TypeId</code>. Implemented in <code>tsz-solver/src/instantiation/</code>.
+  <code>TypeId</code>. Implemented in <code>crates/tsz-solver/src/caches/instantiation_cache.rs</code>.
 </p>
 
 <h3 id="g-interner">Interner (String Interner / Type Interner)</h3>
@@ -1704,7 +1694,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 <p>
   This two-phase approach keeps transforms clean (they describe <em>what</em> the output
   should look like structurally) and keeps formatting concerns separate (the printer handles
-  <em>how</em> to render it). The IR lives in <code>tsz-emitter/src/transforms/ir.rs</code>.
+  <em>how</em> to render it). The IR lives in <code>crates/tsz-emitter/src/transforms/ir.rs</code>.
 </p>
 
 <!-- ── L ── -->
@@ -1780,7 +1770,7 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 <!-- ── Q ── -->
 <h3 id="g-query-boundaries">Query Boundaries</h3>
 <p>
-  The gateway API in the checker (<code>tsz-checker/src/query_boundaries/</code>) that
+  The gateway API in the checker (<code>crates/tsz-checker/src/query_boundaries/</code>) that
   routes type-checking questions to the solver. Instead of the checker calling solver
   methods directly all over the codebase, assignability checks for TS2322/TS2345/TS2416
   diagnostics must go through these boundary functions. This centralization ensures
@@ -1946,9 +1936,8 @@ StringInterner    [<span class="str">"x"</span>][<span class="str">"string"</spa
 
 <footer>
   <p>
-    Project Zang &mdash; a TypeScript compiler in Rust.
-    See <a href="https://github.com/nicolo-ribaudo/tsz">the repository</a> for the source code,
-    and <code>docs/architecture/NORTH_STAR.md</code> for the complete architectural specification.
+    tsz &mdash; a TypeScript-compatible compiler in Rust.
+    See <a href="https://github.com/mohsen1/tsz">the repository</a> for the source code.
   </p>
 </footer>
 

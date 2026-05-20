@@ -6,16 +6,21 @@
 //! - Type queries (typeof X)
 //! - Mapped types ({ [P in K]: T })
 
+mod enum_indexed_access;
+mod indexed_access_fast_path;
+mod type_query_declared_type;
+
 use super::type_node::TypeNodeChecker;
 use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
     is_typeof_global_this_type_node,
 };
+use super::unique_symbol_arena::has_declared_unique_symbol_owner;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
+use tsz_solver::{ObjectShape, PropertyInfo, SymbolRef, TypeId};
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // =========================================================================
@@ -61,13 +66,31 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Handle keyof operator
             if operator == SyntaxKind::KeyOfKeyword as u16 {
+                if let Some(operand_node) = self.ctx.arena.get(type_op.type_node)
+                    && operand_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(operand_node)
+                    && let Some(imported_operand) =
+                        self.import_call_type_reference(type_ref.type_name)
+                {
+                    let evaluated = self.ctx.types.evaluate_keyof(imported_operand);
+                    if evaluated != TypeId::ERROR {
+                        return evaluated;
+                    }
+                }
                 return factory.keyof(inner_type);
             }
 
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
-                // unique is handled differently - it's a type modifier for symbols
-                // For now, just return the inner type
+                if inner_type == TypeId::SYMBOL
+                    && !has_declared_unique_symbol_owner(self.ctx.arena, idx)
+                {
+                    return self.ctx.types.unique_symbol(synthetic_unique_symbol_ref(
+                        &self.ctx.file_name,
+                        node.pos,
+                        node.end,
+                    ));
+                }
                 return inner_type;
             }
 
@@ -90,6 +113,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let factory = self.ctx.types.factory();
 
         if let Some(indexed_access) = self.ctx.arena.get_indexed_access_type(node) {
+            if let Some(fast_result) = self.try_fast_alias_union_literal_index_access(
+                indexed_access.object_type,
+                indexed_access.index_type,
+            ) {
+                return fast_result;
+            }
+
             let object_type = self.check(indexed_access.object_type);
             let index_type = self.check(indexed_access.index_type);
 
@@ -140,25 +170,30 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
+            let object_is_type_query_node = self
+                .ctx
+                .arena
+                .get(indexed_access.object_type)
+                .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_QUERY);
             let indexed_type = factory.index_access(object_type, index_type);
-            let evaluated_indexed_type =
-                if !crate::query_boundaries::common::contains_type_parameters(
+            let evaluated_indexed_type = if object_is_type_query_node
+                || !crate::query_boundaries::common::contains_type_parameters(
                     self.ctx.types,
                     indexed_type,
                 ) {
-                    Some(
-                        crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
-                            self.ctx.types,
-                            &*self.ctx,
-                            indexed_type,
-                            std::iter::empty(),
-                            false,
-                            self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
-                        ),
-                    )
-                } else {
-                    None
-                };
+                Some(
+                    crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
+                        self.ctx.types,
+                        &*self.ctx,
+                        indexed_type,
+                        std::iter::empty(),
+                        false,
+                        self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                    ),
+                )
+            } else {
+                None
+            };
             if evaluated_indexed_type
                 .as_ref()
                 .is_some_and(|result| result.depth_exceeded)
@@ -529,7 +564,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let evaluated = evaluated_result.result;
                 if evaluated != TypeId::ERROR
                     && evaluated != indexed_type
-                    && self.is_full_enum_member_union(evaluated)
+                    && let Some(parent_enum_type) =
+                        self.full_enum_member_union_parent_type(evaluated)
+                {
+                    return parent_enum_type;
+                }
+                if evaluated != TypeId::ERROR
+                    && evaluated != indexed_type
+                    && object_is_type_query_node
                 {
                     return evaluated;
                 }
@@ -539,59 +581,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         } else {
             TypeId::ERROR
         }
-    }
-
-    fn is_full_enum_member_union(&self, type_id: TypeId) -> bool {
-        let Some(list_id) = crate::query_boundaries::common::union_list_id(self.ctx.types, type_id)
-        else {
-            return false;
-        };
-        let members = self.ctx.types.type_list(list_id);
-        if members.is_empty() {
-            return false;
-        }
-
-        let mut parent = tsz_binder::SymbolId::NONE;
-        for &member_type in members.iter() {
-            let Some((def_id, _)) =
-                crate::query_boundaries::common::enum_components(self.ctx.types, member_type)
-            else {
-                return false;
-            };
-            let Some(member_sym_id) = self.ctx.def_to_symbol_id(def_id) else {
-                return false;
-            };
-            let Some(member_symbol) = self.ctx.binder.symbols.get(member_sym_id) else {
-                return false;
-            };
-            if !member_symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
-                || member_symbol.parent.is_none()
-            {
-                return false;
-            }
-            if parent.is_none() {
-                parent = member_symbol.parent;
-            } else if parent != member_symbol.parent {
-                return false;
-            }
-        }
-
-        let Some(parent_symbol) = self.ctx.binder.symbols.get(parent) else {
-            return false;
-        };
-        let Some(exports) = parent_symbol.exports.as_ref() else {
-            return false;
-        };
-        let enum_member_count = exports
-            .iter()
-            .filter(|(_, sym_id)| {
-                self.ctx.binder.symbols.get(**sym_id).is_some_and(|symbol| {
-                    symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
-                })
-            })
-            .count();
-
-        enum_member_count == members.len()
     }
 
     /// Check if a type is a union containing Application (generic instantiation) members.
@@ -731,7 +720,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // Type Query (typeof)
     // =========================================================================
 
-    fn apply_instantiation_expression_type_arguments(
+    pub(crate) fn apply_instantiation_expression_type_arguments(
         &mut self,
         expr_type: TypeId,
         type_arguments: &NodeList,
@@ -899,6 +888,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         };
 
+        // Route inline `typeof import("...")[.segments]` through the namespace-
+        // aware resolver before falling through to lowering. See
+        // `try_get_type_from_inline_import_typeof_query` for the full rule.
+        if let Some(resolved) = self.try_get_type_from_inline_import_typeof_query(idx) {
+            return resolved;
+        }
+
         // Capture type argument node indices early (before borrows prevent access).
         // When present, the base type will be wrapped in Application(base, args)
         // so that constraint checking (TS2344) sees the instantiated type rather
@@ -1007,6 +1003,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return param_type;
         }
 
+        if let Some(tuple_type) = self.const_asserted_array_tuple_type_query(type_query.expr_name) {
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(tuple_type, type_arguments);
+            }
+            return tuple_type;
+        }
+
         if let Some(object_type) = self.const_array_to_enum_object_type_query(type_query.expr_name)
         {
             if let Some(type_arguments) = &type_arguments {
@@ -1034,13 +1038,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return property_type;
         }
 
-        // Prefer the already-computed value-space type at this query site when available.
-        // This preserves flow-sensitive narrowing for `typeof expr` in type positions.
         if use_flow_sensitive_query
             && let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
             && expr_type != TypeId::ERROR
         {
-            // Apply type arguments from `typeof expr<Args>` instantiation expressions.
             if let Some(type_arguments) = &type_arguments {
                 return self
                     .apply_instantiation_expression_type_arguments(expr_type, type_arguments);
@@ -1048,82 +1049,109 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return expr_type;
         }
 
-        // For qualified names (e.g., typeof M.F2), resolve the symbol through
-        // the binder's export tables. Simple identifiers are already handled by
-        // the node_types cache above, but qualified names need member resolution.
         if let Some(sym_id) = self.resolve_type_query_symbol(type_query.expr_name) {
-            // TS2693: typeof requires a value binding. If the resolved symbol is
-            // type-only (e.g., an interface or type alias without a value component),
-            // emit an error instead of creating a TypeQuery.
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                let flags = symbol.flags;
-                let has_value = flags & tsz_binder::symbol_flags::VALUE != 0;
-                let is_type_only = (flags & tsz_binder::symbol_flags::TYPE != 0) && !has_value;
-                if is_type_only {
-                    let escaped_name = symbol.escaped_name.clone();
-                    self.emit_type_query_type_only_error(&escaped_name, type_query.expr_name);
-                    return TypeId::ERROR;
+            let (sym_flags, type_only_name) =
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map_or((0 /* no symbol */, None), |s| {
+                        let has_value = s.has_any_flags(tsz_binder::symbol_flags::VALUE);
+                        let is_type_only =
+                            s.has_any_flags(tsz_binder::symbol_flags::TYPE) && !has_value;
+                        (s.flags, is_type_only.then(|| s.escaped_name.clone()))
+                    });
+            if let Some(escaped_name) = type_only_name {
+                self.emit_type_query_type_only_error(&escaped_name, type_query.expr_name);
+                return TypeId::ERROR;
+            }
+
+            if sym_flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                && sym_flags & tsz_binder::symbol_flags::VALUE != 0
+            {
+                if let Some(&val_type) = self.ctx.merged_value_types.get(&sym_id) {
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            val_type,
+                            type_arguments,
+                        );
+                    }
+                    return val_type;
+                }
+
+                if let Some(ann_idx) = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
+                    let mut decl = symbol.value_declaration;
+                    let decl_node = self.ctx.arena.get(decl)?;
+                    if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                        decl = self.ctx.arena.get_extended(decl)?.parent;
+                    }
+                    let decl_node = self.ctx.arena.get(decl)?;
+                    if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                        return None;
+                    }
+                    let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+                    var_decl
+                        .type_annotation
+                        .is_some()
+                        .then_some(var_decl.type_annotation)
+                }) {
+                    let ann_type = self.check(ann_idx);
+                    if ann_type != TypeId::ERROR && ann_type != TypeId::ANY {
+                        if let Some(type_arguments) = &type_arguments {
+                            return self.apply_instantiation_expression_type_arguments(
+                                ann_type,
+                                type_arguments,
+                            );
+                        }
+                        return ann_type;
+                    }
+                }
+
+                if let Some(val_type) = self.compute_safe_merged_value_type_for_type_query(sym_id) {
+                    self.ctx.merged_value_types.insert(sym_id, val_type);
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            val_type,
+                            type_arguments,
+                        );
+                    }
+                    return val_type;
                 }
             }
 
-            // For simple identifiers, try flow-sensitive narrowing. When `typeof c`
-            // appears inside a type alias within a control flow guard (e.g.,
-            // `if (typeof c === 'string') { type C = { [k: string]: typeof c }; }`),
-            // the declared type should be narrowed by the control flow context.
-            //
-            // First try the symbol_types cache, then fall back to resolving
-            // the type annotation from the variable declaration.
-            let mut declared_type: Option<TypeId> = self
-                .ctx
-                .symbol_types
-                .get(&sym_id)
-                .copied()
-                .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR);
+            let mut declared_type: Option<TypeId> =
+                if sym_flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                    && self.ctx.symbol_resolution_set.contains(&sym_id)
+                {
+                    None
+                } else {
+                    self.ctx
+                        .symbol_types
+                        .get(&sym_id)
+                        .copied()
+                        .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
+                };
 
             if declared_type.is_none() {
-                // symbol_types may not be populated yet (early phase).
-                // Extract and resolve the type annotation from the declaration.
-                let type_ann_idx = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
-                    let decl = symbol.value_declaration;
-                    if decl.is_none() {
-                        return None;
-                    }
-                    let decl_node = self.ctx.arena.get(decl)?;
-                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
-                        if var_decl.type_annotation.is_some() {
-                            return Some(var_decl.type_annotation);
-                        }
-                    } else if decl_node.kind == syntax_kind_ext::PARAMETER {
-                        let param = self.ctx.arena.get_parameter(decl_node)?;
-                        if param.type_annotation.is_some() {
-                            return Some(param.type_annotation);
-                        }
-                    } else if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                        && let Some(ext) = self.ctx.arena.get_extended(decl)
-                        && ext.parent.is_some()
-                        && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                        && parent_node.kind == syntax_kind_ext::PARAMETER
-                    {
-                        let param = self.ctx.arena.get_parameter(parent_node)?;
-                        if param.name == decl && param.type_annotation.is_some() {
-                            return Some(param.type_annotation);
-                        }
-                    }
-                    None
-                });
-                if let Some(ann_idx) = type_ann_idx {
-                    let resolved = self.check(ann_idx);
-                    if resolved != TypeId::ANY && resolved != TypeId::ERROR {
-                        declared_type = Some(resolved);
-                    }
-                }
+                declared_type = self.declared_annotation_type_for_type_query_symbol(sym_id);
             }
 
             if let Some(declared_type) = declared_type
                 && declared_type != TypeId::ANY
                 && declared_type != TypeId::ERROR
             {
+                if crate::query_boundaries::common::is_unique_symbol_type(
+                    self.ctx.types,
+                    declared_type,
+                ) {
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            declared_type,
+                            type_arguments,
+                        );
+                    }
+                    return declared_type;
+                }
+
                 if !use_flow_sensitive_query {
                     if let Some(type_arguments) = &type_arguments {
                         return self.apply_instantiation_expression_type_arguments(
@@ -1171,6 +1199,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
                     .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
                     .with_type_environment(&self.ctx.type_environment)
+                    .with_checker_context(self.ctx)
                     .with_narrowing_cache(&self.ctx.narrowing_cache)
                     .with_call_type_predicates(&self.ctx.call_type_predicates)
                     .with_flow_buffers(
@@ -1194,6 +1223,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         return narrowed;
                     }
                 }
+            }
+
+            if let Some(value_type) = self.declared_type_for_type_query_symbol(sym_id) {
+                if let Some(type_arguments) = &type_arguments {
+                    return self
+                        .apply_instantiation_expression_type_arguments(value_type, type_arguments);
+                }
+                return value_type;
             }
 
             let factory = self.ctx.types.factory();
@@ -1385,6 +1422,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let assertion_expr = self.ctx.arena.skip_parenthesized(decl.initializer);
+        let initializer_is_const_assertion = self
+            .ctx
+            .arena
+            .get(assertion_expr)
+            .and_then(|node| self.ctx.arena.get_type_assertion(node))
+            .and_then(|assertion| self.ctx.arena.get(assertion.type_node))
+            .is_some_and(|type_node| type_node.kind == SyntaxKind::ConstKeyword as u16);
         let initializer = self
             .ctx
             .arena
@@ -1400,12 +1445,29 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if element_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
                 let prop = self.ctx.arena.get_property_assignment(element_node)?;
                 if self.property_name_text(prop.name).as_deref() == Some(property_name.as_str()) {
-                    return self.literal_type_from_const_member_initializer(prop.initializer);
+                    let member_type =
+                        self.literal_type_from_const_member_initializer(prop.initializer)?;
+                    return Some(if initializer_is_const_assertion {
+                        member_type
+                    } else {
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            member_type,
+                        )
+                    });
                 }
             } else if element_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
                 let prop = self.ctx.arena.get_shorthand_property(element_node)?;
                 if self.property_name_text(prop.name).as_deref() == Some(property_name.as_str()) {
-                    return self.literal_type_from_const_member_initializer(prop.name);
+                    let member_type = self.literal_type_from_const_member_initializer(prop.name)?;
+                    return Some(if initializer_is_const_assertion {
+                        member_type
+                    } else {
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            member_type,
+                        )
+                    });
                 }
             }
         }
@@ -1684,102 +1746,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .is_some_and(|name| name.escaped_text == param_name.escaped_text)
     }
 
-    pub(crate) fn property_name_text(&self, name: NodeIndex) -> Option<String> {
-        let name = self.ctx.arena.skip_parenthesized_and_assertions(name);
-        let node = self.ctx.arena.get(name)?;
-        if let Some(ident) = self.ctx.arena.get_identifier(node) {
-            return Some(ident.escaped_text.clone());
-        }
-        if node.kind == SyntaxKind::StringLiteral as u16
-            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-            || node.kind == SyntaxKind::NumericLiteral as u16
-        {
-            return self.ctx.arena.get_literal(node).map(|lit| lit.text.clone());
-        }
-        None
-    }
-
-    fn literal_type_from_const_member_initializer(&self, initializer: NodeIndex) -> Option<TypeId> {
-        let initializer = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(initializer);
-        let node = self.ctx.arena.get(initializer)?;
-        let factory = self.ctx.types.factory();
-        match node.kind {
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                self.ctx
-                    .arena
-                    .get_literal(node)
-                    .map(|lit| factory.literal_string(&lit.text))
-            }
-            k if k == SyntaxKind::NumericLiteral as u16 => self
-                .ctx
-                .arena
-                .get_literal(node)
-                .and_then(|lit| {
-                    lit.value
-                        .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
-                })
-                .map(|value| factory.literal_number(value)),
-            k if k == SyntaxKind::TrueKeyword as u16 => Some(factory.literal_boolean(true)),
-            k if k == SyntaxKind::FalseKeyword as u16 => Some(factory.literal_boolean(false)),
-            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
-            k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
-            _ => None,
-        }
-    }
-
-    fn declared_type_for_type_query_symbol(
-        &mut self,
-        sym_id: tsz_binder::SymbolId,
-    ) -> Option<TypeId> {
-        if let Some(type_id) = self
-            .ctx
-            .symbol_types
-            .get(&sym_id)
-            .copied()
-            .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
-        {
-            return Some(type_id);
-        }
-
-        let decl = self.ctx.binder.get_symbol(sym_id)?.value_declaration;
-        if decl.is_none() {
-            return None;
-        }
-        let decl_node = self.ctx.arena.get(decl)?;
-        let type_ann = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
-            var_decl
-                .type_annotation
-                .is_some()
-                .then_some(var_decl.type_annotation)
-        } else if decl_node.kind == syntax_kind_ext::PARAMETER {
-            let param = self.ctx.arena.get_parameter(decl_node)?;
-            param
-                .type_annotation
-                .is_some()
-                .then_some(param.type_annotation)
-        } else if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-            let parent = self.ctx.arena.get_extended(decl)?.parent;
-            let parent_node = self.ctx.arena.get(parent)?;
-            if parent_node.kind == syntax_kind_ext::PARAMETER {
-                let param = self.ctx.arena.get_parameter(parent_node)?;
-                (param.name == decl && param.type_annotation.is_some())
-                    .then_some(param.type_annotation)
-            } else {
-                None
-            }
-        } else {
-            None
-        }?;
-
-        Some(self.check(type_ann)).filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
-    }
-
     fn get_global_this_type(&mut self, _error_node: NodeIndex) -> TypeId {
         let mut names = rustc_hash::FxHashSet::default();
         for (name, _) in self.ctx.binder.file_locals.iter() {
@@ -1887,8 +1853,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if name == "default" {
                 return None;
             }
-            let sym_id = self.ctx.binder.file_locals.get(name)?;
-            return Some(sym_id);
+            return self.resolve_value_symbol_in_scope(expr_name);
         }
 
         if node.kind == syntax_kind_ext::QUALIFIED_NAME {
@@ -1959,4 +1924,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // Delegate to TypeLowering with extended resolvers (enum flags + lib search)
         self.lower_with_resolvers(idx, true, false)
     }
+}
+
+fn synthetic_unique_symbol_ref(file_name: &str, pos: u32, end: u32) -> SymbolRef {
+    let mut hash = 0x811c_9dc5u32;
+    for byte in file_name.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    for value in [pos, end] {
+        hash ^= value;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    SymbolRef(hash | 0x8000_0000)
 }

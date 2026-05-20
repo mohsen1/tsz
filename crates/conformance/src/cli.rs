@@ -106,7 +106,7 @@ pub struct Args {
     pub tsz_binary: String,
 
     /// Timeout per test in seconds (0 = no timeout)
-    #[arg(long, default_value_t = 20)]
+    #[arg(long, default_value_t = 90)]
     pub timeout: u64,
 
     /// Print fingerprint deltas for failed tests (when available).
@@ -207,6 +207,12 @@ mod tests {
     fn is_verbose_stays_false_when_both_flags_are_off() {
         let args = parse_args(&["tsz-conformance"]);
         assert!(!args.is_verbose());
+    }
+
+    #[test]
+    fn default_timeout_covers_slow_full_suite_fixtures() {
+        let args = parse_args(&["tsz-conformance"]);
+        assert_eq!(args.timeout, 90);
     }
 
     #[test]

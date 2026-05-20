@@ -60,15 +60,20 @@ pub struct CheckerOptions {
     pub allow_unused_labels: Option<bool>,
     /// When true, require bracket notation for index signature property access (TS4111).
     pub no_property_access_from_index_signature: bool,
-    /// When true, enable Sound Mode for stricter type checking beyond TypeScript's defaults.
-    /// Sound Mode catches common unsoundness issues like:
-    /// - Mutable array covariance (TS9002)
-    /// - Method parameter bivariance (TS9003)
-    /// - `any` escapes (TS9004)
-    /// - Excess properties via sticky freshness (TS9001)
+    /// When true, enable experimental Sound Mode checks beyond TypeScript's defaults.
     ///
-    /// Activated via: `--sound` CLI flag or `// @tsz-sound` pragma
+    /// Current production behavior is intentionally narrow: the checker tightens
+    /// relation policy for method bivariance and partial `any` propagation, and
+    /// preserves object-literal freshness in a few value-flow paths. Public TSZ
+    /// sound diagnostics, per-file pragmas, report-only mode, and the final
+    /// config surface are not wired yet.
     pub sound_mode: bool,
+    /// When true, opt first-party declaration files (.d.ts) into sound checking.
+    pub sound_check_declarations: bool,
+    /// When true, report sound diagnostics without failing the build.
+    pub sound_report_only: bool,
+    /// When true, enable pedantic sound heuristics beyond the core sound bundle.
+    pub sound_pedantic: bool,
     /// When true, enables experimental support for decorators (legacy decorators).
     /// This is required for the @experimentalDecorators flag.
     /// When decorators are used, `TypedPropertyDescriptor` must be available.
@@ -105,6 +110,9 @@ pub struct CheckerOptions {
     pub no_unchecked_side_effect_imports: bool,
     /// When true, require 'override' modifier on members that override base class members (TS4114).
     pub no_implicit_override: bool,
+    /// When true, allow iterable protocol consumption under ES5/ES3 targets.
+    /// This corresponds to the --downlevelIteration compiler flag.
+    pub downlevel_iteration: bool,
     /// JSX factory function (e.g. `React.createElement`)
     pub jsx_factory: String,
     /// Whether `jsxFactory` was explicitly set via compiler options.
@@ -216,6 +224,9 @@ impl Default for CheckerOptions {
             allow_unused_labels: None,
             no_property_access_from_index_signature: false,
             sound_mode: false,
+            sound_check_declarations: false,
+            sound_report_only: false,
+            sound_pedantic: false,
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,
@@ -232,6 +243,7 @@ impl Default for CheckerOptions {
             // TSC 6.0 defaults `noUncheckedSideEffectImports` to true.
             no_unchecked_side_effect_imports: true,
             no_implicit_override: false,
+            downlevel_iteration: false,
             jsx_factory: "React.createElement".to_string(),
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),

@@ -5,13 +5,16 @@
 //!
 //! These functions operate purely on `TypeIds` and maintain no AST dependencies.
 
-use crate::TypeDatabase;
-use crate::TypeResolver;
 use crate::caches::db::QueryDatabase;
 use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
-use crate::is_subtype_of;
+use crate::construction::TypeDatabase;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{IntrinsicKind, ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId};
+use crate::relations::subtype::TypeResolver;
+use crate::relations::subtype::is_subtype_of;
+use crate::types::{
+    IntrinsicKind, ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId, Visibility,
+};
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_common::interner::Atom;
 
@@ -169,10 +172,10 @@ pub fn normalize_object_union_members_for_write_target(
 
         if changed {
             shape.flags.remove(ObjectFlags::FRESH_LITERAL);
+            let display_props =
+                normalized_display_properties(interner, original_type, &shape.properties);
             let widened = interner.object_with_flags(shape.properties, shape.flags);
-            if let Some(display_props) = interner.get_display_properties(original_type) {
-                interner.store_display_properties(widened, display_props.as_ref().clone());
-            }
+            interner.store_display_properties(widened, display_props);
             normalized.push(widened);
         } else {
             normalized.push(original_type);
@@ -180,6 +183,57 @@ pub fn normalize_object_union_members_for_write_target(
     }
 
     changed.then_some(normalized)
+}
+
+/// Merge a later object-spread property contribution with an earlier property.
+///
+/// This implements the AST-independent part of TypeScript's object spread merge
+/// rule for a single property name:
+/// - a later required property overrides the earlier contribution;
+/// - a later optional property is unioned with the earlier contribution because
+///   the runtime spread may omit it;
+/// - when `exactOptionalPropertyTypes` is disabled, `undefined` is removed from
+///   the later optional contribution before unioning with an earlier required
+///   property.
+pub fn merge_object_spread_property(
+    db: &dyn TypeDatabase,
+    exact_optional_property_types: bool,
+    earlier: Option<&PropertyInfo>,
+    spread: &PropertyInfo,
+) -> PropertyInfo {
+    let Some(earlier) = earlier else {
+        return spread.clone();
+    };
+
+    if !spread.optional {
+        return spread.clone();
+    }
+
+    let (spread_type, spread_write_type) = if !exact_optional_property_types && !earlier.optional {
+        (
+            crate::narrowing::utils::remove_undefined(db, spread.type_id),
+            crate::narrowing::utils::remove_undefined(db, spread.write_type),
+        )
+    } else {
+        (spread.type_id, spread.write_type)
+    };
+
+    PropertyInfo {
+        name: spread.name,
+        type_id: db.union2(earlier.type_id, spread_type),
+        write_type: db.union2(earlier.write_type, spread_write_type),
+        // Required wins on optionality.
+        optional: earlier.optional && spread.optional,
+        readonly: earlier.readonly && spread.readonly,
+        is_method: spread.is_method,
+        is_class_prototype: false,
+        visibility: spread.visibility,
+        parent_id: spread.parent_id,
+        declaration_order: spread.declaration_order,
+        is_string_named: spread.is_string_named,
+        is_symbol_named: spread.is_symbol_named,
+        single_quoted_name: spread.single_quoted_name,
+    }
 }
 
 fn complement_fresh_object_literal_union(
@@ -264,9 +318,10 @@ pub(crate) fn normalize_fresh_object_literal_union_members(
             // dedupe to a previously-interned twin whose `declaration_order` is
             // zero, and the diagnostic printer falls back to Atom order — which
             // is non-deterministic across compilations and rarely matches the
-            // source-written property order tsc preserves.
-            let mut display_props = completed.clone();
-            crate::types::normalize_display_property_order(&mut display_props);
+            // source-written property order tsc preserves. Existing properties
+            // keep their display-only literal types so normalized unions don't
+            // repaint `{ c: true }` as `{ c: boolean }`.
+            let display_props = normalized_display_properties(interner, original_type, &completed);
             let new_type_id = interner.object_with_flags(completed, shape.flags);
             interner.store_display_properties(new_type_id, display_props);
             normalized.push(new_type_id);
@@ -297,6 +352,40 @@ fn add_missing_optional_properties(existing: &[PropertyInfo], names: &[Atom]) ->
         out.push(prop);
     }
     out
+}
+
+fn normalized_display_properties(
+    interner: &dyn TypeDatabase,
+    original_type: TypeId,
+    normalized_properties: &[PropertyInfo],
+) -> Vec<PropertyInfo> {
+    let original_display = interner.get_display_properties(original_type);
+    let original_display_by_name: Option<FxHashMap<Atom, (TypeId, TypeId)>> =
+        original_display.as_ref().map(|props| {
+            props
+                .iter()
+                .map(|prop| (prop.name, (prop.type_id, prop.write_type)))
+                .collect()
+        });
+    let mut display_props: Vec<PropertyInfo> = normalized_properties
+        .iter()
+        .map(|prop| {
+            let Some((display_type, display_write_type)) = original_display_by_name
+                .as_ref()
+                .and_then(|props| props.get(&prop.name).copied())
+            else {
+                return prop.clone();
+            };
+
+            PropertyInfo {
+                type_id: display_type,
+                write_type: display_write_type,
+                ..prop.clone()
+            }
+        })
+        .collect();
+    crate::types::normalize_display_property_order(&mut display_props);
+    display_props
 }
 
 /// Computes the type of a template literal expression.
@@ -818,6 +907,14 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
         return hit;
     }
 
+    if subtype_reduction_proven_noop_by_unique_required_fields(interner, types) {
+        let result: Arc<[TypeId]> = Arc::from(types.to_vec());
+        if let (Some(db), Some(key)) = (query_db, cache_key) {
+            db.insert_subtype_reduction_cache(key, result.clone());
+        }
+        return result;
+    }
+
     let result: Arc<[TypeId]> = if let Some(res) = resolver {
         let mut keep = vec![true; len];
         let mut checker = SubtypeChecker::with_resolver(interner, res);
@@ -875,6 +972,61 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
         db.insert_subtype_reduction_cache(key, result.clone());
     }
     result
+}
+
+fn subtype_reduction_proven_noop_by_unique_required_fields(
+    interner: &dyn TypeDatabase,
+    types: &[TypeId],
+) -> bool {
+    if types.len() <= 1 {
+        return true;
+    }
+
+    let mut shapes = Vec::with_capacity(types.len());
+    let mut property_counts = FxHashMap::default();
+
+    for &type_id in types {
+        let shape_id = match interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+            _ => return false,
+        };
+        let shape = interner.object_shape(shape_id);
+        if shape.string_index.is_some() || shape.number_index.is_some() {
+            return false;
+        }
+        for property in &shape.properties {
+            *property_counts.entry(property.name).or_insert(0usize) += 1;
+        }
+        shapes.push(shape);
+    }
+
+    shapes.iter().all(|shape| {
+        shape.properties.iter().any(|property| {
+            property_can_prove_missing_required_field(property)
+                && property_counts.get(&property.name).copied() == Some(1)
+        })
+    })
+}
+
+fn property_can_prove_missing_required_field(property: &PropertyInfo) -> bool {
+    !property.optional
+        && !property.is_method
+        && !property.is_class_prototype
+        && property.visibility == Visibility::Public
+        && property_type_can_prove_object_base_incompatible(property.type_id)
+}
+
+const fn property_type_can_prove_object_base_incompatible(type_id: TypeId) -> bool {
+    matches!(
+        type_id,
+        TypeId::BOOLEAN
+            | TypeId::NUMBER
+            | TypeId::STRING
+            | TypeId::BIGINT
+            | TypeId::SYMBOL
+            | TypeId::BOOLEAN_TRUE
+            | TypeId::BOOLEAN_FALSE
+    )
 }
 
 fn is_constructor_like<R: TypeResolver>(

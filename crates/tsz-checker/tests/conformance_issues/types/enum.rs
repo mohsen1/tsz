@@ -73,7 +73,51 @@ var p = x.Green;
 }
 
 #[test]
-#[ignore = "merged backlog: needs tsc-compatible enum member widening for enum object targets"]
+fn test_string_enum_member_targets_reject_raw_string_literals() {
+    let source = r#"
+enum Direction {
+    Up = "UP",
+    Down = "DOWN",
+    Side = "SIDE",
+}
+
+enum OtherDirection {
+    Up = "UP",
+}
+
+enum Count {
+    Zero,
+    One,
+}
+
+type Vertical = Direction.Up | Direction.Down;
+type RawVertical = "UP" | "DOWN";
+
+const rawToMember: Direction.Up = "UP";
+const rawToUnion: Vertical = "UP";
+const rawUnionToUnion: Vertical = "UP" as RawVertical;
+const rawToEnum: Direction = "UP";
+const crossEnum: Direction.Up = OtherDirection.Up;
+
+const enumMemberToUnion: Vertical = Direction.Up;
+const enumMemberToString: string = Direction.Up;
+const enumUnionToString: string = Direction.Up as Vertical;
+const numericLiteralToMember: Count.Zero = 0;
+const numericLiteralToEnum: Count = 1;
+
+export {};
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+
+    assert_eq!(
+        ts2322_count, 5,
+        "Expected raw string-like and cross-enum sources to be rejected for string enum targets, while enum-to-string and numeric enum cases stay accepted. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_enum_member_assignment_to_enum_object_target_displays_whole_enum() {
     let source = r#"
 namespace W {
@@ -309,148 +353,6 @@ fn test_exported_variable_typeof_block_local_value_emits_ts4025() {
                 .contains("Exported variable 'b' has or is using private name 'a'")),
         "Expected TS4025 message to mention exported variable 'b' and private name 'a'. Actual diagnostics: {diagnostics:#?}"
     );
-}
-
-fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    tsz_checker::test_utils::load_default_lib_files()
-}
-
-fn lib_files_available() -> bool {
-    !load_lib_files_for_test().is_empty()
-}
-
-fn without_missing_global_type_errors(diagnostics: Vec<(u32, String)>) -> Vec<(u32, String)> {
-    diagnostics
-        .into_iter()
-        .filter(|(code, _)| *code != 2318)
-        .collect()
-}
-
-fn compile_and_get_diagnostics_with_lib_and_options(
-    source: &str,
-    options: CheckerOptions,
-) -> Vec<(u32, String)> {
-    compile_and_get_diagnostics_named_with_lib_and_options("test.ts", source, options)
-}
-
-fn compile_and_get_diagnostics_named_with_lib_and_options(
-    file_name: &str,
-    source: &str,
-    options: CheckerOptions,
-) -> Vec<(u32, String)> {
-    compile_and_get_raw_diagnostics_named_with_lib_and_options(file_name, source, options)
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
-}
-
-fn compile_and_get_raw_diagnostics_named_with_lib_and_options(
-    file_name: &str,
-    source: &str,
-    options: CheckerOptions,
-) -> Vec<tsz_common::diagnostics::Diagnostic> {
-    let lib_files = load_lib_files_for_test();
-
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    let checker_lib_contexts = if lib_files.is_empty() {
-        Vec::new()
-    } else {
-        let raw_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| BinderLibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&raw_contexts);
-        lib_files
-            .iter()
-            .map(|lib| tsz_checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect()
-    };
-    // Match the CLI/LSP convention: stamp the user file with a stable
-    // `file_idx` so checker-side `def_file_idx` lookups can distinguish
-    // user-defined aliases from merged-in lib symbols.
-    binder.set_file_idx(0);
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-
-    if !checker_lib_contexts.is_empty() {
-        checker.ctx.set_lib_contexts(checker_lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics
-}
-
-fn compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
-    source: &str,
-    options: CheckerOptions,
-) -> Vec<(u32, String)> {
-    let lib_files = load_lib_files_for_test();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    let checker_lib_contexts = if lib_files.is_empty() {
-        Vec::new()
-    } else {
-        let raw_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| BinderLibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&raw_contexts);
-        lib_files
-            .iter()
-            .map(|lib| CheckerLibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect()
-    };
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    if !checker_lib_contexts.is_empty() {
-        checker.ctx.set_lib_contexts(checker_lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code != 2318)
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
 }
 
 #[test]

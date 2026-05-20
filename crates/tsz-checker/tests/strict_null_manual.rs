@@ -5,8 +5,12 @@
 
 use crate::state::CheckerState;
 use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_literal_null_property_access_without_strict() {
@@ -14,8 +18,7 @@ fn test_literal_null_property_access_without_strict() {
 const x: null = null;
 x.prop;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -55,8 +58,7 @@ fn test_literal_undefined_property_access_without_strict() {
 const x: undefined = undefined;
 x.prop;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -95,8 +97,7 @@ fn test_null_union_property_access_without_strict() {
 const x: string | null = null;
 x.prop;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -130,13 +131,58 @@ x.prop;
 }
 
 #[test]
+fn test_annotated_var_null_initializer_preserves_declared_receiver_for_missing_property() {
+    let source = r"
+interface Sym { known: number }
+var container: Sym = null;
+container.missing;
+";
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message.contains("Property 'missing' does not exist on type 'Sym'")
+        }),
+        "expected missing-property diagnostic on declared receiver type, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 18047),
+        "missing property should not be masked by a possibly-null diagnostic, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_any_property_access_no_error() {
     let source = r"
 const x: any = null;
 x.prop;
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -186,8 +232,7 @@ function bar<U>() {
     foo<U>(null);
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -230,8 +275,7 @@ function bar<U>() {
     foo<U>(null);
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -278,8 +322,7 @@ const x: Stuff = {
     b: 1,
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -343,8 +386,7 @@ const x: Stuff = {
     b: 1,
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);

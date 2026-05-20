@@ -17,7 +17,7 @@ use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHasher};
 use smallvec::SmallVec;
-use std::cell::UnsafeCell;
+use std::cell::Cell;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     Arc, OnceLock, RwLock,
@@ -84,44 +84,42 @@ struct InternCacheEntry {
 }
 
 /// Combined thread-local cache for both `lookup()` and `intern()` directions.
+///
+/// Uses per-slot `Cell<T>` values for interior mutability. Both cache entry
+/// types are `Copy`, so each probe/insert remains one direct slot `get`/`set`
+/// with no `unsafe` and no manual `Send`/`Sync` impls. The cache is reached
+/// only through `thread_local!`, which requires neither bound.
 struct TypeInternerCache {
-    lookup: UnsafeCell<[LookupCacheEntry; LOOKUP_CACHE_SIZE]>,
-    intern: UnsafeCell<[InternCacheEntry; INTERN_CACHE_SIZE]>,
+    lookup: [Cell<LookupCacheEntry>; LOOKUP_CACHE_SIZE],
+    intern: [Cell<InternCacheEntry>; INTERN_CACHE_SIZE],
 }
 
-// SAFETY: Only accessed via thread_local!, so never shared across threads.
-#[allow(unsafe_code)]
-unsafe impl Send for TypeInternerCache {}
-#[allow(unsafe_code)]
-unsafe impl Sync for TypeInternerCache {}
+const EMPTY_LOOKUP_ENTRY: LookupCacheEntry = LookupCacheEntry {
+    tag: 0,
+    instance_id: 0,
+    data: TypeData::Error,
+};
 
-#[allow(dead_code, unsafe_code)]
+const EMPTY_INTERN_ENTRY: InternCacheEntry = InternCacheEntry {
+    hash: 0,
+    instance_id: 0,
+    key: TypeData::Error,
+    result: TypeId::NONE,
+};
+
+#[allow(dead_code)]
 impl TypeInternerCache {
     const fn new() -> Self {
         Self {
-            lookup: UnsafeCell::new(
-                [LookupCacheEntry {
-                    tag: 0,
-                    instance_id: 0,
-                    data: TypeData::Error,
-                }; LOOKUP_CACHE_SIZE],
-            ),
-            intern: UnsafeCell::new(
-                [InternCacheEntry {
-                    hash: 0,
-                    instance_id: 0,
-                    key: TypeData::Error,
-                    result: TypeId::NONE,
-                }; INTERN_CACHE_SIZE],
-            ),
+            lookup: [const { Cell::new(EMPTY_LOOKUP_ENTRY) }; LOOKUP_CACHE_SIZE],
+            intern: [const { Cell::new(EMPTY_INTERN_ENTRY) }; INTERN_CACHE_SIZE],
         }
     }
 
     #[inline(always)]
-    fn lookup_probe(&self, id: TypeId, instance_id: u32) -> Option<TypeData> {
+    const fn lookup_probe(&self, id: TypeId, instance_id: u32) -> Option<TypeData> {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
-        // SAFETY: single-threaded access via thread_local!
-        let entry = unsafe { &(*self.lookup.get())[idx] };
+        let entry = self.lookup[idx].get();
         if entry.tag == id.0 && entry.instance_id == instance_id {
             Some(entry.data)
         } else {
@@ -132,18 +130,17 @@ impl TypeInternerCache {
     #[inline(always)]
     fn lookup_insert(&self, id: TypeId, instance_id: u32, data: TypeData) {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
-        // SAFETY: single-threaded access via thread_local!
-        let entry = unsafe { &mut (*self.lookup.get())[idx] };
-        entry.tag = id.0;
-        entry.instance_id = instance_id;
-        entry.data = data;
+        self.lookup[idx].set(LookupCacheEntry {
+            tag: id.0,
+            instance_id,
+            data,
+        });
     }
 
     #[inline(always)]
     fn intern_probe(&self, hash: u64, instance_id: u32, key: &TypeData) -> Option<TypeId> {
         let idx = (hash & INTERN_CACHE_MASK) as usize;
-        // SAFETY: single-threaded access via thread_local!
-        let entry = unsafe { &(*self.intern.get())[idx] };
+        let entry = self.intern[idx].get();
         if entry.hash == hash && entry.instance_id == instance_id && &entry.key == key {
             Some(entry.result)
         } else {
@@ -154,12 +151,12 @@ impl TypeInternerCache {
     #[inline(always)]
     fn intern_insert(&self, hash: u64, instance_id: u32, key: TypeData, result: TypeId) {
         let idx = (hash & INTERN_CACHE_MASK) as usize;
-        // SAFETY: single-threaded access via thread_local!
-        let entry = unsafe { &mut (*self.intern.get())[idx] };
-        entry.hash = hash;
-        entry.instance_id = instance_id;
-        entry.key = key;
-        entry.result = result;
+        self.intern[idx].set(InternCacheEntry {
+            hash,
+            instance_id,
+            key,
+            result,
+        });
     }
 }
 
@@ -179,21 +176,13 @@ static NEXT_INTERNER_INSTANCE_ID: AtomicU32 = AtomicU32::new(1);
 /// from being returned for `TypeId` values that have been reused by a new interner.
 /// Without this, the lookup cache may return `TypeData` from a dropped interner,
 /// causing incorrect type resolution and panics.
-#[allow(unsafe_code)]
 pub fn clear_thread_local_cache() {
     TL_CACHE.with(|cache| {
-        // Reset lookup cache entries
-        let lookup = unsafe { &mut (*cache.lookup.get()) };
-        for entry in lookup.iter_mut() {
-            entry.tag = 0;
-            entry.data = TypeData::Error;
+        for cell in &cache.lookup {
+            cell.set(EMPTY_LOOKUP_ENTRY);
         }
-        // Reset intern cache entries
-        let intern = unsafe { &mut (*cache.intern.get()) };
-        for entry in intern.iter_mut() {
-            entry.hash = 0;
-            entry.key = TypeData::Error;
-            entry.result = TypeId::NONE;
+        for cell in &cache.intern {
+            cell.set(EMPTY_INTERN_ENTRY);
         }
     });
 }
@@ -212,11 +201,22 @@ pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 2_000;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const TEMPLATE_LITERAL_EXPANSION_LIMIT: usize = 100_000;
 
-/// Maximum number of interned types before the interner returns ERROR.
+/// Maximum number of interned types before the interner returns `TypeId::ERROR`.
+///
+/// Native and WASM currently share the same 500k policy. The circuit breaker
+/// was introduced with matching values on both cfg branches; there is no
+/// separate native memory budget yet. Keep both constants visible so any future
+/// target-specific change is reviewed explicitly.
+///
 /// Prevents OOM on pathological inputs (e.g., DOM types + module augmentation
 /// that create millions of intermediate types via heritage merging and
-/// function shape instantiation). With ~200-300 bytes per interned entry
-/// (DashMap overhead, Arc, shapes), 2M types ≈ 400-600MB.
+/// function shape instantiation). With roughly 200-300 bytes per interned entry
+/// (DashMap overhead, `Arc`, shapes), 500k types is roughly a 100-150MB
+/// interner budget before fallback.
+///
+/// When the count is exceeded, new non-intrinsic interning poisons the interner
+/// and returns `TypeId::ERROR`. Already-computed ids remain readable for later
+/// diagnostics.
 #[cfg(target_arch = "wasm32")]
 pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 #[cfg(not(target_arch = "wasm32"))]
@@ -236,6 +236,13 @@ pub(crate) const MAX_EVALUATION_FUEL: u32 = 2_000_000;
 pub(crate) type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
 type ObjectPropertyIndex = DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>;
 type ObjectPropertyMap = OnceLock<ObjectPropertyIndex>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct InternedTypeLimitContext {
+    pub(crate) current_count: usize,
+    pub(crate) max_interned_types: usize,
+    pub(crate) fallback_type: TypeId,
+}
 
 /// Cached data for a union member, pre-fetched to avoid redundant DashMap/arena
 /// lookups during sort comparisons. Each field corresponds to a lookup that
@@ -373,7 +380,14 @@ where
             dashmap::mapref::entry::Entry::Vacant(e) => {
                 e.insert(id);
                 {
-                    let mut vec = inner.items.write().expect("interner items lock poisoned");
+                    // T2.4 instrumentation: wrap the write-lock acquisition
+                    // so contention on the slice-interner's `items` vec lands
+                    // in the lock-wait histogram alongside the per-shard
+                    // TypeData writes. With `perf-counters-timing` OFF this
+                    // wrapper compiles to a direct closure call.
+                    let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
+                        inner.items.write().expect("interner items lock poisoned")
+                    });
                     while vec.len() < id as usize {
                         vec.push(Arc::clone(&temp_arc));
                     }
@@ -463,7 +477,12 @@ where
             Entry::Vacant(e) => {
                 e.insert(id);
                 {
-                    let mut vec = inner.items.write().expect("interner items lock poisoned");
+                    // T2.4 instrumentation: see the matching wrapper in
+                    // `ConcurrentSliceInterner::intern`. Same rationale,
+                    // same zero-cost-when-feature-off contract.
+                    let mut vec = tsz_common::perf_counters::time_shard_write(0, || {
+                        inner.items.write().expect("interner items lock poisoned")
+                    });
                     while vec.len() < id as usize {
                         vec.push(Arc::clone(&value_arc));
                     }
@@ -523,6 +542,13 @@ pub struct TypeInterner {
     /// repeated recursive walk that showed up at ~5% of total CPU on
     /// multi-file workloads.
     pub(crate) contains_this_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Cache for `contains_infer_types_db` checks. Evaluation/cache filtering
+    /// and conditional subtype paths ask this repeatedly for the same
+    /// conditional/application shapes.
+    pub(crate) contains_infer_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Cache for `contains_type_query_db` checks. Results are immutable per
+    /// `TypeId` and shared across evaluator instances.
+    pub(crate) contains_type_query_cache: DashMap<TypeId, bool, FxBuildHasher>,
     /// The global Array base type (e.g., Array<T> from lib.d.ts).
     /// Uses `AtomicU32` (with `u32::MAX` as sentinel for `None`) instead of
     /// `RwLock` so file checkers can overwrite the prime checker's value without
@@ -536,6 +562,10 @@ pub struct TypeInterner {
     /// Kept as `OnceLock` since params don't contain `DefIds` and are stable
     /// across checkers (the interner allocates `TypeParam` `TypeIds` centrally).
     pub(super) array_base_type_params: OnceLock<Vec<TypeParamInfo>>,
+    /// The global ReadonlyArray base type (e.g., `ReadonlyArray<T>` from lib.d.ts).
+    /// Used by property access resolution to correctly reject mutating methods
+    /// (`push`, `pop`, etc.) on `readonly T[]` types.
+    pub(super) readonly_array_base_type: AtomicU32,
     /// Boxed interface types for primitives (e.g., String interface for `string`).
     /// Registered from lib.d.ts during primordial type setup.
     pub(super) boxed_types: DashMap<IntrinsicKind, TypeId, FxBuildHasher>,
@@ -578,6 +608,12 @@ pub struct TypeInterner {
     /// The formatter checks this to show `Dictionary<string>` instead
     /// of `{ [index: string]: string; }` in error messages.
     pub(super) display_alias: DashMap<TypeId, TypeId, FxBuildHasher>,
+    /// Application bases whose type-alias body is a conditional type.
+    ///
+    /// Conditional aliases often evaluate to a branch with its own display
+    /// surface. Keep this small provenance bit so application-preferring alias
+    /// storage can avoid repainting an already-recorded branch intersection.
+    pub(super) conditional_alias_bases: DashMap<TypeId, (), FxBuildHasher>,
     /// As-written origin members for a Union TypeId, used to preserve top-level
     /// alias names that would otherwise be lost during union flattening.
     ///
@@ -599,6 +635,10 @@ pub struct TypeInterner {
     /// reduction). Mirrors tsc's `removeSubtypes` complexity heuristic that
     /// emits TS2590. The checker reads and clears this flag to emit the diagnostic.
     pub(super) union_too_complex: AtomicBool,
+    /// Flag set when tuple synthesis detects that a spread would produce a tuple
+    /// with more than `MAX_REPRESENTABLE_TUPLE_LENGTH` elements. The checker reads
+    /// and clears this to emit TS2799 instead of TS2589.
+    pub(super) tuple_too_large: AtomicBool,
     /// Global evaluation fuel counter.
     ///
     /// Tracks cumulative evaluation work across ALL `TypeEvaluator` instances.
@@ -647,9 +687,12 @@ impl TypeInterner {
             applications: ConcurrentValueInterner::new(),
             identity_comparable_cache: DashMap::with_hasher(FxBuildHasher),
             contains_this_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_infer_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_type_query_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),
+            readonly_array_base_type: AtomicU32::new(u32::MAX),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
             boxed_def_ids: DashMap::with_hasher(FxBuildHasher),
             this_type_marker_def_ids: DashMap::with_hasher(FxBuildHasher),
@@ -659,8 +702,10 @@ impl TypeInterner {
             exact_optional_property_types: AtomicBool::new(false),
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
+            conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
+            tuple_too_large: AtomicBool::new(false),
             evaluation_fuel: AtomicU32::new(0),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
         }
@@ -705,6 +750,23 @@ impl TypeInterner {
         self.union_too_complex.store(true, Ordering::Relaxed);
     }
 
+    /// Atomically read and clear the "tuple too large" flag.
+    ///
+    /// Returns `true` if a tuple spread synthesis was aborted because the result
+    /// would exceed `MAX_REPRESENTABLE_TUPLE_LENGTH` elements. The checker uses
+    /// this to emit TS2799 instead of TS2589.
+    #[inline]
+    pub fn take_tuple_too_large(&self) -> bool {
+        self.tuple_too_large.swap(false, Ordering::Relaxed)
+    }
+
+    /// Mark that a tuple spread synthesis was aborted due to exceeding the
+    /// representable tuple length limit.
+    #[inline]
+    pub(crate) fn set_tuple_too_large(&self) {
+        self.tuple_too_large.store(true, Ordering::Relaxed);
+    }
+
     /// Set the global Array base type (e.g., Array<T> from lib.d.ts).
     ///
     /// The `TypeId` uses `AtomicU32` so each file checker can overwrite the prime
@@ -714,6 +776,23 @@ impl TypeInterner {
     pub fn set_array_base_type(&self, type_id: TypeId, params: Vec<TypeParamInfo>) {
         self.array_base_type.store(type_id.0, Ordering::Relaxed);
         let _ = self.array_base_type_params.set(params);
+    }
+
+    /// Set the global `ReadonlyArray<T>` base type from lib.d.ts.
+    pub fn set_readonly_array_base_type(&self, type_id: TypeId) {
+        self.readonly_array_base_type
+            .store(type_id.0, Ordering::Relaxed);
+    }
+
+    /// Get the global `ReadonlyArray<T>` base type, if it has been set.
+    #[inline]
+    pub fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        let raw = self.readonly_array_base_type.load(Ordering::Relaxed);
+        if raw == u32::MAX {
+            None
+        } else {
+            Some(TypeId(raw))
+        }
     }
 
     /// Set the Array base type used for display-order-sensitive queries.
@@ -815,9 +894,7 @@ impl TypeInterner {
     /// This is used when constructing types with property names or string literals.
     #[inline]
     pub fn intern_string(&self, s: &str) -> Atom {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().interner_string_intern_calls,
-        );
+        tsz_common::perf_counters::record_interner_string_intern_call();
         self.string_interner.intern(s)
     }
 
@@ -1038,7 +1115,40 @@ impl TypeInterner {
         if self.poisoned.load(std::sync::atomic::Ordering::Relaxed) {
             return TypeId::ERROR;
         }
+        // T2.4 instrumentation. Semantics:
+        //   intern_calls   = number of non-poisoned `intern()` entries
+        //   intern_hits    = returned an existing `TypeId` (intrinsic, TL
+        //                    hit, shard read hit, or race-loss occupied
+        //                    insert)
+        //   intern_misses  = stored a new `TypeData` (vacant insert)
+        // Invariant:
+        //   intern_calls = intern_hits + intern_misses + slow_path_errors
+        // where `slow_path_errors` is the count of calls that hit the
+        // `intern_slow` circuit breakers (max-types, u32-overflow). It is
+        // observable as the residual `intern_calls - intern_hits -
+        // intern_misses` and is not separately bucketed today.
+        //
+        // We gate once with `enabled_fast()` (one `OnceLock<bool>` read)
+        // and cache the resulting `&'static PerfCounters` pointer in `pc`.
+        // An enabled run pays the gate read plus one `counters()`
+        // `OnceLock<PerfCounters>` deref per `intern()` call (vs. one per
+        // increment). A disabled run pays only the gate read: subsequent
+        // `if let Some(c) = pc` checks are predictable branches on a
+        // local `None`, so the increment body is consistently skipped.
+        let pc = if tsz_common::perf_counters::enabled_fast() {
+            Some(tsz_common::perf_counters::counters())
+        } else {
+            None
+        };
+        if let Some(c) = pc {
+            c.interner_intern_calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         if let Some(id) = self.get_intrinsic_id(&key) {
+            if let Some(c) = pc {
+                c.interner_intern_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             return id;
         }
 
@@ -1049,24 +1159,92 @@ impl TypeInterner {
         // Fast path: thread-local cache hit scoped by this interner's
         // instance_id.
         if let Some(id) = TL_CACHE.with(|c| c.intern_probe(hash, self.instance_id, &key)) {
+            if let Some(c) = pc {
+                c.interner_intern_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             return id;
         }
 
-        let result = self.intern_slow(key, hash);
+        let result = self.intern_slow(key, hash, pc);
         if result != TypeId::ERROR {
             TL_CACHE.with(|c| c.intern_insert(hash, self.instance_id, key, result));
         }
         result
     }
 
-    /// Slow path for `intern`: goes through `DashMap` and RwLock-protected storage.
-    #[inline(never)]
-    fn intern_slow(&self, key: TypeData, hash: u64) -> TypeId {
-        // Circuit breaker 1: type count limit.
-        if self.approximate_count() > MAX_INTERNED_TYPES {
-            self.poisoned
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+    /// Allocate a fresh `TypeId` for declaration-scoped types that carry
+    /// identity beyond their structural payload.
+    ///
+    /// The stored `TypeData` is still available through `lookup`, but this
+    /// intentionally bypasses `key_to_index` and the thread-local intern cache
+    /// so two declarations with the same surface name and constraint do not
+    /// collapse to one semantic type parameter.
+    pub(crate) fn intern_fresh(&self, key: TypeData) -> TypeId {
+        if self.poisoned.load(std::sync::atomic::Ordering::Relaxed) {
             return TypeId::ERROR;
+        }
+        if self.interned_type_limit_exceeded() {
+            return self.poison_due_to_interned_type_limit();
+        }
+
+        let mut hasher = FxHasher::default();
+        key.hash(&mut hasher);
+        let hash = hasher.finish();
+        let shard_idx = (hash as usize) & (SHARD_COUNT - 1);
+        let shard = &self.shards[shard_idx];
+        let inner = shard.get_inner();
+
+        let local_index = shard.next_index.fetch_add(1, Ordering::Relaxed);
+        if local_index > (u32::MAX >> SHARD_BITS) {
+            return TypeId::ERROR;
+        }
+
+        let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut vec = tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
+                inner
+                    .index_to_key
+                    .write()
+                    .expect("interner index_to_key lock poisoned")
+            });
+            let mut ord = tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
+                inner
+                    .alloc_order
+                    .write()
+                    .expect("interner alloc_order lock poisoned")
+            });
+            let target_len = local_index as usize + 1;
+            if vec.len() < target_len {
+                vec.resize(target_len, TypeData::Error);
+                ord.resize(target_len, u32::MAX);
+            }
+            vec[local_index as usize] = key;
+            ord[local_index as usize] = order;
+        }
+
+        self.make_id(local_index, shard_idx as u32)
+    }
+
+    /// Slow path for `intern`: goes through `DashMap` and RwLock-protected storage.
+    ///
+    /// `pc` is the cached counter pointer from the public `intern()` entry,
+    /// `Some` only when `enabled_fast()` was true at the call site. Threading
+    /// it through avoids re-deref'ing the `OnceLock` and re-checking the gate
+    /// in this slow path, and lets the caller make the lifetime of the cache
+    /// pointer explicit.
+    #[inline(never)]
+    fn intern_slow(
+        &self,
+        key: TypeData,
+        hash: u64,
+        pc: Option<&'static tsz_common::perf_counters::PerfCounters>,
+    ) -> TypeId {
+        // Circuit breaker 1: type count limit. Returning `TypeId::ERROR` here
+        // intentionally does not credit a hit or miss — the residual
+        // `calls - hits - misses` exposes circuit-breaker activations.
+        if self.interned_type_limit_exceeded() {
+            return self.poison_due_to_interned_type_limit();
         }
 
         let shard_idx = (hash as usize) & (SHARD_COUNT - 1);
@@ -1076,13 +1254,18 @@ impl TypeInterner {
         // Try to get existing ID (lock-free read)
         if let Some(entry) = inner.key_to_index.get(&key) {
             let local_index = *entry.value();
+            if let Some(c) = pc {
+                c.interner_intern_hits
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             return self.make_id(local_index, shard_idx as u32);
         }
 
         // Allocate new index
         let local_index = shard.next_index.fetch_add(1, Ordering::Relaxed);
         if local_index > (u32::MAX >> SHARD_BITS) {
-            // Return error type instead of panicking
+            // Circuit breaker 2: u32 overflow. Same rationale as #1: not
+            // credited as hit or miss; observable via the residual.
             return TypeId::ERROR;
         }
 
@@ -1093,14 +1276,25 @@ impl TypeInterner {
                 // Record allocation order for deterministic union member sorting.
                 let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
                 {
-                    let mut vec = inner
-                        .index_to_key
-                        .write()
-                        .expect("interner index_to_key lock poisoned");
-                    let mut ord = inner
-                        .alloc_order
-                        .write()
-                        .expect("interner alloc_order lock poisoned");
+                    // T2.4 instrumentation: time the shard's write-lock
+                    // acquisitions. With `perf-counters-timing` ON, each
+                    // observation lands in the lock-wait histogram. With it
+                    // OFF (default) the wrapper compiles to a direct call —
+                    // no `Instant::now()`, no atomic touch.
+                    let mut vec =
+                        tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
+                            inner
+                                .index_to_key
+                                .write()
+                                .expect("interner index_to_key lock poisoned")
+                        });
+                    let mut ord =
+                        tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
+                            inner
+                                .alloc_order
+                                .write()
+                                .expect("interner alloc_order lock poisoned")
+                        });
                     let target_len = local_index as usize + 1;
                     if vec.len() < target_len {
                         vec.resize(target_len, TypeData::Error);
@@ -1109,11 +1303,21 @@ impl TypeInterner {
                     vec[local_index as usize] = key;
                     ord[local_index as usize] = order;
                 }
+                if let Some(c) = pc {
+                    c.interner_intern_misses
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 self.make_id(local_index, shard_idx as u32)
             }
             Entry::Occupied(e) => {
-                // Another thread inserted first, use their ID
+                // Another thread inserted first, use their ID. We bumped
+                // `next_index` above and won't recycle it, so this is a hit
+                // from the caller's POV (no new TypeData was stored).
                 let existing_index = *e.get();
+                if let Some(c) = pc {
+                    c.interner_intern_hits
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 self.make_id(existing_index, shard_idx as u32)
             }
         }
@@ -1186,18 +1390,14 @@ impl TypeInterner {
     }
 
     pub(in crate::intern) fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().interner_type_list_intern_calls,
-        );
+        tsz_common::perf_counters::record_interner_type_list_intern_call();
         TypeListId(self.type_lists.intern(&members))
     }
 
     /// Intern a type list from a slice, avoiding Vec conversion when the caller
     /// already has a `SmallVec` or slice reference.
     pub(in crate::intern) fn intern_type_list_from_slice(&self, members: &[TypeId]) -> TypeListId {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().interner_type_list_intern_calls,
-        );
+        tsz_common::perf_counters::record_interner_type_list_intern_call();
         TypeListId(self.type_lists.intern(members))
     }
 
@@ -1210,9 +1410,7 @@ impl TypeInterner {
     }
 
     pub fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().interner_object_shape_intern_calls,
-        );
+        tsz_common::perf_counters::record_interner_object_shape_intern_call();
         ObjectShapeId(self.object_shapes.intern(shape))
     }
 
@@ -1243,6 +1441,14 @@ impl TypeInterner {
         // Only store if the evaluated type differs from the application
         // (i.e., evaluation actually produced a different type).
         if evaluated == application {
+            return;
+        }
+        // A generic alias can evaluate to a bare type parameter (for example
+        // `type Id<T> = T` or a conditional alias branch that returns `T`).
+        // Type parameter ids are scoped semantic identities, not fresh display
+        // surfaces for one alias application. Recording `T -> Alias<...>` here
+        // repaints unrelated uses of `T` in later diagnostics.
+        if matches!(self.lookup(evaluated), Some(TypeData::TypeParameter(_))) {
             return;
         }
         // Only alias types produced by this evaluation. Generic helper aliases
@@ -1327,11 +1533,21 @@ impl TypeInterner {
         if evaluated == application || evaluated.is_intrinsic() {
             return;
         }
+        if matches!(self.lookup(evaluated), Some(TypeData::TypeParameter(_))) {
+            return;
+        }
         let Some(TypeData::Application(app_id)) = self.lookup(application) else {
             return;
         };
         let app = self.type_application(app_id);
         if app.args.contains(&evaluated) {
+            return;
+        }
+        let preserves_conditional_branch_alias = self.is_conditional_alias_base(app.base)
+            && self.get_display_alias(evaluated).is_some_and(|existing| {
+                matches!(self.lookup(existing), Some(TypeData::Intersection(_)))
+            });
+        if preserves_conditional_branch_alias {
             return;
         }
         let application_has_generic_args = app
@@ -1351,6 +1567,20 @@ impl TypeInterner {
         if application_has_generic_args && evaluated_precedes_application && !evaluated_is_mapped {
             return;
         }
+        // First-application-wins for pre-existing types: when the evaluated type was
+        // allocated before this application AND already has an Application display alias,
+        // keep the existing alias. This prevents a later concrete instantiation
+        // (e.g., `NestedRecord<"x.y.z.a.b.c", string>`) from overwriting an alias
+        // recorded by an earlier Application (e.g., from evaluating `Id<{x:{...}}>`)
+        // that produced the same interned structural type.
+        if evaluated_precedes_application
+            && !evaluated_is_mapped
+            && self.get_display_alias(evaluated).is_some_and(|existing| {
+                matches!(self.lookup(existing), Some(TypeData::Application(_)))
+            })
+        {
+            return;
+        }
         self.display_alias.insert(evaluated, application);
     }
 
@@ -1360,6 +1590,16 @@ impl TypeInterner {
     /// Returns `None` if this type was not produced from an Application evaluation.
     pub fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
         self.display_alias.get(&type_id).map(|r| *r)
+    }
+
+    /// Record that an application base belongs to a type alias whose body is a
+    /// conditional type. This is diagnostic-only provenance.
+    pub fn mark_conditional_alias_base(&self, base: TypeId) {
+        self.conditional_alias_bases.insert(base, ());
+    }
+
+    pub fn is_conditional_alias_base(&self, base: TypeId) -> bool {
+        self.conditional_alias_bases.contains_key(&base)
     }
 
     /// Record the as-written origin members for a flattened Union TypeId.
@@ -1681,13 +1921,12 @@ impl TypeInterner {
     }
 
     pub(super) fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().interner_function_shape_intern_calls,
-        );
+        tsz_common::perf_counters::record_interner_function_shape_intern_call();
         FunctionShapeId(self.function_shapes.intern(shape))
     }
 
     pub(in crate::intern) fn intern_callable_shape(&self, shape: CallableShape) -> CallableShapeId {
+        tsz_common::perf_counters::record_interner_callable_shape_intern_call();
         CallableShapeId(self.callable_shapes.intern(shape))
     }
 
@@ -1695,23 +1934,17 @@ impl TypeInterner {
         &self,
         conditional: ConditionalType,
     ) -> ConditionalTypeId {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().interner_conditional_intern_calls,
-        );
+        tsz_common::perf_counters::record_interner_conditional_intern_call();
         ConditionalTypeId(self.conditional_types.intern(conditional))
     }
 
     pub(super) fn intern_mapped_type(&self, mapped: MappedType) -> MappedTypeId {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().interner_mapped_intern_calls,
-        );
+        tsz_common::perf_counters::record_interner_mapped_intern_call();
         MappedTypeId(self.mapped_types.intern(mapped))
     }
 
     pub(super) fn intern_application(&self, application: TypeApplication) -> TypeApplicationId {
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().interner_application_intern_calls,
-        );
+        tsz_common::perf_counters::record_interner_application_intern_call();
         TypeApplicationId(self.applications.intern(application))
     }
 
@@ -1737,6 +1970,45 @@ impl TypeInterner {
     #[inline]
     fn approximate_count(&self) -> usize {
         self.alloc_counter.load(Ordering::Relaxed) as usize
+    }
+
+    #[inline]
+    const fn interned_type_limit_exceeded_for_count(count: usize) -> bool {
+        count > MAX_INTERNED_TYPES
+    }
+
+    #[inline]
+    fn interned_type_limit_exceeded(&self) -> bool {
+        Self::interned_type_limit_exceeded_for_count(self.approximate_count())
+    }
+
+    #[inline]
+    fn interned_type_limit_context(&self) -> InternedTypeLimitContext {
+        InternedTypeLimitContext {
+            current_count: self.approximate_count(),
+            max_interned_types: MAX_INTERNED_TYPES,
+            fallback_type: TypeId::ERROR,
+        }
+    }
+
+    #[inline]
+    fn poison_due_to_interned_type_limit(&self) -> TypeId {
+        let context = self.interned_type_limit_context();
+        if self
+            .poisoned
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            tracing::warn!(
+                target: "tsz::solver::interner",
+                interned_type_count = context.current_count,
+                max_interned_types = context.max_interned_types,
+                fallback_type_id = context.fallback_type.0,
+                fallback_type = "TypeId::ERROR",
+                "interned type limit exceeded; poisoning type interner"
+            );
+        }
+        context.fallback_type
     }
 
     /// Consume evaluation fuel and return whether fuel is exhausted.
@@ -1808,3 +2080,7 @@ impl TypeInterner {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "interner_tests.rs"]
+mod tests;

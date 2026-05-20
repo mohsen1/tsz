@@ -27,10 +27,11 @@
 //! }
 //! ```
 
+use crate::TypeId;
+use crate::construction::TypeDatabase;
 use crate::types::{CallableShapeId, IndexInfo, IndexSignature, ObjectShapeId, TypeData};
 use crate::utils;
 use crate::visitor::TypeVisitor;
-use crate::{TypeDatabase, TypeId};
 
 /// Distinguishes between string and numeric index signatures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -345,6 +346,24 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         // Resolve lazy types (interfaces, classes, type aliases) before collecting index info
         let resolved = crate::evaluation::evaluate::evaluate_type(self.db, TypeId(def_id));
         self.visit_type(self.db, resolved)
+    }
+
+    fn visit_type(&mut self, types: &dyn TypeDatabase, type_id: TypeId) -> Self::Output {
+        // `Mapped` types (e.g. `{ [K in \`on${string}\`]?: V }`) evaluate to `ObjectWithIndex`
+        // with a template-literal string_index key. We must evaluate them first so that
+        // `get_index_info` can return the restricted key type and let the caller decide
+        // whether the index expression is valid (TS7053 gating).
+        match types.lookup(type_id) {
+            Some(TypeData::Mapped(_)) => {
+                let evaluated = crate::evaluation::evaluate::evaluate_type(types, type_id);
+                if evaluated != type_id {
+                    return self.visit_type(types, evaluated);
+                }
+                Self::default_output()
+            }
+            Some(ref type_key) => self.visit_type_key(types, type_key),
+            None => Self::default_output(),
+        }
     }
 
     fn default_output() -> Self::Output {

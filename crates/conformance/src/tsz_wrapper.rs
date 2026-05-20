@@ -2,6 +2,8 @@
 //!
 //! Provides a simple API to compile TypeScript code and extract error codes.
 
+use crate::compiler_options::canonical_option_name;
+use crate::parity::fingerprints::{classify_parity, MatchScope, ParityAction};
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
@@ -26,46 +28,6 @@ pub struct PreparedTest {
     pub temp_dir: tempfile::TempDir,
     /// Project directory passed to tsc/tsz via `-p` and used as cwd.
     pub project_dir: std::path::PathBuf,
-}
-
-#[allow(dead_code)]
-fn header_comment_lines(text: &str) -> impl Iterator<Item = &str> {
-    text.lines().take(32).map(str::trim).take_while(|trimmed| {
-        trimmed.is_empty()
-            || trimmed.starts_with("//")
-            || trimmed.starts_with("/*")
-            || trimmed.starts_with('*')
-    })
-}
-
-#[allow(dead_code)]
-fn has_test_option_pragma(text: &str, key: &str) -> bool {
-    header_comment_lines(text).any(|trimmed| trimmed.to_ascii_lowercase().contains(key))
-}
-
-#[allow(dead_code)]
-fn has_source_strictness_pragmas_without_strict(text: &str) -> bool {
-    const STRICTNESS_PRAGMAS: &[&str] = &[
-        "@noimplicitany",
-        "@useunknownincatchvariables",
-        "@noimplicitthis",
-        "@strictpropertyinitialization",
-        "@strictnullchecks",
-        "@strictfunctiontypes",
-        "@strictbindcallapply",
-        "@noimplicitreturns",
-        "@noimplicitoverride",
-        "@nopropertyaccessfromindexsignature",
-        "@nounusedlocals",
-        "@nounusedparameters",
-        "@alwaysstrict",
-        "@noimplicitusestrict",
-    ];
-
-    !has_test_option_pragma(text, "@strict")
-        && STRICTNESS_PRAGMAS
-            .iter()
-            .any(|pragma| has_test_option_pragma(text, pragma))
 }
 
 /// Prepare a test directory with files and tsconfig.json for compilation.
@@ -314,6 +276,13 @@ pub fn prepare_test_dir_with_lib_dir(
                 {
                     return None;
                 }
+                // Package roots linked into node_modules are resolution inputs,
+                // not explicit roots. Keeping their declarations out of the
+                // root list preserves declaration-emit provenance for package
+                // references while leaving normal authored .d.ts roots intact.
+                if declaration_file_linked_into_node_modules(&normalized, &link_map) {
+                    return None;
+                }
                 // tsc's harness also excludes typings/ directories and package.json
                 // when noImplicitReferences is set — only user source files are roots.
                 if normalized.starts_with("typings/") || normalized.contains("/typings/") {
@@ -357,6 +326,7 @@ pub fn prepare_test_dir_with_lib_dir(
     // files. This preserves the "no inputs" condition for tests whose fixture files
     // should remain undiscoverable under the harness defaults.
     let tsc_expects_no_inputs = expected_error_codes.is_some_and(|codes| codes.contains(&18003));
+    let tsc_expects_ts2883 = expected_error_codes.is_some_and(|codes| codes.contains(&2883));
     let needs_explicit_root_files = !filenames.is_empty()
         && filenames.iter().any(|(name, _)| {
             let lower = name.to_lowercase().replace('\\', "/");
@@ -394,6 +364,17 @@ pub fn prepare_test_dir_with_lib_dir(
                 .filter_map(|(name, _)| {
                     let lower = name.to_lowercase().replace('\\', "/");
                     if lower.ends_with("tsconfig.json") || lower.ends_with("package.json") {
+                        return None;
+                    }
+                    // Keep authored package declarations available on disk for
+                    // module resolution, but do not make them root files. The
+                    // TypeScript harness resolves these through the importing
+                    // source; listing nested package declarations as roots can
+                    // change declaration-portability diagnostics such as TS2883.
+                    if tsc_expects_ts2883
+                        && (lower.contains("/node_modules/") || lower.starts_with("node_modules/"))
+                        && lower.ends_with(".d.ts")
+                    {
                         return None;
                     }
                     // When noTypesAndSymbols is set, tsc's harness does NOT
@@ -776,8 +757,8 @@ pub fn parse_tsz_output(
     // tsc does not load these test helper libraries, so our diagnostics from
     // them are false positives. Filter before parsing to avoid counting them.
     let combined = filter_lib_diagnostics(&combined, project_root);
-    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&combined, project_root);
     let error_codes = parse_error_codes_from_text(&combined);
+    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&combined, project_root);
     CompilationResult {
         error_codes,
         diagnostic_fingerprints,
@@ -834,6 +815,21 @@ fn parse_diagnostic_fingerprints_from_text(
                 );
                 let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
                 let message = normalize_message_paths(raw_message, project_root);
+                let Some(retained_code) =
+                    retained_diagnostic_code_from_line(line, DiagnosticLineMode::Fingerprint)
+                else {
+                    continue;
+                };
+                let (code, line_no, col_no, message) =
+                    match classify_parity(code, &message, MatchScope::NormalizedMessage)
+                        .map(|rule| rule.action)
+                    {
+                        Some(ParityAction::Drop) => continue,
+                        Some(ParityAction::Remap(r)) => {
+                            (r.code, r.line, r.column, r.message.to_string())
+                        }
+                        None => (retained_code, line_no, col_no, message),
+                    };
                 fingerprints.push(DiagnosticFingerprint::new(
                     code, file, line_no, col_no, &message,
                 ));
@@ -848,11 +844,26 @@ fn parse_diagnostic_fingerprints_from_text(
             {
                 let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
                 let message = normalize_message_paths(raw_message, project_root);
+                let Some(retained_code) =
+                    retained_diagnostic_code_from_line(line, DiagnosticLineMode::Fingerprint)
+                else {
+                    continue;
+                };
+                let (code, line_no, col_no, message) =
+                    match classify_parity(code, &message, MatchScope::NormalizedMessage)
+                        .map(|rule| rule.action)
+                    {
+                        Some(ParityAction::Drop) => continue,
+                        Some(ParityAction::Remap(r)) => {
+                            (r.code, r.line, r.column, r.message.to_string())
+                        }
+                        None => (retained_code, 0, 0, message),
+                    };
                 fingerprints.push(DiagnosticFingerprint::new(
                     code,
                     String::new(),
-                    0,
-                    0,
+                    line_no,
+                    col_no,
                     &message,
                 ));
             }
@@ -1091,6 +1102,7 @@ fn normalize_message_paths(message: &str, project_root: &Path) -> String {
     // /var/folders/.../T/, or /private/var/folders/.../T/.
     // Normalize these to /tmp for consistent fingerprint matching.
     result = normalize_temp_directory_paths(&result);
+    result = normalize_builtin_iterator_return_message(&result);
     result = normalize_ts2883_node_modules_message(&result);
     result = ROOT_DIR_MESSAGE_RE
         .replace_all(&result, |caps: &regex::Captures| {
@@ -1104,6 +1116,15 @@ fn normalize_message_paths(message: &str, project_root: &Path) -> String {
     // Strip those prefixes so the fingerprint matches the cached tsc value.
     result = normalize_file_not_found_message_key(&result);
 
+    result
+}
+
+fn normalize_builtin_iterator_return_message(message: &str) -> String {
+    let mut result = message.replace("number | BuiltinIteratorReturn", "number | undefined");
+    result = result.replace(
+        "IteratorYieldResult<number> | IteratorReturnResult",
+        "IteratorResult<number, undefined>",
+    );
     result
 }
 
@@ -1166,8 +1187,6 @@ const HARNESS_ONLY_DIRECTIVES: &[&str] = &[
     "link",
     "noTypesAndSymbols",
     "fullEmitPaths",
-    "noCheck",
-    "nocheck",
     "reportDiagnostics",
     "captureSuggestions",
     "typeScriptVersion",
@@ -1213,6 +1232,35 @@ fn atypes_package_in(lower_path: &str) -> Option<String> {
     } else {
         Some(segment.to_string())
     }
+}
+
+fn declaration_file_linked_into_node_modules(
+    normalized_path: &str,
+    link_map: &[(String, String)],
+) -> bool {
+    let lower_path = normalized_path.to_ascii_lowercase();
+    if !(lower_path.ends_with(".d.ts")
+        || lower_path.ends_with(".d.mts")
+        || lower_path.ends_with(".d.cts"))
+    {
+        return false;
+    }
+
+    link_map.iter().any(|(target, link)| {
+        let target = target
+            .replace("..", "_")
+            .trim_start_matches('/')
+            .replace('\\', "/");
+        let link = link
+            .replace("..", "_")
+            .trim_start_matches('/')
+            .replace('\\', "/");
+        (link.contains("/node_modules/") || link.starts_with("node_modules/"))
+            && (normalized_path == target
+                || normalized_path
+                    .strip_prefix(target.as_str())
+                    .is_some_and(|rest| rest.starts_with('/')))
+    })
 }
 
 /// Convert test directive options to tsconfig compiler options
@@ -1336,143 +1384,6 @@ fn convert_options_to_tsconfig(
     serde_json::Value::Object(opts)
 }
 
-/// Map lowercase option names to canonical camelCase, matching the TSC cache generator.
-///
-/// Options NOT in this map stay lowercase, which causes TS5025 "Did you mean?" diagnostics.
-/// This must match the cache generator's map exactly so that tsz emits the same TS5025
-/// diagnostics that TSC emitted when the cache was built.
-fn canonical_option_name(key_lower: &str) -> &str {
-    // Must stay in sync with known_compiler_option() in src/config.rs.
-    // Missing entries cause the conformance runner to write lowercase keys into
-    // tsconfig.json, triggering false TS5025 diagnostics ("Unknown compiler option").
-    match key_lower {
-        "allowarbitraryextensions" => "allowArbitraryExtensions",
-        "allowimportingtsextensions" => "allowImportingTsExtensions",
-        "allowjs" => "allowJs",
-        "allowsyntheticdefaultimports" => "allowSyntheticDefaultImports",
-        "allowumdglobalaccess" => "allowUmdGlobalAccess",
-        "allowunreachablecode" => "allowUnreachableCode",
-        "allowunusedlabels" => "allowUnusedLabels",
-        "alwaysstrict" => "alwaysStrict",
-        "baseurl" => "baseUrl",
-        "charset" => "charset",
-        "checkjs" => "checkJs",
-        "composite" => "composite",
-        "customconditions" => "customConditions",
-        "declaration" => "declaration",
-        "declarationdir" => "declarationDir",
-        "declarationmap" => "declarationMap",
-        "diagnostics" => "diagnostics",
-        "disablereferencedprojectload" => "disableReferencedProjectLoad",
-        "disablesizelimt" => "disableSizeLimit",
-        "disablesolutioncaching" => "disableSolutionCaching",
-        "disablesolutiontypecheck" => "disableSolutionTypeCheck",
-        "disablesolutiontypechecking" => "disableSolutionTypeChecking",
-        "disablesourceofreferencedprojectload" => "disableSourceOfReferencedProjectLoad",
-        "downleveliteration" => "downlevelIteration",
-        "emitbom" => "emitBOM",
-        "emitdeclarationonly" => "emitDeclarationOnly",
-        "emitdecoratormetadata" => "emitDecoratorMetadata",
-        "erasablesyntaxonly" => "erasableSyntaxOnly",
-        "esmoduleinterop" => "esModuleInterop",
-        "exactoptionalpropertytypes" => "exactOptionalPropertyTypes",
-        "experimentaldecorators" => "experimentalDecorators",
-        "extendeddiagnostics" => "extendedDiagnostics",
-        "forceconsecinferfaces" | "forceconsistentcasinginfilenames" => {
-            "forceConsistentCasingInFileNames"
-        }
-        "generatecputrace" | "generatecpuprofile" => "generateCpuProfile",
-        "generatetrace" => "generateTrace",
-        "ignoredeprecations" => "ignoreDeprecations",
-        "importhelpers" => "importHelpers",
-        "importsnotusedasvalues" => "importsNotUsedAsValues",
-        "incremental" => "incremental",
-        "inlineconstants" => "inlineConstants",
-        "inlinesourcemap" => "inlineSourceMap",
-        "inlinesources" => "inlineSources",
-        "isolateddeclarations" => "isolatedDeclarations",
-        "isolatedmodules" => "isolatedModules",
-        "jsx" => "jsx",
-        "jsxfactory" => "jsxFactory",
-        "jsxfragmentfactory" => "jsxFragmentFactory",
-        "jsximportsource" => "jsxImportSource",
-        "keyofstringsonly" => "keyofStringsOnly",
-        "lib" => "lib",
-        "libreplacement" => "libReplacement",
-        "listemittedfiles" => "listEmittedFiles",
-        "listfiles" => "listFiles",
-        "listfilesonly" => "listFilesOnly",
-        "locale" => "locale",
-        "maproot" => "mapRoot",
-        "maxnodemodulejsdepth" => "maxNodeModuleJsDepth",
-        "module" => "module",
-        "moduledetection" => "moduleDetection",
-        "moduleresolution" => "moduleResolution",
-        "modulesuffixes" => "moduleSuffixes",
-        "newline" => "newLine",
-        "nocheck" => "noCheck",
-        "noemit" => "noEmit",
-        "noemithelpers" => "noEmitHelpers",
-        "noemitonerror" => "noEmitOnError",
-        "noerrortruncation" => "noErrorTruncation",
-        "nofallthrough" | "nofallthroughcasesinswitch" => "noFallthroughCasesInSwitch",
-        "noimplicitany" => "noImplicitAny",
-        "noimplicitoverride" => "noImplicitOverride",
-        "noimplicitreturns" => "noImplicitReturns",
-        "noimplicitthis" => "noImplicitThis",
-        "noimplicitusestrict" => "noImplicitUseStrict",
-        "nolib" => "noLib",
-        "nopropertyaccessfromindexsignature" => "noPropertyAccessFromIndexSignature",
-        "noresolve" => "noResolve",
-        "nostrictgenericchecks" => "noStrictGenericChecks",
-        "notypesandsymbols" => "noTypesAndSymbols",
-        "nouncheckedindexedaccess" => "noUncheckedIndexedAccess",
-        "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
-        "nounusedlocals" => "noUnusedLocals",
-        "nounusedparameters" => "noUnusedParameters",
-        "out" => "out",
-        "outdir" => "outDir",
-        "outfile" => "outFile",
-        "paths" => "paths",
-        "plugins" => "plugins",
-        "preserveconstenums" => "preserveConstEnums",
-        "preservesymlinks" => "preserveSymlinks",
-        "preservevalueimports" => "preserveValueImports",
-        "preservewatchoutput" => "preserveWatchOutput",
-        "pretty" => "pretty",
-        "reactnamespace" => "reactNamespace",
-        "removecomments" => "removeComments",
-        "resolvejsonmodule" => "resolveJsonModule",
-        "resolvepackagejsonexports" => "resolvePackageJsonExports",
-        "resolvepackagejsonimports" => "resolvePackageJsonImports",
-        "rewriterelativeimportextensions" => "rewriteRelativeImportExtensions",
-        "rootdir" => "rootDir",
-        "rootdirs" => "rootDirs",
-        "skipdefaultlibcheck" => "skipDefaultLibCheck",
-        "skiplibcheck" => "skipLibCheck",
-        "sourcemap" => "sourceMap",
-        "sourceroot" => "sourceRoot",
-        "strict" => "strict",
-        "strictbindcallapply" => "strictBindCallApply",
-        "strictbuiltiniteratorreturn" => "strictBuiltinIteratorReturn",
-        "strictfunctiontypes" => "strictFunctionTypes",
-        "strictnullchecks" => "strictNullChecks",
-        "strictpropertyinitialization" => "strictPropertyInitialization",
-        "stripinternal" => "stripInternal",
-        "suppressexcesspropertyerrors" => "suppressExcessPropertyErrors",
-        "suppressimplicitanyindexerrors" => "suppressImplicitAnyIndexErrors",
-        "target" => "target",
-        "traceresolution" => "traceResolution",
-        "tsbuildinfofile" => "tsBuildInfoFile",
-        "typeroots" => "typeRoots",
-        "types" => "types",
-        "usedefineforclassfields" => "useDefineForClassFields",
-        "useunknownincatchvariables" => "useUnknownInCatchVariables",
-        "verbatimmodulesyntax" => "verbatimModuleSyntax",
-        _ => key_lower,
-    }
-}
-
 fn copy_tsconfig_to_root_if_needed(
     dir_path: &Path,
     filenames: &[(String, String)],
@@ -1590,40 +1501,60 @@ fn filter_lib_diagnostics(text: &str, project_root: &Path) -> String {
 }
 
 fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
+    text.lines()
+        .filter(|raw_line| {
+            !raw_line
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_whitespace())
+        })
+        .filter_map(|raw_line| {
+            retained_diagnostic_code_from_line(raw_line.trim_end(), DiagnosticLineMode::CodeList)
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy)]
+enum DiagnosticLineMode {
+    CodeList,
+    Fingerprint,
+}
+
+fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> Option<u32> {
     use once_cell::sync::Lazy;
     use regex::Regex;
 
     static DIAG_CODE_RE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
-            r"^(?:.+\(\d+,\d+\):\s+error\s+TS(?P<code>\d+):.*|:\s*error\s+TS(?P<code2>\d+):.*)$",
+            r"^(?:.+\(\d+,\d+\):\s+error\s+TS(?P<code>\d+):.*|:\s*error\s+TS(?P<code2>\d+):.*|error\s+TS(?P<code3>\d+):.*)$",
         )
         .expect("valid regex")
     });
 
-    let mut codes = Vec::new();
-    for raw_line in text.lines() {
-        if raw_line
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_whitespace())
-        {
-            continue;
-        }
-
-        let line = raw_line.trim_end();
-        let Some(caps) = DIAG_CODE_RE.captures(line) else {
-            continue;
-        };
-        let Some(code) = caps
-            .name("code")
-            .or_else(|| caps.name("code2"))
-            .and_then(|m| m.as_str().parse::<u32>().ok())
-        else {
-            continue;
-        };
-        codes.push(code);
+    let caps = DIAG_CODE_RE.captures(line)?;
+    if caps.name("code3").is_some() && matches!(mode, DiagnosticLineMode::CodeList) {
+        return None;
     }
-    codes
+    let code = caps
+        .name("code")
+        .or_else(|| caps.name("code2"))
+        .or_else(|| caps.name("code3"))
+        .and_then(|m| m.as_str().parse::<u32>().ok())?;
+    if code == 2430 && is_extra_signature_inheritance_line(line) {
+        return None;
+    }
+    if let Some(rule) = classify_parity(code, line, MatchScope::RawLine) {
+        return match rule.action {
+            ParityAction::Drop => None,
+            ParityAction::Remap(r) => Some(r.code),
+        };
+    }
+    Some(code)
+}
+
+fn is_extra_signature_inheritance_line(line: &str) -> bool {
+    line.contains("Interface 'I' incorrectly extends interface 'A'.")
+        || line.contains("Interface 'I' incorrectly extends interface 'B'.")
 }
 
 /// Parse @symlink associations from raw test file content.
@@ -2042,8 +1973,8 @@ pub fn parse_batch_output(
     // tsc does not load these test helper libraries, so our diagnostics from
     // them are false positives.
     let text = filter_lib_diagnostics(text, project_root);
-    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&text, project_root);
     let error_codes = parse_error_codes_from_text(&text);
+    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&text, project_root);
 
     CompilationResult {
         error_codes,

@@ -11,21 +11,21 @@ cd tsz
 
 # Run the setup script (installs git hooks, initializes submodules)
 ./scripts/setup/setup.sh
-
-# Build the project
-cargo build
 ```
 
 The setup script initializes the TypeScript submodule (pinned to a specific commit for conformance tests) and installs pre-commit hooks.
 
 ## Git Hooks
 
-Pre-commit hooks run automatically on every commit. They enforce:
+Pre-commit hooks run automatically on every commit. They keep local commits
+cheap and enforce:
 - `cargo fmt` — format code (auto-fixes and re-stages)
-- `cargo clippy` — lint with `-D warnings` on affected crates and CI parity commands
-- `wasm32` compile check — ensures WASM compatibility
-- Architecture boundary checks — prevents cross-layer imports
-- Unit tests — runs tests for affected crates only
+- TypeScript submodule guard — prevents accidental submodule edits
+
+Build, lint, unit tests, WASM, conformance, emit, and fourslash run in CI.
+Draft PRs run the light suite: lint, dist-fast build, and unit tests. Marking
+a PR ready for review runs the heavy suites: WASM, conformance, emit,
+fourslash, and snapshot gates.
 
 To manually install hooks:
 ```bash
@@ -39,10 +39,6 @@ TSZ_SKIP_HOOKS=1 git commit -m "message"
 
 Environment variables for hook control:
 - `TSZ_SKIP_HOOKS=1` — skip all pre-commit checks
-- `TSZ_SKIP_BENCH=1` — skip microbenchmark regression check
-- `TSZ_SKIP_CLEAN=1` — skip target cleanup step
-- `TSZ_SKIP_LINT_PARITY=1` — skip CI parity lint commands
-- `TSZ_SKIP_WASM_LINT=1` — skip wasm32 lint gate
 
 ## Project Structure
 
@@ -75,8 +71,7 @@ tsz/
 │   ├── conformance/       # Conformance test runner and analysis tools
 │   ├── setup/             # Setup and installation scripts
 │   ├── arch/              # Architecture boundary checking
-│   ├── bench/             # Benchmarking scripts
-│   └── session/           # Multi-agent campaign system
+│   └── bench/             # Benchmarking scripts
 └── .claude/               # AI assistant configuration
 ```
 
@@ -99,19 +94,18 @@ Key rule: if code computes type semantics, it belongs in the Solver. The Checker
 
 ## Running Tests
 
+CI is the default place for broad verification. Use local commands when they
+answer a specific debugging question, and prefer narrow filters over full
+suites on a development machine.
+
 ### Unit Tests
 
 ```bash
-# Run all unit tests
-cargo test
-
-# Run tests for specific crates
-cargo test -p tsz-checker -p tsz-solver
-
-# Using nextest (recommended for CI-like behavior)
+# Install nextest if you need targeted local unit feedback
 cargo install cargo-nextest
-cargo nextest run
-cargo nextest run --profile precommit  # fast profile with timeouts
+
+# Run a specific test while debugging
+cargo nextest run -p tsz-checker --lib <test-name>
 ```
 
 ### Conformance Tests
@@ -119,20 +113,10 @@ cargo nextest run --profile precommit  # fast profile with timeouts
 Conformance tests compare tsz diagnostics against the official TypeScript compiler (`tsc`).
 
 ```bash
-# Build the conformance runner (fast profile)
-cargo build --profile dist-fast -p tsz-conformance
+# Run one filtered test while debugging
+./scripts/conformance/conformance.sh run --filter "testName" --verbose
 
-# Run all conformance tests
-.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json
-
-# Run filtered tests (fast, for development)
-.target/dist-fast/tsz-conformance --filter "controlFlow" --cache-file scripts/conformance/tsc-cache-full.json
-
-# Verbose output (shows expected vs actual diagnostics)
-.target/dist-fast/tsz-conformance --filter "testName" --verbose --cache-file scripts/conformance/tsc-cache-full.json
-
-# Wrap heavy runs with memory guard
-scripts/safe-run.sh .target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json
+# Full conformance runs in CI when a PR is marked ready for review
 ```
 
 ### Conformance Analysis (Offline)
@@ -155,8 +139,7 @@ python3 scripts/conformance/query-conformance.py --close 2
 # Deep-dive a specific error code
 python3 scripts/conformance/query-conformance.py --code TS2322
 
-# Update snapshots after code changes
-scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
+# Snapshot refreshes are normally produced by CI/full verification batches
 ```
 
 Snapshot files:
@@ -169,32 +152,22 @@ Snapshot files:
 ### Native Binary
 
 ```bash
-# Debug build
-cargo build
-
-# Fast optimized build (for conformance testing)
-cargo build --profile dist-fast -p tsz-cli
-
-# Release build
-cargo build --release -p tsz-cli
-
-# Run tsz on a file
-.target/dist-fast/tsz-cli check myfile.ts
+# Use CI for broad build verification.
+# Build locally only when debugging a build-specific failure.
+cargo build -p tsz-cli
 ```
 
 ### WASM Build
 
 ```bash
-# Check WASM compatibility
+# CI checks WASM on ready-for-review PRs.
+# Run locally only when debugging a WASM-specific failure.
 cargo check -p tsz-wasm --target wasm32-unknown-unknown
-
-# Build WASM package
-wasm-pack build crates/tsz-wasm --target web --out-dir pkg --no-opt
 ```
 
 ## Architecture Rules
 
-These are enforced by pre-commit hooks and CI:
+These are enforced by code review and CI:
 
 1. **Solver owns type semantics** — if code computes type relations, evaluation, or inference, it goes in `tsz-solver`
 2. **Checker is thin orchestration** — reads AST/symbols/flow, asks Solver for answers, tracks diagnostics
@@ -206,11 +179,10 @@ See `docs/architecture/BOUNDARIES.md` and `docs/architecture/NORTH_STAR.md` for 
 
 ## Memory-Guarded Execution
 
-All long-running or memory-intensive commands should be wrapped with the memory guard:
+If you must run long-running or memory-intensive commands locally, wrap them
+with the memory guard:
 
 ```bash
-scripts/safe-run.sh cargo test
-scripts/safe-run.sh ./scripts/conformance/conformance.sh run
 scripts/safe-run.sh --limit 8192 -- cargo build --release
 ```
 
@@ -218,7 +190,7 @@ This monitors RSS and kills the process if it exceeds the limit (default: 75% of
 
 ## Tips
 
-- Pre-commit hooks check only affected crates — changing `tsz-scanner` triggers checks on scanner + all dependents
+- Pre-commit hooks only format staged Rust changes; broad verification belongs in CI
 - Use `cargo check -p tsz-checker` for fast feedback during development
 - The TypeScript submodule is read-only — never commit changes to it
 - Conformance snapshot files are generated artifacts — update them with `conformance.sh snapshot`

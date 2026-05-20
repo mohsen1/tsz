@@ -34,6 +34,11 @@ use super::capabilities::{EnvironmentCapabilities, FeatureGate, MissingGlobalKin
 /// and *how* (error_at_node vs error_at_position) to emit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CapabilityDiagnostic {
+    /// TS2304: Cannot find name '{name}'.
+    /// Used for known environment globals where `tsc` does not suggest adding
+    /// DOM or Node typings when the declaring lib is absent.
+    MissingPlainGlobalValue { name: String },
+
     /// TS2318: Cannot find global type '{name}'.
     /// Emitted when a core global type is missing (e.g., `Array`, `String`
     /// when --noLib is set).
@@ -94,6 +99,7 @@ impl CapabilityDiagnostic {
     /// The diagnostic code associated with this capability diagnostic.
     pub fn code(&self) -> u32 {
         match self {
+            Self::MissingPlainGlobalValue { .. } => 2304,
             Self::MissingGlobalType { .. } => 2318,
             Self::MissingEs2015Type { .. } => 2583,
             Self::MissingDomGlobal { .. } => 2584,
@@ -184,6 +190,11 @@ impl EnvironmentCapabilities {
     pub(crate) fn diagnose_missing_name(&self, name: &str) -> Option<CapabilityDiagnostic> {
         let kind = self.classify_missing_global(name)?;
         match kind {
+            MissingGlobalKind::PlainGlobalValue => {
+                Some(CapabilityDiagnostic::MissingPlainGlobalValue {
+                    name: name.to_string(),
+                })
+            }
             MissingGlobalKind::CoreGlobalType => Some(CapabilityDiagnostic::MissingGlobalType {
                 name: name.to_string(),
             }),

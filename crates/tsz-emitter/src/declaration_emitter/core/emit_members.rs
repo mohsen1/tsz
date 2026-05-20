@@ -1,11 +1,28 @@
 use crate::enums::evaluator::EnumEvaluator;
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::MethodDeclData;
+use tsz_parser::parser::node::{IndexSignatureData, MethodDeclData, Node};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
 
 use super::DeclarationEmitter;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::declaration_emitter) enum ClassMemberKind {
+    Property,
+    Method,
+    Accessor,
+    Signature,
+    IndexSignature,
+    Constructor,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::declaration_emitter) struct ClassMemberInfo {
+    pub kind: ClassMemberKind,
+    pub name: Option<NodeIndex>,
+    pub is_static: bool,
+}
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn emit_method_declaration(
@@ -72,6 +89,16 @@ impl<'a> DeclarationEmitter<'a> {
                 // Skip implementation signature when overloads exist
                 // (for private methods, `private foo;` was already emitted at first overload)
                 self.skip_comments_in_node(method_node.pos, method_node.end);
+                return;
+            }
+        }
+
+        if self.source_is_js_file && !is_private {
+            let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(method_idx);
+            if self.emit_jsdoc_overload_method_signatures(method_idx, &jsdoc_overload_signatures) {
+                if let Some(ref name) = method_name {
+                    self.method_names_with_overloads.insert(name.clone());
+                }
                 return;
             }
         }
@@ -243,49 +270,91 @@ impl<'a> DeclarationEmitter<'a> {
                 .node_types
                 .get(&method_idx.0)
                 .copied()
+                .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
                 .or_else(|| self.get_node_type_or_names(&[method_name]))
-                .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name));
+                .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
+                .or_else(|| cache.node_types.get(&method_idx.0).copied());
 
-            if let Some(method_type_id) = method_type_id
-                && let Some(return_type_id) =
+            // When the selected return type mentions a scoped type parameter, the body-text
+            // fallback lacks outer-param context and would produce `unknown` for it.
+            let all_param_nodes: Vec<NodeIndex> = self
+                .current_class_type_params
+                .iter()
+                .flat_map(|p| p.nodes.iter().copied())
+                .chain(
+                    method
+                        .type_parameters
+                        .iter()
+                        .flat_map(|p| p.nodes.iter().copied()),
+                )
+                .collect();
+
+            if let Some(method_type_id) = method_type_id {
+                if let Some(predicate_text) = self
+                    .function_type_predicate_text(method_type_id, method.type_parameters.as_ref())
+                {
+                    self.write(": ");
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
-            {
-                if return_type_id == tsz_solver::types::TypeId::ANY
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
                 {
-                    self.write(": void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
+                    if (return_type_id == tsz_solver::types::TypeId::ANY
+                        || return_type_id == tsz_solver::types::TypeId::NEVER)
+                        && method_body.is_some()
+                        && self.body_returns_void(method_body)
+                    {
+                        self.write(": void");
+                    } else if self
+                        .type_mentions_scoped_type_param_nodes(return_type_id, &all_param_nodes)
+                    {
+                        self.write(": ");
+                        let text = self.print_type_id_with_outer_type_param_nodes(
+                            return_type_id,
+                            &all_param_nodes,
+                        );
+                        self.write(&text);
+                    } else if method_body.is_some()
+                        && let Some(type_text) =
+                            self.function_body_preferred_return_type_text(method_body)
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if return_type_id == tsz_solver::types::TypeId::UNKNOWN
+                        && method.type_annotation.is_none()
+                        && method_body.is_none()
+                    {
+                        // Ambient methods without explicit return type: tsc emits `any`
+                        self.write(": any");
+                    } else {
+                        self.write(": ");
+                        self.write(&self.print_type_id(return_type_id));
+                    }
+                } else if self
+                    .type_mentions_scoped_type_param_nodes(method_type_id, &all_param_nodes)
+                    && method_type_id != tsz_solver::types::TypeId::ANY
+                    && method_type_id != tsz_solver::types::TypeId::UNKNOWN
+                {
+                    // `get_return_type` returned None: the checker stored the inferred return
+                    // type (e.g. IndexAccess, Conditional) directly as the method's node type
+                    // rather than wrapping it in a function type.  `method_type_id` IS the
+                    // return type here.
+                    self.write(": ");
+                    let text = self.print_type_id_with_outer_type_param_nodes(
+                        method_type_id,
+                        &all_param_nodes,
+                    );
+                    self.write(&text);
+                } else if method_body.is_some() {
+                    if self.body_returns_void(method_body) {
+                        self.write(": void");
+                    } else if let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if return_type_id == tsz_solver::types::TypeId::UNKNOWN
-                    && method.type_annotation.is_none()
-                    && method_body.is_none()
-                {
-                    // Ambient methods without explicit return type: tsc emits `any`
-                    self.write(": any");
-                } else {
-                    self.write(": ");
-                    self.write(&self.print_type_id(return_type_id));
-                }
-            } else if let Some(method_type_id) = method_type_id {
-                if method_type_id == tsz_solver::types::TypeId::ANY
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
-                {
-                    self.write(": void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else {
-                    self.write(": ");
-                    self.write(&self.print_type_id(method_type_id));
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if !self.source_is_declaration_file {
+                        self.write(": any");
+                    }
                 }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
@@ -319,6 +388,49 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn type_mentions_scoped_type_param_nodes(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        param_nodes: &[NodeIndex],
+    ) -> bool {
+        if param_nodes.is_empty() {
+            return false;
+        }
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+
+        let mut param_type_ids = Vec::new();
+        if let Some(cache) = &self.type_cache {
+            param_type_ids.extend(
+                param_nodes
+                    .iter()
+                    .filter_map(|param_idx| cache.node_types.get(&param_idx.0).copied())
+                    .filter(|param_type_id| {
+                        tsz_solver::visitor::type_param_info(interner, *param_type_id).is_some()
+                    }),
+            );
+        }
+        if param_type_ids.iter().any(|param_type_id| {
+            tsz_solver::visitor::contains_type_by_id(interner, type_id, *param_type_id)
+        }) {
+            return true;
+        }
+
+        param_nodes.iter().any(|param_idx| {
+            self.arena
+                .get(*param_idx)
+                .and_then(|param_node| self.arena.get_type_parameter(param_node))
+                .and_then(|param| self.get_identifier_text(param.name))
+                .is_some_and(|name_text| {
+                    let name = interner.intern_string(&name_text);
+                    tsz_solver::visitor::contains_type_parameter_named_shallow(
+                        interner, type_id, name,
+                    )
+                })
+        })
+    }
+
     pub(in crate::declaration_emitter) fn emit_method_function_type_return(
         &mut self,
         method_idx: NodeIndex,
@@ -337,47 +449,53 @@ impl<'a> DeclarationEmitter<'a> {
 
         let method_name = method.name;
         if method.type_annotation.is_some() {
-            self.emit_type(method.type_annotation);
+            if let Some(type_text) = self.preferred_annotation_name_text(method.type_annotation) {
+                self.write(&type_text);
+            } else {
+                self.emit_type(method.type_annotation);
+            }
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             let method_type_id = cache
                 .node_types
                 .get(&method_idx.0)
                 .copied()
+                .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
                 .or_else(|| self.get_node_type_or_names(&[method_name]))
-                .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name));
+                .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
+                .or_else(|| cache.node_types.get(&method_idx.0).copied());
 
-            if let Some(method_type_id) = method_type_id
-                && let Some(return_type_id) =
+            if let Some(method_type_id) = method_type_id {
+                if let Some(predicate_text) = self
+                    .function_type_predicate_text(method_type_id, method.type_parameters.as_ref())
+                {
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
-            {
-                if return_type_id == tsz_solver::types::TypeId::ANY
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
                 {
-                    self.write("void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
+                    if return_type_id == tsz_solver::types::TypeId::ANY
+                        && method_body.is_some()
+                        && self.body_returns_void(method_body)
+                    {
+                        self.write("void");
+                    } else if method_body.is_some()
+                        && let Some(type_text) =
+                            self.function_body_preferred_return_type_text(method_body)
+                    {
+                        self.write_type_text_with_current_indent(&type_text);
+                    } else {
+                        let type_text = self.print_type_id(return_type_id);
+                        self.write_type_text_with_current_indent(&type_text);
+                    }
+                } else if method_body.is_some() {
+                    if self.body_returns_void(method_body) {
+                        self.write("void");
+                    } else if let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write_type_text_with_current_indent(&type_text);
-                } else {
-                    let type_text = self.print_type_id(return_type_id);
-                    self.write_type_text_with_current_indent(&type_text);
-                }
-            } else if let Some(method_type_id) = method_type_id {
-                if method_type_id == tsz_solver::types::TypeId::ANY
-                    && method_body.is_some()
-                    && self.body_returns_void(method_body)
-                {
-                    self.write("void");
-                } else if method_body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(method_body)
-                {
-                    self.write_type_text_with_current_indent(&type_text);
-                } else {
-                    let type_text = self.print_type_id(method_type_id);
-                    self.write_type_text_with_current_indent(&type_text);
+                    {
+                        self.write_type_text_with_current_indent(&type_text);
+                    } else if !self.source_is_declaration_file {
+                        self.write("any");
+                    }
                 }
             } else if method_body.is_some() {
                 if self.body_returns_void(method_body) {
@@ -697,6 +815,15 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        if self.source_is_js_file {
+            let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(ctor_idx);
+            if self.emit_jsdoc_overload_constructor_signatures(ctor_idx, &jsdoc_overload_signatures)
+            {
+                self.class_has_constructor_overloads = true;
+                return;
+            }
+        }
+
         let has_visibility_modifier = ctor.modifiers.as_ref().is_some_and(|mods| {
             mods.nodes.iter().any(|&mod_idx| {
                 self.arena.get(mod_idx).is_some_and(|mod_node| {
@@ -756,6 +883,33 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(body_node) = self.arena.get(ctor_body) {
             self.skip_comments_in_node(body_node.pos, body_node.end);
         }
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_array_subclass_constructor_overloads_if_needed(
+        &mut self,
+        members: &NodeList,
+        heritage_clauses: Option<&NodeList>,
+    ) {
+        if !self.source_is_js_file || !self.heritage_clauses_extend_bare_array(heritage_clauses) {
+            return;
+        }
+        if members.nodes.iter().copied().any(|member_idx| {
+            self.arena
+                .get(member_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CONSTRUCTOR)
+        }) {
+            return;
+        }
+
+        self.write_indent();
+        self.write("constructor(arrayLength?: number);");
+        self.write_line();
+        self.write_indent();
+        self.write("constructor(arrayLength: number);");
+        self.write_line();
+        self.write_indent();
+        self.write("constructor(...items: any[]);");
+        self.write_line();
     }
 
     /// Emit parameter properties from constructor as class properties
@@ -829,7 +983,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 self.write("?");
                             }
                             if !is_private {
-                                self.emit_flattened_binding_type_annotation(ident_idx, type_id);
+                                self.emit_flattened_binding_type_annotation(
+                                    ident_idx, type_id, None,
+                                );
                             }
                             self.write(";");
                             self.write_line();
@@ -853,11 +1009,15 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         let before_type = self.writer.len();
                         self.emit_type(param.type_annotation);
-                        if param.question_token {
+                        let full = self.writer.get_output();
+                        let type_text = &full[before_type..];
+                        if param.question_token
+                            && !self.emitted_type_text_semantically_includes_undefined(type_text)
+                            && !self
+                                .type_node_semantically_includes_undefined(param.type_annotation, 0)
+                        {
                             // Only append `| undefined` if the type doesn't already
                             // include it (avoid `Type | undefined | undefined`).
-                            let full = self.writer.get_output();
-                            let type_text = &full[before_type..];
                             if !type_text.ends_with("| undefined")
                                 && !Self::type_text_has_undefined_branch(type_text)
                             {
@@ -944,7 +1104,17 @@ impl<'a> DeclarationEmitter<'a> {
             self.skip_comments_in_node(accessor_node.pos, accessor_node.end);
         } else if !is_getter
             && !is_private
+            && let Some(type_text) = self.js_setter_declared_type_with_backing_nullish(accessor_idx)
+        {
+            self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
+        } else if !is_getter
+            && !is_private
             && let Some(type_text) = self.js_accessor_backing_field_type_text(accessor_idx)
+        {
+            self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
+        } else if !is_getter
+            && !is_private
+            && let Some(type_text) = self.js_setter_param_declared_type_text(&accessor.parameters)
         {
             self.emit_setter_parameters_with_type_text(&accessor.parameters, &type_text);
         } else if !is_getter
@@ -973,14 +1143,24 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(type_text) = self.jsdoc_return_type_text_for_node(accessor_idx) {
                 self.write(": ");
                 self.write(&type_text);
+            } else if let Some(type_text) = self.jsdoc_type_text_for_node(accessor_idx) {
+                self.write(": ");
+                self.write(&type_text);
             } else if let Some(type_text) = self.matching_setter_parameter_type_text(accessor_idx) {
                 self.write(": ");
                 self.write(&type_text);
             } else if let Some(type_id) =
                 self.get_node_type_or_names(&[accessor_idx, accessor.name])
             {
-                // If solver returned `any` but body clearly returns void, prefer void
-                if type_id == tsz_solver::types::TypeId::ANY
+                // Invalid ambient-style accessors in `.ts` sources have no body.
+                // tsc declaration emit prints `any` for their getter type even
+                // when checker recovery reports `void`.
+                if accessor_body.is_none()
+                    && !self.source_is_declaration_file
+                    && type_id == tsz_solver::types::TypeId::VOID
+                {
+                    self.write(": any");
+                } else if type_id == tsz_solver::types::TypeId::ANY
                     && accessor_body.is_some()
                     && self.body_returns_void(accessor_body)
                 {
@@ -1081,6 +1261,10 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
+            if let Some(type_text) = self.js_setter_declared_type_with_backing_nullish(member_idx) {
+                return Some(type_text);
+            }
+
             if let Some(type_text) = self.js_accessor_backing_field_type_text(member_idx) {
                 return Some(type_text);
             }
@@ -1106,6 +1290,94 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn js_setter_declared_type_with_backing_nullish(
+        &self,
+        accessor_idx: NodeIndex,
+    ) -> Option<String> {
+        if !self.source_is_js_file {
+            return None;
+        }
+
+        let accessor_node = self.arena.get(accessor_idx)?;
+        if accessor_node.kind != syntax_kind_ext::SET_ACCESSOR {
+            return None;
+        }
+
+        let declared = self.jsdoc_type_text_for_node(accessor_idx)?;
+        let Some(backing) = self.js_accessor_backing_field_type_text(accessor_idx) else {
+            return Some(declared);
+        };
+
+        Some(Self::append_missing_nullish_union_members(
+            &declared, &backing,
+        ))
+    }
+
+    fn append_missing_nullish_union_members(declared: &str, backing: &str) -> String {
+        let mut parts = vec![declared.trim().to_string()];
+        for nullish in ["null", "undefined"] {
+            if Self::type_text_union_contains(backing, nullish)
+                && !Self::type_text_union_contains(declared, nullish)
+            {
+                parts.push(nullish.to_string());
+            }
+        }
+        parts.join(" | ")
+    }
+
+    fn type_text_union_contains(type_text: &str, needle: &str) -> bool {
+        Self::type_text_top_level_union_members(type_text)
+            .into_iter()
+            .any(|member| Self::trim_wrapping_parens(member) == needle)
+    }
+
+    fn type_text_top_level_union_members(type_text: &str) -> Vec<&str> {
+        let mut members = Vec::new();
+        let mut start = 0usize;
+        let mut paren_depth = 0u32;
+        let mut bracket_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut angle_depth = 0u32;
+
+        for (idx, ch) in type_text.char_indices() {
+            match ch {
+                '(' => paren_depth = paren_depth.saturating_add(1),
+                ')' => paren_depth = paren_depth.saturating_sub(1),
+                '[' => bracket_depth = bracket_depth.saturating_add(1),
+                ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                '{' => brace_depth = brace_depth.saturating_add(1),
+                '}' => brace_depth = brace_depth.saturating_sub(1),
+                '<' => angle_depth = angle_depth.saturating_add(1),
+                '>' => angle_depth = angle_depth.saturating_sub(1),
+                '|' if paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    members.push(type_text[start..idx].trim());
+                    start = idx + ch.len_utf8();
+                }
+                _ => {}
+            }
+        }
+
+        members.push(type_text[start..].trim());
+        members
+    }
+
+    fn trim_wrapping_parens(type_text: &str) -> &str {
+        let mut text = type_text.trim();
+        loop {
+            let Some(stripped) = text
+                .strip_prefix('(')
+                .and_then(|inner| inner.strip_suffix(')'))
+            else {
+                return text;
+            };
+            text = stripped.trim();
+        }
     }
 
     pub(in crate::declaration_emitter) fn js_accessor_backing_field_type_text(
@@ -1348,6 +1620,23 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn js_setter_param_declared_type_text(
+        &self,
+        params: &tsz_parser::parser::NodeList,
+    ) -> Option<String> {
+        if !self.source_is_js_file {
+            return None;
+        }
+
+        let param_idx = *params.nodes.first()?;
+        let decl = self.jsdoc_param_decl_for_parameter(param_idx, 0)?;
+        let mut type_text = decl.type_text;
+        if decl.optional && !Self::type_text_has_undefined_branch(&type_text) {
+            type_text.push_str(" | undefined");
+        }
+        Some(type_text)
+    }
+
     pub(in crate::declaration_emitter) fn emit_index_signature(&mut self, sig_idx: NodeIndex) {
         let Some(sig_node) = self.arena.get(sig_idx) else {
             return;
@@ -1362,16 +1651,121 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_member_modifiers(&sig.modifiers);
 
         self.write("[");
-        self.emit_parameters(&sig.parameters);
+        if let Some(text) = self.recovered_legacy_index_signature_parameters(sig_node, sig) {
+            self.write(&text);
+        } else {
+            self.emit_parameters(&sig.parameters);
+        }
         self.write("]");
 
         if sig.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(sig.type_annotation);
+        } else if !self.source_is_declaration_file {
+            self.write(": any");
         }
 
         self.write(";");
         self.write_line();
+    }
+
+    pub(in crate::declaration_emitter) fn recovered_legacy_index_signature_parameters(
+        &self,
+        sig_node: &Node,
+        sig: &IndexSignatureData,
+    ) -> Option<String> {
+        let source = self.source_file_text.as_ref()?;
+        let pos = sig
+            .parameters
+            .nodes
+            .first()
+            .and_then(|idx| self.arena.get(*idx))
+            .map_or(sig_node.pos as usize, |node| node.pos as usize);
+        let line_start = source[..pos].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = source[pos..]
+            .find('\n')
+            .map_or(source.len(), |idx| pos + idx);
+        let line = source.get(line_start..line_end)?;
+        let start = Self::index_signature_open_bracket_before_pos(line, pos - line_start)?;
+        let end = line[start + 1..].find(']')? + start + 1;
+        let inner = line[start + 1..end].trim();
+        (inner.contains(',') && !inner.contains('\n')).then(|| inner.to_string())
+    }
+
+    pub(in crate::declaration_emitter) fn emit_index_signature_parameters(
+        &mut self,
+        params: &NodeList,
+    ) {
+        let mut first = true;
+        for &param_idx in &params.nodes {
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let comment_pos = self
+                .arena
+                .get(param.name)
+                .map_or(param_node.pos, |name_node| name_node.pos);
+            self.emit_inline_parameter_comment(comment_pos);
+            self.emit_member_modifiers(&param.modifiers);
+            if param.dot_dot_dot_token {
+                self.write("...");
+            }
+            if let Some(name) = self.recovered_index_signature_parameter_name(param_node) {
+                self.write(&name);
+            } else if let Some(name) = self.get_identifier_text(param.name) {
+                self.write(&name);
+            } else {
+                self.emit_node(param.name);
+            }
+            if param.question_token {
+                self.write("?");
+            }
+            if param.type_annotation.is_some() {
+                self.write(": ");
+                self.emit_type(param.type_annotation);
+            }
+        }
+    }
+
+    fn recovered_index_signature_parameter_name(&self, param_node: &Node) -> Option<String> {
+        let name = self
+            .arena
+            .get_parameter(param_node)
+            .and_then(|param| self.get_identifier_text(param.name))?;
+        if !name.contains(',') && !name.contains('[') {
+            return None;
+        }
+        let source = self.source_file_text.as_ref()?;
+        let pos = param_node.pos as usize;
+        let line_start = source[..pos].rfind('\n').map_or(0, |idx| idx + 1);
+        let line_end = source[pos..]
+            .find('\n')
+            .map_or(source.len(), |idx| pos + idx);
+        let line = source.get(line_start..line_end)?;
+        let open = Self::index_signature_open_bracket_before_pos(line, pos - line_start)?;
+        let after_open = line.get(open + 1..)?;
+        let colon = after_open.find(':')?;
+        let candidate = after_open.get(..colon)?.trim();
+        (!candidate.is_empty()
+            && candidate
+                .chars()
+                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+        .then(|| candidate.to_string())
+    }
+
+    fn index_signature_open_bracket_before_pos(line: &str, pos_in_line: usize) -> Option<usize> {
+        line[..pos_in_line.min(line.len())]
+            .char_indices()
+            .rev()
+            .find_map(|(idx, ch)| (ch == '[').then_some(idx))
     }
 
     pub(in crate::declaration_emitter) fn emit_type_alias_declaration(
@@ -1659,26 +2053,63 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn class_member_info(
+        &self,
+        member_idx: NodeIndex,
+    ) -> Option<ClassMemberInfo> {
+        let member_node = self.arena.get(member_idx)?;
+
+        if let Some(prop) = self.arena.get_property_decl(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Property,
+                name: Some(prop.name),
+                is_static: self.arena.is_static(&prop.modifiers),
+            });
+        }
+        if let Some(method) = self.arena.get_method_decl(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Method,
+                name: Some(method.name),
+                is_static: self.arena.is_static(&method.modifiers),
+            });
+        }
+        if let Some(accessor) = self.arena.get_accessor(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Accessor,
+                name: Some(accessor.name),
+                is_static: self.arena.is_static(&accessor.modifiers),
+            });
+        }
+        if let Some(sig) = self.arena.get_signature(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Signature,
+                name: Some(sig.name),
+                is_static: false,
+            });
+        }
+        if let Some(index) = self.arena.get_index_signature(member_node) {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::IndexSignature,
+                name: None,
+                is_static: self.arena.is_static(&index.modifiers),
+            });
+        }
+        if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
+            return Some(ClassMemberInfo {
+                kind: ClassMemberKind::Constructor,
+                name: None,
+                is_static: false,
+            });
+        }
+        None
+    }
+
     /// Get the name `NodeIndex` of a class or interface member, if it has one.
     pub(in crate::declaration_emitter) fn get_member_name_idx(
         &self,
         member_idx: NodeIndex,
     ) -> Option<NodeIndex> {
-        let member_node = self.arena.get(member_idx)?;
-
-        if let Some(prop) = self.arena.get_property_decl(member_node) {
-            return Some(prop.name);
-        }
-        if let Some(method) = self.arena.get_method_decl(member_node) {
-            return Some(method.name);
-        }
-        if let Some(accessor) = self.arena.get_accessor(member_node) {
-            return Some(accessor.name);
-        }
-        if let Some(sig) = self.arena.get_signature(member_node) {
-            return Some(sig.name);
-        }
-        None
+        self.class_member_info(member_idx)?.name
     }
 
     /// Check if a member has a computed property name that should NOT be emitted in `.d.ts`.
@@ -1700,33 +2131,11 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         members: &tsz_parser::parser::NodeList,
     ) -> bool {
-        for &member_idx in &members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            // Check property declarations
-            if let Some(prop) = self.arena.get_property_decl(member_node)
-                && let Some(name_node) = self.arena.get(prop.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
-            // Check method declarations
-            if let Some(method) = self.arena.get_method_decl(member_node)
-                && let Some(name_node) = self.arena.get(method.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
-            // Check accessors
-            if let Some(accessor) = self.arena.get_accessor(member_node)
-                && let Some(name_node) = self.arena.get(accessor.name)
-                && name_node.kind == SyntaxKind::PrivateIdentifier as u16
-            {
-                return true;
-            }
-        }
-        false
+        members
+            .nodes
+            .iter()
+            .copied()
+            .any(|member_idx| self.member_has_private_identifier_name(member_idx))
     }
 
     /// Check if a function body has any return statements with value expressions.
@@ -1766,6 +2175,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 true
             }
+            k if k == syntax_kind_ext::THROW_STATEMENT => true,
             k if k == syntax_kind_ext::BLOCK => {
                 if let Some(block) = self.arena.get_block(stmt_node) {
                     self.block_returns_void(&block.statements)
@@ -1968,6 +2378,17 @@ impl<'a> DeclarationEmitter<'a> {
                         });
 
                         if is_destructuring {
+                            if self.js_local_bare_require_alias_without_export_surface(
+                                decl.initializer,
+                            ) {
+                                self.record_js_elided_bare_require_binding_names(decl.name);
+                                let skip_end = self
+                                    .arena
+                                    .get(decl.initializer)
+                                    .map_or(decl_node.end, |n| n.end);
+                                self.skip_comments_in_node(decl_node.pos, skip_end);
+                                continue;
+                            }
                             // Emit destructuring as individual declarations
                             let is_exported =
                                 has_export_modifier || self.is_js_named_exported_name(decl.name);
@@ -1982,8 +2403,11 @@ impl<'a> DeclarationEmitter<'a> {
                                 .map_or(decl_node.end, |n| n.end);
                             self.skip_comments_in_node(decl_node.pos, skip_end);
                         } else {
-                            let is_exported =
-                                has_export_modifier || self.is_js_named_exported_name(decl.name);
+                            let is_exported = (has_export_modifier
+                                || self.is_js_named_exported_name(decl.name))
+                                && !(self.inside_non_ambient_namespace
+                                    && self.get_identifier_text(decl.name).as_deref()
+                                        == Some("__proto__"));
                             regular_decls.push((is_exported, decl_idx, decl_node, decl));
                         }
                     }
@@ -2000,6 +2424,19 @@ impl<'a> DeclarationEmitter<'a> {
                         continue;
                     }
                     if self.emit_js_object_literal_namespace_if_possible(
+                        decl.name,
+                        decl.initializer,
+                        is_exported,
+                    ) {
+                        if let Some(dn) = self.arena.get(decl_idx) {
+                            let skip_end =
+                                self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);
+                            self.skip_comments_in_node(dn.pos, skip_end);
+                        }
+                        continue;
+                    }
+                    if self.emit_jsdoc_enum_variable_declaration_if_possible(
+                        decl_idx,
                         decl.name,
                         decl.initializer,
                         is_exported,
@@ -2044,6 +2481,12 @@ impl<'a> DeclarationEmitter<'a> {
                                 decl.initializer,
                                 decl.type_annotation,
                             )
+                            && !self.js_local_bare_require_alias_without_export_surface(
+                                decl.initializer,
+                            )
+                            && !self.initializer_references_js_elided_bare_require_binding(
+                                decl.initializer,
+                            )
                     });
                 }
 
@@ -2074,6 +2517,23 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         "let"
                     } else if js_var_promoted_to_const {
+                        let has_bundled_duplicate_global_var = regular_decls
+                            [group_start..group_end]
+                            .iter()
+                            .any(|(_, _, _, decl)| {
+                                self.get_identifier_text(decl.name).is_some_and(|name| {
+                                    self.bundled_duplicate_global_var_types
+                                        .contains_key(name.as_str())
+                                })
+                            });
+                        let is_named_js_export =
+                            regular_decls[group_start..group_end]
+                                .iter()
+                                .any(|(_, _, _, decl)| {
+                                    self.get_identifier_text(decl.name).is_some_and(|name| {
+                                        self.js_named_export_names.contains(&name)
+                                    })
+                                });
                         let has_jsdoc = regular_decls[group_start..group_end].iter().any(
                             |(_, decl_idx, _, decl)| {
                                 self.jsdoc_name_like_type_expr_for_node(*decl_idx).is_some()
@@ -2082,7 +2542,11 @@ impl<'a> DeclarationEmitter<'a> {
                         ) || self
                             .jsdoc_name_like_type_expr_for_pos(stmt_node.pos)
                             .is_some();
-                        if has_jsdoc { "var" } else { keyword }
+                        if has_jsdoc || is_named_js_export || has_bundled_duplicate_global_var {
+                            "var"
+                        } else {
+                            keyword
+                        }
                     } else {
                         keyword
                     };
@@ -2118,7 +2582,7 @@ impl<'a> DeclarationEmitter<'a> {
                             // Emitted function type directly from AST
                         } else {
                             self.emit_variable_decl_type_or_initializer(
-                                keyword,
+                                effective_keyword,
                                 stmt_node.pos,
                                 *decl_idx,
                                 decl.name,
@@ -2162,6 +2626,14 @@ impl<'a> DeclarationEmitter<'a> {
 
                     self.write(";");
                     self.write_line();
+                    for (_, decl_idx, decl_node, decl) in &regular_decls[group_start..group_end] {
+                        self.emit_js_export_equals_type_alias_namespace_for_name(
+                            decl.name,
+                            self.arena
+                                .get(*decl_idx)
+                                .map_or(decl_node.pos, |node| node.pos),
+                        );
+                    }
                     group_start = group_end;
                 }
             }

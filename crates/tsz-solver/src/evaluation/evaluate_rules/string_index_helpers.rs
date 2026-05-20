@@ -68,3 +68,42 @@ fn is_string_like_intersection_member<R: TypeResolver>(
         )
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evaluation::evaluate::evaluate_index_access;
+    use crate::intern::TypeInterner;
+    use crate::types::{ObjectFlags, ObjectShape, TemplateSpan};
+
+    #[test]
+    fn template_pattern_string_index_rejects_non_matching_literal_key() {
+        let db = TypeInterner::new();
+        let prefix = db.intern_string("data-");
+        let key_type = db.template_literal(vec![
+            TemplateSpan::Text(prefix),
+            TemplateSpan::Type(TypeId::STRING),
+        ]);
+        let object = db.object_with_index(ObjectShape {
+            flags: ObjectFlags::empty(),
+            properties: Vec::new(),
+            string_index: Some(IndexSignature {
+                key_type,
+                value_type: TypeId::NUMBER,
+                readonly: false,
+                param_name: None,
+            }),
+            number_index: None,
+            symbol: None,
+        });
+
+        let matching = db.literal_string("data-id");
+        let non_matching = db.literal_string("other");
+
+        assert_eq!(evaluate_index_access(&db, object, matching), TypeId::NUMBER);
+        assert_eq!(
+            evaluate_index_access(&db, object, non_matching),
+            TypeId::UNDEFINED
+        );
+    }
+}

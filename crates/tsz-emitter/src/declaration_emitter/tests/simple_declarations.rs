@@ -1,4 +1,9 @@
 use super::*;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =============================================================================
 // 1. Simple Declarations
@@ -20,6 +25,193 @@ fn test_function_declaration() {
     assert!(
         output.contains("): number;"),
         "Expected return type: {output}"
+    );
+}
+
+#[test]
+fn test_invalid_ambient_style_getter_defaults_to_any() {
+    let source = r#"
+export class C {
+    get value()
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("get value(): any;"),
+        "Expected no-body getter recovery to emit any: {output}"
+    );
+}
+
+#[test]
+fn test_legacy_index_signature_defaults_to_any() {
+    let source = r#"
+export interface I {
+    [p];
+    [p2: string, p3: number];
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("[p]: any;"),
+        "Expected untyped index signature to emit any result: {output}"
+    );
+    assert!(
+        output.contains("[p2: string, p3: number]: any;"),
+        "Expected legacy index signature parameters to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_index_signature_preserves_inline_parameter_comment() {
+    let source = r#"
+export interface I {
+    /** indexer */
+    [/** key param */ key: string]: any;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("[/** key param */ key: string]: any;"),
+        "Expected index signature parameter comment to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_non_exported_namespace_hidden_inside_non_ambient_namespace() {
+    let source = r#"
+export namespace Outer {
+    namespace Hidden {
+        export var x;
+    }
+    export declare namespace Ambient {
+        var y;
+    }
+    export var z;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        !output.contains("namespace Hidden"),
+        "Expected hidden non-exported namespace to be elided: {output}"
+    );
+    assert!(
+        output.contains("namespace Ambient {\n        var y: any;"),
+        "Expected declared nested namespace body to remain ambient: {output}"
+    );
+    assert!(
+        output.contains("var z: any;"),
+        "Expected exported namespace member to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_internal_namespace_does_not_retain_private_module_interface() {
+    let source = r#"
+export var x = 1;
+interface Iterator<T> {
+    value: T;
+}
+
+namespace Query {
+    export function fromDoWhile<T>(doWhile: (test: Iterator<T>) => boolean): Iterator<T> {
+        return null;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert_eq!(
+        "export declare var x: number;",
+        output.trim(),
+        "Expected private namespace dependencies to stay out of module DTS: {output}"
+    );
+}
+
+#[test]
+fn test_exported_namespace_retains_private_module_interface_dependency() {
+    let source = r#"
+export var x = 1;
+interface Iterator<T> {
+    value: T;
+}
+
+export namespace Query {
+    export function fromDoWhile<T>(doWhile: (test: Iterator<T>) => boolean): Iterator<T> {
+        return null;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("interface Iterator<T>"),
+        "Expected private interface to remain when exported namespace references it: {output}"
+    );
+    assert!(
+        output.contains("export declare namespace Query"),
+        "Expected exported namespace to remain public: {output}"
+    );
+    assert!(
+        output.contains("test: Iterator<T>"),
+        "Expected exported namespace member to keep its private dependency reference: {output}"
+    );
+}
+
+#[test]
+fn test_named_exported_namespace_retains_private_module_interface_dependency() {
+    let source = r#"
+export { Query as PublicQuery };
+interface Private {
+    value: string;
+}
+
+namespace Query {
+    export function f(x: Private): Private {
+        return x;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export { Query as PublicQuery };"),
+        "Expected aliased named namespace export to remain public: {output}"
+    );
+    assert!(
+        output.contains("interface Private"),
+        "Expected private interface to remain when named-exported namespace references it: {output}"
+    );
+    assert!(
+        output.contains("function f(x: Private): Private;"),
+        "Expected named-exported namespace member to keep its private dependency reference: {output}"
+    );
+}
+
+#[test]
+fn test_throw_only_unannotated_returns_void() {
+    let source = r#"
+export function f() {
+    throw new Error();
+}
+export class C {
+    m() {
+        throw new Error();
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export declare function f(): void;"),
+        "Expected throw-only function to emit void: {output}"
+    );
+    assert!(
+        output.contains("m(): void;"),
+        "Expected throw-only method to emit void: {output}"
     );
 }
 
@@ -242,8 +434,7 @@ function f5({ await: _await, ...rest }: P) {
 #[test]
 fn test_non_exported_function_declaration_emits_declare_function() {
     let source = "function helper(x: string): string { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -269,8 +460,7 @@ fn test_class_declaration() {
         }
     }
     "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -310,8 +500,7 @@ var c = new C();
 #[test]
 fn test_interface_declaration() {
     let source = "export interface Point { x: number; y: number; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -326,8 +515,7 @@ fn test_interface_declaration() {
 #[test]
 fn test_type_alias() {
     let source = "export type ID = string | number;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -347,8 +535,7 @@ fn test_type_only_export_module_gets_empty_export_marker() {
 import "some-dep";
 type T = { x: number };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -369,8 +556,7 @@ export interface I {
     f: T;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -413,8 +599,7 @@ export class Bar {
 #[test]
 fn test_empty_named_export_has_no_extra_spacing() {
     let source = "export {};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -453,6 +638,73 @@ export function j() {}
 }
 
 #[test]
+fn test_js_local_renamed_export_function_with_jsdoc_emits_before_alias_group() {
+    let source = r#"
+export function i() {}
+/**
+ * @param {number} x
+ */
+function hh(x) {
+    return x;
+}
+export { hh as h };
+export function j() {}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let i_pos = output
+        .find("export function i(): void;")
+        .unwrap_or_else(|| panic!("missing i declaration: {output}"));
+    let j_pos = output
+        .find("export function j(): void;")
+        .unwrap_or_else(|| panic!("missing j declaration: {output}"));
+    let hh_pos = output
+        .find("declare function hh(x: number): number;")
+        .unwrap_or_else(|| panic!("missing deferred hh declaration: {output}"));
+    let alias_pos = output
+        .find("export { hh as h };")
+        .unwrap_or_else(|| panic!("missing alias group: {output}"));
+
+    assert!(
+        i_pos < j_pos && j_pos < hh_pos && hh_pos < alias_pos,
+        "Expected JSDoc-typed local export alias function to emit before the trailing alias group: {output}"
+    );
+    assert!(
+        output.contains("/**\n * @param {number} x\n */\ndeclare function hh"),
+        "Expected deferred local function to keep its JSDoc comment: {output}"
+    );
+}
+
+#[test]
+fn test_js_local_enum_exports_are_deferred_before_alias_group() {
+    let source = r#"
+export enum A {}
+enum B {}
+export { B };
+enum CC {}
+export { CC as C };
+export enum D {}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let expected = r#"export enum A {
+}
+export enum D {
+}
+export enum B {
+}
+declare enum CC {
+}
+export { CC as C };
+"#;
+
+    assert_eq!(
+        output, expected,
+        "Expected local enum exports to match tsc order"
+    );
+}
+
+#[test]
 fn test_js_cjs_export_aliases_are_grouped_in_source_order() {
     let source = r#"
 function hh() {}
@@ -476,14 +728,71 @@ module.exports.j = function j() {}
 }
 
 #[test]
+fn test_js_cjs_synthetic_function_export_with_jsdoc_is_not_alias_deferred() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} value
+ */
+module.exports.map = function map(value) {
+    return value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function map(value: number): number;"),
+        "Expected CJS synthetic function export to emit at its own statement: {output}"
+    );
+}
+
+#[test]
+fn test_js_cjs_export_aliases_emit_at_first_alias_statement() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.apply = undefined;
+function a() {}
+exports.apply = a;
+"#,
+    );
+
+    let expected = "export { a as apply };\ndeclare function a(): void;\n";
+    assert_eq!(
+        output, expected,
+        "Expected CJS alias group to keep the first alias statement position"
+    );
+}
+
+#[test]
+fn test_js_cjs_export_alias_with_later_values_emits_grouped_value_union() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+exports.apply = undefined;
+exports.apply = undefined;
+function a() {}
+exports.apply = a;
+exports.apply();
+exports.apply = 'ok';
+var OK = exports.apply.toUpperCase();
+exports.apply = 1;
+"#,
+    );
+
+    let expected = "export const apply: typeof a | \"ok\" | 1 | undefined;\nexport { a as apply };\ndeclare function a(): void;\n";
+    assert_eq!(
+        output, expected,
+        "Expected CJS alias/value export to match tsc declaration grouping"
+    );
+}
+
+#[test]
 fn test_private_set_accessor_omits_type_and_uses_value_param_name() {
     let source = r#"
 declare class C {
     private set x(foo: string);
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -505,8 +814,7 @@ declare class C {
     set x(foo: string);
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -560,7 +868,6 @@ export interface Box {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_returned_object_literal_member_comments_are_preserved() {
     let output = emit_dts(
         r#"
@@ -593,6 +900,67 @@ export class Next {}
     assert!(
         !output.contains("*/\nexport declare class Next"),
         "Did not expect returned object member JSDoc to leak to the next declaration: {output}"
+    );
+}
+
+#[test]
+fn test_returned_object_literal_local_function_declarations_inline() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo<T>(v: T) {
+    function a<T>(a: T) { return a; }
+    function b(): T { return v; }
+
+    function c<T>(v: T) {
+        function a<T>(a: T) { return a; }
+        function b(): T { return v; }
+        return { a, b };
+    }
+
+    return { a, b, c };
+}
+"#,
+    );
+
+    let expected = r#"declare function foo<T>(v: T): {
+    a: <T_1>(a: T_1) => T_1;
+    b: () => T;
+    c: <T_1>(v: T_1) => {
+        a: <T_2>(a: T_2) => T_2;
+        b: () => T_1;
+    };
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected returned local function declarations to inline as object member function types: {output}"
+    );
+}
+
+#[test]
+fn test_returned_object_literal_local_function_overloads_preserve_signatures() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo() {
+    function a(x: string): string;
+    function a(x: number): number;
+    function a(x: string | number) { return x; }
+
+    return { a };
+}
+"#,
+    );
+
+    let expected = r#"declare function foo(): {
+    a: {
+        (x: string): string;
+        (x: number): number;
+    };
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected returned overloaded local function declarations to preserve every overload signature: {output}"
     );
 }
 
@@ -645,6 +1013,49 @@ export const useBox = () => {
     assert!(
         output.contains("export declare const useBox: () => Box<typeof import(\"pkg\")>;"),
         "Expected local call return annotation to preserve explicit type arguments: {output}"
+    );
+}
+
+#[test]
+fn test_generic_function_return_keeps_outer_type_param_over_later_alias() {
+    let output = emit_dts_with_binding(
+        r#"
+function makeBox<T>(value: T) {
+    return { value };
+}
+
+type Box<T> = ReturnType<typeof makeBox<T>>;
+type StringBox = Box<string>;
+"#,
+    );
+
+    assert!(
+        output.contains("declare function makeBox<T>(value: T): {\n    value: T;\n};"),
+        "Expected inferred object return to preserve the function type parameter: {output}"
+    );
+    assert!(
+        !output.contains("declare function makeBox<T>(value: T): Box<string>;"),
+        "Did not expect a later instantiated alias to replace the generic return: {output}"
+    );
+}
+
+#[test]
+fn test_instantiation_expression_error_recovery_matches_tsc_declarations() {
+    let output = emit_dts_with_binding(
+        r#"
+declare let g: (<T>(x: T) => T) | undefined;
+const c1 = g<string> || ((x: string) => x);
+const c2 = g<string> ?? ((x: string) => x);
+"#,
+    );
+
+    assert!(
+        output.contains("declare const c1: (x: string) => string;"),
+        "Expected || to collapse matching undefined fallback function: {output}"
+    );
+    assert!(
+        output.contains("declare const c2: (x: string) => string;"),
+        "Expected ?? to collapse matching undefined fallback function: {output}"
     );
 }
 
@@ -742,7 +1153,6 @@ class C {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_computed_methods_emit_as_property_signatures() {
     let output = emit_dts(
         r#"
@@ -865,8 +1275,7 @@ fn test_js_const_literal_uses_type_annotation() {
 #[test]
 fn test_ts_const_await_literal_uses_initializer() {
     let source = "const x = await 1;\nexport { x };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -903,6 +1312,10 @@ export const x = () => 1;
         "Expected JS @type alias reference to be preserved: {output}"
     );
     assert!(
+        output.contains("@callback Foo") && output.contains("@type {Foo}"),
+        "Expected callback and variable JSDoc comments to remain in declaration output: {output}"
+    );
+    assert!(
         output.contains("export type Foo = (...args: string[]) => number;"),
         "Expected JS @callback alias to be synthesized after the exported value: {output}"
     );
@@ -924,6 +1337,169 @@ var notOK = 0;
         output.contains("declare var notOK: B;"),
         "Expected unresolved JSDoc type reference to be preserved in .d.ts emit: {output}"
     );
+}
+
+#[test]
+fn test_js_variable_preserves_generic_jsdoc_type_reference() {
+    let output = emit_js_dts(
+        r#"
+/** @template T @typedef {<T1 extends T>(data: T1) => T1} Test */
+
+/** @type {Test<number>} */
+const test = dibbity => dibbity
+"#,
+    );
+
+    assert!(
+        output.contains("declare const test: Test<number>;"),
+        "Expected generic JSDoc @type alias reference to be preserved: {output}"
+    );
+    assert!(
+        output.contains("type Test<T> = <T1 extends T>(data: T1) => T1;"),
+        "Expected same-line @template/@typedef alias to emit clean type parameters: {output}"
+    );
+}
+
+#[test]
+fn test_js_variable_normalizes_legacy_dot_generic_jsdoc_type_reference() {
+    let output = emit_js_dts(
+        r#"
+/** @type {Array.<number>} */
+const values = [];
+"#,
+    );
+
+    assert!(
+        output.contains("declare const values: Array<number>;"),
+        "Expected legacy JSDoc dot-generic form to normalize to standard generic syntax: {output}"
+    );
+    assert!(
+        !output.contains(": Array.<number>;"),
+        "Did not expect invalid legacy dot-generic syntax in emitted type annotation: {output}"
+    );
+}
+
+#[test]
+fn test_js_jsdoc_array_empty_args_normalizes_to_any_array() {
+    // `Array.<>` (legacy JSDoc empty-args generic) should normalize to `any[]`
+    // in declaration emit, matching tsc. Without the fix it surfaces as
+    // `Array<>` which is not valid TypeScript.
+    let output = emit_js_dts(
+        r#"
+/**
+ * @return {Array.<>}
+ */
+function z() { return null; }
+"#,
+    );
+
+    assert!(
+        output.contains("any[]"),
+        "Expected `Array.<>` to normalize to `any[]`: {output}"
+    );
+    assert!(
+        !output.contains("Array<>"),
+        "Did not expect invalid `Array<>` token in emitted type: {output}"
+    );
+}
+
+#[test]
+fn test_js_jsdoc_array_empty_args_in_union() {
+    // The original conformance test exercises `(Array.<> | null)` as the return
+    // type — the parens, union, and empty-args generic all interact. Lock in
+    // that the result is `(any[] | null)`, not `(Array<> | null)`.
+    let output = emit_js_dts(
+        r#"
+/**
+ * @return {(Array.<> | null)} list of devices
+ */
+function z() { return null; }
+"#,
+    );
+
+    assert!(
+        output.contains("any[] | null") || output.contains("(any[] | null)"),
+        "Expected `Array.<>` inside union to normalize: {output}"
+    );
+    assert!(
+        !output.contains("Array<>"),
+        "Did not expect raw `Array<>` token: {output}"
+    );
+}
+
+#[test]
+fn test_js_jsdoc_promise_empty_args_normalizes_to_promise_any() {
+    // `Promise.<>` (legacy empty-args form) mirrors the Array case — should
+    // normalize to `Promise<any>`, matching tsc and the bare-name fallback in
+    // `resolve_jsdoc_global_implicit_any_type`.
+    let output = emit_js_dts(
+        r#"
+/**
+ * @return {Promise.<>}
+ */
+function p() { return Promise.resolve(); }
+"#,
+    );
+
+    assert!(
+        output.contains("Promise<any>"),
+        "Expected `Promise.<>` to normalize to `Promise<any>`: {output}"
+    );
+    assert!(
+        !output.contains("Promise<>"),
+        "Did not expect invalid `Promise<>` token: {output}"
+    );
+}
+
+#[test]
+fn test_js_jsdoc_promise_star_normalizes_to_promise_any() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @return {Promise.<*>}
+ */
+function p() { return Promise.resolve(); }
+"#,
+    );
+
+    assert!(
+        output.contains("Promise<any>"),
+        "Expected `Promise.<*>` to normalize to `Promise<any>`: {output}"
+    );
+    assert!(
+        !output.contains("Promise<*>"),
+        "Did not expect raw `Promise<*>` token: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_nested_object_binding_params_and_promise_star() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class Y {
+    /**
+     * @param {Object} error
+     * @param {string?} error.reason
+     * @param {Object} error.suberr
+     * @param {string?} error.suberr.reason
+     * @param {string?} error.suberr.code
+     * @returns {Promise.<*>}
+     */
+    async cancel({reason, suberr}) {}
+}
+"#,
+    );
+
+    for expected in [
+        "reason: string | null;",
+        "suberr: {\n            reason: string | null;\n            code: string | null;\n        };",
+        "): Promise<any>;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "Expected nested JSDoc parameter output `{expected}`: {output}"
+        );
+    }
 }
 
 #[test]
@@ -1063,8 +1639,473 @@ const send = handlers => Promise.resolve(handlers);
         "Expected JSDoc-annotated JS function variable to emit as a function declaration: {output}"
     );
     assert!(
+        output.contains(
+            "/**\n * @param {ResolveRejectMap} handlers\n * @returns {Promise<any>}\n */\ndeclare function send"
+        ),
+        "Expected function variable JSDoc to stay attached to synthetic declaration: {output}"
+    );
+    assert!(
         output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
         "Expected multiline JSDoc typedef alias to be emitted as a local type alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_arrow_without_jsdoc_emits_function_declaration() {
+    let output = emit_js_dts_with_usage_analysis("export const id = (value) => value;");
+
+    assert!(
+        output.contains("export function id(value: any);"),
+        "Expected exported JS arrow variable to emit as a function declaration: {output}"
+    );
+    assert!(
+        !output.contains("export const id:"),
+        "Did not expect exported JS arrow variable to stay as a const function type: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_jsx_arrow_destructured_computed_param_uses_literal_key() {
+    let source = r#"
+const dynPropName = "data-dyn";
+export const ExampleFunctionalComponent = ({ "data-testid": dataTestId, [dynPropName]: dynProp }) => (
+    <>Hello</>
+);
+"#;
+    let mut parser = ParserState::new("test.jsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let (_decl_idx, decl) = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            parser
+                .arena
+                .get_variable_declaration(node)
+                .filter(|decl| {
+                    parser.arena.get_identifier_text(decl.name)
+                        == Some("ExampleFunctionalComponent")
+                })
+                .map(|decl| (NodeIndex(idx as u32), decl))
+        })
+        .expect("missing declaration");
+    let init_node = parser
+        .arena
+        .get(decl.initializer)
+        .expect("missing arrow initializer");
+    let func = parser
+        .arena
+        .get_function(init_node)
+        .expect("missing arrow function");
+    let param_idx = func.parameters.nodes[0];
+    let param = parser
+        .arena
+        .get(param_idx)
+        .and_then(|node| parser.arena.get_parameter(node))
+        .expect("missing parameter");
+    let pattern = parser
+        .arena
+        .get(param.name)
+        .and_then(|node| parser.arena.get_binding_pattern(node))
+        .expect("missing object binding pattern");
+    let computed_expr = parser
+        .arena
+        .get(pattern.elements.nodes[1])
+        .and_then(|node| parser.arena.get_binding_element(node))
+        .and_then(|element| parser.arena.get(element.property_name))
+        .and_then(|node| parser.arena.get_computed_property(node))
+        .map(|computed| computed.expression)
+        .expect("missing computed binding property");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let data_testid = interner.intern_string("data-testid");
+    let data_dyn = interner.intern_string("data-dyn");
+    let param_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![
+            PropertyInfo::new(data_testid, TypeId::ANY),
+            PropertyInfo::new(data_dyn, TypeId::ANY),
+        ],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let func_type = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(
+            interner.intern_string("__0"),
+            param_type,
+        )],
+        TypeId::ANY,
+    ));
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(computed_expr.0, interner.literal_string("data-dyn"));
+    type_cache.node_types.insert(decl.initializer.0, func_type);
+
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.jsx".to_string());
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export function ExampleFunctionalComponent"),
+        "Expected exported JS arrow component to emit as a function declaration: {output}"
+    );
+    assert!(
+        output.contains("\"data-dyn\": any;"),
+        "Expected computed binding key to use its resolved literal property name: {output}"
+    );
+    assert!(
+        output.contains("declare const dynPropName: \"data-dyn\";"),
+        "Expected computed binding key declaration to remain nameable: {output}"
+    );
+    assert!(
+        output.contains("): JSX.Element;"),
+        "Expected concise JSX arrow return to emit JSX.Element: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_computed_param_key_does_not_emit_synthetic_duplicate() {
+    let output = emit_js_dts_with_usage_analysis(
+        "export const key = \"x\";\nexport const f = ({ [key]: value }) => value;\n",
+    );
+
+    assert!(
+        output.contains("export const key: \"x\";"),
+        "Expected exported computed key const to emit through the normal export path: {output}"
+    );
+    assert!(
+        output.contains("export function f({ [key]: value }"),
+        "Expected exported JS arrow variable to emit as a function using the exported computed key: {output}"
+    );
+    assert!(
+        output.contains("x: any;"),
+        "Expected computed binding key to resolve to the literal property name: {output}"
+    );
+    assert_eq!(
+        output.matches("const key:").count(),
+        1,
+        "Did not expect a duplicate synthetic local declaration for an already exported computed key: {output}"
+    );
+}
+
+#[test]
+fn test_js_multiline_typedef_before_variable_comment_is_preserved() {
+    let source = r#"
+/**
+ * @typedef {{
+ *   [id: string]: [Function, Function];
+ * }} ResolveRejectMap
+ */
+let id = 0;
+
+/**
+ * @param {ResolveRejectMap} handlers
+ * @returns {Promise<any>}
+ */
+const send = handlers => Promise.resolve(handlers);
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.starts_with(
+            "/**\n * @typedef {{\n * [id: string]: [Function, Function];\n * }} ResolveRejectMap\n */\ndeclare let id: number;"
+        ),
+        "Expected source typedef comment to stay attached to the variable declaration: {output}"
+    );
+    assert!(
+        output.contains("declare function send(handlers: ResolveRejectMap): Promise<any>;"),
+        "Expected function variable to use the typedef alias: {output}"
+    );
+    assert!(
+        output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
+        "Expected typedef alias to still be emitted: {output}"
+    );
+}
+
+#[test]
+fn test_js_multiline_typedef_preserves_unstarred_source_lines() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ * @typedef {{
+  value: {
+    [K in keyof T]?: Box<T[K]>[]
+  }
+}} Box<T> */
+/** @type {Box<{foo:string}>} */
+const p = {};
+"#,
+    );
+
+    // tsc joins single-line @type comments to the following declaration even when
+    // they appear on a separate source line, so check for the joined form.
+    assert!(
+        output.starts_with(
+            "/**\n * @template T\n * @typedef {{\n  value: {\n    [K in keyof T]?: Box<T[K]>[]\n  }\n}} Box<T> */\n/** @type {Box<{foo:string}>} */ declare const p: Box<{"
+        ),
+        "Expected unstarred typedef lines and following @type comment to preserve source text: {output}"
+    );
+    assert!(
+        output.contains("type Box<T> = {\n    value: { [K in keyof T]?: Box<T[K]>[]; };\n};"),
+        "Expected generic typedef name suffix to be folded into type parameters: {output}"
+    );
+}
+
+#[test]
+fn test_js_multiline_typedef_before_export_equals_function_variable_is_emitted() {
+    let source = r#"
+/**
+ * @typedef {{
+ *   [id: string]: [Function, Function];
+ * }} ResolveRejectMap
+ */
+/**
+ * @param {ResolveRejectMap} handlers
+ * @returns {Promise<any>}
+ */
+const send = handlers => Promise.resolve(handlers);
+module.exports = send;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    let export_pos = output
+        .find("export = send;")
+        .expect("Expected CommonJS export-equals statement");
+    let function_pos = output
+        .find("declare function send(handlers: ResolveRejectMap): Promise<any>;")
+        .expect("Expected synthetic function declaration for send");
+    assert!(
+        export_pos < function_pos,
+        "Expected export= send to emit before the synthetic declaration in CommonJS mode: {output}"
+    );
+    assert!(
+        output.contains("type ResolveRejectMap = {\n    [id: string]: [Function, Function];\n};"),
+        "Expected multiline JSDoc typedef alias to be emitted alongside export= send: {output}"
+    );
+    assert_eq!(
+        output.matches("export = send;").count(),
+        1,
+        "Did not expect duplicate export= send statements: {output}"
+    );
+}
+
+#[test]
+fn test_js_require_json_export_equals_infers_json_shape() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let dir =
+        std::env::temp_dir().join(format!("tsz-json-require-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp json fixture dir");
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{
+  "name": "pkg",
+  "bin": {
+    "cli": "./bin/cli.js",
+  },
+  "devDependencies": {
+    "@ns/dep": "0.1.2"
+  },
+  "keywords": ["kw"],
+  "config": {
+    "o": ["a"]
+  }
+}"#,
+    )
+    .expect("write json fixture");
+
+    let source = r#"
+const j = require("./package.json");
+module.exports = j;
+"#;
+    let index_path = dir.join("index.js");
+    let mut parser = ParserState::new(
+        index_path.to_string_lossy().into_owned(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.set_current_arena(current_arena, index_path.to_string_lossy().into_owned());
+
+    let output = emitter.emit(root);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let expected = r#"export = j;
+declare const j: {
+    name: string;
+    bin: {
+        cli: string;
+    };
+    devDependencies: {
+        "@ns/dep": string;
+    };
+    keywords: string[];
+    config: {
+        o: string[];
+    };
+};
+"#;
+    assert_eq!(
+        output, expected,
+        "Expected CommonJS JSON require exports to infer the JSON data shape"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_export_equals_function_declaration_stays_local() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+/**
+ * @param {Value} value
+ * @returns {Value}
+ */
+function make(value) {
+    return value;
+}
+module.exports = make;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = make;")
+        .expect("Expected CommonJS export assignment");
+    let comment_pos = output
+        .find("/** @typedef {string | number} Value */")
+        .expect("Expected source typedef comment before function");
+    let function_pos = output
+        .find("declare function make(value: Value): Value;")
+        .expect("Expected function declaration to use the typedef alias");
+    let alias_pos = output
+        .find("type Value = string | number;")
+        .expect("Expected local typedef alias");
+
+    assert!(
+        export_pos < comment_pos && comment_pos < function_pos && function_pos < alias_pos,
+        "Expected export= first, source typedef comment on the function, and local alias after it: {output}"
+    );
+    assert!(
+        !output.contains("export type Value"),
+        "CommonJS export= typedef alias should stay local: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_export_equals_class_declaration_stays_local() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+    item = 3;
+    method() {}
+}
+module.exports = Conn;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = Conn;")
+        .expect("Expected CommonJS export assignment");
+    let comment_pos = output
+        .find("/**\n * @typedef {string | number} Whatever\n */")
+        .expect("Expected source typedef comment before class");
+    let class_pos = output
+        .find("declare class Conn")
+        .expect("Expected class declaration");
+    let namespace_pos = output
+        .find("declare namespace Conn")
+        .expect("Expected merged namespace declaration");
+    let alias_pos = output
+        .find("type Whatever = string | number;")
+        .expect("Expected local typedef alias");
+
+    assert!(
+        export_pos < comment_pos
+            && comment_pos < class_pos
+            && class_pos < namespace_pos
+            && namespace_pos < alias_pos,
+        "Expected export=, commented class, namespace, then local alias: {output}"
+    );
+    assert!(
+        output.contains("export { Whatever };"),
+        "Expected namespace to re-export the local typedef alias: {output}"
+    );
+    assert!(
+        !output.contains("export type Whatever"),
+        "CommonJS export= typedef alias should stay local: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_private_function_in_es_module_stays_exported() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+function local(value) { return value; }
+export const x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected sibling ES export to stay exported: {output}"
+    );
+    assert!(
+        output.contains("export type Value = string | number;"),
+        "Expected top-level typedef before a private JS function to follow ES module export policy: {output}"
+    );
+    assert!(
+        !output.contains("\ntype Value = string | number;"),
+        "Did not expect ES module typedef to be consumed early as a local alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_private_class_in_es_module_stays_exported() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+class Local {
+    method() {}
+}
+export const x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected sibling ES export to stay exported: {output}"
+    );
+    assert!(
+        output.contains("export type Value = string | number;"),
+        "Expected top-level typedef before a private JS class to follow ES module export policy: {output}"
+    );
+    assert!(
+        !output.contains("\ntype Value = string | number;"),
+        "Did not expect ES module typedef to be consumed early as a local alias: {output}"
     );
 }
 
@@ -1092,6 +2133,532 @@ function format(x) {
 }
 
 #[test]
+fn test_js_function_declaration_emits_separate_jsdoc_overload_comments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @overload
+ * @param {number} value
+ * @returns {'number'}
+ */
+/**
+ * @overload
+ * @param {string} value
+ * @returns {'string'}
+ */
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function kind(value) {
+  return typeof value;
+}
+
+/**
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
+const identity = value => value;
+
+/**
+ * @template T
+ * @overload
+ * @param {T[]} values
+ * @returns {T[]}
+ */
+/**
+ * @param {unknown[]} values
+ * @returns {unknown[]}
+ */
+function copy(values) {
+  return values.map(identity);
+}
+"#,
+    );
+
+    let kind_number = output
+        .find("declare function kind(value: number): \"number\";")
+        .expect("expected number overload");
+    let kind_string = output
+        .find("declare function kind(value: string): \"string\";")
+        .expect("expected string overload");
+    let copy = output
+        .find("declare function copy<T>(values: T[]): T[];")
+        .expect("expected generic overload");
+    let identity = output
+        .find("declare function identity<T>(value: T): T;")
+        .expect("expected variable function declaration");
+
+    assert!(
+        kind_number < kind_string && kind_string < copy && copy < identity,
+        "Expected JS function overloads to stay in function source order before function variables: {output}"
+    );
+    assert!(
+        !output.contains("declare function kind(value: unknown): string;"),
+        "Implementation signature should not be emitted for @overload JSDoc: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_emits_combined_jsdoc_overload_comment() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ * @template U
+ * @overload
+ * @param {T[]} array
+ * @param {(x: T) => U[]} mapper
+ * @returns {U[]}
+ *
+ * @overload
+ * @param {T[][]} array
+ * @returns {T[]}
+ *
+ * @param {unknown[]} array
+ * @param {(x: unknown) => unknown} mapper
+ * @returns {unknown[]}
+ */
+function flatMap(array, mapper) {
+  return [];
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function flatMap<T, U>(array: T[], mapper: (x: T) => U[]): U[];"),
+        "Expected first overload from combined JSDoc comment: {output}"
+    );
+    assert!(
+        output.contains("declare function flatMap<T, U>(array: T[][]): T[];"),
+        "Expected second overload from combined JSDoc comment: {output}"
+    );
+    assert!(
+        !output.contains("array: unknown[]"),
+        "Implementation JSDoc tags after overloads should not become a declaration signature: {output}"
+    );
+}
+
+#[test]
+fn test_js_method_declaration_emits_jsdoc_overload_comments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ */
+class Box {
+  /** @param {T} value */
+  constructor(value) {
+    this.value = value;
+  }
+
+  /**
+   * @overload
+   * @param {Box<number>} this
+   * @returns {'number'}
+   */
+  /**
+   * @overload
+   * @param {Box<string>} this
+   * @returns {'string'}
+   */
+  /**
+   * @returns {string}
+   */
+  kind() {
+    return typeof this.value;
+  }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("kind(this: Box<number>): \"number\";"),
+        "Expected number receiver overload: {output}"
+    );
+    assert!(
+        output.contains("kind(this: Box<string>): \"string\";"),
+        "Expected string receiver overload: {output}"
+    );
+    assert!(
+        !output.contains("kind(): string;"),
+        "Implementation method signature should not be emitted for JSDoc overloads: {output}"
+    );
+}
+
+#[test]
+fn test_js_constructor_declaration_emits_jsdoc_overloads_before_private_marker() {
+    let output = emit_js_dts(
+        r#"
+export class Foo {
+  #value;
+
+  /**
+   * @constructor
+   * @overload
+   * @param {string} value
+   */
+  /**
+   * @constructor
+   * @overload
+   * @param {number} value
+   */
+  /** @constructor @param {string | number} value */
+  constructor(value) {
+    this.#value = value;
+  }
+}
+"#,
+    );
+
+    let string_ctor = output
+        .find("constructor(value: string);")
+        .expect("expected string constructor overload");
+    let number_ctor = output
+        .find("constructor(value: number);")
+        .expect("expected number constructor overload");
+    let private_marker = output.find("#private;").expect("expected private marker");
+
+    assert!(
+        string_ctor < number_ctor && number_ctor < private_marker,
+        "Expected constructor overloads before private marker: {output}"
+    );
+    assert!(
+        !output.contains("string | number"),
+        "Implementation constructor JSDoc should not become a signature: {output}"
+    );
+}
+
+#[test]
+fn test_ts_function_declaration_preserves_jsdoc_overload_comments() {
+    let output = emit_dts(
+        r#"
+/**
+ * @overload
+ * @param {number} value
+ * @returns {'number'}
+ */
+/**
+ * @overload
+ * @param {string} value
+ * @returns {'string'}
+ */
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function kind(value: unknown): string {
+  return typeof value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("declare function kind(value: unknown): string;"),
+        "Expected TS implementation signature instead of JSDoc overload expansion: {output}"
+    );
+    assert!(
+        !output.contains("declare function kind(value: number): \"number\";")
+            && !output.contains("declare function kind(value: string): \"string\";"),
+        "TS @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
+fn test_ts_function_declaration_jsdoc_overload_keeps_implementation_param_names() {
+    let output = emit_dts(
+        r#"
+/**
+ * @overload
+ * @param {number} x
+ * @returns {number}
+ */
+/**
+ * @overload
+ * @param {string} x
+ * @returns {string}
+ */
+/**
+ * @param {unknown} x
+ * @returns {unknown}
+ */
+function identity(x: unknown): unknown {
+  return x;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("declare function identity(x: unknown): unknown;"),
+        "Expected TS implementation signature to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("identity(x: number)") && !output.contains("identity(x: string)"),
+        "TS @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
+fn test_ts_class_method_preserves_jsdoc_overload_comments() {
+    let output = emit_dts(
+        r#"
+class Converter {
+  /**
+   * @overload
+   * @param {number} x
+   * @returns {string}
+   */
+  /**
+   * @overload
+   * @param {string} x
+   * @returns {number}
+   */
+  /**
+   * @param {unknown} x
+   * @returns {unknown}
+   */
+  convert(x: unknown): unknown {
+    return x;
+  }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS method @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("convert(x: unknown): unknown;"),
+        "Expected TS implementation method signature to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("convert(x: number): string;")
+            && !output.contains("convert(x: string): number;"),
+        "TS method @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
+fn test_ts_class_constructor_preserves_jsdoc_overload_comments() {
+    let output = emit_dts(
+        r#"
+class Wrapper {
+  /**
+   * @overload
+   * @param {string} value
+   */
+  /**
+   * @overload
+   * @param {number} value
+   */
+  /** @param {unknown} value */
+  constructor(value: unknown) {}
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS constructor @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("constructor(value: unknown);"),
+        "Expected TS implementation constructor signature to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("constructor(value: string);")
+            && !output.contains("constructor(value: number);"),
+        "TS constructor @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
+fn test_js_object_namespace_emits_legacy_jsdoc_overload_member_comments() {
+    let output = emit_js_dts(
+        r#"
+const example = {
+  /**
+   * @overload Example(value)
+   *   Creates Example
+   *   @param value [String]
+   */
+  constructor: function Example(value, options) {},
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace example"),
+        "Expected object literal namespace declaration: {output}"
+    );
+    assert!(
+        output.contains("@overload Example(value)"),
+        "Expected legacy overload comment to be preserved: {output}"
+    );
+    assert!(
+        output.contains("function constructor(value: any): any;"),
+        "Expected legacy overload params to replace the implementation signature: {output}"
+    );
+    assert!(
+        !output.contains("options:"),
+        "Implementation-only parameters should not leak into the legacy overload: {output}"
+    );
+}
+
+#[test]
+fn test_js_object_namespace_aliases_multiple_legacy_constructor_overloads() {
+    let output = emit_js_dts(
+        r#"
+const example = {
+  /**
+   * @overload Example(value)
+   * @param value [String]
+   * @param secret [String]
+   * @overload Example(options)
+   * @option options value [String]
+   */
+  constructor: function Example() {},
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export function constructor_1(value: any, secret: any): any;"),
+        "Expected first legacy constructor overload to use an aliasable local name: {output}"
+    );
+    assert!(
+        output.contains("export function constructor_1(): any;"),
+        "Expected option-only legacy overload to fall back to no parameters: {output}"
+    );
+    assert!(
+        output.contains("export { constructor_1 as constructor };"),
+        "Expected constructor alias export after synthetic overloads: {output}"
+    );
+}
+
+#[test]
+fn test_js_object_namespace_malformed_legacy_overload_falls_back_to_no_params() {
+    let output = emit_js_dts(
+        r#"
+const example = {
+  /**
+   * @overload evaluate(options = {}, [callback])
+   * @param options [map]
+   * @callback callback function (error, result)
+   *   If callback is provided it will be called with evaluation result
+   *   @param error [Error]
+   *   @param result [String]
+   */
+  evaluate: function evaluate(options, callback) {},
+};
+"#,
+    );
+
+    assert!(
+        output.contains("function evaluate(): any;"),
+        "Expected malformed legacy overload call to fall back to a no-arg any signature: {output}"
+    );
+    assert!(
+        !output.contains("options:"),
+        "Malformed legacy overload params should not be trusted as a signature: {output}"
+    );
+    assert!(
+        output.contains("type callback = (error: any, result: any) => any;"),
+        "Expected nested legacy @callback alias to be emitted after the namespace: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_variable_strips_jsdoc_satisfies_comment() {
+    let output = emit_js_dts(
+        r#"
+/** @satisfies {(uuid: string) => void} */
+export const fn1 = uuid => {};
+
+/**
+ * @satisfies {(a: string, ...args: never) => void}
+ * @param {string} a
+ */
+export const fn2 = (a, b) => {};
+
+/** @satisfies {(uuid: string) => void} */
+export function fn3(uuid) {}
+"#,
+    );
+
+    assert!(
+        !output.contains("@satisfies {(uuid: string) => void} */\nexport function fn1"),
+        "Expected synthetic function-variable JSDoc @satisfies comment to be stripped: {output}"
+    );
+    assert!(
+        !output.contains("@satisfies {(a: string, ...args: never) => void}"),
+        "Expected multiline synthetic function-variable @satisfies comment to be stripped: {output}"
+    );
+    assert!(
+        output.contains("export function fn1(uuid: string): void;"),
+        "Expected @satisfies parameter fallback to remain active: {output}"
+    );
+    assert!(
+        output.contains("export function fn2(a: string, b: never): void;"),
+        "Expected @param plus @satisfies inference to remain active: {output}"
+    );
+    assert!(
+        output.contains(
+            "/** @satisfies {(uuid: string) => void} */\nexport function fn3(uuid: any): void;"
+        ),
+        "Expected function declarations to preserve @satisfies comments: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_typedef_same_file_typeof_export_stays_unqualified() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @satisfies {(uuid: string) => void} */
+export const fn1 = uuid => {};
+
+/** @typedef {Parameters<typeof fn1>} Foo */
+
+/** @type Foo */
+export const v1 = ["abc"];
+
+/** @satisfies {(label: string) => void} */
+export const renamed = label => {};
+
+/** @typedef {ReturnType<typeof renamed>} Bar */
+"#,
+    );
+
+    assert!(
+        output.contains("export function fn1(uuid: string): void;"),
+        "Expected @satisfies parameter fallback to keep exported const-function signature: {output}"
+    );
+    assert!(
+        output.contains("export type Foo = Parameters<typeof fn1>;"),
+        "Expected JSDoc typedef alias to keep same-file typeof reference unqualified: {output}"
+    );
+    assert!(
+        output.contains("export type Bar = ReturnType<typeof renamed>;"),
+        "Expected renamed same-file typeof reference to stay unqualified too: {output}"
+    );
+    assert!(
+        !output.contains("typeof import(\".\").fn1")
+            && !output.contains("typeof import(\".\").renamed"),
+        "Same-file JSDoc typedef aliases should not self-import exported values: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_emits_constrained_jsdoc_template() {
     let output = emit_js_dts(
         r#"
@@ -1113,6 +2680,159 @@ export function id(x) {
     assert!(
         !output.contains("id<{string}, T>"),
         "Did not expect braced JSDoc constraint to emit as a fake type parameter: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_uses_jsdoc_type_alias_signature() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<T>(m : T) => T} IFn
+ */
+
+/** @type {IFn} */
+export function inJs(l) {
+  return l;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function inJs<T>(m: T): T;"),
+        "Expected JSDoc @type function alias to emit as a function signature: {output}"
+    );
+    assert!(
+        output.contains("export type IFn = <T>(m: T) => T;"),
+        "Expected the JSDoc typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@typedef"),
+        "Did not expect source-only typedef comment to be duplicated before the function: {output}"
+    );
+    assert!(
+        !output.contains("@type {IFn}"),
+        "Did not expect implementation-only @type comment in declaration output: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_uses_jsdoc_type_alias_signature_with_nested_commas() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<T>(x: [T, number], y: { items: [T, string] }) => [T, string]} IFn
+ */
+
+/** @type {IFn} */
+export function inJs(l) {
+  return l;
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export function inJs<T>(x: [T, number], y: { items: [T, string] }): [T, string];"
+        ),
+        "Expected nested tuple/object commas in JSDoc function typedef to parse as a single signature: {output}"
+    );
+    assert!(
+        output.contains("export type IFn = <T>(x: [T, number], y: {")
+            && output.contains("items: [T, string];")
+            && output.contains("}) => [T, string];"),
+        "Expected nested tuple/object commas to be preserved in emitted typedef alias structure: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_uses_jsdoc_type_alias_signature_with_nested_function_param() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {(cb: (x: number) => string, value: number) => void} IFn2
+ */
+
+/** @type {IFn2} */
+export function inJs(cb, value) {
+  cb(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function inJs(cb: (x: number) => string, value: number): void;"),
+        "Expected nested function parameter type to parse through closing paren matching: {output}"
+    );
+    assert!(
+        output.contains("export type IFn2 = (cb: (x: number) => string, value: number) => void;"),
+        "Expected emitted typedef alias to preserve nested function parameter type: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_type_alias_signature_filters_renamed_typedef_comment() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<Value>(input : Value) => Value} Mapper
+ */
+
+/** @type {Mapper} */
+export function mapValue(value) {
+  return value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function mapValue<Value>(input: Value): Value;"),
+        "Expected renamed JSDoc function alias to emit as a function signature: {output}"
+    );
+    assert!(
+        output.contains("export type Mapper = <Value>(input: Value) => Value;"),
+        "Expected renamed typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@typedef"),
+        "Did not expect renamed source-only typedef comment to be duplicated: {output}"
+    );
+    assert!(
+        !output.contains("@type {Mapper}"),
+        "Did not expect renamed implementation-only @type comment in declaration output: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_type_alias_signature_preserves_non_type_jsdoc_comments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<T>(m : T) => T} IFn
+ */
+
+/**
+ * Keep this function-level JSDoc.
+ * @deprecated use next
+ */
+/** @type {IFn} */
+export function inJs(l) {
+  return l;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function inJs<T>(m: T): T;"),
+        "Expected JSDoc @type function alias to emit as a function signature: {output}"
+    );
+    assert!(
+        output.contains("@deprecated use next"),
+        "Expected non-@type JSDoc comments to remain in declaration output: {output}"
+    );
+    assert!(
+        !output.contains("@type {IFn}"),
+        "Did not expect implementation-only @type comment in declaration output: {output}"
     );
 }
 
@@ -1144,7 +2864,135 @@ export { x, f };
 }
 
 #[test]
-#[ignore = "broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
+fn test_js_named_export_interface_folds_into_declaration() {
+    let source = r#"
+interface G {}
+export { G };
+interface HH {}
+export { HH as H };
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export interface G"),
+        "Expected same-name JS interface export to fold into the declaration: {output}"
+    );
+    assert!(
+        output.contains("interface HH"),
+        "Expected renamed interface alias to keep its local declaration: {output}"
+    );
+    assert!(
+        output.contains("export { HH as H };"),
+        "Expected renamed interface alias to remain in the grouped export aliases: {output}"
+    );
+    assert!(
+        !output.contains("export { G"),
+        "Did not expect a redundant same-name export alias for G: {output}"
+    );
+}
+
+#[test]
+fn test_js_mixed_named_export_partitions_interface_and_value_specifiers() {
+    let source = r#"
+interface G {}
+interface H {}
+const x = 1;
+export { G, H as HH, x };
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let g_pos = output
+        .find("export interface G")
+        .expect("expected same-name interface export to fold into declaration");
+    let h_pos = output
+        .find("interface H")
+        .expect("expected renamed interface to keep a local declaration");
+    let x_pos = output
+        .find("export const x: 1;")
+        .expect("expected same-name value export to fold into declaration");
+    let alias_pos = output
+        .find("export { H as HH };")
+        .expect("expected renamed interface alias to remain in trailing export aliases");
+
+    assert!(
+        g_pos < h_pos && h_pos < x_pos && x_pos < alias_pos,
+        "Expected mixed export specifiers to be partitioned in tsc order: {output}"
+    );
+    assert!(
+        !output.contains("export { G, H as HH, x };"),
+        "Did not expect the original mixed export clause to be emitted: {output}"
+    );
+}
+
+#[test]
+fn test_js_interface_recovery_orders_construct_call_then_members() {
+    let source = r#"
+export interface C<T, U> {
+    field: T & U;
+    (): number;
+    (x: T): U;
+    new (): string;
+    new (x: T): U;
+    method(): number;
+    optMethod?(): number;
+}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let construct_pos = output
+        .find("new (): string;")
+        .unwrap_or_else(|| panic!("missing construct signature: {output}"));
+    let call_pos = output
+        .find("(): number;")
+        .unwrap_or_else(|| panic!("missing call signature: {output}"));
+    let field_pos = output
+        .find("field: T & U;")
+        .unwrap_or_else(|| panic!("missing field: {output}"));
+    let method_pos = output
+        .find("method(): number;")
+        .unwrap_or_else(|| panic!("missing method: {output}"));
+
+    assert!(
+        construct_pos < call_pos && call_pos < field_pos && field_pos < method_pos,
+        "Expected JS interface recovery to order construct signatures, call signatures, then source-order members: {output}"
+    );
+    assert!(
+        !output.contains("optMethod"),
+        "Expected optional JS recovered interface methods to be omitted like tsc: {output}"
+    );
+}
+
+#[test]
+fn test_js_named_export_function_preserves_jsdoc_signature_at_export_position() {
+    let output = emit_js_dts(
+        r#"
+export function b() {}
+
+/**
+ * @param {{x: string}} a
+ * @param {{y: typeof b}} b
+ */
+function g(a, b) {
+    return a.x && b.y();
+}
+
+export { g };
+"#,
+    );
+
+    assert!(
+        output.contains("export function g(a: {\n    x: string;\n}, b: {\n    y: typeof import(\".\").b;\n}): void | \"\";"),
+        "Expected folded JS export function to preserve JSDoc param and return types: {output}"
+    );
+    assert!(
+        output.contains(
+            "/**\n * @param {{x: string}} a\n * @param {{y: typeof b}} b\n */\nexport function g"
+        ),
+        "Expected folded JS export function to keep its JSDoc comment: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_exports_preserve_explicit_export_order() {
     let source = r#"
 function require() {}
@@ -1320,8 +3168,7 @@ fn test_ts_import_meta_url_infers_string() {
 const x = import.meta.url;
 export { x };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -1418,6 +3265,56 @@ const Strings = {
 }
 
 #[test]
+fn test_js_exported_object_literal_property_reference_member_emits_import_alias() {
+    let output = emit_js_dts_with_usage_analysis(
+        r##"
+export const colors = {
+    royalBlue: "#6400e4",
+};
+
+export const brandColors = {
+    purple: colors.royalBlue,
+};
+"##,
+    );
+
+    let expected = r##"export namespace colors {
+    let royalBlue: string;
+}
+export namespace brandColors {
+    import purple = colors.royalBlue;
+    export { purple };
+}"##;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected exported object literal property references to stay namespace-shaped: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_object_literal_ordinary_property_access_member_emits_value() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const s = "x";
+
+export const ns = {
+    len: s.length,
+};
+"#,
+    );
+
+    let expected = r#"export namespace ns {
+    let len: number;
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected ordinary property accesses to emit typed namespace values, not import aliases: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_zero_arg_constructor_is_omitted() {
     let source = r#"
 export class Preferences {
@@ -1433,6 +3330,26 @@ export class Preferences {
     assert!(
         !output.contains("constructor();"),
         "Expected zero-arg JS constructors to be omitted from declaration emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_like_class_zero_arg_constructor_is_omitted() {
+    let source = r#"
+function C1() {
+    this.prop = 1;
+}
+C1.prototype.method = function () {};
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare class C1"),
+        "Expected JS function-like class surface: {output}"
+    );
+    assert!(
+        !output.contains("constructor();"),
+        "Expected zero-arg synthetic JS function-like constructors to be omitted: {output}"
     );
 }
 
@@ -1512,6 +3429,134 @@ module.exports = a;
 }
 
 #[test]
+fn test_js_module_exports_typed_object_keeps_value_declaration_with_usage_analysis() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {{x: number}} Item
+ */
+/**
+ * @type {Item}
+ */
+const x = { x: 12 };
+module.exports = x;
+"#,
+    );
+
+    assert!(
+        output.starts_with("export = x;"),
+        "Expected CommonJS export assignment to stay before its value declaration: {output}"
+    );
+    assert!(
+        output.contains("const x: Item;"),
+        "Expected typed export-equals object root to emit as a value declaration: {output}"
+    );
+    assert!(
+        !output.contains("namespace x {\n    let x: number;"),
+        "Did not expect the object-literal namespace shortcut for an export-equals root: {output}"
+    );
+    assert!(
+        output.contains("declare namespace x {\n    export { Item };\n}"),
+        "Expected export-equals root namespace to re-export local typedef aliases: {output}"
+    );
+    assert!(
+        output.contains("type Item = {\n    x: number;\n};"),
+        "Expected local JSDoc typedef dependency to remain available: {output}"
+    );
+}
+
+#[test]
+fn test_js_module_exports_function_emits_before_hoisted_jsdoc() {
+    let source = r#"
+/**
+ * @param {number} timeout
+ */
+function Timer(timeout) {
+    this.timeout = timeout;
+}
+module.exports = Timer;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.starts_with("export = Timer;\n/**"),
+        "Expected JS module.exports export= to precede hoisted function JSDoc: {output}"
+    );
+    assert!(
+        output.contains("declare function Timer(timeout: number): void;"),
+        "Expected hoisted function declaration to keep its JSDoc signature: {output}"
+    );
+    assert_eq!(
+        output.matches("export = Timer;").count(),
+        1,
+        "Did not expect duplicate JS export= statements: {output}"
+    );
+}
+
+#[test]
+fn test_js_export_equals_class_keeps_typedef_local_and_after_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+}
+module.exports = Conn;
+"#,
+    );
+
+    assert!(
+        output.starts_with("export = Conn;\n/**"),
+        "Expected class export= to precede leading typedef JSDoc: {output}"
+    );
+    assert!(
+        output.contains("\ntype Whatever = string | number;"),
+        "Expected CommonJS typedef alias to remain local and trailing: {output}"
+    );
+    assert!(
+        !output.contains("export type Whatever"),
+        "Did not expect CommonJS typedef alias to emit as exported top-level type: {output}"
+    );
+}
+
+#[test]
+fn test_js_module_exports_function_with_typedef_members() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef Options
+ * @property {string} opt
+ */
+
+/**
+ * @param {Options} options
+ */
+module.exports = function loader(options) {}
+"#,
+    );
+
+    let expected = r#"declare namespace _exports {
+    export { Options };
+}
+declare function _exports(options: Options): void;
+export = _exports;
+type Options = {
+    opt: string;
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected export= function to retain local typedef namespace members: {output}"
+    );
+}
+
+#[test]
 fn test_export_equals_namespace_keeps_local_type_dependencies() {
     let source = r#"
 namespace X {
@@ -1551,8 +3596,7 @@ export = X;
 
 #[test]
 fn test_namespace_shadowed_default_export_uses_self_import_type_names() {
-    let mut parser = ParserState::new("test.ts".to_string(), String::new());
-    let _ = parser.parse_source_file();
+    let (parser, _root) = parse_test_source("");
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     emitter.current_namespace_self_import_alias = Some("me".to_string());
     emitter.current_namespace_shadowed_default_name = Some("MyComponent".to_string());
@@ -1630,6 +3674,156 @@ exports.for = "loop";
 }
 
 #[test]
+fn test_js_module_exports_object_keyword_name_and_namespace_members() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+var x = 12;
+module.exports = {
+    extends: "base",
+    more: {
+        others: ["strs"]
+    },
+    x
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export var x: number;"),
+        "Expected shorthand object export to keep JS var widening: {output}"
+    );
+    assert!(
+        output.contains("declare let _extends: string;"),
+        "Expected reserved object export name to use a local alias: {output}"
+    );
+    assert!(
+        output.contains("export declare namespace more {\n    let others: string[];\n}"),
+        "Expected nested object member to emit as an export namespace: {output}"
+    );
+    assert!(
+        output.contains("export { _extends as extends };"),
+        "Expected reserved object export alias to be grouped: {output}"
+    );
+    assert!(
+        !output.contains("export const x: 12;"),
+        "Did not expect the JS var export to remain const-narrowed: {output}"
+    );
+    assert!(
+        !output.contains("export const extends"),
+        "Did not expect invalid keyword binding declaration: {output}"
+    );
+}
+
+#[test]
+fn test_object_shorthand_preserves_declared_identifier_type_after_narrowing() {
+    let source = r#"
+class RoyalGuard {
+    isLeader(): this is LeadGuard {
+        return this instanceof LeadGuard;
+    }
+    isFollower(): this is FollowerGuard {
+        return this instanceof FollowerGuard;
+    }
+}
+
+class LeadGuard extends RoyalGuard {
+    lead(): void {}
+}
+
+class FollowerGuard extends RoyalGuard {
+    follow(): void {}
+}
+
+let guard: RoyalGuard = new FollowerGuard();
+
+if (guard.isLeader()) {
+    guard.lead();
+} else if (guard.isFollower()) {
+    guard.follow();
+}
+
+var holder = { guard };
+
+if (holder.guard.isLeader()) {
+    holder.guard;
+} else {
+    holder.guard;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare var holder: {\n    guard: RoyalGuard;\n};"),
+        "Expected shorthand object member to use the declared annotation instead of a narrowed flow type: {output}"
+    );
+}
+
+#[test]
+fn test_object_shorthand_definite_assignment_uses_non_nullish_declared_type() {
+    let source = r#"
+const a: string | undefined = 'ff';
+const foo = { a! };
+
+const b: string | undefined = 'plain';
+const plain = { b };
+
+const c: number | null | undefined = 1;
+const numeric = { c! };
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+    let (parser, _) = parse_test_source(source);
+    let shorthand_exclamation_count = parser
+        .arena
+        .nodes
+        .iter()
+        .filter_map(|node| parser.arena.get_shorthand_property(node))
+        .filter(|data| data.exclamation_token_pos != 0)
+        .count();
+    assert_eq!(
+        shorthand_exclamation_count, 2,
+        "Expected parser recovery to preserve two shorthand definite-assignment markers"
+    );
+
+    assert!(
+        output.contains("declare const foo: {\n    a: string;\n};"),
+        "Expected recovered `{{a!}}` shorthand to use the non-nullish declared type: {output}"
+    );
+    assert!(
+        output.contains("declare const plain: {\n    b: string | undefined;\n};"),
+        "Expected plain shorthand to preserve the declared union type: {output}"
+    );
+    assert!(
+        output.contains("declare const numeric: {\n    c: number;\n};"),
+        "Expected recovered shorthand to remove both null and undefined from top-level unions: {output}"
+    );
+}
+
+#[test]
+fn test_object_shorthand_mixed_members_keep_resolved_member_types() {
+    let source = r#"
+class RoyalGuard {
+    isLeader(): this is LeadGuard {
+        return this instanceof LeadGuard;
+    }
+}
+
+class LeadGuard extends RoyalGuard {
+    lead(): void {}
+}
+
+let guard: RoyalGuard = new LeadGuard();
+var holder = { guard, generated: 1 };
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output
+            .contains("declare var holder: {\n    guard: RoyalGuard;\n    generated: number;\n};"),
+        "Expected mixed object literal to preserve declared shorthand member and resolved generated member: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_bracket_string_exports_emit_named_declarations() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -1645,6 +3839,78 @@ module.exports["bar"] = "x";
     assert!(
         output.contains("export const bar: \"x\";"),
         "Expected module.exports bracket string exports to emit named declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_element_access_invalid_export_alias() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function D() {}
+exports["D"] = D;
+/** alias comment should stay attached to the skipped source statement */
+exports["Does not work yet"] = D;
+"#,
+    );
+
+    assert!(
+        output.contains("export function D(): void;"),
+        "Expected valid element access export to emit the local function: {output}"
+    );
+    assert!(
+        output.contains("export { D as _Does_not_work_yet };"),
+        "Expected invalid element access export name to emit a sanitized alias: {output}"
+    );
+    assert!(
+        !output.contains("alias comment should stay attached"),
+        "Did not expect skipped alias statement comments to leak into output: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_object_param_properties_type_destructured_parameter() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {object} opts
+ * @param {number} opts.a
+ * @param {number} [opts.b]
+ * @returns {number}
+ */
+function foo({ a, b }) {
+    return a + (b ?? 0);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function foo({ a, b }: {\n    a: number;\n    b?: number | undefined;\n}): number;"
+        ),
+        "Expected JSDoc object property tags to type the destructured parameter: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_nested_object_param_properties_type_destructured_parameter() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {Object} opts
+ * @param {string?} opts.reason
+ * @param {Object} opts.suberr
+ * @param {string?} opts.suberr.reason
+ * @param {string?} opts.suberr.code
+ */
+function foo({ reason, suberr }) {}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function foo({ reason, suberr }: {\n    reason: string | null;\n    suberr: {\n        reason: string | null;\n        code: string | null;\n    };\n}): void;"
+        ),
+        "Expected nested JSDoc object property tags to type the destructured parameter: {output}"
     );
 }
 
@@ -1716,6 +3982,83 @@ var local = 123;
 }
 
 #[test]
+fn test_js_commonjs_define_property_function_exports() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function fn() {}
+
+Object.defineProperty(module.exports, "fn", { value: fn });
+Object.defineProperty(module.exports, "alias", { value: module.exports.fn });
+Object.defineProperty(module.exports.fn, "self", { value: module.exports.fn });
+"#,
+    );
+
+    assert!(
+        output.contains("export function fn(): void;"),
+        "Expected local function defineProperty export: {output}"
+    );
+    assert!(
+        output.contains("export function alias(): void;"),
+        "Expected defineProperty export alias to reuse the function signature: {output}"
+    );
+    assert!(
+        output.contains("export namespace fn {\n    function self(): void;\n}"),
+        "Expected defineProperty namespace member function declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare function fn"),
+        "Did not expect the consumed local function to be emitted separately: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_define_property_function_export_keeps_jsdoc_at_export_site() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+Object.defineProperty(module.exports, "a", { value: function a() {} });
+
+/**
+ * @param {number} value
+ * @return {string}
+ */
+function d(value) { return ""; }
+Object.defineProperty(module.exports, "d", { value: d });
+"#,
+    );
+
+    let expected = r#"export function a(): void;
+/**
+ * @param {number} value
+ * @return {string}
+ */
+export function d(value: number): string;"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected defineProperty-exported local function JSDoc to stay with the synthetic export: {output}"
+    );
+}
+
+#[test]
+fn test_js_esm_syntax_ignores_commonjs_named_exports() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const x = 0;
+module.exports.y = 0;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 0;"),
+        "Expected native ESM export to remain: {output}"
+    );
+    assert!(
+        !output.contains("export const y:"),
+        "Did not expect CommonJS assignment to become a named export in an ESM JS file: {output}"
+    );
+}
+
+#[test]
 fn test_js_exports_assignment_marks_same_name_function_exported() {
     let output = emit_js_dts(
         r#"
@@ -1748,6 +4091,152 @@ module.exports = { bar };
     assert!(
         output.contains("export function bar(a: string): string;"),
         "Expected JSDoc parameter type to infer the CommonJS function return: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_object_export_preserves_documented_source_order() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * const doc comment
+ */
+const x = (a) => {
+    return "";
+};
+
+/**
+ * function doc comment
+ */
+function b() {
+    return 0;
+}
+
+module.exports = { x, b };
+"#,
+    );
+
+    let x_pos = output
+        .find("/**\n * const doc comment\n */\nexport function x(a: any): string;")
+        .unwrap_or_else(|| panic!("Expected documented exported function x: {output}"));
+    let b_pos = output
+        .find("/**\n * function doc comment\n */\nexport function b(): number;")
+        .unwrap_or_else(|| panic!("Expected documented exported function b: {output}"));
+    assert!(
+        x_pos < b_pos,
+        "Expected module.exports object declarations to preserve source order: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_enum_object_literal_emits_type_and_namespace() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @enum {string} */
+export const Target = {
+    START: "start",
+    /** @type {number} */
+    OK_I_GUESS: 2
+};
+
+/** @enum {function(number): number} */
+export const Fs = {
+    ADD1: n => n + 1,
+    SUB1: n => n - 1
+};
+
+/** @enum {?} */
+export const Unknowns = { ANY: 1 };
+
+/** @enum {Array} */
+export const Lists = { EMPTY: [] };
+
+/** @enum {Promise} */
+export const Tasks = { DONE: Promise.resolve() };
+
+/** @enum {function(Array): Promise} */
+export const AsyncFns = { RUN: values => Promise.resolve(values) };
+"#,
+    );
+
+    assert!(
+        output.contains("export type Target = string;\nexport namespace Target {"),
+        "Expected JSDoc enum value to emit type plus namespace: {output}"
+    );
+    assert!(
+        output.contains("let START: string;"),
+        "Expected enum members to use the enum base type: {output}"
+    );
+    assert!(
+        output.contains("let OK_I_GUESS: number;"),
+        "Expected member @type to override the enum base type: {output}"
+    );
+    assert!(
+        output.contains("export type Fs = (arg0: number) => number;"),
+        "Expected function enum base type to normalize to arrow function syntax: {output}"
+    );
+    assert!(
+        output.contains("function ADD1(n: any): any;")
+            && output.contains("function SUB1(n: any): any;"),
+        "Expected function enum members to emit as namespace functions: {output}"
+    );
+    assert!(
+        output.contains("export type Unknowns = any;"),
+        "Expected standalone Closure unknown enum type to normalize to any: {output}"
+    );
+    assert!(
+        output.contains("export type Lists = any[];"),
+        "Expected bare Array enum type to normalize to any[]: {output}"
+    );
+    assert!(
+        output.contains("export type Tasks = Promise<any>;"),
+        "Expected bare Promise enum type to normalize to Promise<any>: {output}"
+    );
+    assert!(
+        output.contains("export type AsyncFns = (arg0: any[]) => Promise<any>;"),
+        "Expected enum function type to use JSDoc function normalization: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_missing_generic_arguments_default_to_any() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {Array=} values
+ */
+function takesArray(values) {}
+
+/** @param {Promise} promise */
+function takesPromise(promise) {}
+
+/** @param {function(Array)} callback */
+function takesCallback(callback) {}
+
+/**
+ * @return {?Promise}
+ */
+function maybePromise() {
+    return null;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function takesArray(values?: any[] | undefined): void;"),
+        "Expected optional bare Array to become any[] | undefined: {output}"
+    );
+    assert!(
+        output.contains("declare function takesPromise(promise: Promise<any>): void;"),
+        "Expected bare Promise to become Promise<any>: {output}"
+    );
+    assert!(
+        output.contains("declare function takesCallback(callback: (arg0: any[]) => any): void;"),
+        "Expected function(Array) to use any[] and default any return: {output}"
+    );
+    assert!(
+        output.contains("declare function maybePromise(): Promise<any> | null;"),
+        "Expected nullable bare Promise return to become Promise<any> | null: {output}"
     );
 }
 
@@ -1939,6 +4428,161 @@ export function Point(x, y) {
 }
 
 #[test]
+fn test_js_function_class_merge_omits_non_constructor_signature() {
+    let output = emit_js_dts(
+        r#"
+function C1() {
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @returns {number}
+     */
+    this.prop = function (x, y) {
+        return x + y;
+    };
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C1.prototype.method = function (x, y) {
+    return x + y;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare function C1(): void;\ndeclare class C1 {"),
+        "Expected JS function plus prototype members to merge with a companion class: {output}"
+    );
+    assert!(
+        !output.contains("constructor();"),
+        "Expected companion class not to duplicate the already-emitted function signature as a constructor: {output}"
+    );
+    assert!(
+        output.contains("prop: (x: number, y: number) => number;")
+            && output.contains("method(x: number, y: number): number;"),
+        "Expected constructor-assigned and prototype members to remain in the companion class: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_static_expando_namespace_members_are_ambient_members() {
+    let output = emit_js_dts(
+        r#"
+function C1() {}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C1.staticProp = function (x, y) {
+    return x + y;
+};
+
+class C2 {}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C2.staticProp = function (x, y) {
+    return x + y;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace C1 {\n    /**")
+            && output.contains("    function staticProp(x: number, y: number): number;\n}"),
+        "Expected function static expando to emit as an ambient namespace member: {output}"
+    );
+    assert!(
+        output.contains("declare namespace C2 {\n    /**")
+            && output.contains("    function staticProp(x: number, y: number): number;\n}"),
+        "Expected class static expando to emit as an ambient namespace member: {output}"
+    );
+    assert!(
+        !output.contains("export function staticProp"),
+        "Did not expect explicit export on ambient namespace members: {output}"
+    );
+}
+
+#[test]
+fn test_var_array_initializer_with_index_assignment_emits_valid_array_type() {
+    // Regression: `var t = [1, 2, 3]; t[0] = 5;` previously emitted
+    // `declare var t: {\n    : number[];` — invalid TypeScript, because
+    // the late-bound expando function path wrote the opening `: {` before
+    // checking whether the initializer was a function. For an array
+    // literal the function then bailed out, leaving a partial brace in
+    // the output. After the fix the initializer shape is probed first
+    // and the late-bound path is skipped entirely.
+    let output = emit_dts(
+        r#"
+var t = [1, 2, 3];
+t[0] = 5;
+"#,
+    );
+    assert!(
+        output.contains("declare var t: number[];"),
+        "Expected valid array type for var with index assignment, got: {output}"
+    );
+    assert!(
+        !output.contains(": {\n    : "),
+        "Did not expect partial broken object type in output: {output}"
+    );
+    assert!(
+        !output.contains("Array<>"),
+        "Did not expect raw Array<> token: {output}"
+    );
+}
+
+#[test]
+fn test_var_array_initializer_with_property_assignment_emits_valid_array_type() {
+    // Same regression as above but for property-style assignment
+    // (`t.foo = 5`). Both element-access and property-access assignments
+    // were triggering `collect_ts_late_bound_assignment_members`, which
+    // in turn entered the broken `: {` write path.
+    let output = emit_dts(
+        r#"
+var t = [1, 2, 3];
+t.foo = 5;
+"#,
+    );
+    assert!(
+        output.contains("declare var t: number[];"),
+        "Expected valid array type for var with property assignment, got: {output}"
+    );
+    assert!(
+        !output.contains(": {\n    : "),
+        "Did not expect partial broken object type in output: {output}"
+    );
+}
+
+#[test]
+fn test_const_array_initializer_with_index_assignment_emits_valid_array_type() {
+    // Same as above for `const` declarations.
+    let output = emit_dts(
+        r#"
+const t = [1, 2, 3];
+t[0] = 5;
+"#,
+    );
+    assert!(
+        output.contains("declare const t"),
+        "Expected valid array type for const with index assignment, got: {output}"
+    );
+    assert!(
+        !output.contains(": {\n    : "),
+        "Did not expect partial broken object type in output: {output}"
+    );
+}
+
+#[test]
 fn test_ts_late_bound_function_assignments_emit_namespace() {
     let source = r#"
 export function foo() {}
@@ -1951,8 +4595,7 @@ const numMem = 42;
 foo[numMem] = "ok";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let interner = TypeInterner::new();
@@ -1993,6 +4636,53 @@ export declare namespace foo {
     assert!(
         output.contains(expected),
         "Expected TS late-bound function assignments to emit a merged namespace: {output}"
+    );
+}
+
+#[test]
+fn test_mutable_generic_call_literal_result_widens_in_declaration_emit() {
+    let source = r#"
+function foo<T>(x: T) { return x; }
+var x = foo(5);
+"#;
+    let (parser, root) = parse_test_source(source);
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let get_var_decl = |stmt_idx: NodeIndex| {
+        parser
+            .arena
+            .get(stmt_idx)
+            .and_then(|node| parser.arena.get_variable(node))
+            .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+            .and_then(|node| parser.arena.get_variable(node))
+            .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+            .and_then(|node| parser.arena.get_variable_declaration(node))
+            .expect("missing variable declaration")
+    };
+    let var_x_decl = get_var_decl(source_file.statements.nodes[1]);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    let literal_five = tsz_solver::type_queries::create_number_literal_type(&interner, 5.0);
+    type_cache
+        .node_types
+        .insert(var_x_decl.initializer.0, literal_five);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+    assert!(
+        output.contains("declare var x: number;"),
+        "Expected mutable generic call literal result to widen in DTS: {output}"
+    );
+    assert!(
+        !output.contains("declare var x: 5;"),
+        "Did not expect mutable generic call literal result to stay narrow: {output}"
     );
 }
 
@@ -2065,6 +4755,67 @@ export declare namespace foo {
     assert!(
         output.contains(expected),
         "Synthetic alias for reserved namespace members should skip real member names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_js_late_bound_function_reserved_alias_uses_keyword_name() {
+    let source = r#"
+function foo() {}
+foo.null = true;
+
+function bar() {}
+bar.async = true;
+bar.normal = false;
+
+function baz() {}
+baz.class = true;
+baz.normal = false;
+"#;
+
+    let output = emit_js_dts_with_usage_analysis(source);
+    let expected = r#"declare function foo(): void;
+declare namespace foo {
+    let _null: boolean;
+    export { _null as null };
+}
+declare function bar(): void;
+declare namespace bar {
+    let async: boolean;
+    let normal: boolean;
+}
+declare function baz(): void;
+declare namespace baz {
+    let _class: boolean;
+    export { _class as class };
+    let normal_1: boolean;
+    export { normal_1 as normal };
+}"#;
+    assert!(
+        output.contains(expected),
+        "Expected JS reserved function expandos to use keyword aliases and avoid reused local names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_js_late_bound_function_alias_generation_avoids_existing_namespace_members() {
+    let source = r#"
+export const normal = 1;
+export function foo() {}
+foo.normal = false;
+foo.normal_1 = true;
+"#;
+
+    let output = emit_js_dts_with_usage_analysis(source);
+    let expected = r#"export function foo(): void;
+export namespace foo {
+    let normal_2: boolean;
+    export { normal_2 as normal };
+    let normal_1: boolean;
+}"#;
+    assert!(
+        output.contains(expected),
+        "Expected namespace alias generation to skip existing member names when resolving collisions: {output}"
     );
 }
 
@@ -2385,6 +5136,99 @@ exports.K = class K {
 }
 
 #[test]
+fn test_exported_class_expression_method_object_types_keep_tsc_indent() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export var circularReference = class C {
+    static getTags(c: C): C { return c }
+    tags(c: C): C { return c }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "    getTags(c: {\n        tags(c: /*elided*/ any): /*elided*/ any;\n    }): {\n        tags(c: /*elided*/ any): /*elided*/ any;\n    };"
+        ),
+        "Expected method parameter and return object types to use one member-relative indent level: {output}"
+    );
+    assert!(
+        !output.contains("\n                tags(c:"),
+        "Did not expect multiline method object types to be reindented by the declaration writer: {output}"
+    );
+}
+
+#[test]
+fn test_namespaced_class_expression_method_object_types_keep_tsc_indent() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export namespace Boxed {
+    export var circularReference = class C {
+        static getTags(c: C): C { return c }
+        tags(c: C): C { return c }
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "        getTags(c: {\n            tags(c: /*elided*/ any): /*elided*/ any;\n        }): {\n            tags(c: /*elided*/ any): /*elided*/ any;\n        };"
+        ),
+        "Expected namespaced method object types to stay relative to the namespace member indent: {output}"
+    );
+    assert!(
+        !output.contains("\n                    tags(c:"),
+        "Did not expect nested namespace declaration writer indentation to be added twice: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_class_expression_method_body_survives_non_callable_cache() {
+    let source = r#"
+exports.K = class K {
+    values() {
+        return new K();
+    }
+};
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let method_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::METHOD_DECLARATION)
+                .then_some(NodeIndex(idx as u32))
+                .filter(|&method_idx| {
+                    parser
+                        .arena
+                        .get(method_idx)
+                        .and_then(|node| parser.arena.get_method_decl(node))
+                        .and_then(|method| parser.arena.get_identifier_text(method.name))
+                        == Some("values")
+                })
+        })
+        .expect("missing values method");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(method_idx.0, TypeId::UNKNOWN);
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("values(): K;"),
+        "Expected CommonJS class expression method return type to fall back to body inference: {output}"
+    );
+}
+
+#[test]
 fn test_object_literal_computed_numeric_names_prefer_syntax_shape() {
     let output = emit_dts(
         r#"
@@ -2478,6 +5322,45 @@ module.exports = new Foo();
 }
 
 #[test]
+fn test_js_module_exports_new_expression_with_expando_emits_single_let_export() {
+    // Regression: `module.exports = new Foo(); module.exports.additional = X;`
+    // previously emitted `additional` TWICE — once via the secondary-member
+    // path (during `module.exports = new Foo()` emission) and again via the
+    // deferred value-export path (when the statement visitor later reached
+    // the `module.exports.additional = X` statement). Fix removes the
+    // statement from the deferred export maps before secondary emission so
+    // the visitor skips it. Also `export const` was emitted where tsc emits
+    // `export let` for CommonJS class-instance exports.
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class Foo {
+    static stat = 10;
+    member = 10;
+}
+module.exports = new Foo();
+module.exports.additional = 20;
+"#,
+    );
+    // The `additional` property must appear exactly once in the export
+    // surface. (`emit_js_dts_with_usage_analysis` may wrap output in
+    // additional preamble lines; the count of literal occurrences is the
+    // stable check.)
+    let occurrences = output.matches("additional").count();
+    assert_eq!(
+        occurrences, 1,
+        "Expected `additional` to appear exactly once in the .d.ts, got {occurrences}.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export let additional: 20;"),
+        "Expected `export let additional: 20;` (CommonJS class-instance exports use `let`): {output}"
+    );
+    assert!(
+        output.contains("export let member: number;"),
+        "Expected `export let member: number;` from class instance widening: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_object_literal_plus_secondary_promotes_named_exports() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -2519,6 +5402,48 @@ module.exports.Strings = Strings;
 }
 
 #[test]
+fn test_js_exported_object_literal_empty_object_member_emits_namespace_value() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const x = {
+    grey: {}
+};
+export { x };
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace x {\n    let grey: {};\n}"),
+        "Expected named JS object exports with empty object members to emit as namespaces: {output}"
+    );
+    assert!(
+        !output.contains("export const x:"),
+        "Did not expect named JS object exports with empty object members to fall back to const object types: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_named_object_alias_empty_object_member_emits_namespace_value() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const chalk = {
+    grey: {}
+};
+module.exports.chalk = chalk;
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace chalk {\n    let grey: {};\n}"),
+        "Expected CommonJS named object aliases with empty object members to emit as namespaces: {output}"
+    );
+    assert!(
+        !output.contains("export const chalk:"),
+        "Did not expect CommonJS named object aliases with empty object members to fall back to const object types: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_anonymous_class_expression_uses_exports_class_surface() {
     let output = emit_js_dts(
         r#"
@@ -2552,6 +5477,184 @@ module.exports = class {
 }
 
 #[test]
+fn test_js_module_exports_anonymous_class_secondary_class_emits_once() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+module.exports = class {
+    constructor(p) {
+        this.t = 12 + p;
+    }
+};
+module.exports.Sub = class {
+    constructor() {
+        this.instance = new module.exports(10);
+    }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace exports {\n    export { Sub };\n}"),
+        "Expected secondary anonymous class exports to be aliased through the export= namespace: {output}"
+    );
+    assert!(
+        output.contains("declare class Sub {"),
+        "Expected secondary anonymous class exports to emit a local class declaration: {output}"
+    );
+    assert!(
+        !output.contains("export class Sub"),
+        "Did not expect the secondary class assignment to also emit as a named export: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_constructor_function_prototype_object_emits_single_class() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @constructor */
+module.exports.MyClass = function() {
+    this.x = 1;
+};
+module.exports.MyClass.prototype = {
+    a: function() {
+    }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export class MyClass {\n    a: () => void;\n}"),
+        "Expected CommonJS constructor functions with prototype object literals to emit as a single class surface: {output}"
+    );
+    assert!(
+        !output.contains("export function MyClass"),
+        "Did not expect the constructor function assignment to emit beside the class: {output}"
+    );
+    assert!(
+        !output.contains("constructor();") && !output.contains("x: number;"),
+        "Did not expect constructor-body properties to leak when tsc uses the prototype object surface: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_export_assignment_inside_closure_emits_export_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+function foo() {
+    module.exports = exports = function (o) {
+        return o;
+    };
+    const m = function () {
+    }
+    exports.methods = m;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function _exports(o: any): any;"),
+        "Expected closure CommonJS root assignment to emit export= function surface: {output}"
+    );
+    assert!(
+        output.contains("declare namespace _exports {\n    export { m as methods };\n}"),
+        "Expected closure CommonJS secondary exports to attach to the synthetic namespace: {output}"
+    );
+    assert!(
+        output.contains("export = _exports;\ndeclare function m(): void;"),
+        "Expected local function secondary export target to be emitted after export=: {output}"
+    );
+    assert!(
+        !output.contains("declare function foo"),
+        "Did not expect enclosing helper closure to leak as the declaration surface: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_type_tags_on_const_null_preserve_closure_type_syntax() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {?} */
+export const a = null;
+/** @type {*} */
+export const b = null;
+/** @type {string?} */
+export const c = null;
+/** @type {string=} */
+export const d = null;
+/** @type {string!} */
+export const e = null;
+/** @type {function(string, number): object} */
+export const f = null;
+/** @type {function(new: object, string, number)} */
+export const g = null;
+/** @type {Object.<string, number>} */
+export const h = null;
+"#,
+    );
+
+    assert!(
+        output.contains("export const a: unknown;"),
+        "Expected bare Closure unknown @type to win over const null fallback: {output}"
+    );
+    assert!(output.contains("export const b: any;"));
+    assert!(output.contains("export const c: string | null;"));
+    assert!(output.contains("export const d: string | undefined;"));
+    assert!(output.contains("export const e: string;"));
+    assert!(output.contains("export const f: (arg0: string, arg1: number) => object;"));
+    assert!(output.contains("export const g: new (arg1: string, arg2: number) => object;"));
+    assert!(output.contains("export const h: {\n    [x: string]: number;\n};"));
+}
+
+#[test]
+fn test_jsdoc_typedef_comment_before_namespace_object_is_not_duplicated() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @template T
+ * @template {keyof T} K
+ * @typedef {T[K]} Foo
+ */
+const x = { a: 1 };
+
+/** @type {Foo<typeof x, "a">} */
+const y = "a";
+"#,
+    );
+
+    assert!(
+        output.starts_with("declare namespace x {\n    let a: number;\n}"),
+        "Expected namespace object emit without leaking implementation-only typedef JSDoc: {output}"
+    );
+    assert!(
+        output.contains("type Foo<T, K extends keyof T> = T[K];"),
+        "Expected typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@typedef"),
+        "Did not expect the source typedef comment to be duplicated in the DTS: {output}"
+    );
+}
+
+#[test]
+fn test_js_array_subclass_emits_array_any_and_constructors() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class ElementsArray extends Array {
+    static {
+        this.isArray = (arg) => Array.isArray(arg);
+    }
+}
+"#,
+    );
+
+    let expected = "declare class ElementsArray extends Array<any> {\n    constructor(arrayLength?: number);\n    constructor(arrayLength: number);\n    constructor(...items: any[]);\n}";
+    assert!(
+        output.contains(expected),
+        "Expected bare JS Array subclasses to inherit Array constructor overloads: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_function_like_export_preserves_constructor_jsdoc_block() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -2569,6 +5672,65 @@ module.exports = Timer;
     assert!(
         output.contains(expected),
         "Expected synthetic function-like class constructor JSDoc to stay block-formatted: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_export_equals_function_jsdoc_follows_export_assignment() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} timeout
+ */
+function Timer(timeout) {
+    this.timeout = timeout;
+}
+module.exports = Timer;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = Timer;")
+        .expect("Expected CommonJS export assignment");
+    let jsdoc_pos = output
+        .find("/**\n * @param {number} timeout\n */")
+        .expect("Expected Timer JSDoc block");
+    let function_pos = output
+        .find("declare function Timer(timeout: number): void;")
+        .expect("Expected Timer function declaration");
+    assert!(
+        export_pos < jsdoc_pos && jsdoc_pos < function_pos,
+        "Expected export= before the function JSDoc and declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_export_equals_plain_function_jsdoc_follows_export_assignment() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} value
+ * @returns {string}
+ */
+function format(value) {
+    return String(value);
+}
+module.exports = format;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = format;")
+        .expect("Expected CommonJS export assignment");
+    let jsdoc_pos = output
+        .find("/**\n * @param {number} value\n * @returns {string}\n */")
+        .expect("Expected format JSDoc block");
+    let function_pos = output
+        .find("declare function format(value: number): string;")
+        .expect("Expected format function declaration");
+    assert!(
+        export_pos < jsdoc_pos && jsdoc_pos < function_pos,
+        "Expected export= before the plain function JSDoc and declaration: {output}"
     );
 }
 
@@ -2682,6 +5844,57 @@ Point2D.prototype = {
 }
 
 #[test]
+fn test_namespace_exported_proto_var_suppresses_private_interface_merge() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace m1 {
+    export var __proto__;
+    interface __proto__ {}
+
+    class C<T extends { __proto__: __proto__ }> { }
+}
+__proto__ = 0;
+m1.__proto__ = 0;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace m1 {\n    var __proto__: any;\n}"),
+        "Expected exported __proto__ var to stay as the namespace surface: {output}"
+    );
+    assert!(
+        !output.contains("interface __proto__"),
+        "Private merged __proto__ interface should not leak into the namespace d.ts: {output}"
+    );
+    assert!(
+        !output.contains("export {};"),
+        "Skipping the private interface should also avoid a namespace scope marker: {output}"
+    );
+}
+
+#[test]
+fn test_namespace_exported_proto_interface_is_public_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace m1 {
+    export interface __proto__ {
+        value: string;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("interface __proto__"),
+        "Expected exported __proto__ interface to stay in namespace d.ts: {output}"
+    );
+    assert!(
+        output.contains("value: string;"),
+        "Expected exported __proto__ interface members to stay in namespace d.ts: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_getter_before_setter_preserves_both_accessors() {
     let output = emit_js_dts(
         r#"
@@ -2711,8 +5924,42 @@ class C {
 }
 
 #[test]
+fn test_js_class_define_property_prototype_accessors_emit() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export class D {}
+Object.defineProperty(D.prototype, "x", {
+    get() {
+        return 12;
+    },
+    /** @param {number} _arg */
+    set(_arg) {}
+});
+
+/** @param {number} v */
+const setter = (v) => {};
+export class E {}
+Object.defineProperty(E.prototype, "x", { set: setter });
+"#,
+    );
+
+    assert!(
+        output.contains("export class D {\n    set x(_arg: number);\n    get x(): number;\n}"),
+        "Expected descriptor getter/setter to fold into class D: {output}"
+    );
+    assert!(
+        output.contains("export class E {\n    set x(value: number);\n}"),
+        "Expected descriptor setter alias to fold into class E: {output}"
+    );
+    assert!(
+        !output.contains("Object.defineProperty"),
+        "Descriptor statements should not leak to declaration output: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_export_equals_class_expression_shadowing_preserves_root_name() {
-    let output = emit_js_dts(
+    let output = emit_js_dts_with_usage_analysis(
         r#"
 class A {
     member = new Q();
@@ -2736,6 +5983,10 @@ module.exports.Another = Q;
     assert!(
         output.contains("declare namespace Q {"),
         "Expected named CommonJS class export-equals roots to own their namespace aliases: {output}"
+    );
+    assert!(
+        output.contains("declare class A {\n    member: Q;\n}"),
+        "Expected local classes referenced by the exported class expression surface to be retained: {output}"
     );
     assert!(
         output.contains("export { Q_1 as Another };"),
@@ -2814,6 +6065,29 @@ export class Factory {
     assert!(
         output.contains("static create<T>(value: T): T;"),
         "Expected JSDoc method templates on JS classes to surface in declaration emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_property_type_resolves_semicolon_typedef_alias() {
+    let output = emit_js_dts(
+        r#"
+export class Box {
+    /** @typedef {{ id: string }} Prop */
+    ;
+    /** @type {Prop} */
+    value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("value: { id: string };"),
+        "Expected class property JSDoc @type alias to resolve from nearby semicolon-only typedef: {output}"
+    );
+    assert!(
+        !output.contains("value: Prop;"),
+        "Expected class property type to emit resolved typedef body, not unresolved alias name: {output}"
     );
 }
 
@@ -2902,6 +6176,81 @@ exports.value = {};
 }
 
 #[test]
+fn test_jsdoc_property_typedef_preserves_alias_description() {
+    let source = r#"
+/**
+ * Options for Foo.
+ * @typedef {Object} FooOptions
+ * @property {boolean} bar - Enables bar.
+ */
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("/**\n * Options for Foo.\n */\ntype FooOptions = {"),
+        "Expected typedef description to be preserved above the type alias: {output}"
+    );
+    assert!(
+        output.contains("/**\n     * - Enables bar.\n     */\n    bar: boolean;"),
+        "Expected property description to remain on the property: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_typedef_same_line_link_description_is_preserved() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {Object} D1
+ * @property {1} e Just link to {@link NS.R} this time
+ * @property {1} m Wyatt Earp loved {@link N integers} I bet.
+ */
+
+/** @typedef {number} Attempt {@link https://wat} {@linkcode I think lingcod is better} {@linkplain or lutefisk}*/
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "/**\n * {@link https://wat} {@linkcode I think lingcod is better} {@linkplain or lutefisk}\n */\ntype Attempt = number;"
+        ),
+        "Expected same-line typedef link text to become alias JSDoc: {output}"
+    );
+    assert!(
+        output.contains("/**\n     * Just link to {@link NS.R} this time\n     */\n    e: 1;"),
+        "Expected property link tags to remain on object typedef members: {output}"
+    );
+    assert!(
+        output
+            .contains("/**\n     * Wyatt Earp loved {@link N integers} I bet.\n     */\n    m: 1;"),
+        "Expected renamed-link property text to remain on object typedef members: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_typedef_same_line_plain_description_is_preserved() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * Leading alias sentence.
+ * @typedef {string} RenamedAlias trailing alias sentence.
+ */
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "/**\n * Leading alias sentence.\n * trailing alias sentence.\n */\ntype RenamedAlias = string;"
+        ),
+        "Expected leading and same-line typedef descriptions to be preserved: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_static_method_augmentation_emits_namespace_merge() {
     let source = r#"
 export class Clazz {
@@ -2964,8 +6313,7 @@ class C {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let Some(root_node) = parser.arena.get(root) else {
         panic!("missing root node");
@@ -3013,8 +6361,7 @@ abstract class C {
     abstract prop = 1;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -3035,8 +6382,7 @@ export var basePrototype = {
   },
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -3163,8 +6509,7 @@ const obj = {
     [Symbol.observer]: 0
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let obj_decl = parser
         .arena
@@ -3238,8 +6583,7 @@ const obj = {
     [key]: 0
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let obj_decl = parser
         .arena
@@ -3305,8 +6649,7 @@ const obj = {
     [Symbol.iterator]: 0
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let obj_decl = parser
         .arena
@@ -3407,8 +6750,7 @@ export const Baa = {
     [Foo.BANANA]: 1,
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let baa_decl = parser
         .arena
@@ -3590,8 +6932,7 @@ class Foo {
     Hello = Hello;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let source_file = parser
@@ -3661,6 +7002,27 @@ function g<T>(x: T) {
     assert!(
         output.contains("declare function g<T>(x: T): T extends (infer T_1)[] ? T_1 : T;"),
         "Expected returned local annotation to substitute parameter type queries and rename shadowed infer type parameter: {output}"
+    );
+}
+
+#[test]
+fn test_generic_class_unrelated_methods_preserve_literal_return_unions() {
+    let output = emit_dts_with_binding(
+        r#"
+export class C<T> {
+    m(x: boolean) { return x ? 1 : 2; }
+    s(x: boolean) { return x ? "a" : "b"; }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("m(x: boolean): 1 | 2;"),
+        "Expected generic class method numeric literal union to use source-backed return text: {output}"
+    );
+    assert!(
+        output.contains(r#"s(x: boolean): "a" | "b";"#),
+        "Expected generic class method string literal union to use source-backed return text: {output}"
     );
 }
 
@@ -3766,8 +7128,7 @@ var c = new C(1);
 var d = new D(1);
 var e = new E(1);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let Some(root_node) = parser.arena.get(root) else {
         panic!("missing root node");
@@ -3900,8 +7261,7 @@ declare var ctor: Factory;
 declare var value: Input;
 var instance = new ctor(value);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let Some(root_node) = parser.arena.get(root) else {
         panic!("missing root node");
@@ -3947,8 +7307,7 @@ var instance = new ctor(value);
 #[test]
 fn test_constructor_type_no_double_semicolon() {
     let source = "export type Ctor = new (...args: any[]) => void;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -3966,8 +7325,7 @@ fn test_constructor_type_no_double_semicolon() {
 #[test]
 fn test_template_literal_type_no_double_semicolon() {
     let source = r#"export type Outcome = `${string}_${string}`;"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -3985,8 +7343,7 @@ fn test_template_literal_type_no_double_semicolon() {
 #[test]
 fn test_infer_type_no_double_semicolon() {
     let source = "export type Unpack<T> = T extends (infer U)[] ? U : T;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -4004,8 +7361,7 @@ fn test_infer_type_no_double_semicolon() {
 #[test]
 fn test_abstract_constructor_type() {
     let source = "export type AbstractCtor = abstract new () => object;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -4023,8 +7379,7 @@ fn test_abstract_constructor_type() {
 #[test]
 fn test_simple_template_literal_type() {
     let source = r#"export type Greeting = `hello`;"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -4050,8 +7405,7 @@ fn test_public_modifier_omitted_from_dts_class_members() {
         private z: number;
     }
     "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
@@ -4234,10 +7588,11 @@ fn test_export_default_identifier() {
 }
 
 #[test]
-fn test_js_export_default_identifier_is_hoisted() {
-    // For JS source files, tsc hoists `export default <Identifier>` to the very
-    // top of the .d.ts when the identifier resolves to a top-level local
-    // declaration. Repro for jsDeclarationEmitDoesNotRenameImport.
+fn test_js_export_default_identifier_emits_before_local_declaration() {
+    // For JS source files, tsc emits `export default <Identifier>` before the
+    // referenced local declaration when the identifier resolves to a top-level
+    // local declaration. With no earlier public declaration, the default export
+    // is the first output line. Repro for jsDeclarationEmitDoesNotRenameImport.
     let output = emit_js_dts(
         r#"
 function validate() {}
@@ -4248,7 +7603,7 @@ export default validate;
     let trimmed = output.trim();
     assert!(
         trimmed.starts_with("export default validate;"),
-        "Expected `export default validate;` to be hoisted to the top: {trimmed}"
+        "Expected `export default validate;` before the local declaration: {trimmed}"
     );
     let count = trimmed.matches("export default validate;").count();
     assert_eq!(
@@ -4268,8 +7623,36 @@ export default validate;
 }
 
 #[test]
-fn test_js_export_default_class_is_hoisted_above_class_body() {
-    // Same hoisting rule as above, but for class declarations. Uses the
+fn test_redundant_named_import_alias_extends_uses_canonical_name() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+import { Base, Base as Base2 } from "pkg";
+export class A extends Base {}
+export class B extends Base2 {}
+"#,
+    );
+
+    assert!(
+        output.contains("export declare class A extends Base"),
+        "Expected first class to keep canonical import name: {output}"
+    );
+    assert!(
+        output.contains("export declare class B extends Base"),
+        "Expected aliased class heritage to use canonical import name: {output}"
+    );
+    assert!(
+        output.contains("import { Base } from \"pkg\";"),
+        "Expected redundant named import alias to be elided: {output}"
+    );
+    assert!(
+        !output.contains("Base2"),
+        "Did not expect declaration output to reference redundant alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_export_default_class_emits_before_local_declaration() {
+    // Same source-position scheduling rule as above, but for class declarations. Uses the
     // usage-analysis variant so the class isn't pruned from the .d.ts.
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -4281,7 +7664,7 @@ export default Test;
     let trimmed = output.trim();
     assert!(
         trimmed.starts_with("export default Test;"),
-        "Expected `export default Test;` to be hoisted to the top: {trimmed}"
+        "Expected `export default Test;` before the local class declaration: {trimmed}"
     );
     let count = trimmed.matches("export default Test;").count();
     assert_eq!(
@@ -4295,6 +7678,103 @@ export default Test;
     assert!(
         default_pos < decl_pos,
         "`export default` should appear before the class declaration: {trimmed}"
+    );
+}
+
+#[test]
+fn test_js_default_identifier_preserves_preceding_exported_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @module A */
+class A {}
+
+export const x = 1;
+/**
+ * Target element
+ * @type {module:A}
+ */
+export let el = null;
+
+export default A;
+"#,
+    );
+
+    let expected = r#"export const x: 1;
+/**
+ * Target element
+ * @type {module:A}
+ */
+export let el: any;
+export default A;
+/** @module A */
+declare class A {
+}
+"#;
+
+    assert_eq!(
+        output, expected,
+        "Expected source-position default export scheduling with deferred local class: {output}"
+    );
+}
+
+#[test]
+fn test_js_default_identifier_keeps_exported_target_in_source_order() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const A = 1;
+export default A;
+"#,
+    );
+
+    let expected = "export const A: 1;\nexport default A;\n";
+    assert_eq!(
+        output, expected,
+        "Expected exported default target to stay in source order without a duplicate declaration"
+    );
+}
+
+#[test]
+fn test_jsdoc_module_reference_variable_type_falls_back_to_any() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {module:pkg.Name} */
+export let pkg = null;
+"#,
+    );
+
+    assert!(
+        output.contains("/** @type {module:pkg.Name} */\nexport let pkg: any;"),
+        "Expected `module:` JSDoc references to emit as any: {output}"
+    );
+    assert!(
+        !output.contains("pkg: null"),
+        "JSDoc @type must take precedence over JS null inference: {output}"
+    );
+}
+
+#[test]
+fn test_js_default_typedef_after_default_identifier_export_uses_export_name() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class Cls {
+    x = 12;
+}
+export default Cls;
+/** @typedef {string | number} default */
+"#,
+    );
+    let trimmed = output.trim();
+    assert!(
+        trimmed.starts_with("export type Cls = string | number;\nexport default Cls;"),
+        "Expected default typedef to reuse the default-exported class name before the source-position default export: {trimmed}"
+    );
+    assert!(
+        !trimmed.contains("export type Cls_1 = string | number;"),
+        "Default typedef alias should not synthesize a unique name for a default-exported class: {trimmed}"
+    );
+    assert!(
+        trimmed.contains("declare class Cls"),
+        "Expected the exported class declaration to remain: {trimmed}"
     );
 }
 
@@ -4504,5 +7984,681 @@ fn strip_type_argument_overshoot_balances_nested_angle_brackets() {
     assert_eq!(
         quoted_gt, "\"a>b\"",
         "`>` inside string literals must not affect the balance count"
+    );
+}
+
+#[test]
+fn test_js_exported_class_emits_documented_constructor_assignment_field() {
+    let source = r#"
+export class Aleph {
+    /**
+     * Impossible to construct.
+     * @param {Aleph} a
+     * @param {null} b
+     */
+	    constructor(a, b) {
+	        /**
+	         * Field is always null
+	         */
+	        this.field = b;
+	        /**
+	         * Explicitly typed count.
+	         * @type {number}
+	         */
+	        this.count = 1;
+	    }
+
+    /**
+     * Doesn't actually do anything
+     * @returns {void}
+     */
+    doIt() {}
+	}
+	"#;
+    let output = emit_js_dts(source);
+
+    assert!(
+        output.contains(
+            "/**\n     * Field is always null\n     */\n    field: any;\n    /**\n     * Explicitly typed count.\n     * @type {number}\n     */\n    count: number;\n    /**\n     * Doesn't actually do anything"
+        ),
+        "Expected documented constructor assignment field before method declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_constructor_assignment_single_line_type_comment_stays_compact() {
+    let source = r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+    item = 3;
+    method() {}
+}
+
+class Wrap {
+    /**
+     * @param {Conn} c
+     */
+    constructor(c) {
+        this.connItem = c.item;
+        /** @type {Whatever} */
+        this.another = "";
+    }
+}
+
+export { Wrap };
+"#;
+    let output = emit_js_dts(source);
+
+    assert!(
+        output.contains("    /** @type {Whatever} */\n    another: Whatever;"),
+        "Expected single-line constructor assignment @type JSDoc to stay compact: {output}"
+    );
+    assert!(
+        output.contains("export type Whatever = string | number;"),
+        "Expected exported typedef alias used by compact @type comment to be emitted: {output}"
+    );
+}
+
+#[test]
+fn test_js_local_bare_require_alias_without_exports_is_elided() {
+    let source = r#"
+const u = require("untyped");
+u.assignment.nested = true;
+u.noError();
+"#;
+    let output = emit_js_dts(source);
+
+    assert!(
+        !output.contains("declare const u"),
+        "Expected local bare require alias in a non-exporting JS module to be elided: {output}"
+    );
+    assert_eq!("export {};", output.trim());
+}
+
+#[test]
+fn test_js_local_destructured_require_alias_without_exports_is_elided() {
+    let source = r#"
+const { apply } = require("./moduleExportAliasDuplicateAlias");
+const result = apply.toFixed();
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        !output.contains("declare const apply"),
+        "Expected local destructured require alias in a non-exporting JS module to be elided: {output}"
+    );
+    assert!(
+        !output.contains("declare const result"),
+        "Expected locals derived from the elided destructured require alias to be omitted: {output}"
+    );
+    assert_eq!("export {};", output.trim());
+}
+
+#[test]
+fn test_js_local_dynamic_require_alias_without_exports_is_preserved() {
+    let source = r#"
+const moduleName = "untyped";
+const u = require(moduleName);
+u.noError();
+"#;
+    let output = emit_js_dts(source);
+
+    assert!(
+        output.contains("declare const u: any;"),
+        "Expected dynamic require alias to be preserved: {output}"
+    );
+}
+
+#[test]
+fn test_js_returned_function_expression_uses_attached_jsdoc_signature() {
+    let output = emit_js_dts(
+        r#"
+function f1() {
+    /**
+     * @param {number} a
+     * @param {number} b
+     * @returns {number}
+     */
+    return (a, b) => a + b;
+}
+
+function f2() {
+    /** @type {(a: string, b: string) => string} */
+    return function (a, b) {
+        return a + b;
+    };
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f1(): (a: number, b: number) => number;"),
+        "Expected returned arrow signature to use attached @param/@returns JSDoc: {output}"
+    );
+    assert!(
+        output.contains("declare function f2(): (a: string, b: string) => string;"),
+        "Expected returned function expression signature to use attached @type JSDoc: {output}"
+    );
+}
+
+#[test]
+fn test_js_export_equals_function_static_assignments_stay_top_level() {
+    let output = emit_js_dts(
+        r#"
+module.exports = MyClass;
+
+function MyClass() {}
+MyClass.staticMethod = function() {}
+MyClass.prototype.method = function() {}
+MyClass.staticProperty = 123;
+"#,
+    );
+
+    assert!(
+        output.contains("export = MyClass;"),
+        "Expected CommonJS export assignment: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare namespace MyClass {\n    export { staticMethod, staticProperty };\n}"
+        ),
+        "Expected namespace to re-export top-level expando declarations: {output}"
+    );
+    assert!(
+        output.contains("declare function staticMethod(): void;"),
+        "Expected static function expando to remain a top-level declaration: {output}"
+    );
+    assert!(
+        output.contains("declare var staticProperty: number;"),
+        "Expected static value expando to remain a top-level declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare namespace MyClass {\n    function staticMethod(): void;"),
+        "Did not expect static expandos to be folded into the namespace body: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_static_properties_export_from_merged_namespace() {
+    let output = emit_js_dts(
+        r#"
+function foo() {}
+foo.x = 1;
+foo.default = 2;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace foo {\n    export let x: number;"),
+        "Expected direct expando property to get export let when a reserved-word sibling requires aliasing: {output}"
+    );
+    assert!(
+        output.contains("let _default: number;\n    export { _default as default };"),
+        "Expected reserved expando property to use local alias plus export specifier: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_expando_function_member_exported_when_alias_sibling_present() {
+    let output = emit_js_dts(
+        r#"
+function bar() {}
+bar.greet = function(name) { return name; };
+bar.default = 42;
+"#,
+    );
+
+    assert!(
+        output.contains("export function greet"),
+        "Expected function-valued expando member to get export when a reserved-word sibling requires aliasing: {output}"
+    );
+    assert!(
+        output.contains("let _default: number;\n    export { _default as default };"),
+        "Expected reserved-word alias emission for default: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_expando_contextual_keyword_member_exported_when_alias_sibling_present() {
+    let output = emit_js_dts(
+        r#"
+function baz() {}
+baz.get = 1;
+baz.default = 2;
+"#,
+    );
+
+    assert!(
+        output.contains("export let get: number;"),
+        "Expected contextual-keyword property to get export let when reserved-word sibling requires aliasing: {output}"
+    );
+    assert!(
+        output.contains("let _default: number;\n    export { _default as default };"),
+        "Expected reserved-word alias emission for default: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_static_property_without_alias_omits_member_export() {
+    let output = emit_js_dts(
+        r#"
+function foo() {}
+foo.x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace foo {\n    let x: number;\n}"),
+        "Expected ordinary expando property without alias scheduling to omit member export: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_function_static_property_without_alias_omits_member_export() {
+    let output = emit_js_dts(
+        r#"
+export function foo() {}
+foo.x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace foo {\n    let x: number;\n}"),
+        "Expected exported function expando namespace to omit member export when no alias is scheduled: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_factory_namespace_alias_declaration_emits_after_namespace() {
+    let output = emit_js_dts(
+        r#"
+class Base {
+    constructor() {}
+}
+
+const BaseFactory = () => {
+    return new Base();
+};
+
+BaseFactory.Base = Base;
+module.exports = BaseFactory;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = BaseFactory;")
+        .expect("Expected CommonJS export assignment");
+    let factory_pos = output
+        .find("declare function BaseFactory")
+        .expect("Expected factory function declaration");
+    let namespace_pos = output
+        .find("declare namespace BaseFactory")
+        .expect("Expected merged namespace declaration");
+    let class_pos = output
+        .find("declare class Base")
+        .expect("Expected local class dependency declaration");
+
+    assert!(
+        export_pos < factory_pos && factory_pos < namespace_pos && namespace_pos < class_pos,
+        "Expected namespace alias dependency declaration to follow the namespace schedule: {output}"
+    );
+    assert!(
+        output.contains("export { Base };"),
+        "Expected namespace to export the local class alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_namespace_alias_jsdoc_function_declaration_emits_once_after_namespace() {
+    let output = emit_js_dts(
+        r#"
+function Root() {}
+
+/**
+ * @param {number} x
+ * @returns {number}
+ */
+function Member(x) {
+    return x;
+}
+
+Root.Member = Member;
+module.exports = Root;
+"#,
+    );
+
+    let namespace_pos = output
+        .find("declare namespace Root")
+        .expect("Expected merged namespace declaration");
+    let member_pos = output
+        .find("declare function Member")
+        .expect("Expected local function dependency declaration");
+
+    assert!(
+        namespace_pos < member_pos,
+        "Expected JSDoc alias dependency declaration to follow the namespace schedule: {output}"
+    );
+    assert_eq!(
+        output.matches("declare function Member").count(),
+        1,
+        "Expected JSDoc alias dependency declaration to emit once: {output}"
+    );
+    assert!(
+        output.contains("export { Member };"),
+        "Expected namespace to export the local function alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_expando_does_not_defer_unrelated_same_named_jsdoc_function() {
+    let output = emit_js_dts(
+        r#"
+function Root() {}
+
+/**
+ * @returns {string}
+ */
+function x() {
+    return "";
+}
+
+Root.x = 1;
+module.exports = Root;
+"#,
+    );
+
+    let function_pos = output
+        .find("declare function x")
+        .expect("Expected unrelated same-named function declaration");
+    let namespace_pos = output
+        .find("declare namespace Root")
+        .expect("Expected merged namespace declaration");
+
+    assert!(
+        function_pos < namespace_pos,
+        "Expected same-named non-alias JSDoc function to avoid namespace-alias deferral: {output}"
+    );
+    assert!(
+        output.contains("declare var x: number;"),
+        "Expected non-alias expando property declaration to remain a value declaration: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_bare_commonjs_import_preserves_import_when_static_surface_is_partial() {
+    let module_source = r#"
+function Root() {}
+class Supported {}
+const unsupported = 1;
+
+Root.Supported = Supported;
+Root.unsupported = unsupported;
+module.exports = Root;
+"#;
+    let mut module_parser = ParserState::new(
+        "/tmp/tsz-jsdoc-partial-surface/root.js".to_string(),
+        module_source.to_string(),
+    );
+    module_parser.parse_source_file();
+    let module_arena = Arc::new(module_parser.arena.clone());
+
+    let consumer_source = r#"
+/** @type {import("./root")} */
+let value;
+"#;
+    let mut consumer_parser = ParserState::new(
+        "/tmp/tsz-jsdoc-partial-surface/consumer.js".to_string(),
+        consumer_source.to_string(),
+    );
+    let consumer_root = consumer_parser.parse_source_file();
+    let consumer_arena = Arc::new(consumer_parser.arena.clone());
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&consumer_parser.arena, consumer_root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&consumer_parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(
+        consumer_arena,
+        "/tmp/tsz-jsdoc-partial-surface/consumer.js".to_string(),
+    );
+
+    let mut arena_to_path = FxHashMap::default();
+    arena_to_path.insert(
+        Arc::as_ptr(&module_arena) as usize,
+        "/tmp/tsz-jsdoc-partial-surface/root.js".to_string(),
+    );
+    emitter.set_arena_to_path(arena_to_path);
+
+    let mut global_symbol_arenas = FxHashMap::default();
+    global_symbol_arenas.insert(tsz_binder::SymbolId(1), module_arena);
+    emitter.set_global_symbol_arenas(global_symbol_arenas);
+
+    let output = emitter.emit(consumer_root);
+
+    assert!(
+        output.contains(r#"declare let value: import("./root");"#),
+        "Expected partial CommonJS static surface to keep original import type: {output}"
+    );
+    assert!(
+        !output.contains("Supported: {"),
+        "Did not expect a partial object surface that drops unsupported static members: {output}"
+    );
+}
+
+#[test]
+fn test_js_reordered_accessor_comments_keep_backing_field_comment() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const key = Symbol("key");
+
+export class C {
+    /**
+     * @protected
+     * @type {null | string}
+     */
+    [key] = null;
+
+    get value() {
+        return this[key];
+    }
+
+    /**
+     * @type {string}
+     */
+    set value(v) {
+        this[key] = v;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(" * @type {string}\n     */\n    set value(v: string | null);"),
+        "Expected setter to keep its own JSDoc and backing nullability: {output}"
+    );
+    assert!(
+        output.contains("get value(): string | null;"),
+        "Expected getter to reuse the setter/backing-field type: {output}"
+    );
+    assert!(
+        output.contains(
+            " * @protected\n     * @type {null | string}\n     */\n    protected [key]: null | string;"
+        ),
+        "Expected backing field JSDoc to stay attached to the deferred field: {output}"
+    );
+}
+
+#[test]
+fn test_js_getter_uses_jsdoc_type_tag() {
+    let output = emit_js_dts(
+        r#"
+class C {
+    /** @type {string=} */
+    get p1() {
+        return undefined;
+    }
+
+    /** @type {?string} */
+    get p2() {
+        return null;
+    }
+
+    /** @type {string | null} */
+    get p3() {
+        return null;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("get p1(): string | undefined;"),
+        "Expected getter @type to override undefined body inference: {output}"
+    );
+    assert!(
+        output.contains("get p2(): string | null;"),
+        "Expected nullable getter @type to override null body inference: {output}"
+    );
+    assert!(
+        output.contains("get p3(): string | null;"),
+        "Expected explicit union getter @type to override null body inference: {output}"
+    );
+}
+
+#[test]
+fn test_js_accessor_pair_preserves_jsdoc_type_comments_and_optional_param_type() {
+    let output = emit_js_dts(
+        r#"
+class C {
+    /** @type {string=} */
+    get value() {
+        return undefined;
+    }
+
+    /** @param {string=} value */
+    set value(value) {
+        this.value = value;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "    /** @param {string=} value */\n    set value(value: string | undefined);"
+        ),
+        "Expected reordered setter comment to stay single-line and optional param to emit as a union: {output}"
+    );
+    assert!(
+        output.contains("    /** @type {string=} */\n    get value(): string | undefined;"),
+        "Expected reordered getter comment to stay single-line and @type to drive getter type: {output}"
+    );
+}
+
+#[test]
+fn test_js_accessor_pair_preserves_multiline_jsdoc_type_comments_when_reordered() {
+    let output = emit_js_dts(
+        r#"
+class C {
+    /**
+     * @type {string=}
+     */
+    get value() {
+        return undefined;
+    }
+
+    /**
+     * @param {string=} value
+     */
+    set value(value) {
+        this.value = value;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("    /**\n     * @param {string=} value\n     */\n    set value(value: string | undefined);"),
+        "Expected reordered setter comment to stay multiline: {output}"
+    );
+    assert!(
+        output.contains(
+            "    /**\n     * @type {string=}\n     */\n    get value(): string | undefined;"
+        ),
+        "Expected reordered getter comment to stay multiline: {output}"
+    );
+    assert!(
+        !output.contains("/** @param {string=} value */\n    set value"),
+        "Did not expect reordered setter comment to collapse to one line: {output}"
+    );
+    assert!(
+        !output.contains("/** @type {string=} */\n    get value"),
+        "Did not expect reordered getter comment to collapse to one line: {output}"
+    );
+}
+
+#[test]
+fn test_js_setter_does_not_lift_nested_nullish_from_array_element_union() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const key = Symbol("key");
+
+export class C {
+    /**
+     * @protected
+     * @type {(null | string)[]}
+     */
+    [key] = [];
+
+    /**
+     * @type {string[]}
+     */
+    set value(v) {
+        this[key] = v;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("set value(v: string[]);"),
+        "Expected nested `(null | string)[]` backing type not to inject top-level null into setter type: {output}"
+    );
+    assert!(
+        !output.contains("set value(v: string[] | null);"),
+        "Did not expect nested element union nullability to be appended at top level: {output}"
+    );
+}
+
+#[test]
+fn test_property_access_to_unannotated_getter_uses_paired_setter_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+class C {
+    value: number;
+    method(input: number) {
+        return this.value + input;
+    }
+    get prop() {
+        return this.method(this.value);
+    }
+    set prop(value: number) {
+        this.value = this.method(value);
+    }
+}
+const c = new C();
+const propValue = c.prop;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const propValue: number;"),
+        "Expected property access to recover the paired setter type: {output}"
     );
 }

@@ -7,12 +7,74 @@ use crate::state::CheckerState;
 use crate::symbols_domain::name_text::{
     is_zero_arg_call_like_expr_in_arena, simple_computed_name_expr_text_in_arena,
 };
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_parser::parser::{NodeList, syntax_kind_ext};
+use tsz_solver::{TypeId, TypeParamInfo};
+
+type TypeParameterScopeUpdates = Vec<(String, Option<TypeId>, bool)>;
+type PushedInterfaceTypeParameters = (Vec<TypeParamInfo>, TypeParameterScopeUpdates);
 
 impl<'a> CheckerState<'a> {
+    fn push_interface_type_parameters(
+        &mut self,
+        iface_name: NodeIndex,
+        type_parameters: &Option<NodeList>,
+    ) -> PushedInterfaceTypeParameters {
+        let (mut params, updates) = self.push_type_parameters(type_parameters);
+        let Some(merged_params) =
+            self.merged_interface_type_parameters_for_scope(iface_name, &params)
+        else {
+            return (params, updates);
+        };
+
+        for (param, merged) in params.iter_mut().zip(merged_params.iter()) {
+            let name = self.ctx.types.resolve_atom(param.name);
+            let type_id = self.ctx.types.factory().type_param(*merged);
+            self.ctx.type_parameter_scope.insert(name, type_id);
+            *param = *merged;
+        }
+
+        (params, updates)
+    }
+
+    fn merged_interface_type_parameters_for_scope(
+        &mut self,
+        iface_name: NodeIndex,
+        current_params: &[TypeParamInfo],
+    ) -> Option<Vec<TypeParamInfo>> {
+        if current_params.is_empty() {
+            return None;
+        }
+        let sym_id = self
+            .resolve_type_symbol_for_lowering(iface_name)
+            .map(SymbolId)?;
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        if !symbol.has_any_flags(symbol_flags::INTERFACE) || symbol.declarations.len() <= 1 {
+            return None;
+        }
+        let merged_params = self.get_type_params_for_symbol(sym_id);
+        if merged_params.len() != current_params.len() {
+            return None;
+        }
+        let names_match = current_params
+            .iter()
+            .zip(merged_params.iter())
+            .all(|(current, merged)| current.name == merged.name);
+        if !names_match {
+            return None;
+        }
+        let merged_adds_constraint_or_default = current_params
+            .iter()
+            .zip(merged_params.iter())
+            .any(|(current, merged)| {
+                (current.constraint.is_none() && merged.constraint.is_some())
+                    || (current.default.is_none() && merged.default.is_some())
+            });
+        merged_adds_constraint_or_default.then_some(merged_params)
+    }
+
     /// Minimal interface validation used by post-merge standard library checks.
     ///
     /// The normal interface checker runs many declaration-file diagnostics that are
@@ -32,7 +94,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
+        let (_type_params, type_param_updates) =
+            self.push_interface_type_parameters(iface.name, &iface.type_parameters);
         let interface_type_param_names: Vec<String> = type_param_updates
             .iter()
             .map(|(name, _, _)| name.clone())
@@ -161,7 +224,8 @@ impl<'a> CheckerState<'a> {
 
         // Push type parameters BEFORE checking heritage clauses
         // This allows heritage clauses to reference the interface's type parameters
-        let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
+        let (_type_params, type_param_updates) =
+            self.push_interface_type_parameters(iface.name, &iface.type_parameters);
 
         // Check for duplicate type parameters
         self.check_duplicate_type_parameters(&iface.type_parameters);
@@ -213,6 +277,14 @@ impl<'a> CheckerState<'a> {
         };
 
         for &member_idx in &iface.members.nodes {
+            if self.interface_member_is_mapped_type(member_idx) {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    member_idx,
+                    diagnostic_messages::A_MAPPED_TYPE_MAY_NOT_DECLARE_PROPERTIES_OR_METHODS,
+                    diagnostic_codes::A_MAPPED_TYPE_MAY_NOT_DECLARE_PROPERTIES_OR_METHODS,
+                );
+            }
             self.check_styled_component_inner_component_constraint(member_idx);
             self.check_type_member_for_missing_names(member_idx);
             self.check_type_member_for_parameter_properties(member_idx);
@@ -456,6 +528,13 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(type_param_updates);
     }
 
+    fn interface_member_is_mapped_type(&self, member_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(member_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::MAPPED_TYPE)
+    }
+
     /// Check that variance annotations (`in`/`out`) on type parameters match
     /// the actual variance of each parameter as computed by the solver (TS2636).
     ///
@@ -627,12 +706,28 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // Method parameters are bivariant in tsc's variance model: they
+            // record as COVARIANT inside the visitor with `REJECTION_UNRELIABLE`
+            // set to mark the signal as not-pure. When T appears ONLY at
+            // method-bivariant positions, `REJECTION_UNRELIABLE` stays set after
+            // the visit; when T ALSO appears at a strict position (a non-method
+            // property, a direct callback, etc.), `strict_occurrence_seen`
+            // causes the flag to be cleared (`compute()` lines 307-309).
+            //
+            // tsc only emits TS2636 for reliable variance violations. So skip
+            // the rejection when `rejection_unreliable()` is set — that gates
+            // out the "purely method-bivariant" case (where `in T` and `out T`
+            // both ride along with bivariance and neither is genuinely
+            // contradicted) while still firing on real direct-position
+            // violations.
             let violation = if info.declared_out {
-                // `out T` (covariant): error if T appears contravariantly
+                // `out T` (covariant): error if T appears reliably contravariantly
                 actual_variance.contains(tsz_solver::type_handles::Variance::CONTRAVARIANT)
+                    && !actual_variance.rejection_unreliable()
             } else {
-                // `in T` (contravariant): error if T appears covariantly
+                // `in T` (contravariant): error if T appears reliably covariantly
                 actual_variance.contains(tsz_solver::type_handles::Variance::COVARIANT)
+                    && !actual_variance.rejection_unreliable()
             };
 
             if !violation {

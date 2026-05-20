@@ -25,6 +25,7 @@ use crate::types::{LiteralValue, TypeData, TypeId};
 use crate::visitor::{
     TypeVisitor, intersection_list_id, literal_value, type_param_info, union_list_id,
 };
+use smallvec::SmallVec;
 use tracing::{Level, span};
 
 impl<'a> NarrowingContext<'a> {
@@ -374,7 +375,7 @@ impl<'a> NarrowingContext<'a> {
 
         // Handle Unions - recursively narrow each member and collect falsy components
         if let UnionMembersKind::Union(members) = classify_for_union_members(self.db, resolved) {
-            let falsy_members: Vec<TypeId> = members
+            let falsy_members: SmallVec<[TypeId; 4]> = members
                 .iter()
                 .map(|&m| self.narrow_to_falsy(m))
                 .filter(|&m| m != TypeId::NEVER)
@@ -385,7 +386,7 @@ impl<'a> NarrowingContext<'a> {
             } else if falsy_members.len() == 1 {
                 falsy_members[0]
             } else {
-                self.db.union(falsy_members)
+                self.db.union(falsy_members.into_vec())
             };
         }
 
@@ -443,7 +444,7 @@ impl<'a> NarrowingContext<'a> {
 
         // Handle unions: map each member
         if let UnionMembersKind::Union(members) = classify_for_union_members(self.db, resolved) {
-            let falsy_members: Vec<TypeId> = members
+            let falsy_members: SmallVec<[TypeId; 4]> = members
                 .iter()
                 .map(|&m| self.extract_definitely_falsy_type(m))
                 .filter(|&m| m != TypeId::NEVER)
@@ -453,7 +454,7 @@ impl<'a> NarrowingContext<'a> {
             } else if falsy_members.len() == 1 {
                 falsy_members[0]
             } else {
-                self.db.union(falsy_members)
+                self.db.union(falsy_members.into_vec())
             };
         }
 
@@ -630,7 +631,7 @@ impl<'a> NarrowingContext<'a> {
         visitor.visit_type(self.db, type_id)
     }
 
-    /// Task 10: Narrow a type to only array-like types.
+    /// Narrow a type to only array-like types.
     ///
     /// Used for `Array.isArray(x)` in the true branch.
     /// Keeps only arrays, tuples, and readonly arrays - preserves element types.
@@ -677,21 +678,14 @@ impl<'a> NarrowingContext<'a> {
                 .iter()
                 .filter_map(|&member| {
                     // tsc's `mapType(matching, t => isRelated(c, t) ? c : ...)`
-                    // substitutes the predicate type `c = any[]` when the
-                    // candidate is structurally a subtype of the source
-                    // member. We approximate `any[] <: member` via
-                    // "member has a string index signature with `any`
-                    // value type" — the structural rule that lets `any[]`'s
-                    // any-typed contents satisfy the index signature
-                    // (e.g. `Record<string, any>`, `{ [k: string]: any }`).
-                    // Check BEFORE recursing so the substitution is detected
-                    // at the union level (not swallowed inside the recursive
-                    // `narrow_to_array` call) and `has_any_compat` is set
-                    // correctly for the array-like retention pass below.
+                    // substitutes the predicate type `c = any[]` when
+                    // `any[] <: member` structurally — detected via
+                    // `is_any_array_compat`. Check BEFORE recursing so the
+                    // substitution is detected at the union level (not
+                    // swallowed by `narrow_to_array`) and `has_any_compat` is
+                    // set correctly for the array-like retention pass below.
                     let resolved_member = self.resolve_type(member);
-                    if !self.is_array_like(resolved_member)
-                        && self.has_any_typed_string_index(resolved_member)
-                    {
+                    if self.is_any_array_compat(resolved_member) {
                         has_any_compat = true;
                         return Some(any_array);
                     }
@@ -727,7 +721,7 @@ impl<'a> NarrowingContext<'a> {
                     let Some(elem) = self.array_element_type_for_narrowing(t) else {
                         return true;
                     };
-                    elem != TypeId::ANY && !self.has_any_typed_string_index(elem)
+                    elem != TypeId::ANY && !self.is_any_array_compat(elem)
                 });
             }
 
@@ -763,17 +757,9 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
-        // Non-array source where `any[]` is structurally a subtype (mutual
-        // subtype via any-typed string index signature). tsc's predicate
-        // narrowing replaces such sources with the predicate type itself.
-        // Note: at the *flow-narrowing* layer this substitution is gated by
-        // `usage::check_flow_usage`'s `is_assignable_to_no_weak_checks`
-        // check — for a bare `Record<string, any>` source, tsz currently
-        // considers `any[]` not assignable to it and falls back to the
-        // declared type. Inside the union path above, the same predicate
-        // substitution survives because `any[]` IS assignable to the array
-        // member of the union.
-        if self.has_any_typed_string_index(source_type) {
+        // Non-array source compatible with `any[]`: tsc's predicate narrowing
+        // substitutes the source with `any[]`.
+        if self.is_any_array_compat(source_type) {
             return any_array;
         }
 
@@ -781,18 +767,11 @@ impl<'a> NarrowingContext<'a> {
         TypeId::NEVER
     }
 
-    /// True iff `type_id` is a non-array, non-tuple type whose string index
-    /// signature value type is `any`.
-    ///
-    /// This is the structural prerequisite for `any[] <: type_id`: an
-    /// `any`-valued string index signature is satisfied by any source's
-    /// properties (everything is assignable to `any`), so types like
-    /// `Record<string, any>` and `{ [k: string]: any }` are mutual subtypes
-    /// of `any[]` in tsc's strict-subtype check used by `getNarrowedType`.
-    /// Restricting to non-array types keeps the check focused on the
-    /// "Record-like" pattern; `is_array_like` members are handled by the
-    /// regular array-narrowing path.
-    fn has_any_typed_string_index(&self, type_id: TypeId) -> bool {
+    /// True iff `type_id` is a non-array, non-tuple type that is structurally
+    /// compatible with `any[]` — either via an `any`-typed string index
+    /// signature (`Record<string, any>`, `{ [k: string]: any }`) or via any
+    /// numeric index signature (`ArrayLike<T>`, `{ [n: number]: T }`).
+    fn is_any_array_compat(&self, type_id: TypeId) -> bool {
         let resolved = self.resolve_type(type_id);
         if self.is_array_like(resolved) {
             return false;
@@ -801,9 +780,10 @@ impl<'a> NarrowingContext<'a> {
             self.db.as_type_database(),
         );
         resolver.resolve_string_index(resolved) == Some(TypeId::ANY)
+            || resolver.resolve_number_index(resolved).is_some()
     }
 
-    /// Task 10: Exclude array-like types from a type.
+    /// Exclude array-like types from a type.
     ///
     /// Used for `!Array.isArray(x)` in the false branch.
     /// Removes arrays, tuples, and readonly arrays.
@@ -942,7 +922,31 @@ impl<'a> NarrowingContext<'a> {
         }
     }
 
+    /// True iff `base` is the canonical `ReadonlyArray` generic definition.
+    fn application_base_is_readonly_array(&self, base: TypeId) -> bool {
+        if self
+            .db
+            .as_type_resolver()
+            .get_readonly_array_base_type()
+            .is_some_and(|readonly_array_base| readonly_array_base == base)
+        {
+            return true;
+        }
+
+        if let Some(TypeData::Lazy(def_id)) = self.db.lookup(base) {
+            return self
+                .resolver
+                .is_some_and(|resolver| resolver.is_builtin_readonly_array_def(def_id));
+        }
+
+        false
+    }
+
     fn application_base_name_is(&self, base: TypeId, expected: &str) -> bool {
+        if expected == "ReadonlyArray" && self.application_base_is_readonly_array(base) {
+            return true;
+        }
+
         match self.db.lookup(base) {
             Some(TypeData::Lazy(def_id)) => self
                 .resolver

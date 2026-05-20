@@ -3,9 +3,14 @@ use crate::CheckerState;
 use crate::flow_graph_builder::FlowGraphBuilder;
 use tsz_binder::BinderState;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::ParserState;
 use tsz_parser::parser::node::NodeArena;
-use tsz_solver::{PropertyInfo, TypeId, TypeInterner, Visibility};
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{PropertyInfo, TypeId, Visibility};
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 fn get_switch_statement(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
     let root_node = arena.get(root).expect("root node");
@@ -135,6 +140,31 @@ fn get_statement_expression(arena: &NodeArena, root: NodeIndex, stmt_index: usiz
     extract_expression_from_statement(arena, stmt_idx)
 }
 
+fn get_function_body_statement_expression(
+    arena: &NodeArena,
+    root: NodeIndex,
+    fn_index: usize,
+    stmt_index: usize,
+) -> NodeIndex {
+    let root_node = arena.get(root).expect("root node");
+    let source_file = arena.get_source_file(root_node).expect("source file");
+    let fn_idx = *source_file
+        .statements
+        .nodes
+        .get(fn_index)
+        .expect("function statement");
+    let fn_node = arena.get(fn_idx).expect("function node");
+    let function = arena.get_function(fn_node).expect("function data");
+    let body_node = arena.get(function.body).expect("function body node");
+    let body = arena.get_block(body_node).expect("function body");
+    let stmt_idx = *body
+        .statements
+        .nodes
+        .get(stmt_index)
+        .expect("body statement");
+    extract_expression_from_statement(arena, stmt_idx)
+}
+
 fn get_method_call_receiver_identifier(
     arena: &NodeArena,
     root: NodeIndex,
@@ -169,8 +199,7 @@ switch (x) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -218,8 +247,7 @@ switch (x.kind) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -281,6 +309,162 @@ switch (x.kind) {
 }
 
 #[test]
+fn test_switch_discriminant_distinct_case_narrows_without_prefix_exclusion() {
+    let source = r#"
+let x: { tag: "left" } | { tag: "right" } | { tag: "center" } | { tag: "none" };
+switch (x.tag) {
+  case "left":
+    x;
+    break;
+  case "right":
+    x;
+    break;
+  default:
+    x;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let tag_name = types.intern_string("tag");
+    let lit_left = types.literal_string("left");
+    let lit_right = types.literal_string("right");
+    let lit_center = types.literal_string("center");
+    let lit_none = types.literal_string("none");
+
+    let member_left = types.object(vec![PropertyInfo::new(tag_name, lit_left)]);
+    let member_right = types.object(vec![PropertyInfo::new(tag_name, lit_right)]);
+    let member_center = types.object(vec![PropertyInfo::new(tag_name, lit_center)]);
+    let member_none = types.object(vec![PropertyInfo::new(tag_name, lit_none)]);
+    let union = types.union(vec![member_left, member_right, member_center, member_none]);
+
+    let switch_idx = get_switch_statement(arena, root, 1);
+    let ident_case_right = get_switch_clause_expression(arena, switch_idx, 1);
+    let ident_default = get_switch_clause_expression(arena, switch_idx, 2);
+
+    let flow_case_right = binder
+        .get_node_flow(ident_case_right)
+        .expect("flow for case right");
+    let narrowed_case_right = analyzer.get_flow_type(ident_case_right, union, flow_case_right);
+    assert_eq!(narrowed_case_right, member_right);
+
+    let flow_default = binder
+        .get_node_flow(ident_default)
+        .expect("flow for default");
+    let narrowed_default = analyzer.get_flow_type(ident_default, union, flow_default);
+    let expected_default = types.union(vec![member_center, member_none]);
+    assert_eq!(narrowed_default, expected_default);
+}
+
+#[test]
+fn test_switch_discriminant_fallthrough_preserves_previous_case_member() {
+    let source = r#"
+let x: { kind: "a" } | { kind: "b" } | { kind: "c" };
+switch (x.kind) {
+  case "a":
+    x;
+  case "b":
+    x;
+    break;
+  default:
+    x;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let kind_name = types.intern_string("kind");
+    let lit_a = types.literal_string("a");
+    let lit_b = types.literal_string("b");
+    let lit_c = types.literal_string("c");
+
+    let member_a = types.object(vec![PropertyInfo::new(kind_name, lit_a)]);
+    let member_b = types.object(vec![PropertyInfo::new(kind_name, lit_b)]);
+    let member_c = types.object(vec![PropertyInfo::new(kind_name, lit_c)]);
+    let union = types.union(vec![member_a, member_b, member_c]);
+
+    let switch_idx = get_switch_statement(arena, root, 1);
+    let ident_case_b = get_switch_clause_expression(arena, switch_idx, 1);
+    let ident_default = get_switch_clause_expression(arena, switch_idx, 2);
+
+    let flow_case_b = binder.get_node_flow(ident_case_b).expect("flow for case b");
+    let narrowed_case_b = analyzer.get_flow_type(ident_case_b, union, flow_case_b);
+    let expected_case_b = types.union(vec![member_a, member_b]);
+    assert_eq!(narrowed_case_b, expected_case_b);
+
+    let flow_default = binder
+        .get_node_flow(ident_default)
+        .expect("flow for default");
+    let narrowed_default = analyzer.get_flow_type(ident_default, union, flow_default);
+    assert_eq!(narrowed_default, member_c);
+}
+
+#[test]
+fn test_switch_discriminant_duplicate_case_falls_back_to_prefix_exclusion() {
+    let source = r#"
+let x: { kind: "a" } | { kind: "b" };
+switch (x.kind) {
+  case "a":
+    x;
+    break;
+  case "a":
+    x;
+    break;
+  default:
+    x;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let kind_name = types.intern_string("kind");
+    let lit_a = types.literal_string("a");
+    let lit_b = types.literal_string("b");
+
+    let member_a = types.object(vec![PropertyInfo::new(kind_name, lit_a)]);
+    let member_b = types.object(vec![PropertyInfo::new(kind_name, lit_b)]);
+    let union = types.union(vec![member_a, member_b]);
+
+    let switch_idx = get_switch_statement(arena, root, 1);
+    let ident_second_case_a = get_switch_clause_expression(arena, switch_idx, 1);
+    let ident_default = get_switch_clause_expression(arena, switch_idx, 2);
+
+    let flow_second_case_a = binder
+        .get_node_flow(ident_second_case_a)
+        .expect("flow for second case a");
+    let narrowed_second_case_a =
+        analyzer.get_flow_type(ident_second_case_a, union, flow_second_case_a);
+    assert_eq!(narrowed_second_case_a, TypeId::NEVER);
+
+    let flow_default = binder
+        .get_node_flow(ident_default)
+        .expect("flow for default");
+    let narrowed_default = analyzer.get_flow_type(ident_default, union, flow_default);
+    assert_eq!(narrowed_default, member_b);
+}
+
+#[test]
 fn test_switch_default_does_not_narrow_unrelated_reference() {
     let source = r#"
 let x: "a" | "b";
@@ -294,8 +478,7 @@ switch (x) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -329,8 +512,7 @@ switch (true) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -442,8 +624,7 @@ switch (true) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -495,8 +676,7 @@ switch (true) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -639,8 +819,7 @@ if (x instanceof Foo) {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -691,8 +870,7 @@ if ("a" in x) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -760,8 +938,7 @@ if ("a" in x) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -829,8 +1006,7 @@ if (#a in x) {
 }
 "##;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -901,8 +1077,7 @@ if (isString(x)) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -951,8 +1126,7 @@ if (guard(x)) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1034,8 +1208,7 @@ if (assertString(x)) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1083,8 +1256,7 @@ assertString(x);
 x;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1127,8 +1299,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1167,8 +1338,7 @@ x = "hi";
 x;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1222,8 +1392,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1284,8 +1453,7 @@ function f() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1312,8 +1480,7 @@ x = "hi";
 x;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1351,8 +1518,7 @@ while (true) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1393,8 +1559,7 @@ x = null;
 x;
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1427,8 +1592,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1471,8 +1635,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1515,8 +1678,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1559,8 +1721,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1603,8 +1764,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1664,8 +1824,7 @@ function objectAlias() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1713,8 +1872,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1760,8 +1918,7 @@ if (isStringArray(x)) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1824,8 +1981,7 @@ const callback = () => {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1918,8 +2074,7 @@ x = "assigned";
 })();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -1952,8 +2107,7 @@ arr.forEach((item) => {
 });
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2068,8 +2222,7 @@ const mapped = arr.map((item) => {
 });
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2186,8 +2339,7 @@ const outer = () => {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2345,8 +2497,7 @@ setTimeout(() => {
 }, 1000);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2449,8 +2600,7 @@ const callback2 = () => {
 };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2595,8 +2745,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2715,8 +2864,7 @@ x = "test";
 const result = add(1, 2);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
 
@@ -2752,8 +2900,7 @@ const filtered = arr.filter((item) => {
 });
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2877,8 +3024,7 @@ if (Math.random() > 0.5) {
 x;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2916,8 +3062,7 @@ switch (x) {
 result;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2954,8 +3099,7 @@ try {
 x;
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2986,8 +3130,7 @@ for (let i = 0; i < 10; i++) {
 x;
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -3030,8 +3173,7 @@ if (Math.random() > 0.5) {
 x;
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -3070,8 +3212,7 @@ class Foo {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -3096,8 +3237,6 @@ fn test_ts2454_variable_used_before_assigned() {
     use crate::CheckerState;
     use tsz_binder::BinderState;
 
-    use tsz_parser::parser::ParserState;
-
     let source = r"
 function test() {
     let x: string;
@@ -3105,14 +3244,13 @@ function test() {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     // TS2454 requires strictNullChecks (matches tsc behavior)
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
@@ -3141,8 +3279,7 @@ o?.x[b = 1];
 b.toFixed();
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -3170,7 +3307,6 @@ b.toFixed();
 fn test_ts2454_no_error_with_initializer() {
     use crate::CheckerState;
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 function test() {
@@ -3179,14 +3315,13 @@ function test() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(
         arena,
         &binder,
@@ -3209,7 +3344,6 @@ fn test_assignment_then_instanceof_merge_keeps_assigned_set_type() {
     use crate::CheckerState;
     use crate::diagnostics::diagnostic_codes;
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 function f1(s: Set<string> | Set<number>) {
@@ -3233,14 +3367,13 @@ function f2(s: Set<string> | Set<number>) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3267,7 +3400,6 @@ fn test_instanceof_accepts_annotated_union_after_function_augmentation() {
     use crate::CheckerState;
     use crate::diagnostics::diagnostic_codes;
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 declare global {
@@ -3295,14 +3427,13 @@ if (x instanceof X) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3341,7 +3472,6 @@ if (x instanceof X) {
 fn test_ts2366_not_emitted_for_exhaustive_switch_without_default() {
     use crate::CheckerState;
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 function f(v: 0 | 1): number {
@@ -3354,14 +3484,13 @@ function f(v: 0 | 1): number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3382,7 +3511,6 @@ function f(v: 0 | 1): number {
 fn test_ts2366_not_emitted_for_exhaustive_enum_switch_without_default() {
     use crate::CheckerState;
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 enum E { A, B }
@@ -3396,13 +3524,12 @@ function f(e: E): number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3422,7 +3549,6 @@ function f(e: E): number {
 fn test_static_condition_branch_does_not_report_unreachable_exhaustive_switch() {
     use crate::CheckerState;
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 function f1(x: 1 | 2): string {
@@ -3451,13 +3577,12 @@ function g(e: E): number {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         allow_unreachable_code: Some(false),
@@ -3485,12 +3610,212 @@ function g(e: E): number {
     );
 }
 
+/// Issue #6823: an exhaustive numeric-enum switch must narrow the discriminant
+/// to `never` in the `default` clause. The standard exhaustiveness pattern
+/// (`const _: never = op`) must type-check without TS2322.
+#[test]
+fn test_ts2322_not_emitted_for_exhaustive_enum_switch_default_clause() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+
+    let source = r#"
+enum Operation {
+    Add,
+    Subtract,
+    Multiply
+}
+function calculate(op: Operation, a: number, b: number): number {
+    switch (op) {
+        case Operation.Add: return a + b;
+        case Operation.Subtract: return a - b;
+        case Operation.Multiply: return a * b;
+        default:
+            const _exhaustive: never = op;
+            return _exhaustive;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::construction::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "Exhaustive enum switch default must narrow to never; got TS2322: {ts2322:?}",
+    );
+}
+
+/// Issue #6823 adjacent: renamed enum / numeric initialisers must behave the
+/// same. The structural rule depends on enum nominal identity, not on
+/// the spelling of member names.
+#[test]
+fn test_ts2322_not_emitted_for_exhaustive_renamed_enum_switch_default() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+
+    let source = r#"
+enum Direction {
+    Up = 1, Down = 2, Left = 3, Right = 4
+}
+function handle(dir: Direction): string {
+    switch (dir) {
+        case Direction.Up: return "up";
+        case Direction.Down: return "down";
+        case Direction.Left: return "left";
+        case Direction.Right: return "right";
+        default:
+            const exhaustive: never = dir;
+            return exhaustive;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::construction::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "Renamed enum exhaustive switch default must narrow to never; got TS2322: {ts2322:?}",
+    );
+}
+
+/// Issue #6823 adjacent: string-enum variant.
+#[test]
+fn test_ts2322_not_emitted_for_exhaustive_string_enum_switch_default() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+
+    let source = r#"
+enum Color {
+    Red = "red",
+    Green = "green",
+    Blue = "blue"
+}
+function describe(c: Color): string {
+    switch (c) {
+        case Color.Red: return "r";
+        case Color.Green: return "g";
+        case Color.Blue: return "b";
+        default:
+            const exhaustive: never = c;
+            return exhaustive;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::construction::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+    assert!(
+        ts2322.is_empty(),
+        "String enum exhaustive switch default must narrow to never; got TS2322: {ts2322:?}",
+    );
+}
+
+/// Issue #6823 negative: a NON-exhaustive enum switch must NOT narrow to never.
+/// This ensures the fix doesn't over-narrow.
+#[test]
+fn test_ts2322_emitted_for_non_exhaustive_enum_switch_default() {
+    use crate::CheckerState;
+    use tsz_binder::BinderState;
+
+    let source = r#"
+enum Operation {
+    Add,
+    Subtract,
+    Multiply
+}
+function calculate(op: Operation): number {
+    switch (op) {
+        case Operation.Add: return 1;
+        case Operation.Subtract: return 2;
+        // Multiply intentionally not handled
+        default:
+            const _exhaustive: never = op;
+            return _exhaustive;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = tsz_solver::construction::TypeInterner::new();
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
+    checker.check_source_file(root);
+
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Non-exhaustive enum switch default must NOT narrow to never; expected TS2322 but got none. Diagnostics: {:?}",
+        checker.ctx.diagnostics,
+    );
+}
+
 /// Exhaustive enum switch assignments should satisfy definite-assignment checks.
 #[test]
 fn test_ts2454_not_emitted_for_exhaustive_enum_switch_assignment() {
     use crate::CheckerState;
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 enum E { A, B }
@@ -3508,13 +3833,12 @@ function g(e: E): string {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3535,7 +3859,6 @@ function g(e: E): string {
 fn test_ts2366_not_emitted_for_exhaustive_optional_chain_coalescing_switch() {
     use crate::CheckerState;
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 enum Animal { DOG, CAT }
@@ -3550,13 +3873,12 @@ function expression(): Animal {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         ..Default::default()
@@ -3576,7 +3898,6 @@ function expression(): Animal {
 fn test_typeof_switch_exhaustive_unknown_reports_unreachable_not_ts2366() {
     use crate::CheckerState;
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 const unreachable = (x: unknown): number => {
@@ -3594,13 +3915,12 @@ const unreachable = (x: unknown): number => {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         allow_unreachable_code: Some(false),
@@ -3627,7 +3947,6 @@ const unreachable = (x: unknown): number => {
 fn test_typeof_switch_exhaustive_any_reports_unreachable_not_ts2366() {
     use crate::CheckerState;
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 const unreachable = (x: any): number => {
@@ -3645,13 +3964,12 @@ const unreachable = (x: any): number => {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let opts = crate::context::CheckerOptions {
         strict_null_checks: true,
         allow_unreachable_code: Some(false),
@@ -3681,7 +3999,6 @@ const unreachable = (x: any): number => {
 #[test]
 fn test_and_expression_creates_intermediate_flow_nodes() {
     use tsz_binder::{BinderState, flow_flags};
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 let x: string | number | null;
@@ -3692,8 +4009,7 @@ if (typeof x === "string" && x) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -3740,8 +4056,7 @@ if (typeof x === "string" && x) {
 #[test]
 fn test_typeof_and_truthiness_narrows_in_then_block() {
     use tsz_binder::BinderState;
-    use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 let x: string | number | null;
@@ -3752,8 +4067,7 @@ if (typeof x === "string" && x) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -3777,7 +4091,6 @@ if (typeof x === "string" && x) {
 #[test]
 fn test_or_expression_creates_intermediate_flow_nodes() {
     use tsz_binder::{BinderState, flow_flags};
-    use tsz_parser::parser::ParserState;
 
     let source = r#"
 let x: string | number | null;
@@ -3786,8 +4099,7 @@ if (typeof x === "string" || x) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -3833,8 +4145,6 @@ if (typeof x === "string" || x) {
 /// for definite assignment analysis.
 #[test]
 fn test_assignment_tracking_in_conditions() {
-    use tsz_parser::parser::ParserState;
-
     let source = r"
 let x: string | number;
 
@@ -3844,8 +4154,7 @@ if ((x = getValue()) !== null) {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     // Build binder - this tests that flow graph building doesn't panic
@@ -3862,8 +4171,6 @@ if ((x = getValue()) !== null) {
 /// Verifies that while loop conditions track assignments.
 #[test]
 fn test_assignment_tracking_in_while_conditions() {
-    use tsz_parser::parser::ParserState;
-
     let source = r"
 let x: string | number | undefined;
 
@@ -3872,8 +4179,7 @@ while ((x = getNextValue()) !== null) {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = tsz_binder::BinderState::new();
@@ -3888,8 +4194,6 @@ while ((x = getNextValue()) !== null) {
 /// Verifies that do-while loop conditions track assignments.
 #[test]
 fn test_assignment_tracking_in_do_while_conditions() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string | number | undefined;
 
@@ -3898,8 +4202,7 @@ do {
 } while ((x = getValue()) !== null);
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = tsz_binder::BinderState::new();
@@ -3914,8 +4217,6 @@ do {
 /// Verifies that for-loop conditions track assignments.
 #[test]
 fn test_assignment_tracking_in_for_loop_conditions() {
-    use tsz_parser::parser::ParserState;
-
     let source = r"
 let x: string | number | undefined;
 
@@ -3924,8 +4225,7 @@ for (let i = 0; (x = getValue()); i++) {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = tsz_binder::BinderState::new();
@@ -3940,8 +4240,6 @@ for (let i = 0; (x = getValue()); i++) {
 /// Verifies that switch expressions track assignments.
 #[test]
 fn test_assignment_tracking_in_switch_expressions() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string | number;
 
@@ -3951,8 +4249,7 @@ switch ((x = getValue())) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = tsz_binder::BinderState::new();
@@ -3967,8 +4264,6 @@ switch ((x = getValue())) {
 /// Bug #3.1 ensures unreachable code doesn't get resurrected.
 #[test]
 fn test_unreachable_code_through_control_flow() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 function test(): never {
     return;
@@ -3983,8 +4278,7 @@ function test(): never {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -3999,8 +4293,6 @@ function test(): never {
 /// Bug #3.1 ensures nested structures stay unreachable.
 #[test]
 fn test_unreachable_code_in_nested_control_flow() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 function test(): never {
     return;
@@ -4016,8 +4308,7 @@ function test(): never {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = tsz_binder::BinderState::new();
@@ -4032,16 +4323,13 @@ function test(): never {
 /// Verifies const variables are properly flagged for type narrowing.
 #[test]
 fn test_const_variable_declaration() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 const x: string | number = "hello";
 const y = "world";
 let z: string | number = "test";
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4056,8 +4344,6 @@ let z: string | number = "test";
 /// Verifies TS1308 error is emitted for await outside async.
 #[test]
 fn test_for_await_of_requires_async_context() {
-    use tsz_parser::parser::ParserState;
-
     // Test that for-await-of can be parsed (error checking happens at typecheck)
     let source = r"
 async function test() {
@@ -4067,8 +4353,7 @@ async function test() {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     // Should successfully parse for-await-of
     let arena = parser.get_arena();
@@ -4084,8 +4369,6 @@ async function test() {
 /// Documents expected behavior: const preserves narrowing.
 #[test]
 fn test_const_narrowing_with_closure_access() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 const x: string | number = "hello";
 
@@ -4096,8 +4379,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4112,8 +4394,6 @@ if (typeof x === "string") {
 /// Documents current behavior: let variables reset in closures.
 #[test]
 fn test_let_variable_with_closure_access() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let y: string | number = 42;
 
@@ -4124,8 +4404,7 @@ if (typeof y === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4146,8 +4425,6 @@ if (typeof y === "string") {
 /// This test documents the expected behavior for TypeScript Rule #42.
 #[test]
 fn test_closure_capture_invalidates_let_narrowing() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string | number = "hello";
 
@@ -4161,8 +4438,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4175,8 +4451,6 @@ if (typeof x === "string") {
 /// Test: const variable preserves narrowing in closure (Bug #1.2 - positive case)
 #[test]
 fn test_closure_capture_preserves_const_narrowing() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 const x: string | number = "hello";
 
@@ -4190,8 +4464,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4208,8 +4481,6 @@ if (typeof x === "string") {
 /// variable state across closure boundaries.
 #[test]
 fn test_flow_analysis_traverses_closure_antecedents() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string | number = "hello";
 
@@ -4220,8 +4491,7 @@ function foo() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4238,8 +4508,6 @@ function foo() {
 /// the correct type for the loop body.
 #[test]
 fn test_loop_label_unions_back_edge_types() {
-    use tsz_parser::ParserState;
-
     let source = r#"
 let x: string | number = "hello";
 
@@ -4253,8 +4521,7 @@ loopLabel: while (true) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4267,8 +4534,6 @@ loopLabel: while (true) {
 /// Test: definite assignment analysis with continue statement
 #[test]
 fn test_definite_assignment_with_continue() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string;
 
@@ -4283,8 +4548,7 @@ while (true) {
 console.log(x); // Error: x not definitely assigned
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4297,8 +4561,6 @@ console.log(x); // Error: x not definitely assigned
 /// Test: definite assignment analysis with nested loops
 #[test]
 fn test_definite_assignment_with_nested_loops() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string;
 
@@ -4312,8 +4574,7 @@ outer: while (true) {
 console.log(x); // x is definitely assigned
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4326,8 +4587,6 @@ console.log(x); // x is definitely assigned
 /// Test: type narrowing with logical AND operator
 #[test]
 fn test_narrowing_with_logical_and() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string | number | null;
 
@@ -4336,8 +4595,7 @@ if (x !== null && typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4350,8 +4608,6 @@ if (x !== null && typeof x === "string") {
 /// Test: type narrowing with logical OR operator
 #[test]
 fn test_narrowing_with_logical_or() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string | number | null;
 
@@ -4362,8 +4618,7 @@ if (x === null || typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4376,8 +4631,6 @@ if (x === null || typeof x === "string") {
 /// Test: type narrowing with assignment in loop condition
 #[test]
 fn test_narrowing_with_assignment_in_loop_condition() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string | number | null;
 
@@ -4386,8 +4639,7 @@ while ((x = getValue()) !== null && typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4400,8 +4652,6 @@ while ((x = getValue()) !== null && typeof x === "string") {
 /// Test: type narrowing preserves through switch statement
 #[test]
 fn test_narrowing_preserves_through_switch() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string | number;
 
@@ -4415,8 +4665,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4429,8 +4678,6 @@ if (typeof x === "string") {
 /// Test: type narrowing with try-catch block
 #[test]
 fn test_narrowing_with_try_catch() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string | number;
 
@@ -4444,8 +4691,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4458,8 +4704,6 @@ if (typeof x === "string") {
 /// Test: definite assignment analysis with early return
 #[test]
 fn test_definite_assignment_with_early_return() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x: string;
 
@@ -4473,8 +4717,7 @@ function foo(): string {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4487,8 +4730,6 @@ function foo(): string {
 /// Test: unreachable code detection in function with multiple returns
 #[test]
 fn test_unreachable_code_with_multiple_returns() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 function foo(): string {
     return "first";
@@ -4496,8 +4737,7 @@ function foo(): string {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4510,8 +4750,6 @@ function foo(): string {
 /// Test: unreachable code detection in switch with fallthrough
 #[test]
 fn test_unreachable_code_in_switch_fallthrough() {
-    use tsz_parser::parser::ParserState;
-
     let source = r#"
 let x = 1;
 
@@ -4526,8 +4764,7 @@ switch (x) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let arena = parser.get_arena();
     let mut binder = tsz_binder::BinderState::new();
@@ -4550,8 +4787,7 @@ fn test_recursive_flow_analysis_no_panic() {
         }
     "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -4586,8 +4822,7 @@ function foo(v: number) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -4648,8 +4883,7 @@ function test(someDerived: Derived1 | Derived2) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -4715,8 +4949,7 @@ function f10() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -4781,8 +5014,7 @@ function f12() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -4837,8 +5069,7 @@ function process(params: Params) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -4900,8 +5131,7 @@ function f6() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -4949,6 +5179,74 @@ function f6() {
             .iter()
             .map(|d| &d.message_text)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_member_write_does_not_count_as_parameter_reassignment() {
+    let source = r#"
+function f(name: string, value: string) {
+    this.name = name;
+    value = name;
+    name = value;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let member_write = get_function_body_statement_expression(arena, root, 0, 0);
+    let member_write_node = arena.get(member_write).expect("member write node");
+    let member_write_expr = arena
+        .get_binary_expr(member_write_node)
+        .expect("member write expression");
+    let parameter_reference = member_write_expr.right;
+
+    assert!(
+        !analyzer.assignment_targets_reference(member_write, parameter_reference),
+        "member writes should not be treated as reassigning a plain parameter reference"
+    );
+
+    let sibling_parameter_write = get_function_body_statement_expression(arena, root, 0, 1);
+    assert!(
+        !analyzer.assignment_targets_reference(sibling_parameter_write, parameter_reference),
+        "writes to a different known parameter symbol should not count as reassignments"
+    );
+
+    let parameter_write = get_function_body_statement_expression(arena, root, 0, 2);
+    assert!(
+        analyzer.assignment_targets_reference(parameter_write, parameter_reference),
+        "direct parameter writes should still be recognized as reassignments"
+    );
+}
+
+#[test]
+fn test_same_function_parameter_use_is_not_captured() {
+    let source = r#"
+function f(value: string) {
+    value;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+    let parameter_reference = get_function_body_statement_expression(arena, root, 0, 0);
+
+    assert!(
+        !analyzer.is_captured_variable(parameter_reference),
+        "parameter reads in their declaring function body are not closure captures"
     );
 }
 

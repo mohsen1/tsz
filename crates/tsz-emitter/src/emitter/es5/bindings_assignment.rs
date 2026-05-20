@@ -2,7 +2,7 @@
 
 use super::super::{Printer, is_valid_identifier_name};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{ForInOfData, Node};
+use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -12,917 +12,6 @@ enum AssignmentRestProp {
 }
 
 impl<'a> Printer<'a> {
-    pub(in crate::emitter) fn preallocate_nested_iterator_return_temps(
-        &mut self,
-        stmt_idx: NodeIndex,
-    ) {
-        self.visit_for_of_return_temp_prealloc(stmt_idx);
-    }
-
-    pub(in crate::emitter) fn visit_for_of_return_temp_prealloc(&mut self, idx: NodeIndex) {
-        if idx.is_none() {
-            return;
-        }
-        let Some(node) = self.arena.get(idx) else {
-            return;
-        };
-
-        if node.kind == syntax_kind_ext::FOR_OF_STATEMENT {
-            if let Some(for_in_of) = self.arena.get_for_in_of(node) {
-                if !self.reserved_iterator_return_temps.contains_key(&idx) {
-                    let temp = self.get_temp_var_name();
-                    self.reserved_iterator_return_temps.insert(idx, temp);
-                }
-                self.visit_for_of_return_temp_prealloc(for_in_of.statement);
-            }
-            return;
-        }
-
-        match node.kind {
-            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
-                if let Some(block) = self.arena.get_block(node) {
-                    for &stmt in &block.statements.nodes {
-                        self.visit_for_of_return_temp_prealloc(stmt);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::IF_STATEMENT => {
-                if let Some(if_stmt) = self.arena.get_if_statement(node) {
-                    self.visit_for_of_return_temp_prealloc(if_stmt.then_statement);
-                    self.visit_for_of_return_temp_prealloc(if_stmt.else_statement);
-                }
-            }
-            k if k == syntax_kind_ext::TRY_STATEMENT => {
-                if let Some(try_stmt) = self.arena.get_try(node) {
-                    self.visit_for_of_return_temp_prealloc(try_stmt.try_block);
-                    self.visit_for_of_return_temp_prealloc(try_stmt.catch_clause);
-                    self.visit_for_of_return_temp_prealloc(try_stmt.finally_block);
-                }
-            }
-            k if k == syntax_kind_ext::CATCH_CLAUSE => {
-                if let Some(catch_clause) = self.arena.get_catch_clause(node) {
-                    self.visit_for_of_return_temp_prealloc(catch_clause.block);
-                }
-            }
-            k if k == syntax_kind_ext::FOR_STATEMENT
-                || k == syntax_kind_ext::FOR_IN_STATEMENT
-                || k == syntax_kind_ext::WHILE_STATEMENT
-                || k == syntax_kind_ext::DO_STATEMENT =>
-            {
-                if let Some(loop_data) = self.arena.get_loop(node) {
-                    self.visit_for_of_return_temp_prealloc(loop_data.statement);
-                } else if let Some(for_in_of) = self.arena.get_for_in_of(node) {
-                    self.visit_for_of_return_temp_prealloc(for_in_of.statement);
-                }
-            }
-            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
-                if let Some(sw) = self.arena.get_switch(node) {
-                    self.visit_for_of_return_temp_prealloc(sw.case_block);
-                }
-            }
-            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
-                if let Some(clause) = self.arena.get_case_clause(node) {
-                    for &stmt in &clause.statements.nodes {
-                        self.visit_for_of_return_temp_prealloc(stmt);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::LABELED_STATEMENT => {
-                if let Some(labeled) = self.arena.get_labeled_statement(node) {
-                    self.visit_for_of_return_temp_prealloc(labeled.statement);
-                }
-            }
-            k if k == syntax_kind_ext::WITH_STATEMENT => {
-                if let Some(with_stmt) = self.arena.get_with_statement(node) {
-                    self.visit_for_of_return_temp_prealloc(with_stmt.then_statement);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Emit for-of using simple array indexing (default, --downlevelIteration disabled)
-    ///
-    /// Transforms:
-    /// ```typescript
-    /// for (const item of arr) { body }
-    /// ```
-    /// Into:
-    /// ```javascript
-    /// for (var _i = 0, arr_1 = arr; _i < arr_1.length; _i++) {
-    ///     var item = arr_1[_i];
-    ///     body
-    /// }
-    /// ```
-    /// Note: This only works for arrays, not for Sets, Maps, Strings, or Generators.
-    pub(in crate::emitter) fn emit_for_of_statement_es5_array_indexing(
-        &mut self,
-        for_in_of: &ForInOfData,
-    ) {
-        // Simple array indexing pattern (default, no --downlevelIteration):
-        // for (var _i = 0, arr_1 = arr; _i < arr_1.length; _i++) {
-        //     var v = arr_1[_i];
-        //     <body>
-        // }
-        //
-        // TypeScript uses a single global name generator:
-        // - First for-of gets `_i` as index name (special case)
-        // - All other temp names come from the global counter (_a, _b, _c, ...)
-        // - Named arrays use `<name>_1` (doesn't consume from counter)
-        // - Names are checked against all identifiers in the source file
-
-        // CRITICAL: Pre-register the loop variable BEFORE emitting the initialization expression
-        // This ensures that references to shadowed variables in the array initializer get renamed.
-        // For example: `for (let v of [v])` where inner v shadows outer v
-        // We need to register inner v as v_1 BEFORE emitting [v] so the reference becomes [v_1]
-        self.ctx.block_scope_state.enter_scope();
-        self.pre_register_for_of_loop_variable(for_in_of.initializer);
-
-        // Generate index name: first for-of gets `_i`, subsequent ones use global counter
-        let index_name = if !self.first_for_of_emitted {
-            self.first_for_of_emitted = true;
-            let candidate = "_i".to_string();
-            if self.file_identifiers.contains(&candidate)
-                || self.generated_temp_names.contains(&candidate)
-            {
-                let name = self.make_unique_name();
-                self.ctx.block_scope_state.reserve_name(name.clone());
-                name
-            } else {
-                self.generated_temp_names.insert(candidate.clone());
-                self.ctx.block_scope_state.reserve_name(candidate.clone());
-                candidate
-            }
-        } else {
-            let name = self.make_unique_name();
-            self.ctx.block_scope_state.reserve_name(name.clone());
-            name
-        };
-
-        // For assignment-pattern for-of with object/array literals, tsc allocates
-        // destructuring temps before choosing the array temp in the loop header.
-        // Reserve those temps now so later lowering reuses them in order.
-        let reserve_count = self.estimate_for_of_assignment_temp_reserve(for_in_of.initializer);
-        if reserve_count > 0 {
-            self.preallocate_temp_names(reserve_count);
-        }
-
-        // Derive array name from expression:
-        // - Simple identifier `arr` -> `arr_1`, `arr_2`, etc. (doesn't consume counter)
-        // - Complex expression -> `_a`, `_b`, etc. (from global counter)
-        let array_name = if let Some(expr_node) = self.arena.get(for_in_of.expression) {
-            if expr_node.is_identifier() {
-                if let Some(ident) = self.arena.get_identifier(expr_node) {
-                    let name = self.arena.resolve_identifier_text(ident).to_string();
-                    // Try incrementing suffixes: name_1, name_2, name_3, ...
-                    let mut found = None;
-                    for suffix in 1..=100 {
-                        let candidate = format!("{name}_{suffix}");
-                        if !self.file_identifiers.contains(&candidate)
-                            && !self.generated_temp_names.contains(&candidate)
-                        {
-                            found = Some(candidate);
-                            break;
-                        }
-                    }
-                    if let Some(candidate) = found {
-                        self.generated_temp_names.insert(candidate.clone());
-                        // Reserve this name in block scope state to prevent variable shadowing conflicts
-                        self.ctx.block_scope_state.reserve_name(candidate.clone());
-                        candidate
-                    } else {
-                        let name = self.make_unique_name_fresh();
-                        self.ctx.block_scope_state.reserve_name(name.clone());
-                        name
-                    }
-                } else {
-                    let name = self.make_unique_name_fresh();
-                    self.ctx.block_scope_state.reserve_name(name.clone());
-                    name
-                }
-            } else {
-                let name = self.make_unique_name_fresh();
-                self.ctx.block_scope_state.reserve_name(name.clone());
-                name
-            }
-        } else {
-            let name = self.make_unique_name_fresh();
-            self.ctx.block_scope_state.reserve_name(name.clone());
-            name
-        };
-
-        // Check if the for-of initializer is a `using` declaration that needs dispose lowering.
-        let using_info = if !self.ctx.options.target.supports_es2025() {
-            self.for_of_initializer_using_info(for_in_of.initializer)
-        } else {
-            None
-        };
-
-        let capture_context = if using_info.is_none() {
-            let init_vars = self.collect_for_of_iteration_var_names(for_in_of.initializer);
-            let body_info =
-                super::loop_capture::collect_loop_body_vars(self.arena, for_in_of.statement);
-            if (!init_vars.is_empty() || !body_info.block_scoped_vars.is_empty())
-                && let Some(capture_info) = super::loop_capture::check_loop_needs_capture(
-                    self.arena,
-                    for_in_of.statement,
-                    &init_vars,
-                    &body_info.block_scoped_vars,
-                )
-            {
-                let init_var_set: std::collections::HashSet<&str> =
-                    init_vars.iter().map(String::as_str).collect();
-                let param_vars: Vec<String> = capture_info
-                    .captured_vars
-                    .iter()
-                    .filter(|v| init_var_set.contains(v.as_str()))
-                    .cloned()
-                    .collect();
-                let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
-                self.emit_loop_function(
-                    &loop_fn_name,
-                    &param_vars,
-                    for_in_of.statement,
-                    &body_info,
-                    &init_vars,
-                );
-                self.write_line();
-                if !body_info.var_decl_names.is_empty() {
-                    self.write("var ");
-                    for (i, name) in body_info.var_decl_names.iter().enumerate() {
-                        if i > 0 {
-                            self.write(", ");
-                        }
-                        self.write(name);
-                    }
-                    self.write(";");
-                    self.write_line();
-                }
-                Some((loop_fn_name, param_vars, body_info))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        self.write("for (var ");
-        self.write(&index_name);
-        self.write(" = 0, ");
-        self.write(&array_name);
-        self.write(" = ");
-        self.emit_expression(for_in_of.expression);
-        self.write("; ");
-        self.write(&index_name);
-        self.write(" < ");
-        self.write(&array_name);
-        self.write(".length; ");
-        self.write(&index_name);
-        self.write("++) ");
-
-        self.write("{");
-        self.write_line();
-        self.increase_indent();
-
-        // Scope was already entered above (before emitting the initialization expression)
-
-        if let Some((var_name, using_async)) = using_info {
-            // ES5 for-of with `using`: emit temp binding + dispose wrapper
-            // Emit: var d1_1 = _b[_i];
-            let (env_name, error_name, result_name) = self.next_disposable_env_names();
-            let temp_var_name = format!("{}_{}", var_name, self.next_disposable_env_id - 1);
-            self.generated_temp_names.insert(temp_var_name.clone());
-
-            self.write("var ");
-            self.write(&temp_var_name);
-            self.write(" = ");
-            self.write(&array_name);
-            self.write("[");
-            self.write(&index_name);
-            self.write("];");
-            self.write_line();
-
-            // Emit dispose wrapper
-            self.write("var ");
-            self.write(&env_name);
-            self.write(" = { stack: [], error: void 0, hasError: false };");
-            self.write_line();
-            self.write("try {");
-            self.write_line();
-            self.increase_indent();
-            self.write("var ");
-            self.write(&var_name);
-            self.write(" = ");
-            self.write_helper("__addDisposableResource");
-            self.write("(");
-            self.write(&env_name);
-            self.write(", ");
-            self.write(&temp_var_name);
-            self.write(", ");
-            self.write(if using_async { "true" } else { "false" });
-            self.write(");");
-            self.write_line();
-
-            // Emit body
-            self.emit_for_of_body(for_in_of.statement);
-
-            self.decrease_indent();
-            self.write("}");
-            self.write_line();
-            self.write("catch (");
-            self.write(&error_name);
-            self.write(") {");
-            self.write_line();
-            self.increase_indent();
-            self.write(&env_name);
-            self.write(".error = ");
-            self.write(&error_name);
-            self.write(";");
-            self.write_line();
-            self.write(&env_name);
-            self.write(".hasError = true;");
-            self.write_line();
-            self.decrease_indent();
-            self.write("}");
-            self.write_line();
-            self.write("finally {");
-            self.write_line();
-            self.increase_indent();
-            if using_async {
-                self.write("var ");
-                self.write(&result_name);
-                self.write(" = ");
-                self.write_helper("__disposeResources");
-                self.write("(");
-                self.write(&env_name);
-                self.write(");");
-                self.write_line();
-                self.write("if (");
-                self.write(&result_name);
-                self.write(")");
-                self.write_line();
-                self.increase_indent();
-                self.write("await ");
-                self.write(&result_name);
-                self.write(";");
-                self.write_line();
-                self.decrease_indent();
-            } else {
-                self.write_helper("__disposeResources");
-                self.write("(");
-                self.write(&env_name);
-                self.write(");");
-                self.write_line();
-            }
-            self.decrease_indent();
-            self.write("}");
-            self.write_line();
-        } else {
-            self.emit_for_of_value_binding_array_es5(
-                for_in_of.initializer,
-                &array_name,
-                &index_name,
-            );
-            self.write_line();
-
-            // Emit the loop body
-            if let Some((loop_fn_name, param_vars, body_info)) = &capture_context {
-                self.emit_loop_call(loop_fn_name, param_vars, body_info);
-                self.write_line();
-            } else {
-                self.emit_for_of_body(for_in_of.statement);
-            }
-        }
-
-        // Exit the loop body scope
-        self.ctx.block_scope_state.exit_scope();
-
-        self.decrease_indent();
-        self.write("}");
-    }
-
-    pub(in crate::emitter) fn estimate_for_of_assignment_temp_reserve(
-        &self,
-        initializer: NodeIndex,
-    ) -> usize {
-        let Some(init_node) = self.arena.get(initializer) else {
-            return 0;
-        };
-        match init_node.kind {
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                if let Some(lit) = self.arena.get_literal_expr(init_node)
-                    && lit.elements.nodes.len() > 1
-                {
-                    // One extracted source temp + per-property default temps.
-                    let mut defaults = 0usize;
-                    for &elem_idx in &lit.elements.nodes {
-                        let Some(elem_node) = self.arena.get(elem_idx) else {
-                            continue;
-                        };
-                        if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
-                            && let Some(prop) = self.arena.get_property_assignment(elem_node)
-                            && let Some(value_node) = self.arena.get(prop.initializer)
-                            && value_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                            && let Some(bin) = self.arena.get_binary_expr(value_node)
-                            && bin.operator_token == SyntaxKind::EqualsToken as u16
-                        {
-                            defaults += 1;
-                        }
-                    }
-                    return 1 + defaults;
-                }
-                0
-            }
-            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                if let Some(lit) = self.arena.get_literal_expr(init_node)
-                    && lit.elements.nodes.len() > 1
-                {
-                    // One extracted source temp. Additional nested/default temps are emitted
-                    // later and use normal allocation.
-                    return 1;
-                }
-                0
-            }
-            _ => 0,
-        }
-    }
-
-    /// Emit the for-of loop body (common logic for both array and iterator modes)
-    pub(in crate::emitter) fn emit_for_of_body(&mut self, statement: NodeIndex) {
-        if let Some(stmt_node) = self.arena.get(statement) {
-            if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::BLOCK {
-                // If body is a block, emit its statements directly (unwrap the block)
-                if let Some(block) = self.arena.get_block(stmt_node) {
-                    for &stmt_idx in &block.statements.nodes {
-                        self.emit(stmt_idx);
-                        self.write_line();
-                    }
-                }
-            } else {
-                self.emit(statement);
-                self.write_line();
-            }
-        }
-    }
-
-    /// Emit value binding for iterator protocol: `var item = _a.value;`
-    pub(in crate::emitter) fn emit_for_of_value_binding_iterator_es5(
-        &mut self,
-        initializer: NodeIndex,
-        result_name: &str,
-    ) {
-        if initializer.is_none() {
-            return;
-        }
-
-        let Some(init_node) = self.arena.get(initializer) else {
-            return;
-        };
-
-        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            self.write("var ");
-            if let Some(decl_list) = self.arena.get_variable(init_node) {
-                let mut first = true;
-                for &decl_idx in &decl_list.declarations.nodes {
-                    if let Some(decl_node) = self.arena.get(decl_idx)
-                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                    {
-                        // Check if name is a binding pattern (array or object destructuring)
-                        if self.is_binding_pattern(decl.name) {
-                            // For downlevelIteration with binding patterns, use __read
-                            // Transform: var [a = 0, b = 1] = _c.value
-                            // Into: var _d = __read(_c.value, 2), _e = _d[0], a = _e === void 0 ? 0 : _e, ...
-                            self.emit_es5_destructuring_with_read(
-                                decl.name,
-                                &format!("{result_name}.value"),
-                                &mut first,
-                            );
-                        } else {
-                            if !first {
-                                self.write(", ");
-                            }
-                            first = false;
-                            // Simple identifier binding
-                            self.emit(decl.name);
-                            self.write(" = ");
-                            self.write(result_name);
-                            self.write(".value");
-                        }
-                    }
-                }
-            }
-            self.write_semicolon();
-        } else if self.is_binding_pattern(initializer) {
-            self.write("var ");
-            let mut first = true;
-            self.emit_es5_destructuring_from_value(
-                initializer,
-                &format!("{result_name}.value"),
-                &mut first,
-            );
-            self.write_semicolon();
-        } else {
-            self.emit_expression(initializer);
-            self.write(" = ");
-            self.write(result_name);
-            self.write(".value");
-            self.write_semicolon();
-        }
-    }
-
-    /// Emit value binding for async iterator protocol from an already extracted value.
-    /// Uses direct assignment (no `__read`) for `for await...of` downleveling.
-    pub(in crate::emitter) fn emit_for_of_value_binding_iterator_es5_async(
-        &mut self,
-        initializer: NodeIndex,
-        value_name: &str,
-    ) {
-        if initializer.is_none() {
-            return;
-        }
-
-        let Some(init_node) = self.arena.get(initializer) else {
-            return;
-        };
-
-        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            let flags = init_node.flags as u32;
-            let keyword = if self.ctx.target_es5 {
-                "var"
-            } else if flags & tsz_parser::parser::node_flags::CONST != 0 {
-                "const"
-            } else if flags & tsz_parser::parser::node_flags::LET != 0 {
-                "let"
-            } else {
-                "var"
-            };
-            self.write(keyword);
-            self.write(" ");
-            if let Some(decl_list) = self.arena.get_variable(init_node) {
-                let mut first = true;
-                for &decl_idx in &decl_list.declarations.nodes {
-                    if let Some(decl_node) = self.arena.get(decl_idx)
-                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                    {
-                        if self.is_binding_pattern(decl.name) {
-                            let mut first = true;
-                            self.emit_es5_destructuring_from_value(
-                                decl.name, value_name, &mut first,
-                            );
-                        } else {
-                            if !first {
-                                self.write(", ");
-                            }
-                            first = false;
-                            self.emit(decl.name);
-                            self.write(" = ");
-                            self.write(value_name);
-                        }
-                    }
-                }
-            }
-            self.write_semicolon();
-        } else if self.is_binding_pattern(initializer) {
-            self.write("var ");
-            let mut first = true;
-            self.emit_es5_destructuring_from_value(initializer, value_name, &mut first);
-            self.write_semicolon();
-        } else {
-            self.emit_expression(initializer);
-            self.write(" = ");
-            self.write(value_name);
-            self.write_semicolon();
-        }
-    }
-
-    /// Pre-register loop variables before emitting the for-of initialization expression.
-    /// This ensures that references to outer variables with the same name get properly renamed.
-    ///
-    /// For example: `for (let v of [v])` where inner v shadows outer v
-    /// We register inner v as `v_1`, so when we emit [v], it becomes [`v_1`]
-    ///
-    /// Note: Only registers variables from `VARIABLE_DECLARATION_LIST` nodes (e.g., `for (let v of ...)`).
-    /// Bare identifiers (e.g., `for (v of ...)`) are assignment targets, not declarations, so they don't
-    /// create new variables and shouldn't be pre-registered.
-    pub(in crate::emitter) fn pre_register_for_of_loop_variable(&mut self, initializer: NodeIndex) {
-        if initializer.is_none() {
-            return;
-        }
-
-        let Some(init_node) = self.arena.get(initializer) else {
-            return;
-        };
-
-        // Only handle variable declaration list: `for (let v of ...)`
-        // Do NOT handle bare identifiers: `for (v of ...)` - those are assignments, not declarations
-        // Note: Pre-register for both var and let/const in for-of loops because loop
-        // temporaries (e.g., a_1 for array copy) create naming conflicts that must be avoided.
-        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-            && let Some(decl_list) = self.arena.get_variable(init_node)
-        {
-            for &decl_idx in &decl_list.declarations.nodes {
-                if let Some(decl_node) = self.arena.get(decl_idx)
-                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                {
-                    self.pre_register_binding_name(decl.name);
-                }
-            }
-        }
-        // Note: We explicitly do NOT pre-register for the else case (bare identifiers or patterns)
-        // because those are assignment targets, not declarations
-    }
-
-    /// Pre-register a binding name (identifier or pattern) in the current scope
-    pub(in crate::emitter) fn pre_register_binding_name(&mut self, name_idx: NodeIndex) {
-        if name_idx.is_none() {
-            return;
-        }
-
-        let Some(name_node) = self.arena.get(name_idx) else {
-            return;
-        };
-
-        // Simple identifier: register it directly
-        if name_node.is_identifier() {
-            if let Some(ident) = self.arena.get_identifier(name_node) {
-                let original_name = self.arena.resolve_identifier_text(ident);
-                self.ctx.block_scope_state.register_variable(original_name);
-            }
-        }
-        // Destructuring patterns: extract all binding identifiers
-        else if matches!(
-            name_node.kind,
-            syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
-        ) && let Some(pattern) = self.arena.get_binding_pattern(name_node)
-        {
-            for &elem_idx in &pattern.elements.nodes {
-                if let Some(elem_node) = self.arena.get(elem_idx)
-                    && let Some(elem) = self.arena.get_binding_element(elem_node)
-                {
-                    self.pre_register_binding_name(elem.name);
-                }
-            }
-        }
-    }
-
-    /// Pre-register a var binding name. Uses `register_var_declaration` which allows
-    /// same-scope redeclarations but renames for parent-scope conflicts.
-    pub(in crate::emitter) fn pre_register_var_binding_name(&mut self, name_idx: NodeIndex) {
-        if name_idx.is_none() {
-            return;
-        }
-
-        let Some(name_node) = self.arena.get(name_idx) else {
-            return;
-        };
-
-        if name_node.is_identifier() {
-            if let Some(ident) = self.arena.get_identifier(name_node) {
-                let original_name = self.arena.resolve_identifier_text(ident);
-                self.ctx
-                    .block_scope_state
-                    .register_var_declaration(original_name);
-            }
-        } else if matches!(
-            name_node.kind,
-            syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
-        ) {
-            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
-                for &elem_idx in &pattern.elements.nodes {
-                    if let Some(elem_node) = self.arena.get(elem_idx)
-                        && let Some(elem) = self.arena.get_binding_element(elem_node)
-                    {
-                        self.pre_register_var_binding_name(elem.name);
-                    }
-                }
-            }
-            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
-                for &elem_idx in &pattern.elements.nodes {
-                    if let Some(elem_node) = self.arena.get(elem_idx)
-                        && let Some(elem) = self.arena.get_binding_element(elem_node)
-                    {
-                        self.pre_register_var_binding_name(elem.name);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Emit variable binding for array-indexed for-of pattern:
-    /// `var v = _a[_i];`
-    pub(in crate::emitter) fn emit_for_of_value_binding_array_es5(
-        &mut self,
-        initializer: NodeIndex,
-        array_name: &str,
-        index_name: &str,
-    ) {
-        if initializer.is_none() {
-            return;
-        }
-
-        let Some(init_node) = self.arena.get(initializer) else {
-            return;
-        };
-
-        let element_expr = format!("{array_name}[{index_name}]");
-
-        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            self.write("var ");
-            if let Some(decl_list) = self.arena.get_variable(init_node) {
-                // Empty declaration list (e.g. `for (var of X)` where `of` is parsed
-                // as the keyword, leaving zero declarators).  tsc still emits a temp
-                // variable assignment inside the loop body, so we do the same.
-                if decl_list.declarations.nodes.is_empty() {
-                    let temp = self.get_temp_var_name();
-                    self.write(&temp);
-                    self.write(" = ");
-                    self.write(&element_expr);
-                    self.write_semicolon();
-                    return;
-                }
-                let mut first = true;
-                // `for...of` allows only a single declaration. If the source
-                // has multiple (`for (var a, b of X)`), that is a syntax error
-                // and tsc only processes the first declaration. Match that.
-                for &decl_idx in decl_list.declarations.nodes.iter().take(1) {
-                    if let Some(decl_node) = self.arena.get(decl_idx)
-                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                    {
-                        if self.is_binding_pattern(decl.name) {
-                            if let Some(pattern_node) = self.arena.get(decl.name) {
-                                // Object patterns: for single-property patterns, use element_expr
-                                // directly. For multi-property, create a temp.
-                                if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
-                                    let (obj_count, obj_rest) =
-                                        self.count_effective_bindings(pattern_node);
-                                    if obj_count <= 1 && !obj_rest {
-                                        // Single property: var nameA = robots_1[_i].name
-                                        self.emit_es5_destructuring_pattern_direct(
-                                            pattern_node,
-                                            &element_expr,
-                                            &mut first,
-                                        );
-                                    } else {
-                                        // Multi property: var _p = robots_1[_o], nameA = _p.name, skillA = _p.skill
-                                        let temp_name = self.get_temp_var_name();
-                                        if !first {
-                                            self.write(", ");
-                                        }
-                                        first = false;
-                                        self.write(&temp_name);
-                                        self.write(" = ");
-                                        self.write(&element_expr);
-                                        self.emit_es5_destructuring_pattern(
-                                            pattern_node,
-                                            &temp_name,
-                                        );
-                                    }
-                                    continue;
-                                }
-
-                                let (effective_count, has_rest) =
-                                    self.count_effective_bindings(pattern_node);
-
-                                // Single element at index 0: inline as name = arr[idx][0]
-                                if effective_count == 1
-                                    && !has_rest
-                                    && self.try_emit_single_inline_from_expr(
-                                        pattern_node,
-                                        &element_expr,
-                                        &mut first,
-                                    )
-                                {
-                                    continue;
-                                }
-
-                                // Rest-only: inline as name = arr[idx].slice(0)
-                                if effective_count == 0
-                                    && has_rest
-                                    && self.try_emit_rest_only_from_expr(
-                                        pattern_node,
-                                        &element_expr,
-                                        &mut first,
-                                    )
-                                {
-                                    continue;
-                                }
-
-                                // Multi-binding or complex: create temp and lower
-                                // e.g., var [, nameA] = robots_1[_i] → var _a = robots_1[_i], nameA = _a[1]
-                                let temp_name = self.get_temp_var_name();
-                                if !first {
-                                    self.write(", ");
-                                }
-                                first = false;
-                                self.write(&temp_name);
-                                self.write(" = ");
-                                self.write(&element_expr);
-                                self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
-                            }
-                        } else {
-                            if !first {
-                                self.write(", ");
-                            }
-                            first = false;
-
-                            // Handle variable shadowing: get the pre-registered renamed name
-                            // (variable was already registered in pre_register_for_of_loop_variable)
-                            if let Some(ident_node) = self.arena.get(decl.name) {
-                                if ident_node.is_identifier() {
-                                    if let Some(ident) = self.arena.get_identifier(ident_node) {
-                                        let original_name =
-                                            self.arena.resolve_identifier_text(ident);
-                                        let emitted_name = self
-                                            .ctx
-                                            .block_scope_state
-                                            .get_emitted_name(original_name)
-                                            .unwrap_or_else(|| original_name.to_string());
-                                        self.write(&emitted_name);
-                                    } else {
-                                        self.emit(decl.name);
-                                    }
-                                } else {
-                                    self.emit(decl.name);
-                                }
-                            } else {
-                                self.emit(decl.name);
-                            }
-
-                            self.write(" = ");
-                            self.write(&element_expr);
-                        }
-                    }
-                }
-            }
-            self.write_semicolon();
-        } else if init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-            || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-        {
-            // Assignment destructuring pattern in for-of: {name: nameA} or [, nameA]
-            // Lower to: nameA = element_expr.name or nameA = element_expr[1]
-            let mut first = true;
-            match init_node.kind {
-                k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                    if let Some(lit) = self.arena.get_literal_expr(init_node) {
-                        let elem_count = lit.elements.nodes.len();
-                        if elem_count > 1 {
-                            // Multi-element: need temp
-                            let temp = self.make_unique_name_hoisted_assignment();
-                            self.write(&temp);
-                            self.write(" = ");
-                            self.write(&element_expr);
-                            first = false;
-                            self.emit_assignment_array_destructuring(
-                                &lit.elements.nodes,
-                                &temp,
-                                &mut first,
-                                None,
-                            );
-                        } else {
-                            // Single element: inline
-                            self.emit_assignment_array_destructuring(
-                                &lit.elements.nodes,
-                                &element_expr,
-                                &mut first,
-                                None,
-                            );
-                        }
-                    }
-                }
-                _ => {
-                    // Object pattern
-                    if let Some(lit) = self.arena.get_literal_expr(init_node) {
-                        let elem_count = lit.elements.nodes.len();
-                        if elem_count > 1 {
-                            let temp = self.make_unique_name_hoisted_assignment();
-                            self.write(&temp);
-                            self.write(" = ");
-                            self.write(&element_expr);
-                            first = false;
-                            self.emit_assignment_object_destructuring(
-                                &lit.elements.nodes,
-                                &temp,
-                                &mut first,
-                            );
-                        } else {
-                            self.emit_assignment_object_destructuring(
-                                &lit.elements.nodes,
-                                &element_expr,
-                                &mut first,
-                            );
-                        }
-                    }
-                }
-            }
-            self.write_semicolon();
-        } else {
-            self.emit_expression(initializer);
-            self.write(" = ");
-            self.write(&element_expr);
-            self.write_semicolon();
-        }
-    }
-
     // =========================================================================
     // Assignment destructuring lowering (ES5)
     // Lowers: [, nameA] = expr  →  nameA = expr[1]
@@ -939,6 +28,76 @@ impl<'a> Printer<'a> {
     /// Count elements in an object destructuring pattern for temp-variable optimization.
     const fn count_object_destructuring_elements(&self, elements: &[NodeIndex]) -> usize {
         elements.len()
+    }
+
+    fn emit_assignment_target(&mut self, target_idx: NodeIndex) {
+        if self.emit_commonjs_live_export_assignment_target(target_idx) {
+            return;
+        }
+        self.emit(target_idx);
+    }
+
+    pub(in crate::emitter) fn assignment_pattern_has_commonjs_live_export_target(
+        &self,
+        pattern_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    pattern_idx,
+                );
+                self.commonjs_live_export_assignment_target_name_needs_chain(&name)
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.arena.get_binary_expr(node).is_some_and(|binary| {
+                    binary.operator_token == SyntaxKind::EqualsToken as u16
+                        && self.assignment_pattern_has_commonjs_live_export_target(binary.left)
+                })
+            }
+            k if k == syntax_kind_ext::SPREAD_ELEMENT
+                || k == syntax_kind_ext::SPREAD_ASSIGNMENT =>
+            {
+                self.arena.get_spread(node).is_some_and(|spread| {
+                    self.assignment_pattern_has_commonjs_live_export_target(spread.expression)
+                })
+            }
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_property_assignment(node)
+                .is_some_and(|prop| {
+                    self.assignment_pattern_has_commonjs_live_export_target(prop.initializer)
+                }),
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_shorthand_property(node)
+                .map(|shorthand| {
+                    crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        shorthand.name,
+                    )
+                })
+                .is_some_and(|name| {
+                    self.commonjs_live_export_assignment_target_name_needs_chain(&name)
+                }),
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || k == syntax_kind_ext::OBJECT_BINDING_PATTERN =>
+            {
+                self.get_binding_or_literal_elements(node)
+                    .is_some_and(|elements| {
+                        elements.into_iter().any(|element| {
+                            !element.is_none()
+                                && self.assignment_pattern_has_commonjs_live_export_target(element)
+                        })
+                    })
+            }
+            _ => false,
+        }
     }
 
     /// Unwrap a chain of empty destructuring assignments to find the effective RHS.
@@ -1021,10 +180,25 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
+
+        if self.ctx.options.downlevel_iteration
+            && (left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || left_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+            && let Some(elements) = self.get_binding_or_literal_elements(left_node)
+        {
+            let mut first = true;
+            self.emit_assignment_array_destructuring_with_read(
+                &elements,
+                effective_right_idx,
+                &mut first,
+            );
+            return;
+        }
+
         // Determine if right side is a simple identifier (can be accessed directly).
         // Also check if the RHS is a destructuring assignment with an empty pattern,
         // which reduces to just the inner RHS (e.g., `{} = a` evaluates to `a`).
-        let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
         let mut is_simple = self
             .arena
             .get(effective_right_idx)
@@ -1133,6 +307,7 @@ impl<'a> Printer<'a> {
                                 &elements,
                                 &source_name,
                                 &mut first,
+                                use_inline_source.then_some(right_idx),
                             );
                         }
                         _ => {}
@@ -1152,7 +327,11 @@ impl<'a> Printer<'a> {
     /// assignment target is the identifier `name`. Used to detect cases like
     /// `({ foo, bar } = foo)` where reading `foo.bar` after assigning to
     /// `foo` would observe the clobbered value.
-    fn assignment_lhs_reassigns_identifier(&self, lhs: &Node, name: &str) -> bool {
+    pub(in crate::emitter) fn assignment_lhs_reassigns_identifier(
+        &self,
+        lhs: &Node,
+        name: &str,
+    ) -> bool {
         // Object literal: `{ foo, bar }` or `{ x: foo }`
         if lhs.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             let Some(lit) = self.arena.get_literal_expr(lhs) else {
@@ -1221,6 +400,13 @@ impl<'a> Printer<'a> {
             return false;
         };
 
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            return self.assignment_pattern_has_object_rest(binary.left);
+        }
+
         if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             let Some(lit) = self.arena.get_literal_expr(node) else {
                 return false;
@@ -1262,62 +448,6 @@ impl<'a> Printer<'a> {
         false
     }
 
-    fn assignment_pattern_has_dynamic_computed_property_name(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            let Some(lit) = self.arena.get_literal_expr(node) else {
-                return false;
-            };
-            return lit.elements.nodes.iter().any(|&elem_idx| {
-                let Some(elem_node) = self.arena.get(elem_idx) else {
-                    return false;
-                };
-                match elem_node.kind {
-                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
-                        .arena
-                        .get_property_assignment(elem_node)
-                        .is_some_and(|prop| {
-                            self.assignment_property_name_is_dynamic_computed(prop.name)
-                                || self.assignment_pattern_has_dynamic_computed_property_name(
-                                    prop.initializer,
-                                )
-                        }),
-                    k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
-                        self.arena.get_spread(elem_node).is_some_and(|spread| {
-                            self.assignment_pattern_has_dynamic_computed_property_name(
-                                spread.expression,
-                            )
-                        })
-                    }
-                    _ => false,
-                }
-            });
-        }
-
-        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            let Some(lit) = self.arena.get_literal_expr(node) else {
-                return false;
-            };
-            return lit.elements.nodes.iter().any(|&elem_idx| {
-                let Some(elem_node) = self.arena.get(elem_idx) else {
-                    return false;
-                };
-                if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                    && let Some(spread) = self.arena.get_spread(elem_node)
-                {
-                    return self
-                        .assignment_pattern_has_dynamic_computed_property_name(spread.expression);
-                }
-                self.assignment_pattern_has_dynamic_computed_property_name(elem_idx)
-            });
-        }
-
-        false
-    }
-
     fn assignment_object_literal_is_rest_only(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
@@ -1337,6 +467,43 @@ impl<'a> Printer<'a> {
         })
     }
 
+    fn assignment_object_rest_default_pattern(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16
+            || !self.assignment_pattern_has_object_rest(binary.left)
+        {
+            return None;
+        }
+        Some((binary.left, binary.right))
+    }
+
+    fn assignment_default_nested_pattern(&self, idx: NodeIndex) -> Option<(NodeIndex, NodeIndex)> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+        let left_node = self.arena.get(binary.left)?;
+        matches!(
+            left_node.kind,
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+        )
+        .then_some((binary.left, binary.right))
+    }
+
     /// Lower object-rest assignment for targets that do not support ES2018.
     /// `({ a, ...rest } = source)` -> `{ a } = source, rest = __rest(source, ["a"])`.
     pub(in crate::emitter) fn emit_assignment_object_rest_destructuring(
@@ -1353,18 +520,38 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if self.assignment_pattern_has_dynamic_computed_property_name(left_idx) {
-            self.emit_assignment_destructuring_es5(left_node, right_idx);
-            return;
-        }
-
         let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
-        let is_simple = self
+        let mut is_simple = self
             .arena
             .get(effective_right_idx)
             .is_some_and(|n| n.is_identifier());
+        if is_simple {
+            let rhs_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                effective_right_idx,
+            );
+            if !rhs_name.is_empty()
+                && self.assignment_lhs_reassigns_identifier(left_node, &rhs_name)
+            {
+                is_simple = false;
+            }
+        }
         if !is_simple && self.assignment_object_literal_is_rest_only(left_idx) {
             self.emit_assignment_rest_only_object(left_idx, right_idx);
+            return;
+        }
+
+        if !is_simple
+            && left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            && self.assignment_array_object_rest_can_inline_source(left_idx)
+        {
+            let mut first = true;
+            self.emit_assignment_array_pattern_with_object_rest(
+                left_idx,
+                "",
+                &mut first,
+                Some(right_idx),
+            );
             return;
         }
 
@@ -1447,12 +634,89 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.emit(spread.expression);
+        if !self.ctx.flags.in_statement_expression {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.write("(");
+            self.write(&temp);
+            self.write(" = ");
+            self.emit(right_idx);
+            self.write(", ");
+            self.emit_assignment_object_rest_target(spread.expression);
+            self.write(" = ");
+            self.write_helper("__rest");
+            self.write("(");
+            self.write(&temp);
+            self.write(", []), ");
+            self.write(&temp);
+            self.write(")");
+            return;
+        }
+
+        self.emit_assignment_object_rest_target(spread.expression);
         self.write(" = ");
         self.write_helper("__rest");
         self.write("(");
         self.emit(right_idx);
         self.write(", [])");
+    }
+
+    fn emit_assignment_object_rest_target(&mut self, target: NodeIndex) {
+        if self.assignment_object_rest_target_needs_temp(target) {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.write(&temp);
+        } else {
+            self.emit(target);
+        }
+    }
+
+    fn assignment_object_rest_target_needs_temp(&self, target: NodeIndex) -> bool {
+        if self.assignment_object_rest_target_is_empty_pattern(target) {
+            return true;
+        }
+
+        self.assignment_object_rest_target_source_is_bare_empty_pattern(target)
+    }
+
+    fn assignment_object_rest_target_is_empty_pattern(&self, target: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(target) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        {
+            return self
+                .arena
+                .get_literal_expr(node)
+                .is_some_and(|literal| literal.elements.nodes.is_empty());
+        }
+
+        if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return self
+                .arena
+                .get_binding_pattern(node)
+                .is_some_and(|pattern| pattern.elements.nodes.is_empty());
+        }
+
+        false
+    }
+
+    fn assignment_object_rest_target_source_is_bare_empty_pattern(
+        &self,
+        target: NodeIndex,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(node) = self.arena.get(target) else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = (node.end as usize).min(text.len());
+        text.get(start.min(end)..end)
+            .is_some_and(|source| matches!(source.trim(), "{}" | "[]"))
     }
 
     fn emit_assignment_pattern_with_object_rest(
@@ -1471,7 +735,12 @@ impl<'a> Printer<'a> {
                 self.emit_assignment_object_rest_pattern(pattern_idx, source, source_simple, first);
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                self.emit_assignment_array_pattern_with_object_rest(pattern_idx, source, first);
+                self.emit_assignment_array_pattern_with_object_rest(
+                    pattern_idx,
+                    source,
+                    first,
+                    None,
+                );
             }
             _ => {}
         }
@@ -1513,22 +782,50 @@ impl<'a> Printer<'a> {
         let mut excluded_props = Vec::new();
         let mut rest_element = None;
 
-        for &elem_idx in &elements {
+        for (index, &elem_idx) in elements.iter().enumerate() {
             let Some(elem_node) = self.arena.get(elem_idx) else {
                 continue;
             };
 
             match elem_node.kind {
                 k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                    let has_later_element =
+                        elements.iter().skip(index + 1).any(|idx| !idx.is_none());
+                    if has_later_element {
+                        continue;
+                    }
                     rest_element = Some(elem_idx);
                 }
                 k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                     let Some(prop) = self.arena.get_property_assignment(elem_node) else {
                         continue;
                     };
+                    let is_dynamic = self.assignment_property_name_is_dynamic_computed(prop.name);
+
+                    if is_dynamic {
+                        self.emit_assignment_object_pattern_without_rest(
+                            &simple_elements,
+                            source,
+                            first,
+                        );
+                        simple_elements.clear();
+                        let computed_key_temp = self
+                            .emit_assignment_computed_key_temp_if_needed(prop.name, first)
+                            .expect("dynamic computed property should create a key temp");
+                        excluded_props.push(AssignmentRestProp::Dynamic(computed_key_temp.clone()));
+                        self.emit_assignment_object_rest_property_from_key(
+                            prop.initializer,
+                            source,
+                            prop.name,
+                            Some(computed_key_temp.as_str()),
+                            first,
+                        );
+                        continue;
+                    }
+
                     let key = self.get_property_key_text(prop.name).unwrap_or_default();
                     if !key.is_empty() {
-                        excluded_props.push(key.clone());
+                        excluded_props.push(AssignmentRestProp::Static(key.clone()));
                     }
 
                     if self.assignment_pattern_has_object_rest(prop.initializer) {
@@ -1539,17 +836,41 @@ impl<'a> Printer<'a> {
                         );
                         simple_elements.clear();
 
-                        let nested_source = self.object_key_access_text(source, &key);
-                        let nested_simple = self
-                            .arena
-                            .get(prop.initializer)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
-                        self.emit_assignment_pattern_with_object_rest(
-                            prop.initializer,
-                            &nested_source,
-                            nested_simple,
-                            first,
-                        );
+                        if let Some((nested_pattern, default_expr)) =
+                            self.assignment_object_rest_default_pattern(prop.initializer)
+                        {
+                            let extract_temp = self.make_unique_name_hoisted_assignment();
+                            let default_temp = self.make_unique_name_hoisted_assignment();
+                            self.emit_assignment_separator(first);
+                            self.write(&extract_temp);
+                            self.write(" = ");
+                            self.emit_object_key_access(source, &key);
+                            self.write(", ");
+                            self.write(&default_temp);
+                            self.write(" = ");
+                            self.write(&extract_temp);
+                            self.write(" === void 0 ? ");
+                            self.emit(default_expr);
+                            self.write(" : ");
+                            self.write(&extract_temp);
+                            self.emit_assignment_pattern_with_object_rest(
+                                nested_pattern,
+                                &default_temp,
+                                true,
+                                first,
+                            );
+                        } else {
+                            let nested_source = self.object_key_access_text(source, &key);
+                            let nested_simple = self.arena.get(prop.initializer).is_some_and(|n| {
+                                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            });
+                            self.emit_assignment_pattern_with_object_rest(
+                                prop.initializer,
+                                &nested_source,
+                                nested_simple,
+                                first,
+                            );
+                        }
                     } else {
                         simple_elements.push(elem_idx);
                     }
@@ -1561,7 +882,7 @@ impl<'a> Printer<'a> {
                             shorthand.name,
                         );
                         if !key.is_empty() {
-                            excluded_props.push(key);
+                            excluded_props.push(AssignmentRestProp::Static(key));
                         }
                     }
                     simple_elements.push(elem_idx);
@@ -1577,22 +898,94 @@ impl<'a> Printer<'a> {
             && let Some(spread) = self.arena.get_spread(rest_node)
         {
             self.emit_assignment_separator(first);
-            self.emit(spread.expression);
+            self.emit_assignment_object_rest_target(spread.expression);
             self.write(" = ");
             self.write_helper("__rest");
             self.write("(");
             self.write(source);
-            self.write(", [");
-            for (i, key) in excluded_props.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.write("\"");
-                self.write(key);
-                self.write("\"");
-            }
-            self.write("])");
+            self.write(", ");
+            self.emit_assignment_rest_exclude_list(&excluded_props);
+            self.write(")");
         }
+    }
+
+    fn emit_assignment_object_rest_property_from_key(
+        &mut self,
+        initializer: NodeIndex,
+        source: &str,
+        name_idx: NodeIndex,
+        computed_key_temp: Option<&str>,
+        first: &mut bool,
+    ) {
+        let value_node = self.arena.get(initializer);
+        if let Some((nested_pattern, default_expr)) =
+            self.assignment_default_nested_pattern(initializer)
+        {
+            let extract_temp = self.make_unique_name_hoisted_assignment();
+            let default_temp = self.make_unique_name_hoisted_assignment();
+            self.emit_assignment_separator(first);
+            self.write(&extract_temp);
+            self.write(" = ");
+            self.emit_assignment_object_key_access(source, None, name_idx, computed_key_temp);
+            self.write(", ");
+            self.write(&default_temp);
+            self.write(" = ");
+            self.write(&extract_temp);
+            self.write(" === void 0 ? ");
+            self.emit(default_expr);
+            self.write(" : ");
+            self.write(&extract_temp);
+            self.emit_assignment_nested_destructuring(nested_pattern, &default_temp, first);
+            return;
+        }
+
+        let is_nested = value_node.is_some_and(|n| {
+            n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+        });
+
+        if is_nested {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.emit_assignment_separator(first);
+            self.write(&temp);
+            self.write(" = ");
+            self.emit_assignment_object_key_access(source, None, name_idx, computed_key_temp);
+            self.emit_assignment_nested_destructuring(initializer, &temp, first);
+            return;
+        }
+
+        let value_bin = value_node.and_then(|n| {
+            if n.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                self.arena.get_binary_expr(n)
+            } else {
+                None
+            }
+        });
+        if let Some(bin) = value_bin
+            && bin.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.emit_assignment_separator(first);
+            self.write(&temp);
+            self.write(" = ");
+            self.emit_assignment_object_key_access(source, None, name_idx, computed_key_temp);
+            self.write(", ");
+            self.emit_assignment_target(bin.left);
+            self.write(" = ");
+            self.write(&temp);
+            self.write(" === void 0 ? ");
+            self.emit(bin.right);
+            self.write(" : ");
+            self.write(&temp);
+            return;
+        }
+
+        self.emit_assignment_separator(first);
+        self.emit_assignment_target(initializer);
+        self.write(" = ");
+        self.emit_assignment_object_key_access(source, None, name_idx, computed_key_temp);
     }
 
     fn emit_assignment_object_pattern_without_rest(
@@ -1622,6 +1015,7 @@ impl<'a> Printer<'a> {
         pattern_idx: NodeIndex,
         source: &str,
         first: &mut bool,
+        inline_source: Option<NodeIndex>,
     ) {
         let Some(node) = self.arena.get(pattern_idx) else {
             return;
@@ -1651,7 +1045,11 @@ impl<'a> Printer<'a> {
             }
         }
         self.write("] = ");
-        self.write(source);
+        if let Some(inline_source) = inline_source {
+            self.emit(inline_source);
+        } else {
+            self.write(source);
+        }
 
         for (nested_idx, temp) in nested_patterns {
             let nested_pattern = self
@@ -1667,6 +1065,16 @@ impl<'a> Printer<'a> {
                 .unwrap_or(nested_idx);
             self.emit_assignment_pattern_with_object_rest(nested_pattern, &temp, true, first);
         }
+    }
+
+    fn assignment_array_object_rest_can_inline_source(&self, pattern_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return false;
+        };
+        let Some(lit) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        lit.elements.nodes.len() == 1
     }
 
     fn object_key_access_text(&self, source: &str, key: &str) -> String {
@@ -1731,7 +1139,7 @@ impl<'a> Printer<'a> {
                                 first,
                             );
                         } else {
-                            self.emit(spread.expression);
+                            self.emit_assignment_target(spread.expression);
                             self.write(" = ");
                             if let Some(inline_src) = inline_source {
                                 self.emit(inline_src);
@@ -1796,7 +1204,7 @@ impl<'a> Printer<'a> {
                     self.write("[");
                     self.write_usize(i);
                     self.write("], ");
-                    self.emit(bin.left);
+                    self.emit_assignment_target(bin.left);
                     self.write(" = ");
                     self.write(&temp);
                     self.write(" === void 0 ? ");
@@ -1831,7 +1239,7 @@ impl<'a> Printer<'a> {
 
             // Simple identifier target
             self.emit_assignment_separator(first);
-            self.emit(elem_idx);
+            self.emit_assignment_target(elem_idx);
             self.write(" = ");
             if let Some(inline_src) = inline_source {
                 self.emit(inline_src);
@@ -1844,6 +1252,39 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn emit_assignment_array_destructuring_with_read(
+        &mut self,
+        elements: &[NodeIndex],
+        source_idx: NodeIndex,
+        first: &mut bool,
+    ) {
+        let read_temp = self.make_unique_name_hoisted_assignment();
+        self.emit_assignment_separator(first);
+        self.write(&read_temp);
+        self.write(" = ");
+        self.write_helper("__read");
+        self.write("(");
+        self.emit(source_idx);
+        if let Some(limit) = self.assignment_array_read_limit(elements) {
+            self.write(", ");
+            self.write_usize(limit);
+        }
+        self.write(")");
+        self.emit_assignment_array_destructuring(elements, &read_temp, first, None);
+    }
+
+    fn assignment_array_read_limit(&self, elements: &[NodeIndex]) -> Option<usize> {
+        for &elem_idx in elements {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                return None;
+            }
+        }
+        Some(elements.len())
+    }
+
     /// Emit lowered object assignment destructuring.
     /// `{ name: nameA, skill: skillA } = source` →
     /// `nameA = source.name, skillA = source.skill`
@@ -1852,6 +1293,7 @@ impl<'a> Printer<'a> {
         elements: &[NodeIndex],
         source: &str,
         first: &mut bool,
+        inline_source: Option<NodeIndex>,
     ) {
         let mut rest_props = Vec::new();
 
@@ -1876,6 +1318,36 @@ impl<'a> Printer<'a> {
 
                         // Check if value is a nested pattern
                         let value_node = self.arena.get(prop.initializer);
+                        if let Some((nested_pattern, default_expr)) =
+                            self.assignment_default_nested_pattern(prop.initializer)
+                        {
+                            let extract_temp = self.make_unique_name_hoisted_assignment();
+                            let default_temp = self.make_unique_name_hoisted_assignment();
+                            self.emit_assignment_separator(first);
+                            self.write(&extract_temp);
+                            self.write(" = ");
+                            self.emit_assignment_object_key_access(
+                                source,
+                                inline_source,
+                                prop.name,
+                                computed_key_temp.as_deref(),
+                            );
+                            self.write(", ");
+                            self.write(&default_temp);
+                            self.write(" = ");
+                            self.write(&extract_temp);
+                            self.write(" === void 0 ? ");
+                            self.emit(default_expr);
+                            self.write(" : ");
+                            self.write(&extract_temp);
+                            self.emit_assignment_nested_destructuring(
+                                nested_pattern,
+                                &default_temp,
+                                first,
+                            );
+                            continue;
+                        }
+
                         let is_nested = value_node.is_some_and(|n| {
                             n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                                 || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
@@ -1890,6 +1362,7 @@ impl<'a> Printer<'a> {
                             self.write(" = ");
                             self.emit_assignment_object_key_access(
                                 source,
+                                inline_source,
                                 prop.name,
                                 computed_key_temp.as_deref(),
                             );
@@ -1916,11 +1389,12 @@ impl<'a> Printer<'a> {
                                 self.write(" = ");
                                 self.emit_assignment_object_key_access(
                                     source,
+                                    inline_source,
                                     prop.name,
                                     computed_key_temp.as_deref(),
                                 );
                                 self.write(", ");
-                                self.emit(bin.left);
+                                self.emit_assignment_target(bin.left);
                                 self.write(" = ");
                                 self.write(&temp);
                                 self.write(" === void 0 ? ");
@@ -1930,10 +1404,11 @@ impl<'a> Printer<'a> {
                                 continue;
                             }
                             self.emit_assignment_separator(first);
-                            self.emit(prop.initializer);
+                            self.emit_assignment_target(prop.initializer);
                             self.write(" = ");
                             self.emit_assignment_object_key_access(
                                 source,
+                                inline_source,
                                 prop.name,
                                 computed_key_temp.as_deref(),
                             );
@@ -1948,9 +1423,16 @@ impl<'a> Printer<'a> {
                             shorthand.name,
                         );
                         self.emit_assignment_separator(first);
-                        self.write(&name);
+                        if !self.emit_commonjs_live_export_assignment_target_name(&name) {
+                            self.write(&name);
+                        }
                         self.write(" = ");
-                        self.emit_object_key_access(source, &name);
+                        self.emit_assignment_object_key_access(
+                            source,
+                            inline_source,
+                            shorthand.name,
+                            None,
+                        );
                         if !name.is_empty() {
                             rest_props.push(AssignmentRestProp::Static(name));
                         }
@@ -1960,11 +1442,11 @@ impl<'a> Printer<'a> {
                     // { ...rest } → rest = __rest(source, ["prop1", "prop2"])
                     if let Some(spread) = self.arena.get_spread(elem_node) {
                         self.emit_assignment_separator(first);
-                        self.emit(spread.expression);
+                        self.emit_assignment_object_rest_target(spread.expression);
                         self.write(" = ");
                         self.write_helper("__rest");
                         self.write("(");
-                        self.write(source);
+                        self.emit_assignment_source(source, inline_source);
                         self.write(", ");
                         self.emit_assignment_rest_exclude_list(&rest_props);
                         self.write(")");
@@ -2009,11 +1491,12 @@ impl<'a> Printer<'a> {
     fn emit_assignment_object_key_access(
         &mut self,
         source: &str,
+        inline_source: Option<NodeIndex>,
         name_idx: NodeIndex,
         computed_key_temp: Option<&str>,
     ) {
         if let Some(temp) = computed_key_temp {
-            self.write(source);
+            self.emit_assignment_source(source, inline_source);
             self.write("[");
             self.write(temp);
             self.write("]");
@@ -2021,7 +1504,27 @@ impl<'a> Printer<'a> {
         }
 
         let key = self.get_property_key_text(name_idx).unwrap_or_default();
-        self.emit_object_key_access(source, &key);
+        if let Some(inline_src) = inline_source {
+            self.emit(inline_src);
+            if is_valid_identifier_name(&key) {
+                self.write(".");
+                self.write(&key);
+            } else {
+                self.write("[\"");
+                self.write(&key.replace('\\', "\\\\").replace('\"', "\\\""));
+                self.write("\"]");
+            }
+        } else {
+            self.emit_object_key_access(source, &key);
+        }
+    }
+
+    fn emit_assignment_source(&mut self, source: &str, inline_source: Option<NodeIndex>) {
+        if let Some(inline_src) = inline_source {
+            self.emit(inline_src);
+        } else {
+            self.write(source);
+        }
     }
 
     fn emit_assignment_rest_exclude_list(&mut self, props: &[AssignmentRestProp]) {
@@ -2095,7 +1598,12 @@ impl<'a> Printer<'a> {
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 if let Some(lit) = self.arena.get_literal_expr(node) {
-                    self.emit_assignment_object_destructuring(&lit.elements.nodes, source, first);
+                    self.emit_assignment_object_destructuring(
+                        &lit.elements.nodes,
+                        source,
+                        first,
+                        None,
+                    );
                 }
             }
             k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
@@ -2114,6 +1622,7 @@ impl<'a> Printer<'a> {
                         &pattern.elements.nodes,
                         source,
                         first,
+                        None,
                     );
                 }
             }

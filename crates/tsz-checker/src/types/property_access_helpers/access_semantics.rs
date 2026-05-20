@@ -213,6 +213,7 @@ impl<'a> CheckerState<'a> {
         .with_numeric_atom_cache(&self.ctx.flow_numeric_atom_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
         .with_type_environment(&self.ctx.type_environment)
+        .with_checker_context(&self.ctx)
         .with_narrowing_cache(&self.ctx.narrowing_cache)
         .with_call_type_predicates(&self.ctx.call_type_predicates)
         .with_flow_buffers(
@@ -630,6 +631,14 @@ impl<'a> CheckerState<'a> {
 
         let (base, args) = application_info(self.ctx.types, object_type)?;
         let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
+        if !self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+        {
+            return None;
+        }
         let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
         let mapped_id = crate::query_boundaries::common::mapped_type_id(self.ctx.types, body_type)?;
         let mapped = self.ctx.types.mapped_type(mapped_id);
@@ -676,6 +685,14 @@ impl<'a> CheckerState<'a> {
         if let Some((base, args)) = application_info(self.ctx.types, object_type)
             && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
         {
+            if !self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+            {
+                return Vec::new();
+            }
             let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
             if let Some(mapped_id) =
                 crate::query_boundaries::common::mapped_type_id(self.ctx.types, body_type)
@@ -784,12 +801,12 @@ impl<'a> CheckerState<'a> {
         fn method_this_arg_type(
             sig: &tsz_solver::CallSignature,
             is_constructor: bool,
-            receiver_this_type: Option<TypeId>,
+            _receiver_this_type: Option<TypeId>,
         ) -> TypeId {
             if is_constructor {
                 sig.return_type
             } else if sig.this_type.is_some() {
-                receiver_this_type.unwrap_or_else(|| sig.this_type.unwrap_or(TypeId::ANY))
+                sig.this_type.unwrap_or(TypeId::ANY)
             } else {
                 TypeId::ANY
             }
@@ -798,12 +815,12 @@ impl<'a> CheckerState<'a> {
         fn bind_this_arg_type(
             sig: &tsz_solver::CallSignature,
             is_constructor: bool,
-            receiver_this_type: Option<TypeId>,
+            _receiver_this_type: Option<TypeId>,
         ) -> TypeId {
             if is_constructor {
                 TypeId::ANY
             } else if sig.this_type.is_some() {
-                receiver_this_type.unwrap_or_else(|| sig.this_type.unwrap_or(TypeId::ANY))
+                sig.this_type.unwrap_or(TypeId::ANY)
             } else {
                 TypeId::ANY
             }
@@ -823,7 +840,7 @@ impl<'a> CheckerState<'a> {
         }
 
         fn signature_params_as_tuple(
-            factory: tsz_solver::TypeFactory<'_>,
+            factory: tsz_solver::construction::TypeFactory<'_>,
             params: &[tsz_solver::ParamInfo],
         ) -> TypeId {
             let tuple_elements: Vec<tsz_solver::TupleElement> = params
@@ -839,7 +856,7 @@ impl<'a> CheckerState<'a> {
         }
 
         fn bound_callable_return_type(
-            factory: tsz_solver::TypeFactory<'_>,
+            factory: tsz_solver::construction::TypeFactory<'_>,
             sig: &tsz_solver::CallSignature,
             remaining_params: Vec<tsz_solver::ParamInfo>,
             is_constructor: bool,

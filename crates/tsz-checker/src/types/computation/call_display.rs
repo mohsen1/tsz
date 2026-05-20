@@ -435,6 +435,24 @@ impl<'a> CheckerState<'a> {
                 };
                 replace_arg_span_diagnostics(self, arg_idx, &mut recompute)
             }
+            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
+                let ctx_type = self.contextual_type_option_for_call_argument(
+                    expected_type,
+                    arg_idx,
+                    CallableContext::none(),
+                );
+                let Some(ctx_type) = ctx_type.filter(|ty| {
+                    self.call_expression_needs_contextual_generic_instantiation(arg_idx, Some(*ty))
+                }) else {
+                    return cached_arg_type;
+                };
+                let request = TypingRequest::with_contextual_type(ctx_type);
+                let mut recompute = |checker: &mut CheckerState<'a>| {
+                    checker.invalidate_expression_for_contextual_retry(arg_idx);
+                    checker.get_type_of_node_with_request(arg_idx, &request)
+                };
+                replace_arg_span_diagnostics(self, arg_idx, &mut recompute)
+            }
             _ => cached_arg_type,
         }
     }

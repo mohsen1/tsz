@@ -1670,7 +1670,7 @@ impl<'a> CheckerState<'a> {
                 // `export { x } from "mod"` re-exports a binding from another
                 // module. Without resolving the foreign module's symbols here
                 // we keep the parser's conservative answer (treat as runtime).
-                if !export_decl.module_specifier.is_none() {
+                if export_decl.module_specifier.is_some() {
                     return true;
                 }
                 let Some(clause) = self.ctx.arena.get(export_decl.export_clause) else {
@@ -1755,7 +1755,7 @@ impl<'a> CheckerState<'a> {
             return true;
         };
         let value_mask = tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE;
-        if (symbol.flags & value_mask) != 0 {
+        if symbol.has_any_flags(value_mask) {
             return true;
         }
         // A namespace symbol has value meaning only when it is actually

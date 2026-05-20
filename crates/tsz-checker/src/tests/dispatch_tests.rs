@@ -1,8 +1,59 @@
 use crate::context::{CheckerOptions, ScriptTarget};
-use crate::test_utils::check_js_source_diagnostics;
-use crate::test_utils::check_source;
-use crate::test_utils::check_source_diagnostics;
+use crate::diagnostics::Diagnostic;
+use crate::test_utils::{
+    check_js_source_diagnostics, check_source, check_source_diagnostics, diagnostic_codes,
+};
 use tsz_common::checker_options::JsxMode;
+
+fn diagnostics_with_code(diagnostics: &[Diagnostic], code: u32) -> Vec<&Diagnostic> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == code)
+        .collect()
+}
+
+fn diagnostic_refs_with_code<'a>(diagnostics: &[&'a Diagnostic], code: u32) -> Vec<&'a Diagnostic> {
+    diagnostics
+        .iter()
+        .copied()
+        .filter(|diagnostic| diagnostic.code == code)
+        .collect()
+}
+
+fn diagnostic_count_with_code(diagnostics: &[Diagnostic], code: u32) -> usize {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == code)
+        .count()
+}
+
+fn diagnostic_messages<'a>(diagnostics: &[&'a Diagnostic]) -> Vec<&'a str> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message_text.as_str())
+        .collect()
+}
+
+fn diagnostic_summaries(diagnostics: &[Diagnostic]) -> Vec<(u32, &str)> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.message_text.as_str()))
+        .collect()
+}
+
+fn diagnostic_code_starts(diagnostics: &[Diagnostic]) -> Vec<(u32, u32)> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.start))
+        .collect()
+}
+
+fn diagnostic_ref_summaries<'a>(diagnostics: &[&'a Diagnostic]) -> Vec<(u32, &'a str)> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.message_text.as_str()))
+        .collect()
+}
 
 #[test]
 fn structural_nodes_do_not_poison_expression_dispatch() {
@@ -20,10 +71,7 @@ const run: () => void = () => {
         diags.len(),
         0,
         "Expected block bodies and named exports to remain structural, got: {:?}",
-        diags
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_summaries(&diags)
     );
 }
 
@@ -43,12 +91,64 @@ emit('a', {
 });
 "#,
     );
-    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    let ts7006 = diagnostics_with_code(&diags, 7006);
     assert_eq!(
         ts7006.len(),
         0,
         "Expected no TS7006 for contextually-typed arrow param, got: {:?}",
-        ts7006.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts7006)
+    );
+}
+
+#[test]
+fn ts7006_no_false_positive_arrow_in_typed_parameter_default() {
+    let diags = check_source_diagnostics(
+        r#"
+function withContextualDefault(fn: (x: number) => number = x => x * 2) {
+    return fn(5);
+}
+"#,
+    );
+    let ts7006 = diagnostics_with_code(&diags, 7006);
+    assert_eq!(
+        ts7006.len(),
+        0,
+        "Expected no TS7006 when arrow default is contextually typed by parameter annotation, got: {:?}",
+        diagnostic_messages(&ts7006)
+    );
+}
+
+#[test]
+fn ts7006_no_false_positive_arrow_in_typed_parameter_default_alt_name() {
+    let diags = check_source_diagnostics(
+        r#"
+function withContextualDefault(fn: (value: string) => string = value => value.toUpperCase()) {
+    return fn("hello");
+}
+"#,
+    );
+    let ts7006 = diagnostics_with_code(&diags, 7006);
+    assert_eq!(
+        ts7006.len(),
+        0,
+        "Expected no TS7006 when arrow default is contextually typed (alt name), got: {:?}",
+        diagnostic_messages(&ts7006)
+    );
+}
+
+#[test]
+fn ts7006_still_emitted_for_unannotated_parameter_default_arrow() {
+    let diags = check_source_diagnostics(
+        r#"
+function noAnnotation(a = (x: unknown) => x, b = y => y) {}
+"#,
+    );
+    let ts7006 = diagnostics_with_code(&diags, 7006);
+    assert_eq!(
+        ts7006.len(),
+        1,
+        "Expected exactly one TS7006 for unannotated arrow parameter in un-typed default, got: {:?}",
+        diagnostic_messages(&ts7006)
     );
 }
 
@@ -64,12 +164,12 @@ class C5 {
 }
 "#,
     );
-    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    let matching = diagnostics_with_code(&diags, 2352);
     assert_eq!(
         matching.len(),
         2,
         "Expected 2 TS2352 for this type assertions, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -104,12 +204,12 @@ namespace M {
 }
 "#,
     );
-    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    let matching = diagnostics_with_code(&diags, 2352);
     assert_eq!(
         matching.len(),
         1,
         "Expected one TS2352 for object-literal assertion with non-overlapping `this` property, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
     assert!(
         matching[0].message_text.contains("to type 'R'"),
@@ -131,12 +231,12 @@ function foo2<T extends A>(x: T) {
 }
 "#,
     );
-    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    let matching = diagnostics_with_code(&diags, 2352);
     assert_eq!(
         matching.len(),
         1,
         "Expected 1 TS2352, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
     // Verify message says "type 'T'" not "type 'T>'"
     let msg = &matching[0].message_text;
@@ -156,12 +256,12 @@ class C2 {
 }
 "#,
     );
-    let ts2352: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    let ts2352 = diagnostics_with_code(&diags, 2352);
     assert_eq!(
         ts2352.len(),
         0,
         "Expected no TS2352 in static context, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -176,7 +276,7 @@ function f<T>() {
     );
     // Filter out TS2318 "Cannot find global type" from missing lib declarations.
     let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
-    let matching: Vec<_> = relevant.iter().filter(|d| d.code == 2352).collect();
+    let matching = diagnostic_refs_with_code(&relevant, 2352);
     assert_eq!(
         matching.len(),
         1,
@@ -199,7 +299,7 @@ const r = foo(<T, U>(x: T) => <U[]>null);
 "#,
     );
     let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
-    let matching: Vec<_> = relevant.iter().filter(|d| d.code == 2352).collect();
+    let matching = diagnostic_refs_with_code(&relevant, 2352);
     assert_eq!(
         matching.len(),
         1,
@@ -221,19 +321,19 @@ const foo = new A<number>();
 const r: A<number> = <A<A<number>>>foo;
 "#,
     );
-    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
-    let assignment: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let matching = diagnostics_with_code(&diags, 2352);
+    let assignment = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         matching.len(),
         1,
         "Expected one TS2352 for incompatible concrete generic instantiations, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
     assert_eq!(
         assignment.len(),
         1,
         "Expected one TS2322 for incompatible concrete generic assignment, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
     assert!(
         matching[0].message_text.contains("type 'A<A<number>>'"),
@@ -260,7 +360,7 @@ e as ErrAlias<string>;
     );
 
     let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
-    let matching: Vec<_> = relevant.iter().filter(|d| d.code == 2352).collect();
+    let matching = diagnostic_refs_with_code(&relevant, 2352);
     assert_eq!(matching.len(), 1, "Expected one TS2352, got: {relevant:?}");
 
     let message = &matching[0].message_text;
@@ -271,6 +371,40 @@ e as ErrAlias<string>;
     assert!(
         message.contains("{ new (): ErrImpl<string>; prototype: ErrImpl<any>; } & (() => string)"),
         "Expected TS2352 target display to expand instantiated typeof intersection, got: {message:?}"
+    );
+}
+
+#[test]
+fn ts2352_typeof_instantiation_wrapper_alias_preserves_outer_alias() {
+    let diags = check_source_diagnostics(
+        r#"
+declare class Boxed<T> {
+    value!: T;
+}
+
+declare function make<T>(): T;
+
+type BoxedCtor<T> = typeof Boxed<T>;
+type Maker<T> = typeof make<T>;
+type Combined<T> = BoxedCtor<T> & Maker<T>;
+
+declare const combined: Combined<number>;
+combined as Combined<string>;
+"#,
+    );
+
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+    let matching = diagnostic_refs_with_code(&relevant, 2352);
+    assert_eq!(matching.len(), 1, "Expected one TS2352, got: {relevant:?}");
+
+    let message = &matching[0].message_text;
+    assert!(
+        message.contains("Conversion of type 'Combined<number>' to type 'Combined<string>'"),
+        "Expected TS2352 to preserve the outer alias application, got: {message:?}"
+    );
+    assert!(
+        !message.contains("{ new (): Boxed"),
+        "Wrapper aliases should not expand to the constructor/call intersection in TS2352. Got: {message:?}"
     );
 }
 
@@ -296,7 +430,7 @@ type Cache<QR> = {
 "#,
     );
 
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     let ts2635 = codes.iter().filter(|&&c| c == 2635).count();
     let ts2344 = codes.iter().filter(|&&c| c == 2344).count();
     assert_eq!(
@@ -319,7 +453,7 @@ type Bad = ArgumentType<(x: string, y: string) => number>;
 "#,
     );
 
-    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    let ts2344 = diagnostics_with_code(&diags, 2344);
     assert_eq!(ts2344.len(), 1, "Expected one TS2344, got: {diags:?}");
     assert!(
         ts2344[0]
@@ -340,7 +474,7 @@ type T73<T> = T extends T72<infer U> ? T70<U> : never;
 "#,
     );
 
-    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    let ts2344 = diagnostics_with_code(&diags, 2344);
     assert_eq!(ts2344.len(), 1, "Expected one TS2344, got: {diags:?}");
     assert!(
         ts2344[0].message_text.contains("constraint 'string'"),
@@ -384,7 +518,7 @@ type Cache<N extends string, QR> = {
 "#,
     );
 
-    let ts2635: Vec<_> = diags.iter().filter(|d| d.code == 2635).collect();
+    let ts2635 = diagnostics_with_code(&diags, 2635);
     assert_eq!(ts2635.len(), 1, "Expected one TS2635, got: {diags:?}");
     let message = &ts2635[0].message_text;
     assert!(
@@ -394,6 +528,39 @@ type Cache<N extends string, QR> = {
     assert!(
         !message.contains("Lazy("),
         "TS2635 display must not leak Lazy(...) internals, got: {message:?}"
+    );
+}
+
+#[test]
+fn ts2635_instantiation_expression_treats_failed_typeof_as_any_in_alias_display() {
+    let diags = check_source_diagnostics(
+        r#"
+type RT<T extends (...args: any) => any> = T extends (...args: any) => infer R ? R : any;
+const createCacheReducer = <N extends string, QR>(
+    queries: Cache<N, QR>["queries"],
+) => {
+    const queriesMap = {} as QR;
+    const initialState = { queries: queriesMap };
+    return (state = initialState) => state;
+};
+type Cache<N extends string, QR> = {
+    queries: {
+        [QK in keyof QR]: RT<typeof createCacheReducer<QR>>;
+    };
+};
+"#,
+    );
+
+    let ts2635 = diagnostics_with_code(&diags, 2635);
+    assert_eq!(ts2635.len(), 1, "Expected one TS2635, got: {diags:?}");
+    let message = &ts2635[0].message_text;
+    assert!(
+        message.contains("queries: { [QK in keyof QR]: any; }"),
+        "Expected failed typeof-instantiation aliases to reduce through any, got: {message:?}"
+    );
+    assert!(
+        !message.contains("[QK in keyof QR]: (state?: { queries: QR; })"),
+        "TS2635 display must not expand the failed typeof-instantiation inside the parameter map, got: {message:?}"
     );
 }
 
@@ -409,7 +576,7 @@ declare const createReducer: <S>(s: S) => S;
 type R = RT<typeof createReducer<string>>;
 "#,
     );
-    let ts2344 = diags.iter().filter(|d| d.code == 2344).count();
+    let ts2344 = diagnostic_count_with_code(&diags, 2344);
     assert_eq!(
         ts2344, 0,
         "Successful typeof-instantiation must not emit TS2344, got diags: {diags:?}"
@@ -428,7 +595,7 @@ let Anon = class <out T> {
 };
 "#,
     );
-    let ts2344: Vec<_> = diags.iter().filter(|d| d.code == 2344).collect();
+    let ts2344 = diagnostics_with_code(&diags, 2344);
     assert!(
         ts2344.is_empty(),
         "Parenthesized typeof-instantiation should not emit TS2344, got: {diags:?}"
@@ -448,7 +615,7 @@ function bad(f: (<T>(a: T) => T) | ((a: string, b: number) => string[])) {
 "#,
     );
 
-    let ts2635: Vec<_> = diags.iter().filter(|d| d.code == 2635).collect();
+    let ts2635 = diagnostics_with_code(&diags, 2635);
     assert_eq!(ts2635.len(), 1, "Expected one TS2635, got: {diags:?}");
     assert!(
         ts2635[0]
@@ -477,7 +644,7 @@ type T41<U extends number> = typeof g2<U>;
     );
 
     let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
-    let ts2344: Vec<_> = relevant.iter().filter(|d| d.code == 2344).collect();
+    let ts2344 = diagnostic_refs_with_code(&relevant, 2344);
     assert_eq!(
         ts2344.len(),
         2,
@@ -498,12 +665,83 @@ type T41<U extends number> = typeof g2<U>;
 }
 
 #[test]
+fn invalid_instancetype_indexed_access_suppresses_cascading_ts2344() {
+    let diags = check_source_diagnostics(
+        r#"
+type InstanceType<T extends abstract new (...args: any) => any> = T;
+
+const Outer = class {
+    Inner = class {
+        value = "inner";
+    };
+
+    createInner(): InstanceType<Outer["Inner"]> {
+        return new this.Inner();
+    }
+};
+"#,
+    );
+
+    let ts2749 = diagnostics_with_code(&diags, 2749);
+    assert_eq!(
+        ts2749.len(),
+        1,
+        "Expected one TS2749 for value used as type, got: {diags:?}"
+    );
+
+    let ts2344 = diagnostics_with_code(&diags, 2344);
+    assert!(
+        ts2344.is_empty(),
+        "Invalid value-as-type argument should not also emit TS2344, got: {diags:?}"
+    );
+}
+
+#[test]
+fn instancetype_constraint_violation_still_emits_ts2344() {
+    let diags = check_source_diagnostics(
+        r#"
+type InstanceType<T extends abstract new (...args: any) => any> = T;
+type Bad = InstanceType<string>;
+"#,
+    );
+
+    let ts2344 = diagnostics_with_code(&diags, 2344);
+    assert_eq!(
+        ts2344.len(),
+        1,
+        "Expected genuine InstanceType constraint violation to emit TS2344, got: {diags:?}"
+    );
+}
+
+#[test]
+fn instancetype_private_constructor_constraint_violation_emits_ts2344() {
+    let diags = check_source_diagnostics(
+        r#"
+type InstanceType<T extends abstract new (...args: any) => any> = T;
+
+const WithPrivateCtor = class {
+    private constructor() {}
+};
+
+type Bad = InstanceType<typeof WithPrivateCtor>;
+"#,
+    );
+
+    let ts2344 = diagnostics_with_code(&diags, 2344);
+    assert_eq!(
+        ts2344.len(),
+        1,
+        "Expected private constructor InstanceType constraint violation to emit TS2344, got: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2352_array_assertion_anchors_first_excess_property() {
     let source = r#"
 <{ id: number; }[]>[{ foo: "s" }];
 "#;
     let diags = check_source_diagnostics(source);
-    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    let matching = diagnostics_with_code(&diags, 2352);
     assert_eq!(matching.len(), 1, "Expected one TS2352, got: {diags:?}");
 
     let foo_pos = source.find("foo").expect("expected foo property") as u32;
@@ -512,7 +750,7 @@ fn ts2352_array_assertion_anchors_first_excess_property() {
         "Expected TS2352 to anchor at the excess property name, got: {matching:?}"
     );
 
-    let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+    let ts2353 = diagnostics_with_code(&diags, 2353);
     assert!(
         ts2353.is_empty(),
         "Type assertions should not emit nested TS2353 from array elements, got: {diags:?}"
@@ -550,7 +788,7 @@ C3 as Dict;
 "#,
     );
 
-    let ts2352: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    let ts2352 = diagnostics_with_code(&diags, 2352);
     assert_eq!(
         ts2352.len(),
         2,
@@ -583,8 +821,8 @@ type Dict = { [key: string]: unknown };
 let x: Dict = new C1();
 "#,
     );
-    let ts2322_record = diags_record.iter().filter(|d| d.code == 2322).count();
-    let ts2322_direct = diags_direct.iter().filter(|d| d.code == 2322).count();
+    let ts2322_record = diagnostic_count_with_code(&diags_record, 2322);
+    let ts2322_direct = diagnostic_count_with_code(&diags_direct, 2322);
     assert_eq!(
         ts2322_record, ts2322_direct,
         "Record<string, unknown> and {{[key: string]: unknown}} must have identical assignability"
@@ -618,14 +856,14 @@ C3 as Record<string, unknown>;
 "#,
     );
 
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         1,
         "Expected exactly one TS2339 for new C2().unrelated, got: {ts2339:?}"
     );
 
-    let ts2352: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    let ts2352 = diagnostics_with_code(&diags, 2352);
     assert_eq!(
         ts2352.len(),
         2,
@@ -641,7 +879,7 @@ value.missing;
 "#;
 
     let diags = check_source_diagnostics(source);
-    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let matching = diagnostics_with_code(&diags, 2339);
     assert_eq!(matching.len(), 1, "Expected one TS2339, got: {diags:?}");
 
     let missing_pos = source.find("missing").expect("expected property token") as u32;
@@ -664,7 +902,7 @@ value[key];
 "#;
 
     let diags = check_source_diagnostics(source);
-    let matching: Vec<_> = diags.iter().filter(|d| d.code == 7053).collect();
+    let matching = diagnostics_with_code(&diags, 7053);
     assert_eq!(matching.len(), 1, "Expected one TS7053, got: {diags:?}");
 
     let expr_pos = source.find("value[key]").expect("expected element access") as u32;
@@ -682,7 +920,7 @@ arr["name"];
 "#;
 
     let diags = check_source_diagnostics(source);
-    let matching: Vec<_> = diags.iter().filter(|d| d.code == 7015).collect();
+    let matching = diagnostics_with_code(&diags, 7015);
     assert_eq!(matching.len(), 1, "Expected one TS7015, got: {diags:?}");
 
     let index_pos = source.find("\"name\"").expect("expected string index") as u32;
@@ -700,7 +938,7 @@ declare function fn(x: never): void;
 fn({ a: 1, b: 2 });
 "#,
     );
-    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let matching = diagnostics_with_code(&diags, 2345);
     assert_eq!(matching.len(), 1, "Expected one TS2345, got: {diags:?}");
 
     let msg = &matching[0].message_text;
@@ -730,12 +968,12 @@ let b = {
 };
 "#,
     );
-    let ts2304: Vec<_> = diags.iter().filter(|d| d.code == 2304).collect();
+    let ts2304 = diagnostics_with_code(&diags, 2304);
     assert_eq!(
         ts2304.len(),
         0,
         "Expected no TS2304 for type params in object literal methods, got: {:?}",
-        ts2304.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2304)
     );
 }
 
@@ -753,12 +991,12 @@ namespace A {
 }
 "#,
     );
-    let ts2351: Vec<_> = diags.iter().filter(|d| d.code == 2351).collect();
+    let ts2351 = diagnostics_with_code(&diags, 2351);
     assert_eq!(
         ts2351.len(),
         0,
         "Expected no TS2351 for class+namespace merge, got: {:?}",
-        ts2351.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2351)
     );
 }
 
@@ -822,8 +1060,8 @@ const asserted = ((x) => 1) as (x: string) => string;
 const assigned: (x: string) => string = (x) => 1;
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
-    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    let ts7006 = diagnostics_with_code(&diags, 7006);
     assert_eq!(
         ts2322.len(),
         1,
@@ -854,6 +1092,31 @@ fn(s => s.toUpperCase());
         relevant.len(),
         0,
         "Expected speculative overload rollback to avoid poisoning the successful candidate, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn string_argument_does_not_match_generic_array_overload() {
+    let diags = check_source_diagnostics(
+        r#"
+function first<T>(arr: T[]): T;
+function first(arr: string): string;
+function first(arr: any): any {
+  return typeof arr === 'string' ? arr[0] : arr[0];
+}
+
+const f1: number = first([1, 2, 3]);
+const f2: string = first("hello");
+"#,
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.code, 2322 | 2345 | 2769))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected string argument to select string overload, got: {relevant:?}"
     );
 }
 
@@ -890,6 +1153,66 @@ takes({
 }
 
 #[test]
+fn annotated_variable_accepts_nested_anonymous_object_literal() {
+    let diags = check_source_diagnostics(
+        r#"
+interface User {
+  id: string,
+  profile: {
+    name: string,
+    admin: boolean
+  }
+}
+
+const user: User = {
+  id: "u1",
+  profile: {
+    name: "ada",
+    admin: true
+  }
+}
+"#,
+    );
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "expected nested anonymous object literal assignment to be valid, got: {diags:?}"
+    );
+}
+
+#[test]
+fn annotated_variable_accepts_named_nested_object_literal() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Profile {
+  name: string;
+  admin: boolean;
+}
+
+interface User {
+  id: string;
+  profile: Profile;
+}
+
+const user: User = {
+  id: "u1",
+  profile: {
+    name: "ada",
+    admin: true
+  }
+}
+"#,
+    );
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "expected nested named object literal assignment to be valid, got: {diags:?}"
+    );
+}
+
+#[test]
 fn nested_mapped_application_property_preserves_literal_context() {
     let diags = check_source_diagnostics(
         r#"
@@ -900,7 +1223,7 @@ interface Foo<T> {
 const aa: Foo<{ a?: 1; x: 1 }> = { a: { a: 1, x: 1 } };
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         0,
@@ -1050,8 +1373,8 @@ const ok: (s: string) => string = ((x) => x)!;
 const bad: (s: string) => number = x => x;
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
-    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    let ts7006 = diagnostics_with_code(&diags, 7006);
     assert_eq!(
         ts2322.len(),
         1,
@@ -1259,6 +1582,146 @@ takes(class {
 }
 
 #[test]
+fn class_expression_static_field_initializer_checks_own_this() {
+    let diags = check_source_diagnostics(
+        r#"
+class C {
+    static f = 1;
+    static classExprBoundary = class { a = this.f + 3 };
+}
+"#,
+    );
+    let ts2339 = diagnostics_with_code(&diags, 2339);
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected one TS2339 for anonymous class `this.f`, got: {diags:?}"
+    );
+    assert!(
+        ts2339[0].message_text.contains("(Anonymous class)"),
+        "Expected anonymous class receiver in diagnostic, got: {:?}",
+        ts2339[0]
+    );
+}
+
+#[test]
+fn class_property_initializer_this_uses_ast_owner_during_type_environment() {
+    let diags = check_source(
+        r#"
+type ForwardInstance = Model;
+
+export class Model {
+    method(): string {
+        return "";
+    }
+    alias = this.method;
+}
+
+declare const model: Model;
+model.alias;
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 2532 | 2683))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected class property initializer `this` to use the AST class owner during early type environment construction, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn class_property_initializer_this_prescan_includes_accessors() {
+    let diags = check_source(
+        r#"
+declare function needsAccessor(value: { readonly current: number }): void;
+
+export class Model {
+    get current(): number {
+        return 1;
+    }
+    value = needsAccessor(this);
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2345 | 2739))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected class property initializer `this` prescan to include accessors, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn static_property_initializer_this_uses_constructor_owner_during_type_environment() {
+    let diags = check_source(
+        r#"
+type ForwardConstructor = typeof Registry;
+
+export class Registry {
+    static build(): number {
+        return 1;
+    }
+    static create = this.build;
+}
+
+Registry.create;
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 2532 | 2683))
+        .collect();
+    assert_eq!(
+        relevant.len(),
+        0,
+        "Expected static property initializer `this` to use the constructor owner during early type environment construction, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn explicit_this_current_class_does_not_use_any_cached_placeholder() {
+    let diags = check_source_diagnostics(
+        r#"
+const C = class C {
+    static getInstance() { return new C(); }
+    m(this: C) {
+        return this.missing;
+    }
+};
+"#,
+    );
+    let ts2339: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2339 && d.message_text.contains("missing"))
+        .collect();
+    assert!(
+        !ts2339.is_empty(),
+        "Expected TS2339 for explicit `this: C` missing member access, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_children_contextual_typing_uses_request_path() {
     let diags = check_source(
         r#"
@@ -1350,7 +1813,7 @@ b();
 b(1);
 "#,
     );
-    let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2322),
         "Expected TS2322 for assigning {{}} to generic callback typedef, got: {codes:?}"
@@ -1469,7 +1932,7 @@ function foo(opts) {
 foo({ x: "abc" });
 "#,
     );
-    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let relevant = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         relevant.len(),
         0,
@@ -1495,7 +1958,7 @@ function foo(opts) {
 foo({ anotherX: "world" });
 "#,
     );
-    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let relevant = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         relevant.len(),
         0,
@@ -1521,7 +1984,7 @@ function foo(opts) {
 foo({ aliasX: "world" });
 "#,
     );
-    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let relevant = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         relevant.len(),
         0,
@@ -1611,7 +2074,7 @@ var E = function(n) {
 id2(E);
 "#,
     );
-    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let ts2345 = diagnostics_with_code(&diags, 2345);
     assert_eq!(ts2345.len(), 1, "Expected one TS2345, got: {diags:?}");
     let message = &ts2345[0].message_text;
     assert!(
@@ -1684,7 +2147,7 @@ function Zet(t) {
 const options = { value: null };
 "#,
     );
-    let ts2304: Vec<_> = diags.iter().filter(|d| d.code == 2304).collect();
+    let ts2304 = diagnostics_with_code(&diags, 2304);
     assert_eq!(
         ts2304.len(),
         1,
@@ -1774,12 +2237,12 @@ type FnType = () => "foo" | "bar";
 const f2: FnType = () => "bar";
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         0,
         "Expected no TS2322 for literal arrow return assignable to union, got: {:?}",
-        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2322)
     );
 }
 
@@ -1805,12 +2268,12 @@ namespace X.Y {
 }
 "#,
     );
-    let ts2351: Vec<_> = diags.iter().filter(|d| d.code == 2351).collect();
+    let ts2351 = diagnostics_with_code(&diags, 2351);
     assert_eq!(
         ts2351.len(),
         0,
         "Expected no TS2351 for dotted namespace class merge, got: {:?}",
-        ts2351.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2351)
     );
 }
 
@@ -1825,20 +2288,20 @@ fn ts2540_as_const_object_method_this_readonly() {
 let o = { x: 10, foo() { this.x = 20 } } as const;
 "#,
     );
-    let ts2540: Vec<_> = diags.iter().filter(|d| d.code == 2540).collect();
+    let ts2540 = diagnostics_with_code(&diags, 2540);
     assert_eq!(
         ts2540.len(),
         1,
         "Expected 1 TS2540 for readonly property assignment via this in as-const object, got codes: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
     // Must NOT emit TS2322 — the readonly check takes precedence.
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         0,
         "Expected no TS2322 when TS2540 (readonly) applies, got: {:?}",
-        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2322)
     );
 }
 
@@ -1851,12 +2314,12 @@ fn ts2540_as_const_object_method_this_readonly_no_false_positive() {
 let o = { x: 10, foo() { return this.x } } as const;
 "#,
     );
-    let ts2540: Vec<_> = diags.iter().filter(|d| d.code == 2540).collect();
+    let ts2540 = diagnostics_with_code(&diags, 2540);
     assert_eq!(
         ts2540.len(),
         0,
         "Expected no TS2540 for readonly property read, got: {:?}",
-        ts2540.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2540)
     );
 }
 
@@ -1876,15 +2339,12 @@ let o = {
 } as const;
 "#,
     );
-    let ts2540: Vec<_> = diags.iter().filter(|d| d.code == 2540).collect();
+    let ts2540 = diagnostics_with_code(&diags, 2540);
     assert_eq!(
         ts2540.len(),
         2,
         "Expected 2 TS2540 for readonly property assignments in as-const method, got codes: {:?}",
-        diags
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_summaries(&diags)
     );
 }
 
@@ -1897,12 +2357,12 @@ fn no_ts2540_without_const_assertion() {
 let o = { x: 10, foo() { this.x = 20 } };
 "#,
     );
-    let ts2540: Vec<_> = diags.iter().filter(|d| d.code == 2540).collect();
+    let ts2540 = diagnostics_with_code(&diags, 2540);
     assert_eq!(
         ts2540.len(),
         0,
         "Expected no TS2540 without as-const, got: {:?}",
-        ts2540.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2540)
     );
 }
 
@@ -1922,12 +2382,12 @@ if (typeof c === 'string') {
 }
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         1,
         "Expected 1 TS2322 for number not assignable to string, got: {:?}",
-        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2322)
     );
 }
 
@@ -1951,12 +2411,12 @@ declare function extractPrimitives<Tuple extends any[]>(...mappedTypes: TupleMap
 const result: [string, number] = extractPrimitives({ primitive: "" }, { primitive: 0 });
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         0,
         "Expected no TS2322 for reverse-mapped tuple inference through conditional template, got: {:?}",
-        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2322)
     );
 }
 
@@ -1968,12 +2428,12 @@ declare function f0<T, U>(x: [T, ...U[]]): [T, U];
 f0([1, "hello", true]);
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         0,
         "Expected no TS2322 when tuple rest inference merges string | boolean, got: {:?}",
-        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2322)
     );
 }
 
@@ -1991,7 +2451,7 @@ function doStuffWithStuffArr<T extends Stuff>(arr: { [K in keyof T & keyof Stuff
 "#,
     );
 
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert!(
         ts2322.iter().any(|d| {
             d.message_text.contains(
@@ -1999,7 +2459,7 @@ function doStuffWithStuffArr<T extends Stuff>(arr: { [K in keyof T & keyof Stuff
             )
         }),
         "Expected TS2322 for reverse-mapped array return, got: {:?}",
-        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2322)
     );
 }
 
@@ -2027,14 +2487,14 @@ createMachine({
 "#,
     );
 
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert!(
         ts2322.iter().any(|d| {
             d.message_text
                 .contains("Type '\"bar\"' is not assignable to type '\"foo\"'")
         }),
         "Expected nested entry to be checked against inferred literal \"foo\", got: {:?}",
-        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2322)
     );
 }
 
@@ -2080,7 +2540,7 @@ createXMachine({
 "#,
     );
 
-    let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+    let ts2353 = diagnostics_with_code(&diags, 2353);
     assert!(
         ts2353.iter().any(|d| {
             d.message_text.contains(
@@ -2088,7 +2548,7 @@ createXMachine({
             )
         }),
         "Expected anonymous nested object excess display to preserve top literal and structurally widen nested props, got: {:?}",
-        ts2353.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2353)
     );
     assert!(
         ts2353.iter().any(|d| {
@@ -2097,7 +2557,7 @@ createXMachine({
             )
         }),
         "Expected asserted types branch to strip readonly while invoke remains readonly, got: {:?}",
-        ts2353.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2353)
     );
 }
 
@@ -2113,12 +2573,12 @@ fn ts7006_emitted_for_intra_binding_pattern_reference() {
 const { fn1 = (x: number) => 0, fn2 = fn1 } = { fn1: x => x + 1, fn2: x => x + 2 };
 "#,
     );
-    let ts7006: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    let ts7006 = diagnostics_with_code(&diags, 7006);
     assert_eq!(
         ts7006.len(),
         1,
         "Expected exactly 1 TS7006 for 'x' in fn2's arrow (intra-binding ref), got: {:?}",
-        ts7006.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts7006)
     );
 }
 
@@ -2129,7 +2589,7 @@ fn ts2352_tuple_different_length_assertion() {
         r#"var x: [number, string] = [1, "a"]; var y = x as [number, number];"#,
     );
     assert_eq!(
-        diags.iter().filter(|d| d.code == 2352).count(),
+        diagnostic_count_with_code(&diags, 2352),
         1,
         "Expected TS2352 for [number, string] as [number, number]"
     );
@@ -2139,7 +2599,7 @@ fn ts2352_tuple_different_length_assertion() {
         r#"var x: [number, string] = [1, "a"]; var y = x as [number, string, boolean];"#,
     );
     assert_eq!(
-        diags2.iter().filter(|d| d.code == 2352).count(),
+        diagnostic_count_with_code(&diags2, 2352),
         1,
         "Expected TS2352 for [number, string] as [number, string, boolean]"
     );
@@ -2149,7 +2609,7 @@ fn ts2352_tuple_different_length_assertion() {
         r#"var x: [number, string] = [1, "a"]; var y = <[number, string, boolean]>x;"#,
     );
     assert_eq!(
-        diags3.iter().filter(|d| d.code == 2352).count(),
+        diagnostic_count_with_code(&diags3, 2352),
         1,
         "Expected TS2352 for <[number, string, boolean]>x"
     );
@@ -2185,12 +2645,12 @@ class Test9 {
             ..CheckerOptions::default()
         },
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         0,
         "Expected no TS2322 for `typeof this.no = this.no` inside equality guard, got: {:?}",
-        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2322)
     );
 }
 
@@ -2218,12 +2678,12 @@ class Test9 {
             ..CheckerOptions::default()
         },
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         0,
         "Expected no TS2322 for `typeof this.this = this.this` inside equality guard, got: {:?}",
-        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2322)
     );
 }
 
@@ -2240,7 +2700,7 @@ const regex = /(?<foo>)\k<Foo>/;
         },
     );
 
-    let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&1503),
         "Expected TS1503 for named capture groups under ES2015, got {codes:?}"
@@ -2281,12 +2741,12 @@ class Bar extends Foo {
 }
 "#,
     );
-    let ts2416: Vec<_> = diags.iter().filter(|d| d.code == 2416).collect();
+    let ts2416 = diagnostics_with_code(&diags, 2416);
     assert_eq!(
         ts2416.len(),
         1,
         "Expected TS2416 for Bar.method incompatible with merged interface Foo.method, got: {:?}",
-        ts2416.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2416)
     );
     assert!(
         ts2416[0].message_text.contains("method"),
@@ -2315,12 +2775,12 @@ class Bar extends Foo {
 }
 "#,
     );
-    let ts2416: Vec<_> = diags.iter().filter(|d| d.code == 2416).collect();
+    let ts2416 = diagnostics_with_code(&diags, 2416);
     assert_eq!(
         ts2416.len(),
         1,
         "Expected TS2416 for Bar.prop incompatible with merged interface Foo.prop, got: {:?}",
-        ts2416.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2416)
     );
     assert!(
         ts2416[0].message_text.contains("prop"),
@@ -2350,12 +2810,12 @@ class Bar extends Foo {
 }
 "#,
     );
-    let ts2416: Vec<_> = diags.iter().filter(|d| d.code == 2416).collect();
+    let ts2416 = diagnostics_with_code(&diags, 2416);
     assert_eq!(
         ts2416.len(),
         0,
         "Expected no TS2416 for compatible override, got: {:?}",
-        ts2416.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2416)
     );
 }
 
@@ -2388,8 +2848,8 @@ class D extends C {
 }
 "#,
     );
-    let ts2416: Vec<_> = diags.iter().filter(|d| d.code == 2416).collect();
-    let messages: Vec<_> = ts2416.iter().map(|d| &d.message_text).collect();
+    let ts2416 = diagnostics_with_code(&diags, 2416);
+    let messages = diagnostic_messages(&ts2416);
     assert_eq!(
         ts2416.len(),
         5,
@@ -2437,12 +2897,12 @@ const x = {
 } as UserSettings;
 "#,
     );
-    let ts2352: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    let ts2352 = diagnostics_with_code(&diags, 2352);
     assert_eq!(
         ts2352.len(),
         0,
         "Expected no TS2352 for string enum comparable assertion, got: {:?}",
-        ts2352.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2352)
     );
 }
 
@@ -2455,12 +2915,12 @@ const [e1, e2] = f();
 "#;
     let diags = check_source_diagnostics(source);
 
-    let ts2571: Vec<_> = diags.iter().filter(|d| d.code == 2571).collect();
+    let ts2571 = diagnostics_with_code(&diags, 2571);
     assert_eq!(
         ts2571.len(),
         1,
         "Expected exactly one TS2571 for unknown array destructuring, got: {:?}",
-        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+        diagnostic_code_starts(&diags)
     );
 
     let empty_start = source.find("[]").expect("expected empty array pattern") as u32;
@@ -2469,12 +2929,12 @@ const [e1, e2] = f();
         "TS2571 should anchor at the empty array pattern"
     );
 
-    let ts2488: Vec<_> = diags.iter().filter(|d| d.code == 2488).collect();
+    let ts2488 = diagnostics_with_code(&diags, 2488);
     assert_eq!(
         ts2488.len(),
         2,
         "Expected TS2488 on both unknown array destructuring patterns, got: {:?}",
-        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+        diagnostic_code_starts(&diags)
     );
 }
 
@@ -2486,19 +2946,19 @@ try {} catch ([x]) {}
 "#,
     );
 
-    let ts2571: Vec<_> = diags.iter().filter(|d| d.code == 2571).collect();
+    let ts2571 = diagnostics_with_code(&diags, 2571);
     assert_eq!(
         ts2571.len(),
         0,
         "Expected no TS2571 for catch-clause array destructuring, got: {:?}",
-        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+        diagnostic_code_starts(&diags)
     );
-    let ts2488: Vec<_> = diags.iter().filter(|d| d.code == 2488).collect();
+    let ts2488 = diagnostics_with_code(&diags, 2488);
     assert_eq!(
         ts2488.len(),
         1,
         "Expected TS2488 for catch-clause array destructuring, got: {:?}",
-        diags.iter().map(|d| (d.code, d.start)).collect::<Vec<_>>()
+        diagnostic_code_starts(&diags)
     );
 }
 
@@ -2519,12 +2979,12 @@ var t: object = {};
 var p = new MyProxy(t, {});
 "#,
     );
-    let ts2351: Vec<_> = diags.iter().filter(|d| d.code == 2351).collect();
+    let ts2351 = diagnostics_with_code(&diags, 2351);
     assert_eq!(
         ts2351.len(),
         0,
         "Expected no TS2351 for interface with construct signature, got: {:?}",
-        ts2351.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2351)
     );
 }
 
@@ -2555,12 +3015,12 @@ class Vec2_T<A> {
 }
 "#,
     );
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for property access on generic class self-reference, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
     );
 }
 
@@ -2580,12 +3040,124 @@ class Foo<A> {
 }
 "#,
     );
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for f.x where f: Foo<string>, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
+    );
+}
+
+#[test]
+fn no_false_ts2339_on_self_cast_in_generic_class_property_initializer() {
+    let diags = check_source_diagnostics(
+        r#"
+class Bar<T> {
+    num!: number;
+    Field: number = (this as Bar<any>).num;
+    Value = (this as Bar<any>).num;
+}
+"#,
+    );
+    let ts2339 = diagnostics_with_code(&diags, 2339);
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for self-cast property initializer, got: {:?}",
+        diagnostic_messages(&ts2339)
+    );
+
+    let missing_diags = check_source_diagnostics(
+        r#"
+class Bar<T> {
+    Value = (this as Bar<any>).missing;
+}
+"#,
+    );
+    assert!(
+        missing_diags.iter().any(|d| d.code == 2339),
+        "Expected TS2339 for genuinely missing self-cast member, got: {:?}",
+        diagnostic_summaries(&missing_diags)
+    );
+}
+
+#[test]
+fn inherited_generic_class_field_this_method_aliases_use_declared_base_chain() {
+    // A generic base class field initializer can be checked while constructing
+    // a derived class instance whose inheritance graph edge is not populated yet.
+    // The initializer's `this.method` lookup still needs to recover members
+    // declared on the base class through the declared `extends` chain.
+    let diags = check_source_diagnostics(
+        r#"
+interface BaseDef { tag?: string }
+type BaseAny = Base<any, any, any>;
+interface WrapperDef<T extends BaseAny> extends BaseDef { schema: T }
+
+abstract class Base<Output, Def extends BaseDef = BaseDef, Input = Output> {
+    readonly _output!: Output;
+    readonly _input!: Input;
+    readonly _def!: Def;
+
+    abstract parse(data: unknown): Output;
+
+    first(value: unknown): Output {
+        return this.parse(value);
+    }
+    firstAlias = this.first;
+
+    second<Func extends (arg: Output) => unknown>(check: Func): Wrapper<BaseAny> {
+        return null as any;
+    }
+    secondAlias = this.second;
+}
+
+class Wrapper<T extends BaseAny> extends Base<unknown, WrapperDef<T>, unknown> {
+    parse(data: unknown): unknown {
+        return data;
+    }
+}
+
+class Text extends Base<string> {
+    parse(data: unknown): string {
+        return String(data);
+    }
+}
+
+type UseWrapper = Wrapper<Text>;
+type UseText = Text;
+"#,
+    );
+    let ts2339 = diagnostics_with_code(&diags, 2339);
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for inherited field aliases, got: {:?}",
+        diagnostic_messages(&ts2339)
+    );
+}
+
+#[test]
+fn base_class_field_this_does_not_recover_derived_only_members() {
+    let diags = check_source_diagnostics(
+        r#"
+class Base {
+    x = this.derivedOnly;
+}
+
+class Derived extends Base {
+    derivedOnly() {
+        return 1;
+    }
+}
+"#,
+    );
+    let ts2339 = diagnostics_with_code(&diags, 2339);
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected TS2339 for derived-only member in base initializer, got: {:?}",
+        diagnostic_summaries(&diags)
     );
 }
 
@@ -2610,12 +3182,12 @@ r.y;
 r.z;
 "#,
     );
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for getter returning this, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
     );
 }
 
@@ -2640,12 +3212,12 @@ var r2 = c.y;
 r2.y;
 "#,
     );
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for r2.y where r2 = c.y, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
     );
 }
 
@@ -2679,12 +3251,12 @@ var r2 = c.foo();
 r2.y;
 "#,
     );
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for getter `this` return type on class with getter after constructor, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
     );
 }
 
@@ -2711,20 +3283,20 @@ var p3 = m3.Color.Blue;
 "#,
     );
     // TS2339: Property does not exist on type
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for enum member access through typeof namespace, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
     );
     // TS2403: Subsequent variable declarations must have the same type
-    let ts2403: Vec<_> = diags.iter().filter(|d| d.code == 2403).collect();
+    let ts2403 = diagnostics_with_code(&diags, 2403);
     assert_eq!(
         ts2403.len(),
         0,
         "Expected no TS2403 for enum typeof mismatch, got: {:?}",
-        ts2403.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2403)
     );
 }
 
@@ -2739,7 +3311,7 @@ declare function fn(x: number[]): void;
 fn(a);
 "#,
     );
-    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let matching = diagnostics_with_code(&diags, 2345);
     assert_eq!(matching.len(), 1, "Expected one TS2345, got: {diags:?}");
 
     let msg = &matching[0].message_text;
@@ -2765,12 +3337,12 @@ declare class RC<T extends "a" | "b"> {
 }
 "#,
     );
-    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    let ts2339 = diagnostics_with_code(&diags, 2339);
     assert_eq!(
         ts2339.len(),
         0,
         "Expected no TS2339 for property access on class with circular computed property, got: {:?}",
-        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2339)
     );
 }
 
@@ -2787,12 +3359,12 @@ const b: true = "foo" satisfies string;
 const c: 2 = 1 satisfies number;
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         3,
         "Expected 3 TS2322 errors for satisfies literal assignments, got: {:?}",
-        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2322)
     );
     // All three should preserve the source literal in the diagnostic (not widen).
     assert!(
@@ -2824,12 +3396,12 @@ fn satisfies_widens_source_for_ts1360_when_target_is_primitive() {
 const x = 1 satisfies boolean;
 "#,
     );
-    let ts1360: Vec<_> = diags.iter().filter(|d| d.code == 1360).collect();
+    let ts1360 = diagnostics_with_code(&diags, 1360);
     assert_eq!(
         ts1360.len(),
         1,
         "Expected 1 TS1360 error for `1 satisfies boolean`, got: {:?}",
-        ts1360.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts1360)
     );
     assert!(
         ts1360[0].message_text.contains("Type 'number'"),
@@ -2840,6 +3412,74 @@ const x = 1 satisfies boolean;
         ts1360[0].message_text.contains("'boolean'"),
         "Expected target `boolean` in TS1360 message, got: {}",
         ts1360[0].message_text
+    );
+}
+
+#[test]
+fn satisfies_array_literal_elaborates_per_element() {
+    // `[10, "20"] satisfies number[]` should elaborate per-element rather than
+    // emitting a generic TS1360 on the whole expression. tsc emits TS2322 at
+    // the offending `"20"` element with `Type 'string' is not assignable to
+    // type 'number'.`, matching its `elaborateElementwise` behavior.
+    //
+    // Iteration variable / property names are deliberately varied across
+    // assertions to avoid fingerprinting a specific spelling — the rule is
+    // structural over array literal sources, not over specific identifiers.
+    let diags = check_source_diagnostics(
+        r#"
+declare function take(...args: unknown[]): void;
+take(10, ...([10, "20"] satisfies number[]));
+take(10, ...([1, 2, "x", 4] satisfies number[]));
+take(10, ...(([1, "wrapped"]) satisfies number[]));
+take(10, ...(([1, "asserted"] as (number | string)[]) satisfies number[]));
+"#,
+    );
+
+    // First satisfies has one bad element: "20" (string).
+    // Second satisfies has one bad element: "x" (string).
+    // The wrapped cases prove source unwrapping reaches the same array-literal
+    // element path for parenthesized and asserted array sources.
+    // Each source should emit TS2322 at the bad element, NOT TS1360 on the whole satisfies.
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    let ts1360 = diagnostics_with_code(&diags, 1360);
+
+    assert_eq!(
+        ts1360.len(),
+        0,
+        "Expected NO TS1360 generic-satisfies error; expected per-element TS2322 instead, got TS1360s: {:?}",
+        diagnostic_messages(&ts1360)
+    );
+    assert_eq!(
+        ts2322.len(),
+        4,
+        "Expected exactly 4 TS2322 elaborations (one per bad element), got: {:?}",
+        diagnostic_messages(&ts2322)
+    );
+    for diag in &ts2322 {
+        assert!(
+            diag.message_text.contains("'string'") && diag.message_text.contains("'number'"),
+            "Expected TS2322 message about string -> number, got: {}",
+            diag.message_text
+        );
+    }
+}
+
+#[test]
+fn satisfies_array_literal_all_elements_compatible_no_diagnostic() {
+    // Sanity check: when every element of an array literal satisfies the
+    // target's element type, no diagnostic should be reported. This guards
+    // against the new array-elaboration path firing on assignable sources.
+    let diags = check_source_diagnostics(
+        r#"
+declare function take(...args: unknown[]): void;
+take(10, ...([1, 2, 3] satisfies number[]));
+"#,
+    );
+    assert_eq!(
+        diags.len(),
+        0,
+        "Expected no diagnostics for fully-compatible array literal, got: {:?}",
+        diagnostic_summaries(&diags)
     );
 }
 
@@ -2857,12 +3497,12 @@ fn("C" satisfies string);
     );
     // First call should succeed; second should fail with TS2345 (string literal
     // "C" is not assignable to "A" | "B").
-    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    let ts2345 = diagnostics_with_code(&diags, 2345);
     assert_eq!(
         ts2345.len(),
         1,
         "Expected exactly 1 TS2345 for the `\"C\"` call (not the `\"A\"` call), got: {:?}",
-        ts2345.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts2345)
     );
 }
 
@@ -2877,12 +3517,12 @@ declare let y: Box<Box<string>>;
 y = x;
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         1,
         "Expected 1 TS2322 for Box<Box<number>> vs Box<Box<string>>, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -2898,12 +3538,12 @@ declare let y: Cb<Cb<Cb<Cb<string>>>>;
 y = x;
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    let ts2322 = diagnostics_with_code(&diags, 2322);
     assert_eq!(
         ts2322.len(),
         1,
         "Expected 1 TS2322 for Cb<Cb<Cb<Cb<number>>>> vs Cb<Cb<Cb<Cb<string>>>>, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
     // Both source and target must be shown in structurally-expanded form.
     // tsc does not preserve alias names when the alias body is an IndexedAccess type.
@@ -2935,11 +3575,11 @@ fn ts7023_no_false_positive_on_property_name_collision_assign() {
 const assign = <T, U>(a: T, b: U) => Object.assign(a, b);
 "#,
     );
-    let ts7023: Vec<_> = diags.iter().filter(|d| d.code == 7023).collect();
+    let ts7023 = diagnostics_with_code(&diags, 7023);
     assert!(
         ts7023.is_empty(),
         "Expected no TS7023 for property-name collision with enclosing variable, got: {:?}",
-        ts7023.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts7023)
     );
 }
 
@@ -2953,11 +3593,11 @@ const merge = <T, U>(a: T, b: U) => Object.merge(a, b);
 declare namespace Object { function merge<A, B>(a: A, b: B): A & B; }
 "#,
     );
-    let ts7023: Vec<_> = diags.iter().filter(|d| d.code == 7023).collect();
+    let ts7023 = diagnostics_with_code(&diags, 7023);
     assert!(
         ts7023.is_empty(),
         "Expected no TS7023 for `merge` colliding with property name, got: {:?}",
-        ts7023.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts7023)
     );
 }
 
@@ -2970,12 +3610,12 @@ fn ts7023_still_fires_on_genuine_self_reference() {
 const recur = (n: number) => recur(n);
 "#,
     );
-    let ts7023: Vec<_> = diags.iter().filter(|d| d.code == 7023).collect();
+    let ts7023 = diagnostics_with_code(&diags, 7023);
     assert_eq!(
         ts7023.len(),
         1,
         "Expected TS7023 for genuine recursive arrow without return annotation, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -3008,10 +3648,7 @@ const instance = new Howl({
     assert!(
         circularity.is_empty(),
         "Expected no TS7022/TS7023 for self-reference under void return expression, got: {:?}",
-        circularity
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
+        diagnostic_ref_summaries(&circularity)
     );
 }
 
@@ -3024,10 +3661,62 @@ fn ts7023_no_false_positive_when_property_key_matches_outer_var() {
 const wrap = (x: number) => ({ wrap: x });
 "#,
     );
-    let ts7023: Vec<_> = diags.iter().filter(|d| d.code == 7023).collect();
+    let ts7023 = diagnostics_with_code(&diags, 7023);
     assert!(
         ts7023.is_empty(),
         "Expected no TS7023 when an object property key matches the enclosing variable name, got: {:?}",
-        ts7023.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+        diagnostic_messages(&ts7023)
+    );
+}
+
+#[test]
+fn ts2322_no_false_positive_merged_type_alias_and_const_return() {
+    // Two name variants guard against name-hardcoding regressions (§25).
+    for source in [
+        r#"
+type Foo = { type: "foo" };
+const Foo = {
+  make: (): Foo => {
+    return { type: "foo" };
+  }
+};
+"#,
+        r#"
+type MyAlias = { kind: "ok" };
+const MyAlias = {
+  build: (): MyAlias => {
+    return { kind: "ok" };
+  }
+};
+"#,
+    ] {
+        let diags = check_source_diagnostics(source);
+        let ts2322 = diagnostics_with_code(&diags, 2322);
+        assert!(
+            ts2322.is_empty(),
+            "Expected no TS2322 for merged type-alias+const return, got: {:?}",
+            diagnostic_messages(&ts2322)
+        );
+    }
+}
+
+#[test]
+fn ts2322_real_error_still_reported_for_merged_type_alias_and_const_wrong_return() {
+    let diags = check_source_diagnostics(
+        r#"
+type Status = { code: "ok" };
+const Status = {
+  make: (): Status => {
+    return { code: "wrong" };
+  }
+};
+"#,
+    );
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected 1 TS2322 for wrong literal in merged type-alias+const return, got: {:?}",
+        diagnostic_messages(&ts2322)
     );
 }

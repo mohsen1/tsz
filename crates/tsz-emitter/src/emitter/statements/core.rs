@@ -7,10 +7,6 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    // =========================================================================
-    // Statements
-    // =========================================================================
-
     pub(in crate::emitter) fn emit_block(&mut self, node: &Node, idx: NodeIndex) {
         let Some(block) = self.arena.get_block(node) else {
             return;
@@ -39,8 +35,10 @@ impl<'a> Printer<'a> {
 
         if block.statements.nodes.is_empty()
             && !needs_this_capture
+            && !self.has_pending_new_target_capture()
             && is_function_body_block
             && !self.pending_object_rest_params.is_empty()
+            && self.pending_object_rest_param_defaults.is_empty()
             && self.is_single_line(node)
         {
             self.ctx.block_scope_state.enter_function_scope();
@@ -57,7 +55,9 @@ impl<'a> Printer<'a> {
         // Empty blocks: check for comments inside and preserve original format
         if block.statements.nodes.is_empty()
             && !needs_this_capture
+            && !self.has_pending_new_target_capture()
             && self.pending_object_rest_params.is_empty()
+            && self.pending_object_rest_param_defaults.is_empty()
         {
             // Find the actual closing `}` position (not node.end which includes trailing trivia)
             let closing_brace_end = self.find_block_closing_brace_end(node);
@@ -167,10 +167,13 @@ impl<'a> Printer<'a> {
         let should_emit_single_line = !block.statements.nodes.is_empty()
             && self.is_single_line(node)
             && !needs_this_capture
+            && !self.has_pending_new_target_capture()
             && is_function_body_block
+            && self.pending_lowered_async_arrow_super_capture.is_none()
             && self.hoisted_assignment_value_temps.is_empty()
             && self.hoisted_for_of_temps.is_empty()
-            && self.pending_object_rest_params.is_empty();
+            && self.pending_object_rest_params.is_empty()
+            && self.pending_object_rest_param_defaults.is_empty();
 
         if should_emit_single_line {
             if is_function_body_block {
@@ -265,6 +268,13 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        let directive_prologue_count = self
+            .emit_leading_directive_prologue_statements(&block.statements.nodes, block_close_pos);
+
+        if is_function_body_block {
+            self.emit_pending_new_target_capture();
+        }
+
         // Inject `var _this = this;` at the start of the block for arrow function _this capture
         if let Some(ref capture_name) = this_capture_name {
             self.write("var ");
@@ -277,7 +287,12 @@ impl<'a> Printer<'a> {
         // e.g., `function f(_a, b) { var { a } = _a, rest = __rest(_a, ["a"]); ... }`
         if is_function_body_block && !self.pending_object_rest_params.is_empty() {
             self.emit_pending_object_rest_param_preamble(false);
+        } else if is_function_body_block && !self.pending_object_rest_param_defaults.is_empty() {
+            self.emit_pending_object_rest_param_defaults(false);
         }
+
+        let static_super_scope =
+            self.enter_pending_lowered_async_arrow_super_capture_scope(is_function_body_block);
 
         let block_scoped_private_byte_offset =
             Some((self.writer.len(), self.writer.current_line()));
@@ -299,7 +314,7 @@ impl<'a> Printer<'a> {
         let prev_block_using_env = self.block_using_env.take();
         let block_using_names: Option<(String, String, String, bool)> = if block_using_lowered {
             let using_async = self.block_has_await_using(&block.statements);
-            let (env_name, error_name, result_name) = self.next_disposable_env_names();
+            let (env_name, error_name, result_name) = self.disposable_env_names_for_node(idx);
             let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
 
             // Block-level using: tsc uses `const` for the __addDisposableResource calls
@@ -326,7 +341,12 @@ impl<'a> Printer<'a> {
         let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
         let prev_recovered_module_syntax_block_depth = self.recovered_module_syntax_block_depth;
         self.recovered_module_syntax_block_depth += 1;
-        for (stmt_i, &stmt_idx) in stmts.iter().enumerate() {
+        let prev_lexical_block_missing_initializer_function_depth =
+            self.lexical_block_missing_initializer_function_depth;
+        if self.ctx.target_es5 && !is_function_body_block {
+            self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
+        }
+        for (stmt_i, &stmt_idx) in stmts.iter().enumerate().skip(directive_prologue_count) {
             // Save state before leading comments so we can undo them if the
             // statement produces no output (e.g., namespace alias import or
             // CJS export var with no initializer).
@@ -492,27 +512,12 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        self.lexical_block_missing_initializer_function_depth =
+            prev_lexical_block_missing_initializer_function_depth;
         self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
 
         if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
-            let mut ref_vars = Vec::new();
-            ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
-            ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
-
-            if !ref_vars.is_empty() {
-                let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
-                self.writer.insert_line_at(byte_offset, line_no, &var_decl);
-            }
-
-            if !self.hoisted_assignment_value_temps.is_empty() {
-                let var_decl = format!(
-                    "{}var {};",
-                    indent,
-                    self.hoisted_assignment_value_temps.join(", ")
-                );
-                self.writer.insert_line_at(byte_offset, line_no, &var_decl);
-            }
+            self.insert_function_body_hoisted_temps_at(byte_offset, line_no);
         }
 
         if let Some((byte_offset, line_no)) = block_scoped_private_byte_offset
@@ -603,6 +608,7 @@ impl<'a> Printer<'a> {
         if !self.ctx.options.remove_comments {
             self.emit_comments_before_pos(block_close_pos);
         }
+        self.restore_static_super_scope(static_super_scope);
         self.decrease_indent();
         self.map_closing_brace(node);
         self.write_with_end_marker("}");
@@ -636,9 +642,37 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_pending_object_rest_param_preamble(&mut self, inline: bool) {
+    pub(in crate::emitter) fn insert_function_body_hoisted_temps_at(
+        &mut self,
+        byte_offset: usize,
+        line_no: u32,
+    ) {
+        let indent = " ".repeat(self.writer.indent_width() as usize);
+        let mut ref_vars = Vec::new();
+        ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
+        ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+
+        if !ref_vars.is_empty() {
+            let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
+            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+        }
+
+        if !self.hoisted_assignment_value_temps.is_empty() {
+            let var_decl = format!(
+                "{}var {};",
+                indent,
+                self.hoisted_assignment_value_temps.join(", ")
+            );
+            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+        }
+    }
+
+    pub(in crate::emitter) fn emit_pending_object_rest_param_preamble(&mut self, inline: bool) {
         let rest_params: Vec<(String, NodeIndex)> =
             std::mem::take(&mut self.pending_object_rest_params);
+        for (temp_name, _) in &rest_params {
+            self.generated_temp_names.insert(temp_name.clone());
+        }
         for (i, (temp_name, pattern_idx)) in rest_params.iter().enumerate() {
             if inline && i > 0 {
                 self.write(" ");
@@ -646,6 +680,27 @@ impl<'a> Printer<'a> {
             self.write("var ");
             self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
             self.write(";");
+            if !inline {
+                self.write_line();
+            }
+        }
+        self.emit_pending_object_rest_param_defaults(inline);
+    }
+
+    pub(in crate::emitter) fn emit_pending_object_rest_param_defaults(&mut self, inline: bool) {
+        let defaults: Vec<(String, NodeIndex)> =
+            std::mem::take(&mut self.pending_object_rest_param_defaults);
+        for (i, (name, initializer)) in defaults.iter().enumerate() {
+            if inline && i > 0 {
+                self.write(" ");
+            }
+            self.write("if (");
+            self.write(name);
+            self.write(" === void 0) { ");
+            self.write(name);
+            self.write(" = ");
+            self.emit_expression(*initializer);
+            self.write("; }");
             if !inline {
                 self.write_line();
             }
@@ -714,6 +769,10 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
+        if self.emit_esm_object_rest_export_statement(node) {
+            return;
+        }
+
         if self.is_es5_empty_binding_pattern_export_statement(node)
             && self.emit_es5_empty_binding_pattern_export(&var_stmt.declarations)
         {
@@ -757,6 +816,21 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
+            return;
+        }
+
+        let is_var_declaration = var_stmt.declarations.nodes.iter().any(|decl_list_idx| {
+            self.arena.get(*decl_list_idx).is_some_and(|decl_list| {
+                let flags = decl_list.flags as u32;
+                flags & (node_flags::LET | node_flags::CONST | node_flags::USING) == 0
+            })
+        });
+        if self.in_system_execute_body
+            && self.function_scope_depth == 0
+            && !self.in_namespace_iife
+            && is_var_declaration
+        {
+            self.emit_system_variable_initializers(node);
             return;
         }
 
@@ -832,41 +906,82 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // VariableStatement.declarations contains a VARIABLE_DECLARATION_LIST
-        // Emit the declaration list (which handles the let/const/var keyword)
-        if self
+        if self.emit_async_generator_shadow_variable_statement(node) {
+            return;
+        }
+        if self.should_emit_invalid_namespace_static_modifier(node, &var_stmt.modifiers) {
+            self.write("static ");
+        }
+        let is_accessor = self
             .arena
             .has_modifier(&var_stmt.modifiers, SyntaxKind::AccessorKeyword)
-            || self.has_recovered_accessor_modifier(node)
-        {
+            || self.has_recovered_accessor_modifier(node);
+        if is_accessor {
             self.write("accessor ");
         }
-        for &decl_list_idx in &var_stmt.declarations.nodes {
-            self.emit(decl_list_idx);
+        let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
+        let arrow_comment_scan_end = self
+            .source_text
+            .map_or(effective_end, |text| text.len() as u32);
+        let last_concise_arrow_comment_range = self
+            .variable_statement_last_concise_arrow_comment_range(
+                &var_stmt.declarations,
+                arrow_comment_scan_end,
+            );
+        let last_initializer_has_deferred_arrow_comment =
+            last_concise_arrow_comment_range.is_some();
+        let last_emitted_declaration_end =
+            self.variable_statement_last_emitted_declaration_end(&var_stmt.declarations);
+        if let Some((comment_start, comment_end)) = last_concise_arrow_comment_range {
+            self.with_arrow_concise_body_trailing_comments_deferred(
+                comment_start,
+                comment_end,
+                |this| {
+                    for &decl_list_idx in &var_stmt.declarations.nodes {
+                        this.emit(decl_list_idx);
+                    }
+                },
+            );
+        } else {
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                self.emit(decl_list_idx);
+            }
         }
         let recovered_async_arrow_return = self.recovered_async_arrow_return_name(node);
         let recovered_bare_arrow_return = self.recovered_bare_arrow_return_name(node);
         let recovered_arrow_return = recovered_async_arrow_return
             .as_ref()
             .or(recovered_bare_arrow_return.as_ref());
+        let recovered_arrow_property_tail = if recovered_arrow_return.is_none() {
+            self.recovered_parenthesized_arrow_property_tail(&var_stmt.declarations)
+        } else {
+            None
+        };
         if !using_is_lowered {
             if let Some(return_name) = recovered_arrow_return {
                 self.write(", ");
                 self.write(return_name);
+            } else if let Some((tail_name, consumed_span)) = recovered_arrow_property_tail {
+                self.write(", ");
+                self.write(&tail_name);
+                self.consumed_recovered_expression_statement_span =
+                    Some((consumed_span.0, consumed_span.1, tail_name));
             }
-            if let Some(last_end) =
-                self.variable_statement_last_emitted_declaration_end(&var_stmt.declarations)
-            {
-                let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
+            if let Some(last_end) = last_emitted_declaration_end {
                 if let Some(semi_after) =
                     self.find_declaration_semicolon_after(last_end, effective_end)
                 {
                     let comment_end = semi_after.saturating_sub(1);
-                    self.emit_comments_in_range(last_end, comment_end, true, false);
+                    if !last_initializer_has_deferred_arrow_comment {
+                        self.emit_comments_in_range(last_end, comment_end, true, false);
+                    }
                 }
             }
             self.map_trailing_semicolon(node);
             self.write_semicolon();
+            self.emit_recovered_generated_type_member_tail_after_variable_statement(
+                &var_stmt.declarations,
+            );
             self.emit_recovered_regex_slash_tail_after_variable_statement(&var_stmt.declarations);
             self.emit_recovered_class_keyword_variable_statement_tail(node);
         }
@@ -875,8 +990,13 @@ impl<'a> Printer<'a> {
         // Use a bounded scan range that excludes erased type annotations.
         // For `var v: { (...); // comment }`, the backward `;` scan must
         // not find semicolons inside the erased type annotation.
-        let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
         self.emit_trailing_comment_after_semicolon_in_range(node.pos, effective_end);
+        if let Some((comment_start, comment_end)) = last_concise_arrow_comment_range {
+            self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
+        }
+        self.emit_static_block_await_arrow_recovery_blocks_after_variable_statement(
+            &var_stmt.declarations,
+        );
         self.emit_recovered_malformed_arrow_block_after_variable_statement(
             node,
             recovered_async_arrow_return.is_some(),
@@ -978,6 +1098,29 @@ impl<'a> Printer<'a> {
         let masked_line = Self::source_text_with_quoted_spans_masked(line);
         let line_for_scan = masked_line.as_str();
 
+        if self.ctx.flags.in_class_static_block
+            && Self::line_has_static_block_await_arrow_recovery(line_for_scan)
+        {
+            let Some(arrow_rel) = line_for_scan.find("=>") else {
+                return;
+            };
+            let after_arrow = start + arrow_rel + 2;
+            let Some(open_rel) = bytes[after_arrow..line_end].iter().position(|&b| b == b'{')
+            else {
+                return;
+            };
+            let open = after_arrow + open_rel;
+            let mut pos = open + 1;
+            while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if bytes.get(pos) == Some(&b'}') {
+                self.write_line();
+                self.write("{ }");
+            }
+            return;
+        }
+
         if line_for_scan.contains("= @") && line_for_scan.contains("=>") {
             let Some(arrow_rel) = line_for_scan.find("=>") else {
                 return;
@@ -1041,7 +1184,6 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.write_semicolon();
     }
-
     fn emit_recovered_typeof_member_call_after_variable_statement(&mut self, node: &Node) {
         // Only recover when every declaration in the statement lacks an initializer.
         // If any declaration has an initializer, .typeof( is a valid property call
@@ -1478,6 +1620,10 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if self.consume_recovered_expression_statement(node) {
+            return;
+        }
+
         // Suppress bare `declare;` expression statements that are artifacts of the parser
         // not recognizing `declare` as a modifier before certain keywords (e.g.,
         // `declare import a = b;`, `declare export function f() {}`). We distinguish
@@ -1497,6 +1643,52 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let expression_trailing_comment_range = self.source_text.and_then(|text| {
+            self.rightmost_concise_arrow_deferred_comment_range(
+                expr_stmt.expression,
+                text.len() as u32,
+            )
+        });
+
+        if let Some((comment_start, comment_end)) = expression_trailing_comment_range {
+            self.with_arrow_concise_body_trailing_comments_deferred(
+                comment_start,
+                comment_end,
+                |this| {
+                    this.emit_expression_in_statement_position(expr_stmt.expression);
+                },
+            );
+        } else {
+            self.emit_expression_in_statement_position(expr_stmt.expression);
+        }
+        if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
+            self.write_line();
+        }
+        self.map_trailing_semicolon(node);
+        if !self.output_ends_with_semicolon() {
+            self.write_semicolon();
+        }
+        if self
+            .expression_statement_consumed_invalid_backslash_semicolon(node, expr_stmt.expression)
+        {
+            self.write_line();
+            self.write_semicolon();
+        }
+        self.emit_trailing_comment_after_semicolon(node);
+        if let Some((comment_start, comment_end)) = expression_trailing_comment_range {
+            self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
+        }
+    }
+
+    /// Emit an arbitrary expression as a standalone statement expression.
+    ///
+    /// This shares the same parenthesization/disambiguation behavior as
+    /// `emit_expression_statement` (e.g. wrapping leading object/function
+    /// expressions, ES5 arrow wrapping, and `import<T>;` erasure handling).
+    pub(in crate::emitter) fn emit_expression_in_statement_position(
+        &mut self,
+        expression: NodeIndex,
+    ) {
         // When a function/object expression appears at the start of a statement, it needs
         // wrapping parentheses: `function` would be parsed as a declaration, and `{` as a
         // block. We use a leftmost-expression walker that follows the left chain through
@@ -1510,22 +1702,22 @@ impl<'a> Printer<'a> {
         // disambiguate the leading `{`/`function` token. Adding another pair here would
         // produce double parens like `(({a:0}))`. Skip the wrapping in that case —
         // `emit_parenthesized` will print `({a:0})`.
-        let needs_parens = if let Some(expr_node) = self.arena.get(expr_stmt.expression) {
+        let needs_parens = if let Some(expr_node) = self.arena.get(expression) {
             let leftmost = self
-                .leftmost_expression_kind_after_erasure(expr_stmt.expression)
+                .leftmost_expression_kind_after_erasure(expression)
                 .unwrap_or(expr_node.kind);
             let leftmost_needs_parens = leftmost == syntax_kind_ext::FUNCTION_EXPRESSION
                 || leftmost == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || (self.ctx.target_es5 && expr_node.kind == syntax_kind_ext::ARROW_FUNCTION);
             leftmost_needs_parens
-                && !self.outer_paren_will_survive_emit(expr_stmt.expression)
-                && !self.is_erased_object_literal_access_call_expression(expr_stmt.expression)
+                && !self.outer_paren_will_survive_emit(expression)
+                && !self.is_erased_object_literal_access_call_expression(expression)
         } else {
             false
         };
         let needs_legacy_asterisk_padding = self
             .arena
-            .get(expr_stmt.expression)
+            .get(expression)
             .and_then(|expr_node| self.arena.get_unary_expr(expr_node))
             .is_some_and(|unary| unary.operator == SyntaxKind::AsteriskToken as u16);
 
@@ -1540,103 +1732,23 @@ impl<'a> Printer<'a> {
             // CallExpression whose direct callee is a function/object expression,
             // wrap only the callee — producing `(function(){})()` instead of
             // `(function(){}())`.
-            if self.is_call_with_function_or_object_callee(expr_stmt.expression) {
+            if self.is_call_with_function_or_object_callee(expression) {
                 self.ctx.flags.paren_leftmost_function_or_object = true;
-                self.emit(expr_stmt.expression);
+                self.emit(expression);
                 self.ctx.flags.paren_leftmost_function_or_object = false;
             } else {
                 self.write("(");
-                self.emit(expr_stmt.expression);
+                self.emit(expression);
                 self.write(")");
             }
-        } else if self.emit_import_type_arguments_statement_expression(expr_stmt.expression) {
+        } else if self.emit_import_type_arguments_statement_expression(expression) {
             // Handled above: `import<T>;` erases to `import;`, while the same
             // expression in value position still uses the generic
             // ExpressionWithTypeArguments paren path.
         } else {
-            self.emit(expr_stmt.expression);
+            self.emit(expression);
         }
         self.ctx.flags.in_statement_expression = prev_stmt_expr;
-        if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
-            self.write_line();
-        }
-        self.map_trailing_semicolon(node);
-        if !self.output_ends_with_semicolon() {
-            self.write_semicolon();
-        }
-        self.emit_trailing_comment_after_semicolon(node);
-    }
-
-    fn emit_recovered_regex_slash_tail_after_variable_statement(
-        &mut self,
-        declarations: &NodeList,
-    ) -> bool {
-        let Some(text) = self.source_text else {
-            return false;
-        };
-
-        let mut last_initializer = NodeIndex::NONE;
-        for &decl_list_idx in &declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-            for &decl_idx in &decl_list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    continue;
-                };
-                if decl.initializer.is_some() {
-                    last_initializer = decl.initializer;
-                }
-            }
-        }
-
-        let Some(init_node) = self.arena.get(last_initializer) else {
-            return false;
-        };
-        if init_node.kind != SyntaxKind::RegularExpressionLiteral as u16 {
-            return false;
-        }
-
-        let start = init_node.end.min(text.len() as u32) as usize;
-        let end = self
-            .variable_statement_effective_end(declarations)
-            .min(text.len() as u32) as usize;
-        if start >= end {
-            return false;
-        }
-
-        let bytes = text.as_bytes();
-        let mut i = start;
-        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
-            i += 1;
-        }
-        if bytes.get(i) != Some(&b']') {
-            return false;
-        }
-        i += 1;
-        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
-            i += 1;
-        }
-        if bytes.get(i) != Some(&b'/') {
-            return false;
-        }
-        i += 1;
-        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
-            i += 1;
-        }
-        if i < end && bytes.get(i) != Some(&b';') {
-            return false;
-        }
-
-        self.write_line();
-        self.write("/;");
-        true
     }
 
     fn emit_recovered_jsx_unary_trailing_less_than(
@@ -1888,6 +2000,73 @@ impl<'a> Printer<'a> {
                 || k == syntax_kind_ext::CLASS_EXPRESSION
         );
         !can_strip
+    }
+
+    pub(in crate::emitter) fn emit_leading_directive_prologue_statements(
+        &mut self,
+        statements: &[NodeIndex],
+        block_close_pos: u32,
+    ) -> usize {
+        let mut emitted_count = 0;
+        for (stmt_i, &stmt_idx) in statements.iter().enumerate() {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                break;
+            };
+            if !self.is_directive_prologue_statement(stmt_node) {
+                break;
+            }
+
+            let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+            if let Some(text) = self.source_text {
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                    if c_end > actual_start {
+                        break;
+                    }
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                    if let Ok(comment_text) =
+                        safe_slice::slice(text, c_pos as usize, c_end as usize)
+                    {
+                        self.write_comment_with_reindent(comment_text, Some(c_pos));
+                        if c_trailing {
+                            self.write_line();
+                        } else if comment_text.starts_with("/*") {
+                            self.pending_block_comment_space = true;
+                        }
+                    }
+                    self.comment_emit_idx += 1;
+                }
+            }
+
+            let before_emit_len = self.writer.len();
+            self.emit(stmt_idx);
+            if self.writer.len() > before_emit_len && !self.writer.is_at_line_start() {
+                let upper_bound = statements
+                    .get(stmt_i + 1)
+                    .and_then(|&next_idx| self.arena.get(next_idx))
+                    .map_or(block_close_pos, |next_node| next_node.pos);
+                let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
+                let max_pos = if stmt_i + 1 >= statements.len() {
+                    block_close_pos
+                } else {
+                    upper_bound
+                };
+                self.emit_trailing_comments_before(token_end, max_pos);
+                self.write_line();
+            }
+            emitted_count += 1;
+        }
+        emitted_count
+    }
+
+    fn is_directive_prologue_statement(&self, node: &Node) -> bool {
+        node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            && self
+                .arena
+                .get_expression_statement(node)
+                .and_then(|stmt| self.arena.get(stmt.expression))
+                .is_some_and(|expr| expr.is_string_literal())
     }
 
     /// Emit trailing comments after a semicolon. Scans backward through the

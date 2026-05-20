@@ -2,7 +2,7 @@
 //!
 //! See the parent [`contextual`](super) module for overview documentation.
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::contextual::extractors::{
     ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
     PropertyExtractor, RestOrOptionalTailPositionExtractor, RestParameterExtractor,
@@ -31,9 +31,12 @@ pub struct ContextualTypeContext<'a> {
 /// Evaluatable wrappers such as `ConstructorParameters<T>` are normalized first so
 /// generic call round-2 contextual typing doesn't pass the whole tuple application
 /// through as a single argument type.
-pub fn rest_argument_element_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn rest_argument_element_type(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
     fn rest_argument_element_type_inner(
-        db: &dyn crate::TypeDatabase,
+        db: &dyn crate::construction::TypeDatabase,
         type_id: TypeId,
         depth: usize,
     ) -> TypeId {
@@ -186,11 +189,38 @@ impl<'a> ContextualTypeContext<'a> {
             let mut param_types: Vec<TypeId> = Vec::new();
             let mut has_callable_member = false;
 
+            // tsc excludes construct-only Function members when any callable member exists,
+            // so `ComponentClass<P> | StatelessComponent<P> | string` infers only from the
+            // call signature. Single lookup per member for both the callable check and the
+            // constructor filter.
+            let has_non_constructor_callable = members.iter().any(|&m| {
+                // TypeId::FUNCTION intrinsic is callable (not construct-only).
+                if m == TypeId::FUNCTION {
+                    return true;
+                }
+                match self.interner.lookup(m) {
+                    Some(TypeData::Function(func_id)) => {
+                        !self.interner.function_shape(func_id).is_constructor
+                    }
+                    Some(TypeData::Callable(_)) => true,
+                    _ => false,
+                }
+            });
+
             for &m in members.iter() {
-                // Check if this member is callable (has call signatures)
-                let is_callable = crate::type_queries::is_callable_type(self.interner, m);
+                let type_data = self.interner.lookup(m);
+                let is_callable = m == TypeId::FUNCTION
+                    || matches!(
+                        type_data,
+                        Some(TypeData::Callable(_) | TypeData::Function(_))
+                    );
                 if !is_callable {
-                    // Non-callable member — excluded from set S per spec
+                    continue;
+                }
+                if has_non_constructor_callable
+                    && let Some(TypeData::Function(func_id)) = type_data
+                    && self.interner.function_shape(func_id).is_constructor
+                {
                     continue;
                 }
                 has_callable_member = true;
@@ -290,7 +320,7 @@ impl<'a> ContextualTypeContext<'a> {
         {
             if let TypeData::Conditional(cond_id) = expected_key {
                 let cond = self.interner.get_conditional(cond_id);
-                let mut branch_param_types = Vec::new();
+                let mut branch_param_types = Vec::with_capacity(2);
                 for branch in [cond.true_type, cond.false_type] {
                     // Guard against self-recursive aliases.
                     if branch == expected {
@@ -488,11 +518,13 @@ impl<'a> ContextualTypeContext<'a> {
         // discards instantiated parameter types like `Iterable<readonly [K, V]>`,
         // which in turn breaks nested generic call contextual typing.
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
-            if let Some(shape) = crate::get_contextual_signature_for_arity_with_compat_checker(
-                self.interner,
-                expected,
-                arg_count,
-            ) {
+            if let Some(shape) =
+                crate::operations::get_contextual_signature_for_arity_with_compat_checker(
+                    self.interner,
+                    expected,
+                    arg_count,
+                )
+            {
                 return extract_param_type_at_for_call(
                     self.interner,
                     &shape.params,
@@ -550,7 +582,7 @@ impl<'a> ContextualTypeContext<'a> {
         {
             if let TypeData::Conditional(cond_id) = expected_key {
                 let cond = self.interner.get_conditional(cond_id);
-                let mut branch_param_types = Vec::new();
+                let mut branch_param_types = Vec::with_capacity(2);
                 for (is_true_branch, branch) in [(true, cond.true_type), (false, cond.false_type)] {
                     // Guard against self-recursive aliases.
                     if branch == expected {
@@ -769,7 +801,7 @@ impl<'a> ContextualTypeContext<'a> {
     /// with the application arguments, and retry the `ThisType` extraction.
     pub fn get_this_type_from_marker_with_resolver(
         &self,
-        resolver: &dyn crate::TypeResolver,
+        resolver: &dyn crate::relations::subtype::TypeResolver,
     ) -> Option<TypeId> {
         // First try the simple extraction (no expansion needed).
         if let Some(result) = self.get_this_type_from_marker() {
@@ -818,8 +850,12 @@ impl<'a> ContextualTypeContext<'a> {
                 && let Some(body) = resolver.resolve_lazy(def_id, self.interner)
             {
                 let type_params = resolver.get_lazy_type_params(def_id).unwrap_or_default();
-                let expanded =
-                    crate::instantiate_generic(self.interner, body, &type_params, &app.args);
+                let expanded = crate::instantiation::instantiate::instantiate_generic(
+                    self.interner,
+                    body,
+                    &type_params,
+                    &app.args,
+                );
                 let expanded_ctx = ContextualTypeContext::with_expected_and_options(
                     self.interner,
                     expanded,
@@ -837,7 +873,7 @@ impl<'a> ContextualTypeContext<'a> {
     #[inline]
     pub fn get_this_type_from_marker_expanding(
         &self,
-        resolver: &dyn crate::TypeResolver,
+        resolver: &dyn crate::relations::subtype::TypeResolver,
     ) -> Option<TypeId> {
         self.get_this_type_from_marker_with_resolver(resolver)
     }
@@ -862,9 +898,10 @@ impl<'a> ContextualTypeContext<'a> {
 
         // Handle Application explicitly - unwrap to base type
         if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
-            if let Some(shape) =
-                crate::get_contextual_signature_with_compat_checker(self.interner, expected)
-            {
+            if let Some(shape) = crate::operations::get_contextual_signature_with_compat_checker(
+                self.interner,
+                expected,
+            ) {
                 return Some(shape.return_type);
             }
             let app = self.interner.type_application(app_id);
@@ -1109,9 +1146,20 @@ impl<'a> ContextualTypeContext<'a> {
                 TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)
             )
         {
+            // Deferred mapped: substitute K with the index literal before
+            // evaluation so same-name source/key collisions inside nested
+            // templates preserve the source object instead of letting generic
+            // evaluation rewrite both sides by name.
+            if let TypeData::Mapped(mapped_id) = expected_key
+                && let Some(per_index) =
+                    try_mapped_per_index_template(self.interner, mapped_id, index)
+            {
+                return Some(per_index);
+            }
+
             if let TypeData::Conditional(cond_id) = expected_key {
                 let cond = self.interner.get_conditional(cond_id);
-                let mut branch_elem_types = Vec::new();
+                let mut branch_elem_types = Vec::with_capacity(2);
                 for branch in [cond.true_type, cond.false_type] {
                     // Guard against self-recursive aliases.
                     if branch == expected {
@@ -1273,27 +1321,16 @@ impl<'a> ContextualTypeContext<'a> {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                     return ctx.get_property_type_inner(name, strip_optional_undefined);
                 }
-                // If evaluation deferred (e.g. { [K in keyof T]: TakeString } where T is a type
-                // parameter), use the mapped type's template as the contextual property type
-                // IF the template doesn't reference the mapped type's bound parameter or
-                // its iteration variable (TypeParameter with the same name).
-                // Without this check, templates like `({ key }: { key: key }) => void`
-                // would be returned uninstantiated, causing false TS2345 errors when the
-                // iteration variable `key` should be substituted with a concrete literal.
-                let mapped_param_name = mapped.type_param.name;
-                if mapped.template != TypeId::ANY
-                    && mapped.template != TypeId::ERROR
-                    && mapped.template != TypeId::NEVER
-                    && !crate::visitor::contains_type_matching(
-                        self.interner,
-                        mapped.template,
-                        |key| match key {
-                            TypeData::BoundParameter(_) => true,
-                            TypeData::TypeParameter(info) => info.name == mapped_param_name,
-                            _ => false,
-                        },
-                    )
-                {
+                // Deferred mapped (e.g. `{ [K in keyof T]: TakeString }` with T
+                // generic): if the template doesn't reference K, return it
+                // verbatim as the contextual property type — otherwise templates
+                // like `({ key }: { key: key }) => void` would surface as
+                // contextual without K being substituted, causing false TS2345.
+                if !crate::type_queries::template_references_iter_param(
+                    self.interner,
+                    mapped.template,
+                    mapped.type_param.name,
+                ) {
                     return Some(mapped.template);
                 }
                 // Fall back to the constraint of the mapped type's source.
@@ -1624,6 +1661,98 @@ impl<'a> ContextualTypeContext<'a> {
         } else {
             param_type
         }
+    }
+}
+
+/// Substitute K with the index literal in a homomorphic mapped type's
+/// template, recovering per-element contextual info when evaluation cannot
+/// reduce the mapped to a concrete tuple (e.g., source X is still generic).
+/// Refuses when key remapping or constraint shape would misalign positional
+/// indices with the mapped's key domain.
+fn try_mapped_per_index_template(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+    index: usize,
+) -> Option<TypeId> {
+    let mapped = db.mapped_type(mapped_id);
+
+    if !crate::type_queries::is_identity_name_mapping(db, &mapped) {
+        return None;
+    }
+    if !constraint_iterates_positional_keys(db, mapped.constraint) {
+        return None;
+    }
+    if !crate::type_queries::template_references_iter_param(
+        db,
+        mapped.template,
+        mapped.type_param.name,
+    ) {
+        return None;
+    }
+    if template_has_nested_same_name_source_key_collision(
+        db,
+        mapped.template,
+        mapped.type_param.name,
+    ) {
+        return None;
+    }
+
+    let key_literal = db.literal_number(index as f64);
+    Some(
+        crate::type_queries::instantiate_mapped_template_for_property(
+            db,
+            mapped.template,
+            mapped.type_param.name,
+            key_literal,
+        ),
+    )
+}
+
+/// Per-index contextual typing substitutes by the mapped key name. A direct
+/// `T[K]` template has a structural fast path in
+/// `instantiate_mapped_template_for_property`, but nested shapes such as
+/// `(v: P[P]) => void` can otherwise replace an outer source `P` as well as
+/// the mapped key `P`. Refuse those nested collisions so callers fall back to
+/// the existing non-positional contextual path instead of producing a wrong
+/// per-element type.
+fn template_has_nested_same_name_source_key_collision(
+    db: &dyn TypeDatabase,
+    template: TypeId,
+    iter_name: tsz_common::Atom,
+) -> bool {
+    if template.is_intrinsic() {
+        return false;
+    }
+    if matches!(db.lookup(template), Some(TypeData::IndexAccess(_, _))) {
+        return false;
+    }
+
+    crate::contains_type_matching(db, template, |key| match key {
+        TypeData::IndexAccess(object, index) => {
+            crate::contains_type_parameter_named_shallow(db, *object, iter_name)
+                && crate::contains_type_parameter_named_shallow(db, *index, iter_name)
+        }
+        _ => false,
+    })
+}
+
+/// Whether the mapped's iteration domain includes positional numeric keys —
+/// `keyof X`, the `number` intrinsic, or an intersection of those. Intersections
+/// are canonicalized/flattened so a single level of recursion is sufficient.
+fn constraint_iterates_positional_keys(db: &dyn TypeDatabase, constraint: TypeId) -> bool {
+    if constraint == TypeId::NUMBER {
+        return true;
+    }
+    if constraint.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(constraint) {
+        Some(TypeData::KeyOf(_)) => true,
+        Some(TypeData::Intersection(members)) => db
+            .type_list(members)
+            .iter()
+            .any(|&m| constraint_iterates_positional_keys(db, m)),
+        _ => false,
     }
 }
 

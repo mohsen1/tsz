@@ -9,20 +9,105 @@ use crate::instantiation::instantiate::{
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    ConditionalType, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
+    ConditionalType, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId,
+    TypeParamInfo,
 };
+use crate::visitor::{callable_shape_id, function_shape_id};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use tracing::trace;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
+use crate::type_queries::get_application_base;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum depth for tail-recursive conditional evaluation.
     /// This allows patterns like `type Loop<T> = T extends [...infer R] ? Loop<R> : never`
     /// to work with up to 1000 recursive calls instead of being limited to `MAX_EVALUATE_DEPTH`.
     const MAX_TAIL_RECURSION_DEPTH: usize = 1000;
+
+    fn normalize_conditional_object_operand(&mut self, type_id: TypeId) -> TypeId {
+        let (shape_id, with_index) = match self.interner().lookup(type_id) {
+            Some(TypeData::Object(shape_id)) => (shape_id, false),
+            Some(TypeData::ObjectWithIndex(shape_id)) => (shape_id, true),
+            _ => return type_id,
+        };
+
+        let shape = self.interner().object_shape(shape_id);
+
+        // Pre-scan: evaluate every property to prime the evaluator cache and check
+        // whether any TypeId changed. Use |= (not .any()) so that every property is
+        // evaluated unconditionally — short-circuiting would leave later properties
+        // un-cached, defeating the guarantee that the update pass below is cache-only.
+        // Deferring the clone until we know a change is needed avoids an O(P) allocation
+        // on every conditional evaluation for the common no-change case.
+        let str_val = shape
+            .string_index
+            .as_ref()
+            .map(|idx| self.evaluate(idx.value_type));
+        let num_val = shape
+            .number_index
+            .as_ref()
+            .map(|idx| self.evaluate(idx.value_type));
+        let mut any_changed = str_val
+            .zip(shape.string_index.as_ref())
+            .is_some_and(|(v, idx)| v != idx.value_type)
+            || num_val
+                .zip(shape.number_index.as_ref())
+                .is_some_and(|(v, idx)| v != idx.value_type);
+        for prop in shape.properties.iter() {
+            let rt = self.evaluate(prop.type_id);
+            let wt = self.evaluate(prop.write_type);
+            any_changed |= rt != prop.type_id || wt != prop.write_type;
+        }
+
+        if !any_changed {
+            return type_id;
+        }
+
+        // At least one property changed: clone and apply. Every evaluate() call below
+        // is a guaranteed cache hit because the pre-scan above evaluated every property.
+        let flags = shape.flags;
+        let symbol = shape.symbol;
+        let mut properties = shape.properties.clone();
+        for prop in &mut properties {
+            prop.type_id = self.evaluate(prop.type_id);
+            prop.write_type = self.evaluate(prop.write_type);
+        }
+
+        let mut string_index = shape.string_index;
+        if let (Some(index), Some(v)) = (string_index.as_mut(), str_val) {
+            index.value_type = v;
+        }
+
+        let mut number_index = shape.number_index;
+        if let (Some(index), Some(v)) = (number_index.as_mut(), num_val) {
+            index.value_type = v;
+        }
+
+        if with_index {
+            self.interner().object_with_index(ObjectShape {
+                flags,
+                properties,
+                string_index,
+                number_index,
+                symbol,
+            })
+        } else {
+            self.interner()
+                .object_with_flags_and_symbol(properties, flags, symbol)
+        }
+    }
+
+    fn conditional_subtype_checker(&self) -> SubtypeChecker<'a, R> {
+        let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+        checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access();
+        if let Some(query_db) = self.query_db() {
+            checker = checker.with_query_db(query_db);
+        }
+        checker
+    }
 
     /// Evaluate a conditional type: T extends U ? X : Y
     ///
@@ -46,6 +131,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // loop so their capacity is preserved across iterations.
         let mut loop_bindings: FxHashMap<Atom, TypeId> = FxHashMap::default();
         let mut loop_visited: FxHashSet<(TypeId, TypeId)> = FxHashSet::default();
+        let mut tail_application_branch: Option<TypeId> = None;
         // Cycle detection for the tail-recursion loop.
         // Tracks (check_type, extends_type) pairs seen during tail calls.
         // When the same pair is encountered again, the conditional is cyclically
@@ -68,7 +154,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             let cond = &current_cond;
-
             // Cycle detection: if we've seen this exact conditional state before,
             // the tail-recursion loop is cycling. Return ERROR to break the loop.
             if tail_recursion_count > 0
@@ -92,8 +177,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return result;
             }
 
-            let mut check_type = self.evaluate(cond.check_type);
-            let extends_type = self.evaluate(cond.extends_type);
+            // If the check side is already a deferred conditional over generic
+            // inputs and the extends side has no infer pattern to bind, the
+            // outer conditional is also indeterminate. Defer before evaluating
+            // the check side; otherwise recursive helper aliases can expand
+            // nested generic conditionals before any concrete instantiation is
+            // available.
+            if !self.type_contains_infer(cond.extends_type)
+                && matches!(
+                    self.interner().lookup(cond.check_type),
+                    Some(TypeData::Conditional(_))
+                )
+                && crate::visitor::contains_type_parameters(self.interner(), cond.check_type)
+            {
+                return self.interner().conditional(*cond);
+            }
+
+            let evaluated_check = self.evaluate(cond.check_type);
+            let mut check_type = self.normalize_conditional_object_operand(evaluated_check);
+            let evaluated_extends = self.evaluate(cond.extends_type);
+            let extends_type = self.normalize_conditional_object_operand(evaluated_extends);
             if matches!(
                 self.interner().lookup(check_type),
                 Some(TypeData::Application(_))
@@ -146,13 +249,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             );
 
             // PERF: Cache predicate results for extends_type once per iteration.
-            // type_contains_infer is called up to 5 times and contains_type_parameters
+            // type_contains_infer is called up to 5 times and contains_free_type_parameters
             // at least once, each creating fresh FxHashSet/FxHashMap allocations.
             let extends_has_infer = self.type_contains_infer(extends_type)
                 || self.type_contains_infer(cond.extends_type);
+            // Use the FREE-type-parameter query: type parameters bound by inner
+            // function/callable signatures (e.g., the `T` in `<T>() => ...`) are
+            // already resolved within their own scope, so they must not force the
+            // surrounding conditional to stay deferred. Without this distinction,
+            // `(<T>() => T extends any ? 1 : 2) extends (<T>() => T extends Y ? 1 : 2)`
+            // — the structural shape of the type-challenges `Equal<X, Y>` trick —
+            // is incorrectly held deferred whenever either side embeds a generic
+            // function literal.
             let extends_has_type_params =
-                crate::visitor::contains_type_parameters(self.interner(), extends_type)
-                    || crate::visitor::contains_type_parameters(self.interner(), cond.extends_type);
+                crate::visitor::contains_free_type_parameters(self.interner(), extends_type)
+                    || crate::visitor::contains_free_type_parameters(
+                        self.interner(),
+                        cond.extends_type,
+                    );
 
             if cond.is_distributive && check_type == TypeId::NEVER {
                 return TypeId::NEVER;
@@ -166,8 +280,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if extends_has_infer {
                     let mut bindings = FxHashMap::default();
                     let mut visited = FxHashSet::default();
-                    let mut checker =
-                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    let mut checker = self.conditional_subtype_checker();
                     checker.allow_bivariant_rest = true;
                     self.match_infer_pattern(
                         check_type,
@@ -228,8 +341,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let mut subst = TypeSubstitution::single(info.name, check_type);
                 let mut inferred = check_type;
                 if let Some(constraint) = info.constraint {
-                    let mut checker =
-                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    let mut checker = self.conditional_subtype_checker();
                     checker.allow_bivariant_rest = true;
                     let Some(filtered) =
                         self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
@@ -264,10 +376,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().conditional(*cond);
             }
 
+            // Concrete-element fast paths run only when the extends shape contains no
+            // free infer variables or type parameters; otherwise full structural relation
+            // is required.
+            let extends_is_concrete = !extends_has_infer && !extends_has_type_params;
+
             // PERF: Single lookup for array/tuple extends patterns with infer
             match self.interner().lookup(extends_unwrapped) {
                 Some(TypeData::Array(ext_elem)) => {
                     if let Some(TypeData::Infer(info)) = self.interner().lookup(ext_elem) {
+                        return self.eval_conditional_array_infer(cond, check_unwrapped, info);
+                    }
+                    if extends_is_concrete
+                        && let Some(result) = self.eval_conditional_array_concrete(
+                            cond,
+                            check_unwrapped,
+                            ext_elem,
+                            false,
+                        )
+                    {
+                        return result;
+                    }
+                }
+                Some(TypeData::Application(app_id)) => {
+                    if let Some(info) = self.application_array_infer_pattern(app_id) {
                         return self.eval_conditional_array_infer(cond, check_unwrapped, info);
                     }
                 }
@@ -292,8 +424,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     {
                         return result;
                     }
+                    // Evaluated Array<X> becomes ObjectWithIndex. Use direct element comparison
+                    // to avoid the expensive structural check that can fail due to cycle detection
+                    // inside Array's method-signature conditional types.
+                    if extends_is_concrete {
+                        let allow_readonly =
+                            self.application_base_name_is_readonly_array(cond.extends_type);
+                        if let Some(target_elem) =
+                            self.expanded_array_object_element(shape_id, allow_readonly)
+                            && let Some(result) = self.eval_conditional_array_concrete(
+                                cond,
+                                check_unwrapped,
+                                target_elem,
+                                allow_readonly,
+                            )
+                        {
+                            return result;
+                        }
+                    }
                 }
                 _ => {}
+            }
+
+            let raw_extends_unwrapped = match self.interner().lookup(cond.extends_type) {
+                Some(TypeData::ReadonlyType(inner)) => inner,
+                _ => cond.extends_type,
+            };
+            if raw_extends_unwrapped != extends_unwrapped
+                && let Some(TypeData::Application(app_id)) =
+                    self.interner().lookup(raw_extends_unwrapped)
+            {
+                if let Some(info) = self.application_array_infer_pattern(app_id) {
+                    return self.eval_conditional_array_infer(cond, check_unwrapped, info);
+                }
+                // Fires when the raw extends is Application(Array, [X]) but the evaluated
+                // form changed (e.g., to ObjectWithIndex). Use direct element comparison.
+                if extends_is_concrete {
+                    let allow_readonly =
+                        self.application_base_name_is_readonly_array(raw_extends_unwrapped);
+                    if let Some(target_elem) =
+                        self.application_array_concrete_element(app_id, allow_readonly)
+                        && let Some(result) = self.eval_conditional_array_concrete(
+                            cond,
+                            check_unwrapped,
+                            target_elem,
+                            allow_readonly,
+                        )
+                    {
+                        return result;
+                    }
+                }
             }
 
             // Step 2: Check for naked type parameter
@@ -325,8 +505,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     && extends_has_infer
                     && let Some(constraint) = param.constraint
                 {
-                    let mut checker =
-                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    let mut checker = self.conditional_subtype_checker();
                     checker.allow_bivariant_rest = true;
                     let mut bindings = FxHashMap::default();
                     let mut visited = FxHashSet::default();
@@ -488,7 +667,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             if !extends_has_infer
                 && extends_has_type_params
-                && crate::visitor::contains_type_parameters(self.interner(), cond.check_type)
+                && crate::visitor::contains_free_type_parameters(self.interner(), cond.check_type)
                 && self
                     .resolve_generic_constraint(cond.check_type)
                     .is_none_or(|constraint| constraint == cond.check_type)
@@ -511,15 +690,67 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             if extends_has_infer {
                 // PERF: Only allocate SubtypeChecker when infer matching is needed.
-                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
+                if cond.extends_type != extends_type
+                    && self.type_contains_infer(cond.extends_type)
+                    && self.match_infer_pattern(
+                        check_type,
+                        cond.extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    )
+                    && !loop_bindings.is_empty()
+                {
+                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
+                    return self.evaluate(substituted_true);
+                }
+                loop_bindings.clear();
+                loop_visited.clear();
+                if cond.extends_type != extends_type
+                    && self.type_contains_infer(cond.extends_type)
+                    && let Some(alias) = self.interner().get_display_alias(check_type)
+                    && alias != check_type
+                    && self.match_infer_pattern(
+                        alias,
+                        cond.extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    )
+                    && !loop_bindings.is_empty()
+                {
+                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
+                    return self.evaluate(substituted_true);
+                }
+                loop_bindings.clear();
+                loop_visited.clear();
+                if self.type_contains_infer(cond.extends_type)
+                    && let Some(alias) = self.interner().get_display_alias(check_type)
+                    && alias != check_type
+                    && self.match_infer_pattern(
+                        alias,
+                        cond.extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    )
+                    && !loop_bindings.is_empty()
+                {
+                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
+                    return self.evaluate(substituted_true);
+                }
+                loop_bindings.clear();
+                loop_visited.clear();
                 if self.match_infer_pattern(
                     check_type,
                     extends_type,
                     &mut loop_bindings,
                     &mut loop_visited,
                     &mut checker,
-                ) {
+                ) && !loop_bindings.is_empty()
+                {
                     let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
                     // Check for tail-recursive true branch (e.g., Trim<T> recurses on match):
                     // type Trim<S> = S extends ` ${infer T}` ? Trim<T> : S;
@@ -541,6 +772,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             if let Some(TypeData::Conditional(next_cond_id)) =
                                 self.interner().lookup(instantiated)
                             {
+                                tail_application_branch.get_or_insert(substituted_true);
                                 let next_cond = self.interner().get_conditional(next_cond_id);
                                 current_cond = next_cond;
                                 tail_recursion_count += 1;
@@ -549,7 +781,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             // Not a conditional — evaluate normally.
                             // Signal the intermediate Application for forward display alias.
                             self.apparent_conditional_branch = Some(substituted_true);
-                            return self.evaluate(instantiated);
+                            return self.evaluate_preserving_tail_application_branch_alias(
+                                instantiated,
+                                Some(substituted_true),
+                            );
                         }
                     }
                     // Direct Application branch.
@@ -558,8 +793,48 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(TypeData::Application(_))
                     ) {
                         self.apparent_conditional_branch = Some(substituted_true);
+                        return self.evaluate_preserving_tail_application_branch_alias(
+                            substituted_true,
+                            Some(substituted_true),
+                        );
                     }
                     return self.evaluate(substituted_true);
+                }
+
+                let re_evaluated_check = self.evaluate(check_type);
+                if re_evaluated_check != check_type {
+                    loop_bindings.clear();
+                    loop_visited.clear();
+                    let mut checker = self.conditional_subtype_checker();
+                    checker.allow_bivariant_rest = true;
+                    if self.match_infer_pattern(
+                        re_evaluated_check,
+                        extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    ) && !loop_bindings.is_empty()
+                    {
+                        let substituted_true =
+                            self.substitute_infer(cond.true_type, &loop_bindings);
+                        return self.evaluate(substituted_true);
+                    }
+                }
+
+                if self.infer_pattern_has_unresolved_application(cond.extends_type)
+                    || (extends_type != cond.extends_type
+                        && self.infer_pattern_has_unresolved_application(extends_type))
+                {
+                    // Lib-backed patterns can be seen before their base is
+                    // resolved. Keep the conditional deferred rather than
+                    // caching the false branch for e.g. Array<infer U>.
+                    return self.interner().conditional(ConditionalType {
+                        check_type,
+                        extends_type,
+                        true_type: cond.true_type,
+                        false_type: cond.false_type,
+                        is_distributive: cond.is_distributive,
+                    });
                 }
 
                 // Infer pattern didn't match on check_type directly.
@@ -581,8 +856,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checked_concrete_constraint = true;
                         let mut bindings2 = FxHashMap::default();
                         let mut visited2 = FxHashSet::default();
-                        let mut checker2 =
-                            SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                        let mut checker2 = self.conditional_subtype_checker();
                         checker2.allow_bivariant_rest = true;
                         if self.match_infer_pattern(
                             constraint,
@@ -652,13 +926,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         if let Some(TypeData::Conditional(next_cond_id)) =
                             self.interner().lookup(instantiated)
                         {
+                            tail_application_branch.get_or_insert(cond.false_type);
                             let next_cond = self.interner().get_conditional(next_cond_id);
                             current_cond = next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
                         self.apparent_conditional_branch = Some(cond.false_type);
-                        return self.evaluate(instantiated);
+                        return self.evaluate_preserving_tail_application_branch_alias(
+                            instantiated,
+                            Some(cond.false_type),
+                        );
                     }
                     if matches!(
                         self.interner().lookup(cond.false_type),
@@ -669,6 +947,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
 
                 // Not a tail-recursive case - evaluate normally
+                return self.evaluate(cond.false_type);
+            }
+
+            // tsc takes the false branch when the extends type is unresolvable
+            // (e.g. `Function` without lib types); this preserves structural
+            // modifiers (readonly) instead of collapsing the conditional to T.
+            if crate::visitor::is_error_type(self.interner(), extends_type) {
                 return self.evaluate(cond.false_type);
             }
 
@@ -718,9 +1003,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // Function.
                     CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                     false
+                } else if Self::function_intrinsic_extends_callable_target(
+                    self.interner(),
+                    check_type,
+                    extends_type,
+                ) {
+                    // In conditional types, tsc treats the global `Function`
+                    // intrinsic as satisfying callable targets. Ordinary
+                    // assignment intentionally remains stricter.
+                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                    true
                 } else {
-                    let mut strict_checker =
-                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    let mut strict_checker = self.conditional_subtype_checker();
                     let r = strict_checker.is_subtype_of(check_type, extends_type);
                     CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                     r
@@ -747,6 +1041,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // where the wrapper type provides enough info for a determinate result.
                 || matches!(self.interner().lookup(check_type), Some(TypeData::Lazy(_)))
                 || matches!(self.interner().lookup(extends_type), Some(TypeData::Lazy(_)))
+                // An Application in the extends position that survived evaluation means
+                // the current resolver lacks the generic body (e.g., a lib type like
+                // Pick, Readonly, or Required not yet known to the TypeEnvironment
+                // resolver). Taking the false branch would be incorrect when the
+                // Application could expand to a type that `check_type` does satisfy.
+                // Defer so a later resolver pass (CheckerContext) can expand it.
+                || matches!(self.interner().lookup(extends_type), Some(TypeData::Application(_)))
             {
                 // Subtype check failed, but either side contains unresolved type
                 // parameters or lazy references. The result is indeterminate: once
@@ -787,13 +1088,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if let Some(TypeData::Conditional(next_cond_id)) =
                         self.interner().lookup(instantiated)
                     {
+                        tail_application_branch.get_or_insert(result_branch);
                         let next_cond = self.interner().get_conditional(next_cond_id);
                         current_cond = next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
                     self.apparent_conditional_branch = Some(result_branch);
-                    return self.evaluate(instantiated);
+                    return self.evaluate_preserving_tail_application_branch_alias(
+                        instantiated,
+                        Some(result_branch),
+                    );
                 }
                 if matches!(
                     self.interner().lookup(result_branch),
@@ -804,16 +1109,68 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             // Not a tail-recursive case - evaluate normally
-            return self.evaluate_preserving_intersection_branch_alias(result_branch);
+            return self.evaluate_preserving_tail_application_branch_alias(
+                result_branch,
+                tail_application_branch,
+            );
         }
+    }
+
+    fn evaluate_preserving_tail_application_branch_alias(
+        &mut self,
+        branch: TypeId,
+        tail_application_branch: Option<TypeId>,
+    ) -> TypeId {
+        let evaluated = self.evaluate_preserving_intersection_branch_alias(branch);
+        if let Some(application_branch) = tail_application_branch
+            && evaluated != application_branch
+            && self.is_concrete_application_branch(application_branch, evaluated)
+        {
+            self.interner()
+                .store_display_alias_preferring_application(evaluated, application_branch);
+        }
+        evaluated
     }
 
     fn evaluate_preserving_intersection_branch_alias(&mut self, branch: TypeId) -> TypeId {
         let evaluated = self.evaluate(branch);
-        if evaluated != branch && self.is_concrete_application_led_intersection(branch) {
-            self.interner().store_display_alias(evaluated, branch);
+        if evaluated != branch {
+            if self.is_concrete_application_branch(branch, evaluated) {
+                self.interner()
+                    .store_display_alias_preferring_application(evaluated, branch);
+            } else if self.is_concrete_application_led_intersection(branch) {
+                self.interner().store_display_alias(evaluated, branch);
+            }
         }
         evaluated
+    }
+
+    fn is_concrete_application_branch(&self, branch: TypeId, evaluated: TypeId) -> bool {
+        matches!(
+            self.interner().lookup(branch),
+            Some(TypeData::Application(_))
+        ) && Self::is_displayable_conditional_branch_result(self.interner(), evaluated)
+            && !crate::type_queries::contains_generic_type_parameters_db(self.interner(), branch)
+    }
+
+    fn is_displayable_conditional_branch_result(
+        interner: &dyn crate::construction::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        matches!(
+            interner.lookup(type_id),
+            Some(
+                TypeData::Application(_)
+                    | TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Array(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Function(_)
+                    | TypeData::Callable(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::Mapped(_)
+            )
+        )
     }
 
     fn is_concrete_application_led_intersection(&self, type_id: TypeId) -> bool {
@@ -937,7 +1294,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// This fast-path prevents false positives like `string extends Function`
     /// evaluating to true in conditional types.
     fn is_primitive_vs_function(
-        interner: &dyn crate::TypeDatabase,
+        interner: &dyn crate::construction::TypeDatabase,
         check_type: TypeId,
         extends_type: TypeId,
     ) -> bool {
@@ -983,6 +1340,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         false
     }
 
+    fn function_intrinsic_extends_callable_target(
+        interner: &dyn crate::construction::TypeDatabase,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> bool {
+        use crate::types::IntrinsicKind;
+
+        let check_is_function_intrinsic = check_type == TypeId::FUNCTION
+            || matches!(
+                interner.lookup(check_type),
+                Some(TypeData::Intrinsic(IntrinsicKind::Function))
+            );
+        if !check_is_function_intrinsic {
+            return false;
+        }
+
+        if function_shape_id(interner, extends_type).is_some() {
+            return true;
+        }
+
+        callable_shape_id(interner, extends_type)
+            .is_some_and(|shape_id| !interner.callable_shape(shape_id).call_signatures.is_empty())
+    }
+
     /// Distribute a conditional type over a union.
     /// (A | B) extends U ? X : Y -> (A extends U ? X : Y) | (B extends U ? X : Y)
     pub(crate) fn distribute_conditional(
@@ -1008,6 +1389,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut all_same = true;
         let mut first_result = TypeId::NONE;
 
+        // PERF: Pre-allocate the substitution memo outside the loop.
+        // Reusing the same HashMap (with clear() between uses) avoids
+        // O(members.len()) allocations for large union distributions.
+        let mut memo = FxHashMap::default();
+
         for &member in members {
             // Check if depth was exceeded during previous iterations
             if self.is_depth_exceeded() {
@@ -1017,7 +1403,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Substitute the specific member if true_type or false_type references the original check_type
             // This handles cases like: NonNullable<T> = T extends null ? never : T
             // When T = A | B, we need (A extends null ? never : A) | (B extends null ? never : B)
-            let mut memo = FxHashMap::default();
+            memo.clear();
             let substituted_extends_type =
                 self.substitute_exact_type(extends_type, original_check_type, member, &mut memo);
             memo.clear();
@@ -1063,6 +1449,87 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.interner().union_from_slice(&results)
     }
 
+    fn infer_pattern_has_unresolved_application(&mut self, type_id: TypeId) -> bool {
+        let mut visited = FxHashSet::default();
+        self.infer_pattern_has_unresolved_application_inner(type_id, &mut visited)
+    }
+
+    fn infer_pattern_has_unresolved_application_inner(
+        &mut self,
+        type_id: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if type_id.is_intrinsic() || !visited.insert(type_id) {
+            return false;
+        }
+
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner().type_application(app_id);
+                let app_args_contain_infer =
+                    app.args.iter().any(|&arg| self.type_contains_infer(arg));
+                if app_args_contain_infer && self.application_base_is_unresolved(app.base) {
+                    return true;
+                }
+                app.args
+                    .iter()
+                    .any(|&arg| self.infer_pattern_has_unresolved_application_inner(arg, visited))
+            }
+            Some(
+                TypeData::Array(elem) | TypeData::ReadonlyType(elem) | TypeData::NoInfer(elem),
+            ) => self.infer_pattern_has_unresolved_application_inner(elem, visited),
+            Some(TypeData::Tuple(elements)) => {
+                self.interner().tuple_list(elements).iter().any(|elem| {
+                    self.infer_pattern_has_unresolved_application_inner(elem.type_id, visited)
+                })
+            }
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
+                self.interner().type_list(members).iter().any(|&member| {
+                    self.infer_pattern_has_unresolved_application_inner(member, visited)
+                })
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                shape.properties.iter().any(|prop| {
+                    self.infer_pattern_has_unresolved_application_inner(prop.type_id, visited)
+                }) || shape.string_index.as_ref().is_some_and(|index| {
+                    self.infer_pattern_has_unresolved_application_inner(index.value_type, visited)
+                }) || shape.number_index.as_ref().is_some_and(|index| {
+                    self.infer_pattern_has_unresolved_application_inner(index.value_type, visited)
+                })
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = self.interner().get_conditional(cond_id);
+                self.infer_pattern_has_unresolved_application_inner(cond.check_type, visited)
+                    || self
+                        .infer_pattern_has_unresolved_application_inner(cond.extends_type, visited)
+                    || self.infer_pattern_has_unresolved_application_inner(cond.true_type, visited)
+                    || self.infer_pattern_has_unresolved_application_inner(cond.false_type, visited)
+            }
+            _ => false,
+        }
+    }
+
+    fn application_array_infer_pattern(
+        &self,
+        app_id: crate::types::TypeApplicationId,
+    ) -> Option<TypeParamInfo> {
+        let app = self.interner().type_application(app_id);
+        if app.args.len() != 1 {
+            return None;
+        }
+        let Some(TypeData::Infer(info)) = self.interner().lookup(app.args[0]) else {
+            return None;
+        };
+
+        let is_array_like_pattern = self.application_base_name_is(app.base, "Array")
+            || self.application_base_name_is(app.base, "ReadonlyArray")
+            || self.application_base_has_array_shape(app.base, false)
+            || self.application_base_has_array_shape(app.base, true);
+
+        is_array_like_pattern.then_some(info)
+    }
+
     /// Handle array extends pattern: T extends (infer U)[] ? ...
     fn eval_conditional_array_infer(
         &mut self,
@@ -1072,6 +1539,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         // PERF: Single lookup for type parameter check + inferred extraction
         let check_key = self.interner().lookup(check_unwrapped);
+        let allow_readonly_array = matches!(
+            self.interner().lookup(cond.extends_type),
+            Some(TypeData::ReadonlyType(_))
+        );
         if matches!(
             check_key,
             Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
@@ -1126,6 +1597,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.interner().union_from_slice(&parts))
                 }
             }
+            Some(TypeData::Application(app_id)) => {
+                if let Some(element) = self.application_array_element(app_id, allow_readonly_array)
+                {
+                    Some(element)
+                } else {
+                    let app = self.interner().type_application(app_id);
+                    if self.application_base_is_unresolved(app.base) {
+                        return self.interner().conditional(*cond);
+                    }
+                    None
+                }
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                self.expanded_array_object_element(shape_id, allow_readonly_array)
+            }
             _ => None,
         };
 
@@ -1136,7 +1622,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
-            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
             let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
             if is_union && !cond.is_distributive {
@@ -1163,7 +1649,298 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         {
             return true_inst;
         }
-        self.evaluate(true_inst)
+        self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
+    }
+
+    /// Handle concrete array extends pattern: `T extends Array<X>` (no infer in X).
+    ///
+    /// Extracts the element type `S` from `check_unwrapped`, then checks `S <: target_elem`.
+    /// Returns `Some(true_branch)` or `Some(false_branch)` on success, `None` to fall
+    /// through to the full structural subtype check.
+    ///
+    /// This avoids expanding `Array<X>` into its structural `ObjectWithIndex` form which
+    /// triggers recursive method-signature comparisons that can hit cycle detection limits.
+    fn eval_conditional_array_concrete(
+        &mut self,
+        cond: &ConditionalType,
+        check_unwrapped: TypeId,
+        target_elem: TypeId,
+        allow_readonly_array: bool,
+    ) -> Option<TypeId> {
+        // Defer when the check type is still a naked type parameter or infer variable —
+        // the full conditional pipeline is required to handle those cases correctly.
+        if matches!(
+            self.interner().lookup(check_unwrapped),
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+        ) {
+            return None;
+        }
+
+        let check_elem = self.extract_array_element(check_unwrapped, allow_readonly_array)?;
+
+        let mut checker = self.conditional_subtype_checker();
+        checker.allow_bivariant_rest = true;
+        let branch = if checker.is_subtype_of(check_elem, target_elem) {
+            cond.true_type
+        } else {
+            cond.false_type
+        };
+        Some(self.evaluate(branch))
+    }
+
+    /// Extract the element type from an array-like `check_type`.
+    ///
+    /// Handles `Array(elem)`, `ReadonlyType(Array(elem))`, `Tuple(...)`,
+    /// `Application(Array|ReadonlyArray, [elem])`, and `ObjectWithIndex` array shapes.
+    /// Returns `None` when the type is not an array-like shape.
+    fn extract_array_element(
+        &mut self,
+        check_unwrapped: TypeId,
+        allow_readonly_array: bool,
+    ) -> Option<TypeId> {
+        match self.interner().lookup(check_unwrapped) {
+            Some(TypeData::Array(elem)) => Some(elem),
+            Some(TypeData::ReadonlyType(inner)) if allow_readonly_array => {
+                let Some(TypeData::Array(elem)) = self.interner().lookup(inner) else {
+                    return None;
+                };
+                Some(elem)
+            }
+            Some(TypeData::Tuple(elements)) => {
+                let elements = self.interner().tuple_list(elements);
+                // Empty tuple — element type is `never`.
+                if elements.is_empty() {
+                    return Some(TypeId::NEVER);
+                }
+                let mut parts: SmallVec<[TypeId; 8]> = SmallVec::new();
+                for element in elements.iter() {
+                    if element.rest {
+                        parts.push(self.rest_element_type(element.type_id));
+                    } else if element.optional {
+                        parts.push(self.interner().union2(element.type_id, TypeId::UNDEFINED));
+                    } else {
+                        parts.push(element.type_id);
+                    }
+                }
+                Some(self.interner().union_from_slice(&parts))
+            }
+            Some(TypeData::Application(app_id)) => {
+                self.application_array_concrete_element(app_id, allow_readonly_array)
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                self.expanded_array_object_element(shape_id, allow_readonly_array)
+            }
+            _ => None,
+        }
+    }
+
+    /// Return the element type of `Application(Array|ReadonlyArray, [X])` when X is
+    /// not an `Infer` variable (those are handled by `eval_conditional_array_infer`).
+    fn application_array_concrete_element(
+        &self,
+        app_id: crate::types::TypeApplicationId,
+        allow_readonly: bool,
+    ) -> Option<TypeId> {
+        let elem = self.application_array_element(app_id, allow_readonly)?;
+        match self.interner().lookup(elem) {
+            Some(TypeData::Infer(_)) => None,
+            _ => Some(elem),
+        }
+    }
+
+    /// Return `true` when `type_id` is `ReadonlyType(_)`, an `Application` of
+    /// `ReadonlyArray`, or a user-defined alias that resolves to a readonly-array shape.
+    fn application_base_name_is_readonly_array(&self, type_id: TypeId) -> bool {
+        match self.interner().lookup(type_id) {
+            Some(TypeData::ReadonlyType(_)) => true,
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner().type_application(app_id);
+                self.application_base_name_is(app.base, "ReadonlyArray")
+                    || self.application_base_has_array_shape(app.base, true)
+            }
+            _ => false,
+        }
+    }
+
+    fn expanded_array_object_element(
+        &self,
+        shape_id: ObjectShapeId,
+        allow_readonly_array: bool,
+    ) -> Option<TypeId> {
+        let shape = self.interner().object_shape(shape_id);
+        let number_index = shape.number_index.as_ref()?;
+        self.expanded_array_object_matches(shape_id, allow_readonly_array)
+            .then_some(number_index.value_type)
+    }
+
+    fn expanded_array_object_matches(
+        &self,
+        shape_id: ObjectShapeId,
+        allow_readonly_array: bool,
+    ) -> bool {
+        let shape = self.interner().object_shape(shape_id);
+        if shape.number_index.is_none() {
+            return false;
+        }
+        self.object_shape_has_array_markers(shape_id)
+            || (allow_readonly_array && self.object_shape_has_readonly_array_markers(shape_id))
+    }
+
+    fn object_shape_has_array_markers(&self, shape_id: ObjectShapeId) -> bool {
+        self.object_shape_has_property(shape_id, "push")
+            && self.object_shape_has_property(shape_id, "shift")
+    }
+
+    fn object_shape_has_readonly_array_markers(&self, shape_id: ObjectShapeId) -> bool {
+        self.object_shape_has_property(shape_id, "slice")
+            && self.object_shape_has_property(shape_id, "concat")
+    }
+
+    fn object_shape_has_property(&self, shape_id: ObjectShapeId, expected: &str) -> bool {
+        self.interner()
+            .object_shape(shape_id)
+            .properties
+            .iter()
+            .any(|prop| self.interner().resolve_atom_ref(prop.name).as_ref() == expected)
+    }
+
+    fn application_array_element(
+        &self,
+        app_id: crate::types::TypeApplicationId,
+        allow_readonly_array: bool,
+    ) -> Option<TypeId> {
+        let app = self.interner().type_application(app_id);
+        if app.args.len() != 1 {
+            return None;
+        }
+        let is_array_application = self.application_base_name_is(app.base, "Array")
+            || self.application_base_has_array_shape(app.base, false);
+        let is_readonly_array_application = allow_readonly_array
+            && (self.application_base_name_is(app.base, "ReadonlyArray")
+                || self.application_base_has_array_shape(app.base, true));
+
+        (is_array_application || is_readonly_array_application).then_some(app.args[0])
+    }
+
+    fn application_base_name_is(&self, base: TypeId, expected: &str) -> bool {
+        if expected == "Array" && self.application_base_is_registered_array(base) {
+            return true;
+        }
+
+        match self.interner().lookup(base) {
+            Some(TypeData::Lazy(def_id)) => {
+                if expected == "ReadonlyArray"
+                    && self.resolver().is_builtin_readonly_array_def(def_id)
+                {
+                    return true;
+                }
+                self.resolver()
+                    .get_def_name(def_id)
+                    .is_some_and(|name| self.interner().resolve_atom_ref(name).as_ref() == expected)
+            }
+            Some(TypeData::TypeQuery(sym_ref)) => self
+                .resolver()
+                .symbol_to_def_id(sym_ref)
+                .and_then(|def_id| self.resolver().get_def_name(def_id))
+                .is_some_and(|name| self.interner().resolve_atom_ref(name).as_ref() == expected),
+            Some(TypeData::UnresolvedTypeName(name)) => {
+                self.interner().resolve_atom_ref(name).as_ref() == expected
+            }
+            _ => self
+                .interner()
+                .get_display_alias(base)
+                .is_some_and(|alias| self.application_base_name_is(alias, expected)),
+        }
+    }
+
+    fn application_base_is_registered_array(&self, base: TypeId) -> bool {
+        self.interner()
+            .get_array_base_type()
+            .is_some_and(|array_base| self.application_bases_are_equivalent(base, array_base))
+            || self
+                .interner()
+                .get_array_display_base_type()
+                .is_some_and(|array_base| self.application_bases_are_equivalent(base, array_base))
+    }
+
+    fn application_bases_are_equivalent(&self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+        match (self.interner().lookup(left), self.interner().lookup(right)) {
+            (Some(TypeData::Lazy(left_def)), Some(TypeData::Lazy(right_def))) => {
+                self.resolver().defs_are_equivalent(left_def, right_def)
+            }
+            _ => false,
+        }
+    }
+
+    fn application_base_has_array_shape(&self, base: TypeId, allow_readonly_array: bool) -> bool {
+        match self.interner().lookup(base) {
+            Some(TypeData::Lazy(def_id)) => self
+                .resolver()
+                .resolve_lazy(def_id, self.interner())
+                .is_some_and(|resolved| {
+                    self.resolved_application_base_has_array_shape(resolved, allow_readonly_array)
+                }),
+            Some(TypeData::TypeQuery(sym_ref)) => self
+                .resolver()
+                .symbol_to_def_id(sym_ref)
+                .and_then(|def_id| self.resolver().resolve_lazy(def_id, self.interner()))
+                .is_some_and(|resolved| {
+                    self.resolved_application_base_has_array_shape(resolved, allow_readonly_array)
+                }),
+            _ => self
+                .interner()
+                .get_display_alias(base)
+                .is_some_and(|alias| {
+                    self.application_base_has_array_shape(alias, allow_readonly_array)
+                }),
+        }
+    }
+
+    fn application_base_is_unresolved(&self, base: TypeId) -> bool {
+        match self.interner().lookup(base) {
+            Some(TypeData::Lazy(def_id)) => {
+                self.resolver().get_def_name(def_id).is_none()
+                    && self
+                        .resolver()
+                        .resolve_lazy(def_id, self.interner())
+                        .is_none()
+            }
+            Some(TypeData::TypeQuery(sym_ref)) => self
+                .resolver()
+                .symbol_to_def_id(sym_ref)
+                .is_none_or(|def_id| {
+                    self.resolver().get_def_name(def_id).is_none()
+                        && self
+                            .resolver()
+                            .resolve_lazy(def_id, self.interner())
+                            .is_none()
+                }),
+            _ => self
+                .interner()
+                .get_display_alias(base)
+                .is_some_and(|alias| self.application_base_is_unresolved(alias)),
+        }
+    }
+
+    fn resolved_application_base_has_array_shape(
+        &self,
+        type_id: TypeId,
+        allow_readonly_array: bool,
+    ) -> bool {
+        match self.interner().lookup(type_id) {
+            Some(TypeData::Array(_)) => true,
+            Some(TypeData::ReadonlyType(inner)) => {
+                allow_readonly_array
+                    && matches!(self.interner().lookup(inner), Some(TypeData::Array(_)))
+            }
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                self.expanded_array_object_matches(shape_id, allow_readonly_array)
+            }
+            _ => false,
+        }
     }
 
     /// Handle tuple extends pattern: T extends [infer U] ? ...
@@ -1249,7 +2026,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
-            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
             let Some(filtered) =
                 self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
@@ -1263,7 +2040,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
-        self.evaluate(true_inst)
+        self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
     }
 
     /// Handle object extends pattern: T extends { prop: infer U } ? ...
@@ -1363,21 +2140,66 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().conditional(*cond);
         }
 
-        let mut subst = TypeSubstitution::new();
+        // Pass 1: resolve each property and accumulate inferred types per variable name.
+        // Co-located uses of the same `infer T` union their candidates. Track which
+        // variables received contributions from more than one slot, and the effective
+        // constraint from the first occurrence that declares one.
+        let mut accumulated: FxHashMap<Atom, TypeId> = FxHashMap::default();
+        // Set when ≥2 distinct slots contributed to the same variable.
+        let mut multi_slot: FxHashSet<Atom> = FxHashSet::default();
+        // (constraint, optional) from the first constrained occurrence.
+        let mut effective_constraint: FxHashMap<Atom, (TypeId, bool)> = FxHashMap::default();
+
         for &(prop_name, info, optional) in infer_props {
-            let Some(mut inferred) =
+            let Some(inferred) =
                 self.resolve_conditional_infer_property(check_unwrapped, prop_name, optional)
             else {
                 return self.evaluate(cond.false_type);
             };
 
-            subst.insert(info.name, inferred);
+            if let Some(existing) = accumulated.get(&info.name).copied() {
+                // tsc unions co-located infer candidates across property slots.
+                multi_slot.insert(info.name);
+                let merged = self.interner().union2(existing, inferred);
+                accumulated.insert(info.name, merged);
+            } else {
+                accumulated.insert(info.name, inferred);
+            }
 
+            // The constraint declared at the first occurrence is the variable's constraint;
+            // later co-located uses that lack a constraint are just additional candidates.
             if let Some(constraint) = info.constraint {
-                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                effective_constraint
+                    .entry(info.name)
+                    .or_insert((constraint, optional));
+            }
+        }
+
+        // Pass 2: apply each variable's effective constraint to its fully-accumulated type,
+        // then build the substitution in declaration order.
+        //
+        // Constraint semantics differ by how the union arose:
+        // - Multi-slot accumulation: the whole union must satisfy the constraint (tsc fails
+        //   the conditional when `string | number extends string` is false).
+        // - Single-slot with a union source property: filter per-member and keep matching
+        //   parts (preserving the original `filter_inferred_by_constraint_or_undefined`
+        //   behaviour for non-distributive unions).
+        let mut subst = TypeSubstitution::new();
+        for &(_, info, _) in infer_props {
+            if subst.get(info.name).is_some() {
+                continue; // already processed this variable
+            }
+            let Some(mut inferred) = accumulated.get(&info.name).copied() else {
+                continue;
+            };
+
+            if let Some(&(constraint, opt)) = effective_constraint.get(&info.name) {
+                let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
                 let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
-                if optional {
+                let is_multi = multi_slot.contains(&info.name);
+
+                if opt {
                     let Some(filtered) =
                         self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
                     else {
@@ -1386,7 +2208,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.evaluate(false_inst);
                     };
                     inferred = filtered;
-                } else if is_union || cond.is_distributive {
+                } else if is_union && !cond.is_distributive && !is_multi {
+                    // Union from a single source property — filter members, keep matching.
                     inferred = self.filter_inferred_by_constraint_or_undefined(
                         inferred,
                         constraint,
@@ -1395,12 +2218,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 } else if !checker.is_subtype_of(inferred, constraint) {
                     return self.evaluate(cond.false_type);
                 }
-                subst.insert(info.name, inferred);
             }
+
+            subst.insert(info.name, inferred);
         }
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
-        self.evaluate(true_inst)
+        self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
     }
 
     /// Handle object property infer pattern
@@ -1430,7 +2254,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
-            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
             let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
             if prop_optional {
@@ -1442,8 +2266,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return self.evaluate(false_inst);
                 };
                 inferred = filtered;
-            } else if is_union || cond.is_distributive {
-                // For unions or distributive conditionals, use filter that adds undefined
+            } else if is_union && !cond.is_distributive {
+                // Non-distributive union candidates keep the historical partial-match
+                // behavior; distributive conditionals have already split union members.
                 inferred = self.filter_inferred_by_constraint_or_undefined(
                     inferred,
                     constraint,
@@ -1459,7 +2284,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
-        self.evaluate(true_inst)
+        self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
     }
 
     fn resolve_conditional_infer_property(
@@ -1470,6 +2295,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> Option<TypeId> {
         if source == TypeId::OBJECT {
             return optional.then_some(TypeId::UNDEFINED);
+        }
+
+        if let Some(type_id) = self.implicit_sequence_property_type(source, prop_name) {
+            return Some(type_id);
         }
 
         if let Some(query_db) = self.query_db() {
@@ -1677,11 +2506,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
-            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
             let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
-            if is_union || cond.is_distributive {
-                // For unions or distributive conditionals, use filter that adds undefined
+            if is_union && !cond.is_distributive {
+                // Non-distributive union candidates keep the historical partial-match
+                // behavior; distributive conditionals have already split union members.
                 inferred = self.filter_inferred_by_constraint_or_undefined(
                     inferred,
                     constraint,
@@ -1697,7 +2527,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
-        self.evaluate(true_inst)
+        self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
     }
 
     /// Try to match conditional types at the Application level before structural expansion.
@@ -1713,9 +2543,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // it at the Application level. This is critical for complex generic interfaces
         // like Promise, Map, Set where structural expansion loses the ability to
         // match type arguments directly.
-        let Some(TypeData::Application(_)) = self.interner().lookup(cond.extends_type) else {
+        let Some(TypeData::Application(pattern_app_id)) = self.interner().lookup(cond.extends_type)
+        else {
             return None;
         };
+        let pattern_base = self.interner().type_application(pattern_app_id).base;
 
         let contains_infer =
             if let Some(contains_infer) = self.cached_contains_infer(cond.extends_type) {
@@ -1729,46 +2561,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        // Use the raw (unevaluated) check_type — it may still be an Application
-        // which enables Application-vs-Application matching in match_infer_pattern.
-        // When the raw form is *not* an Application (e.g. an IndexAccess inside a
-        // mapped-type per-key conditional like `S[K] extends Pattern<infer T>`),
-        // evaluate it once: if evaluation yields an Application, that Application
-        // is what we want to feed to `match_infer_pattern` so the
-        // Application-vs-Application path can bind the infer arguments. Without
-        // this, downstream `try_expand_application_for_conditional_check`
-        // unfolds the evaluated Application into its structural Object form and
-        // the Application-level match is irretrievably lost.
-        // The raw `cond.check_type` may not be an Application (e.g. an
-        // `IndexAccess` like `S[K]` inside a mapped-type per-key conditional).
-        // Try to recover an Application form so the Application-vs-Application
-        // path in `match_infer_pattern` can bind the infer arguments:
-        //   1. Evaluate the raw type once. If that yields an Application,
-        //      use it directly.
-        //   2. Otherwise, the raw type may have evaluated to the *body* of
-        //      an Application (the structural Object the body interned to).
-        //      The interner records `display_alias[body] = Application` for
-        //      every evaluated Application; consult it to recover the
-        //      original Application form when the evaluated check_type is
-        //      not itself an Application but came from one.
+        // Recover an Application form for `check_type` whose base matches
+        // `pattern_base`. Three shapes need recovery:
+        //   1. raw type isn't an Application (e.g. `S[K]` inside a per-key
+        //      conditional) — evaluate may yield one;
+        //   2. raw type evaluates to a structural Object/Callable — the
+        //      `display_alias` map records a back-reference to the original
+        //      Application;
+        //   3. raw type IS an Application but its base differs from the
+        //      pattern's (e.g. `Exclude<X<T> | undefined, undefined>` wraps
+        //      `X<T>`) — evaluate through the wrapper so the
+        //      Application-vs-Application match has a same-base source.
         let mut check_type = cond.check_type;
-        if !matches!(
-            self.interner().lookup(check_type),
-            Some(TypeData::Application(_))
-        ) {
+        if get_application_base(self.interner(), check_type) != Some(pattern_base) {
             let evaluated = self.evaluate(check_type);
-            if matches!(
-                self.interner().lookup(evaluated),
-                Some(TypeData::Application(_))
-            ) {
+            if get_application_base(self.interner(), evaluated) == Some(pattern_base) {
                 check_type = evaluated;
-            } else if let Some(application_origin) = self.interner().get_display_alias(evaluated)
-                && matches!(
-                    self.interner().lookup(application_origin),
-                    Some(TypeData::Application(_))
-                )
+            } else if let Some(origin) = self.try_recover_application_from_display_alias(evaluated)
+                && get_application_base(self.interner(), origin) == Some(pattern_base)
             {
-                check_type = application_origin;
+                check_type = origin;
             }
         }
 
@@ -1786,7 +2598,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Try infer pattern matching with unevaluated types.
         // match_infer_pattern handles Application vs Application matching
         // by comparing base types and recursing on type arguments.
-        let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+        let mut checker = self.conditional_subtype_checker();
         checker.allow_bivariant_rest = true;
         let mut bindings = FxHashMap::default();
         let mut visited = FxHashSet::default();
@@ -1801,8 +2613,167 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let substituted_true = self.substitute_infer(cond.true_type, &bindings);
             return Some(self.evaluate(substituted_true));
         }
+        if self.application_infer_bases_match(check_type, cond.extends_type, &mut checker) {
+            return Some(self.evaluate(cond.false_type));
+        }
+
+        // Last-chance recovery: reduce the source through generic-alias bodies
+        // whose alias body is a conditional that yields an Application form
+        // matching the pattern's base. Handles `Application(ReturnType, [F])
+        // extends Application(Promise, [infer T])` by simulating ReturnType's
+        // body conditional to discover its `Application(Promise, [...])`
+        // substituted true-branch, which the structural fallback cannot
+        // recover from the fully expanded structural object.
+        //
+        // Only worth attempting when the raw source is itself an `Application`
+        // (potentially reducible by alias peeling) or has a display-alias
+        // back-reference to one (recorded for parametric structural bodies).
+        // For intrinsics, type parameters, unions, and other shapes the
+        // reducer would just do one no-op lookup before returning None.
+        for candidate in [cond.check_type, check_type] {
+            if Self::is_alias_reducible_candidate(self.interner(), candidate)
+                && let Some(reduced) = self.reduce_alias_body_to_application_form(candidate)
+                && reduced != candidate
+                && reduced != check_type
+            {
+                let mut checker = self.conditional_subtype_checker();
+                checker.allow_bivariant_rest = true;
+                let mut bindings = FxHashMap::default();
+                let mut visited = FxHashSet::default();
+                let matched = self.match_infer_pattern(
+                    reduced,
+                    cond.extends_type,
+                    &mut bindings,
+                    &mut visited,
+                    &mut checker,
+                );
+                if matched && !bindings.is_empty() {
+                    let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                    return Some(self.evaluate(substituted_true));
+                }
+            }
+        }
+
+        if let Some(alias) = self.try_recover_application_from_display_alias(check_type)
+            && alias != check_type
+        {
+            let mut checker = self.conditional_subtype_checker();
+            checker.allow_bivariant_rest = true;
+            let mut bindings = FxHashMap::default();
+            let mut visited = FxHashSet::default();
+            let matched = self.match_infer_pattern(
+                alias,
+                cond.extends_type,
+                &mut bindings,
+                &mut visited,
+                &mut checker,
+            );
+            if matched && !bindings.is_empty() {
+                let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                return Some(self.evaluate(substituted_true));
+            }
+        }
 
         None
+    }
+
+    fn application_infer_bases_match(
+        &self,
+        check_type: TypeId,
+        extends_type: TypeId,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let (
+            Some(TypeData::Application(check_app_id)),
+            Some(TypeData::Application(pattern_app_id)),
+        ) = (
+            self.interner().lookup(check_type),
+            self.interner().lookup(extends_type),
+        )
+        else {
+            return false;
+        };
+        let check_app = self.interner().type_application(check_app_id);
+        let pattern_app = self.interner().type_application(pattern_app_id);
+        check_app.args.len() == pattern_app.args.len()
+            && (check_app.base == pattern_app.base
+                || (checker.is_subtype_of(check_app.base, pattern_app.base)
+                    && checker.is_subtype_of(pattern_app.base, check_app.base)))
+    }
+
+    /// Cheap pre-check before `reduce_alias_body_to_application_form`: only
+    /// candidate types can be usefully reduced. Avoids the per-conditional
+    /// hot-path cost of entering the reducer just to bail on the first
+    /// step for intrinsics, type parameters, etc.
+    fn is_alias_reducible_candidate(
+        interner: &dyn crate::construction::TypeDatabase,
+        ty: TypeId,
+    ) -> bool {
+        if crate::type_queries::is_generic_type(interner, ty) {
+            return true;
+        }
+        // Parametric structural instantiations record a back-reference from
+        // their evaluated structural form to the original `Application` via
+        // the display-alias map; the reducer can recover that form.
+        interner
+            .get_display_alias(ty)
+            .is_some_and(|alias| matches!(interner.lookup(alias), Some(TypeData::Application(_))))
+    }
+
+    /// Reduce `ty` to its underlying `Application(...)` form by walking one
+    /// alias step (Application body) or simulating one infer-match step
+    /// (Conditional body with `infer` in `extends`). When `ty` isn't itself
+    /// an `Application`, falls back to the display-alias back-reference
+    /// `evaluate_application` records for parametric structural
+    /// instantiations. Returns `None` on no-op or fixed point.
+    fn reduce_alias_body_to_application_form(&mut self, ty: TypeId) -> Option<TypeId> {
+        let mut current = ty;
+        for _ in 0..Self::MAX_ALIAS_REDUCTION_STEPS {
+            if let Some(alias) = self.try_recover_application_from_display_alias(current) {
+                current = alias;
+            }
+
+            let Some(substituted) = self.alias_application_substituted_body(current) else {
+                break;
+            };
+            let next = match self.interner().lookup(substituted)? {
+                TypeData::Application(_) => substituted,
+                TypeData::Conditional(cond_id) => {
+                    let cond = self.interner().get_conditional(cond_id);
+                    if !self.type_contains_infer(cond.extends_type) {
+                        break;
+                    }
+                    let cond_extends = cond.extends_type;
+                    let cond_true = cond.true_type;
+                    let check_eval = self.evaluate(cond.check_type);
+                    let mut checker = self.conditional_subtype_checker();
+                    checker.allow_bivariant_rest = true;
+                    let mut bindings = FxHashMap::default();
+                    let mut visited = FxHashSet::default();
+                    if !self.match_infer_pattern(
+                        check_eval,
+                        cond_extends,
+                        &mut bindings,
+                        &mut visited,
+                        &mut checker,
+                    ) {
+                        break;
+                    }
+                    // `substitute_infer` is the only step here that can return a
+                    // fixed point distinct from the substituted Application; the
+                    // Application arm above already filters no-ops via
+                    // `alias_application_substituted_body`.
+                    let result = self.substitute_infer(cond_true, &bindings);
+                    if result == current {
+                        break;
+                    }
+                    result
+                }
+                _ => break,
+            };
+            current = next;
+        }
+        (current != ty).then_some(current)
     }
 
     /// Check whether a type is an **intersection** of type parameters/Lazy refs.
@@ -1815,10 +2786,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// We intentionally limit this to Intersection types. Other compound types like
     /// `keyof T`, `T[K]`, or `Lowercase<T>` are evaluated eagerly by TSC through
     /// constraint resolution and should NOT be deferred at this stage.
-    ///
-    /// Type parameters inside generic function bodies are represented as `Lazy(DefId)`
-    /// references. The standard `contains_type_parameters` visitor doesn't walk through
-    /// `Lazy` refs, so this helper checks for Lazy members directly.
     fn type_is_compound_generic(&self, type_id: TypeId) -> bool {
         // Check for compound types containing unresolved type parameter references.
         // We intentionally skip the `contains_type_parameters` visitor here because
@@ -1839,17 +2806,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 members.iter().any(|&m| {
                     matches!(
                         self.interner().lookup(m),
-                        Some(
-                            TypeData::Lazy(_) | TypeData::Recursive(_) | TypeData::TypeParameter(_)
-                        )
+                        Some(TypeData::Recursive(_) | TypeData::TypeParameter(_))
                     )
                 })
             }
             Some(TypeData::IndexAccess(obj, idx)) => {
-                // IndexAccess types like T[K] where T or K contains unresolved
-                // type parameters (Lazy/TypeParameter) are genuinely indeterminate.
-                // Example: Extract<M[K], ArrayLike<any>> must stay deferred because
+                // IndexAccess types like T[K] where T or K is an unresolved type
+                // parameter are genuinely indeterminate and must be deferred.
+                // Example: Extract<M[K], ArrayLike<any>> stays deferred because
                 // M[K] could resolve to anything once M and K are instantiated.
+                // Named concrete types (Lazy(DefId)) resolve eagerly and do NOT
+                // trigger deferral — Interface["prop"] is always evaluatable.
                 Self::is_generic_ref(self.interner(), obj)
                     || Self::is_generic_ref(self.interner(), idx)
             }
@@ -1902,17 +2869,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         })
     }
 
-    fn is_generic_ref(db: &dyn crate::TypeDatabase, type_id: TypeId) -> bool {
+    fn is_generic_ref(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
         }
         match db.lookup(type_id) {
-            Some(
-                TypeData::Lazy(_)
-                | TypeData::TypeParameter(_)
-                | TypeData::Infer(_)
-                | TypeData::Recursive(_),
-            ) => true,
+            // Lazy(DefId) is a reference to a concrete named type (interface, class, type
+            // alias). It is always resolvable — evaluate(Lazy(D)) yields the body of D,
+            // which is structural and concrete. Only true unknowns (TypeParameter, Infer)
+            // and self-recursive placeholders (Recursive) should trigger deferral.
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_) | TypeData::Recursive(_)) => true,
             Some(TypeData::IndexAccess(obj, idx)) => {
                 Self::is_generic_ref(db, obj) || Self::is_generic_ref(db, idx)
             }
@@ -2022,5 +2988,120 @@ mod tests {
                 non_fn
             )
         );
+    }
+
+    /// `Lazy(DefId)` is a reference to a concrete named type (interface, class, type alias).
+    /// It must NOT be treated as a generic ref — it is always resolvable and not an
+    /// unresolved type parameter.
+    #[test]
+    fn test_is_generic_ref_lazy_is_not_generic() {
+        let interner = TypeInterner::new();
+        let lazy_a = interner.lazy(crate::def::DefId(100));
+        let lazy_b = interner.lazy(crate::def::DefId(200));
+        assert!(
+            !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner, lazy_a
+            ),
+            "Lazy(DefId) should not be a generic ref"
+        );
+        assert!(
+            !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner, lazy_b
+            ),
+            "Lazy(DefId) with different DefId should not be a generic ref"
+        );
+    }
+
+    /// `TypeParameter` is a genuine unknown and must still trigger deferral.
+    /// Tests two different parameter names to prove name-independence.
+    #[test]
+    fn test_is_generic_ref_type_parameter_is_generic() {
+        let interner = TypeInterner::new();
+        let atom_t = interner.intern_string("T");
+        let atom_k = interner.intern_string("K");
+        let make_tp = |name| {
+            interner.type_param(crate::types::TypeParamInfo {
+                name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            })
+        };
+        assert!(
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner,
+                make_tp(atom_t)
+            ),
+            "TypeParameter T should be a generic ref"
+        );
+        assert!(
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner,
+                make_tp(atom_k)
+            ),
+            "TypeParameter K (renamed) should be a generic ref"
+        );
+    }
+
+    /// `IndexAccess(Lazy(DefId), string)` — property access on a named interface — must NOT
+    /// trigger deferral. This was the root cause of issue #6256 where
+    /// `Interface["prop"] extends Record<string, any>` was incorrectly deferred.
+    #[test]
+    fn test_is_generic_ref_index_access_lazy_is_not_generic() {
+        let interner = TypeInterner::new();
+        let lazy = interner.lazy(crate::def::DefId(42));
+        let idx_access = interner.index_access(lazy, TypeId::STRING);
+        assert!(
+            !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner, idx_access
+            ),
+            "IndexAccess(Lazy(DefId), string) should not be a generic ref"
+        );
+    }
+
+    /// `IndexAccess(TypeParam, K)` must remain a generic ref — `T[K]` is indeterminate
+    /// until T and K are substituted.
+    #[test]
+    fn test_is_generic_ref_index_access_type_param_remains_generic() {
+        let interner = TypeInterner::new();
+        let atom_m = interner.intern_string("M");
+        let tp_m = interner.type_param(crate::types::TypeParamInfo {
+            name: atom_m,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let idx_access = interner.index_access(tp_m, TypeId::STRING);
+        assert!(
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                &interner, idx_access
+            ),
+            "IndexAccess(TypeParam, string) should be a generic ref"
+        );
+    }
+
+    /// Intrinsic `TypeId`s (like `TypeId::STRING`) are never generic regardless of
+    /// what internal data they might map to.
+    #[test]
+    fn test_is_generic_ref_intrinsics_are_never_generic() {
+        let interner = TypeInterner::new();
+        for id in [
+            TypeId::STRING,
+            TypeId::NUMBER,
+            TypeId::BOOLEAN,
+            TypeId::ANY,
+            TypeId::UNKNOWN,
+            TypeId::NEVER,
+            TypeId::VOID,
+            TypeId::UNDEFINED,
+            TypeId::NULL,
+        ] {
+            assert!(
+                !TypeEvaluator::<crate::relations::subtype::NoopResolver>::is_generic_ref(
+                    &interner, id
+                ),
+                "intrinsic {id:?} should not be a generic ref"
+            );
+        }
     }
 }

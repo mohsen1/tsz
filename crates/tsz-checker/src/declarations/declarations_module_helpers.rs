@@ -98,16 +98,30 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         false
     }
 
+    /// Check whether a module augmentation target exists.
+    ///
+    /// Relative augmentation names must resolve from the declaring file. The
+    /// ambient-module and project-wide specifier fallbacks in `module_exists`
+    /// are valid for bare module names, but they are not source-file-specific
+    /// enough for `declare module "./x"`.
+    pub(crate) fn module_augmentation_target_exists(&self, module_name: &str) -> bool {
+        if self.is_relative_module_name(module_name) {
+            self.ctx.resolve_import_target(module_name).is_some()
+        } else {
+            self.module_exists(module_name)
+        }
+    }
+
     /// Check if a module name matches any wildcard ambient module pattern.
     pub(crate) fn matches_ambient_module_pattern(&self, module_name: &str) -> bool {
         let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
 
-        // Prefer the project-wide pattern list built once on `ProjectEnv`. The
+        // Prefer the project-wide pattern list built once on `ProgramContext`. The
         // per-binder `declared_modules` / `shorthand_ambient_modules` sets are
         // intentionally empty after the per-binder map empty-out; their
         // contents now live in `global_declared_modules.patterns`. The local
         // sets are still scanned as a fallback for tests/standalone callers
-        // without a `ProjectEnv`.
+        // without a `ProgramContext`.
         if let Some(ref dm) = self.ctx.global_declared_modules {
             if dm.matches_wildcard(module_name) {
                 return true;

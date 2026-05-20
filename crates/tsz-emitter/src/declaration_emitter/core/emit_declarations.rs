@@ -19,6 +19,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.reserved_names.clear();
         self.symbol_module_specifier_cache.clear();
         self.import_plan = ImportPlan::default();
+        self.local_namespace_alias_targets.clear();
 
         self.reset_writer();
         self.indent_level = 0;
@@ -64,6 +65,16 @@ impl<'a> DeclarationEmitter<'a> {
                     self.import_name_map.len(),
                     self.import_name_map
                 );
+                let source_is_js_file = self
+                    .arena
+                    .get(root_idx)
+                    .and_then(|node| self.arena.get_source_file(node))
+                    .is_some_and(|source_file| self.source_file_is_js(source_file));
+                let source_is_declaration_file = self
+                    .arena
+                    .get(root_idx)
+                    .and_then(|node| self.arena.get_source_file(node))
+                    .is_some_and(|source_file| source_file.is_declaration_file);
                 let mut analyzer = crate::declaration_emitter::usage_analyzer::UsageAnalyzer::new(
                     self.arena,
                     binder,
@@ -72,10 +83,10 @@ impl<'a> DeclarationEmitter<'a> {
                     std::sync::Arc::clone(current_arena),
                     self.current_file_path.clone(),
                     &self.import_name_map,
-                    self.arena
-                        .get(root_idx)
-                        .and_then(|node| self.arena.get_source_file(node))
-                        .is_some_and(|source_file| self.source_file_is_js(source_file)),
+                    crate::declaration_emitter::usage_analyzer::UsageAnalyzerSourceFlags {
+                        source_is_js_file,
+                        source_is_declaration_file,
+                    },
                 );
                 let used = analyzer.analyze(root_idx).clone();
                 let foreign = analyzer.get_foreign_symbols();
@@ -137,11 +148,20 @@ impl<'a> DeclarationEmitter<'a> {
         };
         self.all_comments = source_file.comments.clone();
         self.comment_emit_idx = 0;
+        if self.emit_js_cross_file_commonjs_merge_diagnostic(source_file) {
+            return String::new();
+        }
         let (js_named_export_names, folded_named_exports, deferred_named_exports) =
             self.collect_js_folded_named_exports(source_file);
         self.js_named_export_names = js_named_export_names;
         self.js_folded_named_export_statements = folded_named_exports;
         self.js_deferred_named_export_statements = deferred_named_exports;
+        self.js_deferred_local_export_enum_statements =
+            self.collect_js_local_export_enum_statements(source_file);
+        let (deferred_interface_statements, skipped_interface_exports) =
+            self.collect_js_local_export_interface_statements(source_file);
+        self.js_deferred_local_export_interface_statements = deferred_interface_statements;
+        self.js_skipped_local_export_interface_exports = skipped_interface_exports;
         let (local_export_aliases, skipped_local_export_aliases) =
             self.collect_js_local_export_aliases(source_file);
         self.js_local_export_aliases = local_export_aliases;
@@ -151,21 +171,28 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_export_default_names = self.collect_js_export_default_names(source_file);
         self.emitted_js_export_default_names.clear();
         self.js_shadowed_export_equals_local_aliases.clear();
+        self.js_elided_bare_require_binding_names.clear();
         let (
             js_commonjs_named_export_names,
             js_commonjs_named_function_exports,
             js_commonjs_named_value_exports,
         ) = self.collect_js_commonjs_named_exports(source_file);
         self.js_named_export_names
-            .extend(js_commonjs_named_export_names);
+            .extend(js_commonjs_named_export_names.iter().cloned());
+        let js_hoistable_function_export_names = self.js_named_export_names.clone();
         let (module_exports_obj_names, module_exports_obj_stmts) =
             self.collect_js_module_exports_object_names(source_file);
         self.js_named_export_names.extend(module_exports_obj_names);
         self.js_module_exports_object_stmts = module_exports_obj_stmts;
+        self.js_define_property_export_local_names =
+            self.collect_js_commonjs_define_property_export_local_names(source_file);
         self.js_require_property_import_aliases.clear();
-        let (cjs_aliases, cjs_alias_stmts) = self.collect_js_cjs_export_aliases(source_file);
-        self.js_cjs_export_aliases = cjs_aliases;
-        self.js_cjs_export_alias_statements = cjs_alias_stmts;
+        let cjs_aliases = self.collect_js_cjs_export_aliases(source_file);
+        self.js_cjs_export_aliases = cjs_aliases.aliases;
+        self.js_cjs_export_alias_value_declarations = cjs_aliases.value_declarations;
+        self.js_cjs_export_alias_statements = cjs_aliases.skipped_statements;
+        self.js_deferred_local_export_alias_function_statements =
+            self.collect_js_deferred_local_export_alias_function_statements(source_file);
         // Mark CJS alias local names as used so they survive usage analysis pruning.
         if let Some(binder) = self.binder
             && let Some(ref mut used) = self.used_symbols
@@ -181,6 +208,16 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.js_namespace_export_aliases =
             self.collect_js_namespace_export_aliases(source_file, &self.js_export_equals_names);
+        self.js_deferred_namespace_alias_declarations = self
+            .collect_js_namespace_alias_declaration_statements(
+                source_file,
+                &self.js_export_equals_names,
+            );
+        self.js_deferred_namespace_alias_declaration_stmts = self
+            .js_deferred_namespace_alias_declarations
+            .values()
+            .flat_map(|stmt_idxs| stmt_idxs.iter().copied())
+            .collect();
         let js_namespace_class_expando_declarations =
             self.collect_js_namespace_class_expando_declarations(source_file);
         let js_commonjs_expando_declarations = self
@@ -222,6 +259,17 @@ impl<'a> DeclarationEmitter<'a> {
             self.collect_js_class_like_prototype_members(source_file, &self.js_export_equals_names);
         self.js_class_like_prototype_members = js_class_like.members;
         self.js_class_like_prototype_stmts = js_class_like.consumed_stmts;
+        let js_class_static = self.collect_js_class_static_members(source_file);
+        self.js_class_static_members = js_class_static.members;
+        self.js_class_static_member_stmts = js_class_static.consumed_stmts;
+        for stmt_idx in &self.js_class_static_member_stmts {
+            self.js_deferred_function_export_statements.remove(stmt_idx);
+            self.js_deferred_value_export_statements.remove(stmt_idx);
+        }
+        let (js_class_define_property_accessors, js_class_define_property_accessor_stmts) =
+            self.collect_js_class_define_property_accessors(source_file);
+        self.js_class_define_property_accessors = js_class_define_property_accessors;
+        self.js_class_define_property_accessor_stmts = js_class_define_property_accessor_stmts;
         let js_static_method_augmentations =
             self.collect_js_class_static_method_augmentations(source_file);
         self.js_static_method_augmentation_statements = js_static_method_augmentations.statements;
@@ -242,6 +290,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.js_deferred_function_export_statements.remove(stmt_idx);
             self.js_deferred_value_export_statements.remove(stmt_idx);
         }
+        let js_commonjs_closure_export = self.js_commonjs_export_assignment_closure(source_file);
 
         debug!(
             "[DEBUG] source_file has {} comments",
@@ -286,15 +335,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_js_anonymous_export_equals_value_declaration(initializer);
             }
         }
-
-        // For JS source files, hoist `export default <Identifier>` statements that
-        // reference a top-level local declaration to the very top of the .d.ts.
-        // This mirrors tsc's `transformDeclarations` behaviour for JS inputs.
-        // The original ExportDeclaration statement is suppressed when the main loop
-        // reaches it because `emit_export_declaration` checks
-        // `emitted_js_export_default_names`.
-        if self.source_is_js_file && !self.js_export_default_names.is_empty() {
-            self.emit_hoisted_js_export_default_statements(source_file);
+        if let Some((_, root_initializer, ref secondary_members)) = js_commonjs_closure_export {
+            self.emit_js_commonjs_closure_export_assignment(root_initializer, secondary_members);
         }
 
         if self.source_is_js_file {
@@ -311,12 +353,41 @@ impl<'a> DeclarationEmitter<'a> {
                 if self.js_deferred_named_export_statements.contains(&stmt_idx) {
                     continue;
                 }
+                if self
+                    .js_deferred_namespace_alias_declaration_stmts
+                    .contains(&stmt_idx)
+                {
+                    continue;
+                }
+                if self
+                    .js_deferred_local_export_alias_function_statements
+                    .contains(&stmt_idx)
+                {
+                    continue;
+                }
                 let should_hoist = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                    self.arena.get_function(stmt_node).is_some_and(|func| {
-                        self.arena
-                            .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
-                            || self.is_js_named_exported_name(func.name)
-                    })
+                    let jsdoc_chain = self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
+                    let Some(func) = self.arena.get_function(stmt_node) else {
+                        continue;
+                    };
+                    if self.get_identifier_text(func.name).is_some_and(|name| {
+                        self.js_define_property_export_local_names.contains(&name)
+                    }) {
+                        continue;
+                    }
+                    let is_exported_or_named_export = self
+                        .arena
+                        .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                        || self
+                            .get_identifier_text(func.name)
+                            .is_some_and(|name| js_hoistable_function_export_names.contains(&name));
+                    if is_exported_or_named_export {
+                        true
+                    } else {
+                        jsdoc_chain
+                            .iter()
+                            .any(|jsdoc| Self::jsdoc_has_function_signature_tags(jsdoc))
+                    }
                 } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                     self.arena
                         .get_export_decl(stmt_node)
@@ -362,6 +433,15 @@ impl<'a> DeclarationEmitter<'a> {
             if skipped_nested_module_export_namespace_stmts.contains(&stmt_idx) {
                 continue;
             }
+            if js_commonjs_closure_export
+                .as_ref()
+                .is_some_and(|(closure_stmt_idx, _, _)| *closure_stmt_idx == stmt_idx)
+            {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
+                continue;
+            }
             if deferred_js_namespace_objects.contains(&stmt_idx)
                 && !self.js_namespace_object_stmt_emits_in_source_order(stmt_idx)
             {
@@ -373,10 +453,43 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 continue;
             }
+            if self
+                .js_deferred_local_export_alias_function_statements
+                .contains(&stmt_idx)
+            {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
+                continue;
+            }
             if self.js_cjs_export_alias_statements.contains(&stmt_idx) {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
+                if self
+                    .js_deferred_local_export_alias_function_statements
+                    .is_empty()
+                {
+                    self.emit_js_cjs_export_aliases();
+                }
                 continue;
             }
             if self.js_module_exports_object_stmts.contains(&stmt_idx) {
+                if let Some(initializer) = self.js_module_exports_assignment_initializer(stmt_idx) {
+                    self.emit_js_anonymous_module_exports_object_members(initializer);
+                }
+                continue;
+            }
+            if self
+                .js_deferred_local_export_enum_statements
+                .contains(&stmt_idx)
+            {
+                continue;
+            }
+            if self
+                .js_deferred_local_export_interface_statements
+                .contains(&stmt_idx)
+            {
                 continue;
             }
             if self
@@ -424,6 +537,9 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_pending_jsdoc_callback_type_aliases(source_file);
         self.emit_trailing_top_level_jsdoc_type_aliases(source_file);
         self.emit_js_require_property_import_aliases();
+        self.emit_deferred_js_local_export_enum_statements(source_file);
+        self.emit_deferred_js_local_export_interface_statements(source_file);
+        self.emit_deferred_js_local_export_alias_function_statements(source_file);
         self.emit_js_local_export_aliases();
         self.emit_js_cjs_export_aliases();
         if !self.source_is_js_file
@@ -475,86 +591,16 @@ impl<'a> DeclarationEmitter<'a> {
                     continue;
                 }
                 let import_line = format!("import {{ {import_specifier} }} from {module};");
-                if !output.contains(&import_line) && output.contains(&format!(": {name}<")) {
+                if !output.contains(&import_line)
+                    && output.contains(&format!(": {name}<"))
+                    && !Self::type_reference_only_in_matching_ambient_module(&output, name, module)
+                {
                     output.insert_str(0, &(import_line + "\n"));
                 }
             }
         }
         output = Self::prune_unused_named_import_specifiers_from_output(&output);
         output
-    }
-
-    fn prune_unused_named_import_specifiers_from_output(output: &str) -> String {
-        let lines = output.lines().collect::<Vec<_>>();
-        let mut changed = false;
-        let mut rewritten = Vec::with_capacity(lines.len());
-
-        for (line_idx, line) in lines.iter().enumerate() {
-            let trimmed = line.trim_start();
-            let Some(rest) = trimmed.strip_prefix("import { ") else {
-                rewritten.push((*line).to_string());
-                continue;
-            };
-            let Some((named, module_part)) = rest.split_once(" } from ") else {
-                rewritten.push((*line).to_string());
-                continue;
-            };
-            let module_part = module_part.trim_end_matches(';');
-            if module_part.is_empty() {
-                rewritten.push((*line).to_string());
-                continue;
-            }
-
-            let body = lines
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, body_line)| (idx != line_idx).then_some(*body_line))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let kept = named
-                .split(',')
-                .filter_map(|specifier| {
-                    let specifier = specifier.trim();
-                    if specifier.is_empty() {
-                        return None;
-                    }
-                    let local_name = specifier
-                        .split_once(" as ")
-                        .map_or(specifier, |(_, alias)| alias.trim());
-                    Self::contains_whole_word_in_text(&body, local_name).then_some(specifier)
-                })
-                .collect::<Vec<_>>();
-
-            if kept.len()
-                == named
-                    .split(',')
-                    .filter(|part| !part.trim().is_empty())
-                    .count()
-            {
-                rewritten.push((*line).to_string());
-                continue;
-            }
-            changed = true;
-            if !kept.is_empty() {
-                let indent_len = line.len() - trimmed.len();
-                rewritten.push(format!(
-                    "{}import {{ {} }} from {};",
-                    &line[..indent_len],
-                    kept.join(", "),
-                    module_part
-                ));
-            }
-        }
-
-        if changed {
-            let mut text = rewritten.join("\n");
-            if output.ends_with('\n') {
-                text.push('\n');
-            }
-            text
-        } else {
-            output.to_string()
-        }
     }
 
     pub(in crate::declaration_emitter) fn emit_statement(&mut self, stmt_idx: NodeIndex) {
@@ -577,7 +623,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !allow_deferred_js_named_export
             && self.js_deferred_named_export_statements.contains(&stmt_idx)
         {
-            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            }
             return;
         }
         if self
@@ -589,6 +637,30 @@ impl<'a> DeclarationEmitter<'a> {
         }
         if self.js_class_like_prototype_stmts.contains(&stmt_idx) {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+        if self.js_class_static_member_stmts.contains(&stmt_idx) {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+        if self
+            .js_deferred_namespace_alias_declaration_stmts
+            .contains(&stmt_idx)
+        {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+        if self
+            .js_class_define_property_accessor_stmts
+            .contains(&stmt_idx)
+        {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+        if !self.emitting_js_default_export_declaration
+            && self.js_default_export_declaration_should_defer_until_export(stmt_idx)
+        {
+            self.skip_comments_before_raw(stmt_node.pos);
             return;
         }
 
@@ -629,15 +701,55 @@ impl<'a> DeclarationEmitter<'a> {
                     .get_export_decl(stmt_node)
                     .and_then(|export| self.arena.get(export.export_clause))
                     .is_some_and(|clause| clause.kind == syntax_kind_ext::VARIABLE_STATEMENT));
-        if !is_variable_like_export {
-            self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos);
+        let has_effective_export = self.statement_has_effective_export(stmt_idx);
+        let js_export_equals_declaration_name = match kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(stmt_node)
+                .map(|func| func.name)
+                .filter(|&name| self.is_js_export_equals_name(name)),
+            k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                .arena
+                .get_class(stmt_node)
+                .map(|class| class.name)
+                .filter(|&name| self.is_js_export_equals_name(name)),
+            _ => None,
+        };
+        if let Some(name) = js_export_equals_declaration_name {
+            self.emit_pending_js_export_equals_for_name(name);
+        } else if has_effective_export && !is_variable_like_export {
+            self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos, has_effective_export);
         }
-
-        if kind == syntax_kind_ext::FUNCTION_DECLARATION
-            && let Some(func) = self.arena.get_function(stmt_node)
-            && self.is_js_export_equals_name(func.name)
+        if kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && let Some(var_stmt) = self.arena.get_variable(stmt_node)
         {
-            self.emit_pending_js_export_equals_for_name(func.name);
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    self.emit_pending_js_export_equals_for_name(decl.name);
+                }
+            }
+        }
+        if kind == syntax_kind_ext::CLASS_DECLARATION
+            && let Some(class) = self.arena.get_class(stmt_node)
+            && self.is_js_export_equals_name(class.name)
+            && self
+                .get_identifier_text(class.name)
+                .and_then(|name| self.js_shadowed_export_equals_local_alias(&name))
+                .is_none()
+        {
+            self.emit_pending_js_export_equals_for_name(class.name);
         }
 
         // Save position before JSDoc comments so we can undo them if the
@@ -646,12 +758,58 @@ impl<'a> DeclarationEmitter<'a> {
         let saved_comment_idx = self.comment_emit_idx;
         self.current_statement_jsdoc_chain =
             self.emittable_jsdoc_comment_chain_for_pos(stmt_node.pos);
-        self.emit_leading_jsdoc_comments(stmt_node.pos);
+        let has_jsdoc_type_alias = self
+            .current_statement_jsdoc_chain
+            .iter()
+            .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));
+        let suppress_jsdoc_type_alias_comments =
+            has_jsdoc_type_alias && self.statement_emits_js_object_literal_namespace(stmt_idx);
+        let has_jsdoc_type_function_signature = self
+            .statement_jsdoc_type_function_signature_node(stmt_idx)
+            .is_some();
+        let jsdoc_overload_function_node =
+            self.jsdoc_overload_function_node_for_statement(stmt_idx);
+        let has_jsdoc_overload_signatures = jsdoc_overload_function_node
+            .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
+        let should_join_single_line_jsdoc_type_comment = self.source_is_js_file
+            && kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && self.emitted_leading_single_line_jsdoc_type_comment_for_pos(stmt_node.pos);
+        if has_jsdoc_overload_signatures {
+            // JSDoc overload comments are emitted once per structured signature
+            // by `emit_function_declaration`.
+        } else if has_jsdoc_type_function_signature || has_jsdoc_type_alias {
+            self.emit_leading_jsdoc_comments(stmt_node.pos);
+            self.writer.truncate(before_jsdoc_len);
+            let mut filtered = if has_jsdoc_type_function_signature {
+                Self::jsdoc_chain_without_type_or_alias_tags(&self.current_statement_jsdoc_chain)
+            } else {
+                self.current_statement_jsdoc_chain.clone()
+            };
+            if suppress_jsdoc_type_alias_comments {
+                filtered.retain(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc));
+            }
+            if has_jsdoc_type_function_signature {
+                if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
+                    stmt_node.pos,
+                    &filtered,
+                ) {
+                    self.emit_jsdoc_comment_chain(&filtered);
+                }
+            } else if !self
+                .emit_jsdoc_comment_chain_preserving_source_for_pos(stmt_node.pos, &filtered)
+            {
+                self.emit_jsdoc_comment_chain(&filtered);
+            }
+        } else {
+            self.emit_leading_jsdoc_comments(stmt_node.pos);
+        }
+        if should_join_single_line_jsdoc_type_comment {
+            self.join_last_emitted_jsdoc_comment_to_next_declaration();
+        }
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
         self.suppress_current_statement_jsdoc_comments = false;
 
-        let has_effective_export = self.statement_has_effective_export(stmt_idx);
         match kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.emit_function_declaration(stmt_idx);
@@ -709,6 +867,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             self.pending_source_pos = None;
         } else {
+            if has_jsdoc_overload_signatures {
+                self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            }
             if self.suppress_current_statement_jsdoc_comments && before_len > before_jsdoc_len {
                 let emitted = self.writer.get_output()[before_len..].to_string();
                 self.writer.truncate(before_jsdoc_len);
@@ -785,18 +946,48 @@ impl<'a> DeclarationEmitter<'a> {
         self.current_statement_jsdoc_chain.clear();
     }
 
-    fn emit_hoisted_js_function_statement(&mut self, stmt_idx: NodeIndex) {
+    pub(crate) fn emit_hoisted_js_function_statement(&mut self, stmt_idx: NodeIndex) {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
         };
 
+        if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && let Some(func) = self.arena.get_function(stmt_node)
+            && self.is_js_export_equals_name(func.name)
+        {
+            self.emit_pending_js_export_equals_for_name(func.name);
+        }
+
         self.current_statement_jsdoc_chain =
             self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
         let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
-        if jsdoc_chain.len() == 1
+        let has_jsdoc_type_function_signature = self
+            .statement_jsdoc_type_function_signature_node(stmt_idx)
+            .is_some();
+        let jsdoc_overload_function_node =
+            self.jsdoc_overload_function_node_for_statement(stmt_idx);
+        let has_jsdoc_overload_signatures = jsdoc_overload_function_node
+            .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
+        if has_jsdoc_overload_signatures {
+            // JSDoc overload comments are emitted with each overload signature.
+        } else if has_jsdoc_type_function_signature {
+            let filtered = Self::jsdoc_chain_without_type_or_alias_tags(&jsdoc_chain);
+            if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
+                stmt_node.pos,
+                &filtered,
+            ) {
+                self.emit_jsdoc_comment_chain(&filtered);
+            }
+        } else if jsdoc_chain.len() == 1
             && Self::jsdoc_has_function_signature_tags(jsdoc_chain[0].as_str())
+            && self.hoisted_jsdoc_source_comment_is_multiline(stmt_node.pos)
         {
-            self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
+            if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
+                stmt_node.pos,
+                &jsdoc_chain,
+            ) {
+                self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
+            }
         } else {
             self.emit_jsdoc_comment_chain(&jsdoc_chain);
         }
@@ -839,6 +1030,14 @@ impl<'a> DeclarationEmitter<'a> {
             .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
             || self.is_js_named_exported_name(func.name);
 
+        if self.source_is_js_file
+            && let Some(name) = self.get_identifier_text(func.name)
+            && self.js_define_property_export_local_names.contains(&name)
+        {
+            self.skip_comments_in_node(func_node.pos, func_node.end);
+            return;
+        }
+
         // `export default function() { ... }` — delegate to the export default handler
         // which correctly emits `export default function (): ReturnType;`
         let is_default = self
@@ -864,6 +1063,11 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
         let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
+        let function_jsdoc = if self.source_is_js_file {
+            self.function_like_jsdoc_for_node(func_idx)
+        } else {
+            None
+        };
 
         // Get function name as string for overload tracking
         let function_name = self.get_function_name(func_idx);
@@ -893,6 +1097,39 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        if self.source_is_js_file {
+            let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(func_idx);
+            if !jsdoc_overload_signatures.is_empty() {
+                self.emit_pending_js_export_equals_for_name(func.name);
+            }
+            if self.emit_jsdoc_overload_function_signatures(
+                func_idx,
+                is_exported,
+                is_exported,
+                &jsdoc_overload_signatures,
+            ) {
+                if should_emit_late_bound_namespace {
+                    self.emit_ts_late_bound_function_namespace_from_members(
+                        func.name,
+                        is_exported,
+                        &late_bound_members,
+                    );
+                }
+                if !self.emit_js_function_like_class_if_needed(
+                    func.name,
+                    &func.parameters,
+                    func.body,
+                    is_exported,
+                    func_idx,
+                ) {
+                    self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
+                }
+                self.emit_js_class_static_members_namespace(func.name, is_exported);
+                self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+                return;
+            }
+        }
+
         self.emit_pending_js_export_equals_for_name(func.name);
         self.write_indent();
         if is_exported {
@@ -905,6 +1142,34 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Function name
         self.emit_node(func.name);
+
+        if self.source_is_js_file
+            && let Some((type_params, params, return_type)) =
+                self.jsdoc_function_type_signature_for_node(func_idx)
+        {
+            self.emit_jsdoc_function_type_signature(&type_params, &params, &return_type);
+            self.write(";");
+            self.write_line();
+            if should_emit_late_bound_namespace {
+                self.emit_ts_late_bound_function_namespace_from_members(
+                    func.name,
+                    is_exported,
+                    &late_bound_members,
+                );
+            }
+            if !self.emit_js_function_like_class_if_needed(
+                func.name,
+                &func.parameters,
+                func.body,
+                is_exported,
+                func_idx,
+            ) {
+                self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
+            }
+            self.emit_js_class_static_members_namespace(func.name, is_exported);
+            self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+            return;
+        }
 
         // Type parameters
         let jsdoc_template_params = if func
@@ -940,6 +1205,21 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let (Some(return_type_text), true) =
+            self.function_body_return_hint(func, func_body)
+        {
+            self.emit_non_portable_function_return_diagnostics(
+                &return_type_text,
+                func_body,
+                func_name,
+            );
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) =
+            self.js_define_property_jsdoc_body_return_text(func, function_jsdoc.as_deref())
+        {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if let Some(return_type_text) = self
             .js_function_body_preferred_return_text_for_declaration(
                 func.body,
@@ -947,6 +1227,11 @@ impl<'a> DeclarationEmitter<'a> {
                 &func.parameters,
             )
         {
+            self.emit_non_portable_function_return_diagnostics(
+                &return_type_text,
+                func_body,
+                func_name,
+            );
             self.write(": ");
             self.write(&return_type_text);
         } else if let Some(return_type_text) = self.boolean_default_param_return_type_text(func) {
@@ -970,264 +1255,222 @@ impl<'a> DeclarationEmitter<'a> {
                 .copied()
                 .or_else(|| self.get_node_type_or_names(&[func_name]))
                 .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name));
-            if let Some(func_type_id) = func_type_id
-                && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
-            {
-                let effective_return_type_id = if func_body.is_some() {
-                    self.refine_invokable_return_type_from_identifier(func_body, return_type_id)
-                        .or_else(|| {
-                            self.refine_object_rest_return_type_from_identifier(
-                                func_body,
-                                return_type_id,
+            if let Some(func_type_id) = func_type_id {
+                if let Some(predicate_text) =
+                    self.function_type_predicate_text(func_type_id, func.type_parameters.as_ref())
+                {
+                    self.emit_inferred_predicate_function_return(
+                        func_idx,
+                        &predicate_text,
+                        func,
+                        is_exported,
+                        should_emit_late_bound_namespace,
+                        &late_bound_members,
+                    );
+                    return;
+                }
+                if let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
+                {
+                    let effective_return_type_id = if func_body.is_some() {
+                        self.refine_invokable_return_type_from_identifier(func_body, return_type_id)
+                            .or_else(|| {
+                                self.refine_object_rest_return_type_from_identifier(
+                                    func_body,
+                                    return_type_id,
+                                )
+                            })
+                            .unwrap_or(return_type_id)
+                    } else {
+                        return_type_id
+                    };
+                    let (preferred_return, direct_function_return) =
+                        self.function_body_return_hint(func, func_body);
+                    let scoped_preferred_return = preferred_return.as_ref().map(|type_text| {
+                        let (type_text, substituted_parameter_type_query) =
+                            self.function_return_type_text_for_declaration_scope(func, type_text);
+                        (
+                            self.restore_mapped_return_type_param_constraints(func, &type_text),
+                            substituted_parameter_type_query,
+                        )
+                    });
+                    // If solver returned `any` OR `undefined` but the function body clearly
+                    // returns void (every control-flow exit is a bare `return;` or falls
+                    // off the end), prefer void. tsc's rule: an unannotated function whose
+                    // only return is `return;` (no expression) has return type `void`, not
+                    // `undefined` — the solver approximates it as `undefined` from the
+                    // runtime value, which we widen to `void` here. Matches
+                    // declFileTypeAnnotationBuiltInType.
+                    let solver_void_like = effective_return_type_id
+                        == tsz_solver::types::TypeId::ANY
+                        || effective_return_type_id == tsz_solver::types::TypeId::UNDEFINED
+                        || effective_return_type_id == tsz_solver::types::TypeId::NEVER;
+                    if solver_void_like && func_body.is_some() && self.body_returns_void(func_body)
+                    {
+                        self.write(": void");
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| {
+                            self.async_returned_function_initializer_promise_type_text(
+                                func, func_body,
                             )
                         })
-                        .unwrap_or(return_type_id)
-                } else {
-                    return_type_id
-                };
-                let (preferred_return, direct_function_return) =
-                    self.function_body_return_hint(func, func_body);
-                let scoped_preferred_return = preferred_return.as_ref().map(|type_text| {
-                    let (type_text, substituted_parameter_type_query) =
-                        self.function_return_type_text_for_declaration_scope(func, type_text);
-                    (
-                        self.restore_mapped_return_type_param_constraints(func, &type_text),
-                        substituted_parameter_type_query,
-                    )
-                });
-                // If solver returned `any` OR `undefined` but the function body clearly
-                // returns void (every control-flow exit is a bare `return;` or falls
-                // off the end), prefer void. tsc's rule: an unannotated function whose
-                // only return is `return;` (no expression) has return type `void`, not
-                // `undefined` — the solver approximates it as `undefined` from the
-                // runtime value, which we widen to `void` here. Matches
-                // declFileTypeAnnotationBuiltInType.
-                let solver_undefined_or_any = effective_return_type_id
-                    == tsz_solver::types::TypeId::ANY
-                    || effective_return_type_id == tsz_solver::types::TypeId::UNDEFINED;
-                if solver_undefined_or_any
-                    && func_body.is_some()
-                    && self.body_returns_void(func_body)
-                {
-                    self.write(": void");
-                } else if let Some(type_text) = func_body
-                    .is_some()
-                    .then(|| {
-                        self.async_returned_function_initializer_promise_type_text(func, func_body)
-                    })
-                    .flatten()
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if let Some((type_text, substituted_parameter_type_query)) =
-                    scoped_preferred_return.as_ref()
-                    && (direct_function_return
-                        || self.should_prefer_source_return_type_text(
-                            preferred_return.as_deref().unwrap_or(type_text),
-                            effective_return_type_id,
-                        )
-                        || self.source_return_type_is_function_type_param(func, type_text)
-                        || (*substituted_parameter_type_query && !type_text.contains("typeof ")))
-                {
-                    self.write(": ");
-                    self.write(type_text);
-                } else if self.emit_single_nameable_new_return_type_if_solver_any(
-                    func,
-                    func_body,
-                    func_name,
-                    effective_return_type_id,
-                ) {
-                } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
-                    && let Some(type_text) = preferred_return
-                {
-                    let (type_text, _) =
-                        self.function_return_type_text_for_declaration_scope(func, &type_text);
-                    if let Some(returned_identifier) =
-                        self.function_body_unique_return_identifier(func_body)
-                        && let Some(return_type_id) =
-                            self.reference_declared_type_id(returned_identifier)
-                        && let Some(name_text) = self.get_identifier_text(func_name)
-                        && let Some(name_node) = self.arena.get(func_name)
-                        && let Some(file_path) = self.current_file_path.clone()
+                        .flatten()
                     {
-                        self.check_non_portable_type_references(
-                            return_type_id,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                    }
-                    if let Some(name_text) = self.get_identifier_text(func_name)
-                        && let Some(name_node) = self.arena.get(func_name)
-                        && let Some(file_path) = self.current_file_path.clone()
-                    {
-                        self.check_non_portable_type_references(
-                            effective_return_type_id,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                        let _ = self.emit_non_portable_import_type_text_diagnostics(
-                            &type_text,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                    }
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
-                    && func_body.is_some()
-                    && self
-                        .get_identifier_text(func.name)
-                        .is_some_and(|name| self.function_body_returns_identifier(func_body, &name))
-                {
-                    self.write(": typeof ");
-                    self.emit_node(func.name);
-                } else {
-                    if func_body.is_some()
-                        && let Some(name_text) = self.get_identifier_text(func_name)
-                        && let Some(name_node) = self.arena.get(func_name)
-                        && let Some(file_path) = self.current_file_path.clone()
-                    {
-                        self.check_non_portable_type_references(
-                            effective_return_type_id,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                    }
-                    self.write(": ");
-                    if let Some(ref tp) = func.type_parameters
-                        && !tp.nodes.is_empty()
-                    {
-                        let printed_type_text =
-                            self.print_type_id_with_outer_type_params(effective_return_type_id, tp);
-                        let printed_type_text = self
-                            .restore_mapped_return_type_param_constraints(func, &printed_type_text);
-                        let printed_type_text = self
-                            .rewrite_returned_auto_accessor_parameter_unknowns(
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if let Some((type_text, substituted_parameter_type_query)) =
+                        scoped_preferred_return.as_ref()
+                        && let Some(func_name_text) = self.get_identifier_text(func_name)
+                        && let printed_return_type = self.print_type_id(effective_return_type_id)
+                        && (direct_function_return
+                            || printed_return_type
+                                == format!("ReturnType<typeof {func_name_text}>")
+                            || self.should_prefer_source_return_type_text(
+                                preferred_return.as_deref().unwrap_or(type_text),
+                                effective_return_type_id,
+                            )
+                            || self.source_return_type_is_function_type_param(func, type_text)
+                            || self.source_return_type_preserves_function_type_param(
                                 func,
-                                &printed_type_text,
-                            );
-                        self.write(&printed_type_text);
-                        if let Some(name_text) = self.get_identifier_text(func_name)
+                                type_text,
+                                effective_return_type_id,
+                            )
+                            || (*substituted_parameter_type_query
+                                && !type_text.contains("typeof ")))
+                    {
+                        self.emit_non_portable_function_return_diagnostics(
+                            type_text, func_body, func_name,
+                        );
+                        self.write(": ");
+                        self.write(type_text);
+                    } else if self.emit_single_nameable_new_return_type_if_solver_any(
+                        func,
+                        func_body,
+                        func_name,
+                        effective_return_type_id,
+                    ) {
+                    } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
+                        && let Some(type_text) = preferred_return
+                    {
+                        let (type_text, _) =
+                            self.function_return_type_text_for_declaration_scope(func, &type_text);
+                        if let Some(returned_identifier) =
+                            self.function_body_unique_return_identifier(func_body)
+                            && let Some(return_type_id) =
+                                self.reference_declared_type_id(returned_identifier)
+                            && let Some(name_text) = self.get_identifier_text(func_name)
                             && let Some(name_node) = self.arena.get(func_name)
                             && let Some(file_path) = self.current_file_path.clone()
-                        {
-                            let _ = self.emit_non_portable_import_type_text_diagnostics(
-                                &printed_type_text,
-                                &name_text,
-                                &file_path,
-                                name_node.pos,
-                                name_node.end - name_node.pos,
-                            );
-                        }
-                    } else {
-                        let printed_type_text = self.print_type_id(effective_return_type_id);
-                        let printed_type_text = self
-                            .rewrite_returned_auto_accessor_parameter_unknowns(
-                                func,
-                                &printed_type_text,
-                            );
-                        self.write(&printed_type_text);
-                        if let Some(name_text) = self.get_identifier_text(func_name)
-                            && let Some(name_node) = self.arena.get(func_name)
-                            && let Some(file_path) = self.current_file_path.clone()
-                        {
-                            let _ = self.emit_non_portable_import_type_text_diagnostics(
-                                &printed_type_text,
-                                &name_text,
-                                &file_path,
-                                name_node.pos,
-                                name_node.end - name_node.pos,
-                            );
-                        }
-                    }
-                }
-            } else if func_body.is_some() {
-                if self.body_returns_void(func_body) {
-                    self.write(": void");
-                } else if let Some(type_text) =
-                    self.async_returned_function_initializer_promise_type_text(func, func_body)
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if let Some(return_text) = self.function_body_return_hint(func, func_body).0
-                {
-                    let (return_text, _) =
-                        self.function_return_type_text_for_declaration_scope(func, &return_text);
-                    if let Some(name_text) = self.get_identifier_text(func_name)
-                        && let Some(name_node) = self.arena.get(func_name)
-                        && let Some(file_path) = self.current_file_path.clone()
-                    {
-                        if let Some(func_type_id) = self
-                            .get_node_type_or_names(&[func_name])
-                            .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name))
                         {
                             self.check_non_portable_type_references(
-                                func_type_id,
+                                return_type_id,
                                 &name_text,
                                 &file_path,
                                 name_node.pos,
                                 name_node.end - name_node.pos,
                             );
                         }
-                        let _ = self.emit_non_portable_import_type_text_diagnostics(
-                            &return_text,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
+                        if let Some(name_text) = self.get_identifier_text(func_name)
+                            && let Some(name_node) = self.arena.get(func_name)
+                            && let Some(file_path) = self.current_file_path.clone()
+                        {
+                            self.check_non_portable_type_references(
+                                effective_return_type_id,
+                                &name_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                            let _ = self.emit_non_portable_import_type_text_diagnostics(
+                                &type_text,
+                                &name_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            );
+                        }
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
+                        && func_body.is_some()
+                        && self.get_identifier_text(func.name).is_some_and(|name| {
+                            self.function_body_returns_identifier(func_body, &name)
+                        })
+                    {
+                        self.write(": typeof ");
+                        self.emit_node(func.name);
+                    } else {
+                        if func_body.is_some()
+                            && let Some(name_text) = self.get_identifier_text(func_name)
+                            && let Some(name_node) = self.arena.get(func_name)
+                            && let Some(file_path) = self.current_file_path.clone()
+                        {
+                            let emitted_return_expr_diagnostic = self
+                                .emit_non_portable_function_return_diagnostics(
+                                    "", func_body, func_name,
+                                );
+                            if !emitted_return_expr_diagnostic {
+                                self.check_non_portable_type_references(
+                                    effective_return_type_id,
+                                    &name_text,
+                                    &file_path,
+                                    name_node.pos,
+                                    name_node.end - name_node.pos,
+                                );
+                            }
+                        }
+                        self.write(": ");
+                        if let Some(ref tp) = func.type_parameters
+                            && !tp.nodes.is_empty()
+                        {
+                            let printed_type_text = self
+                                .inferred_function_return_type_text(func, effective_return_type_id);
+                            let printed_type_text = self
+                                .expand_rest_tuple_parameters_in_function_type_text(
+                                    func_body,
+                                    &printed_type_text,
+                                )
+                                .unwrap_or(printed_type_text);
+                            self.write(&printed_type_text);
+                            let _ = self.emit_non_portable_function_return_diagnostics(
+                                &printed_type_text,
+                                func_body,
+                                func_name,
+                            );
+                        } else {
+                            let printed_type_text = self.print_type_id(effective_return_type_id);
+                            let printed_type_text = self
+                                .rewrite_returned_auto_accessor_parameter_unknowns(
+                                    func,
+                                    &printed_type_text,
+                                );
+                            let printed_type_text = self
+                                .expand_rest_tuple_parameters_in_function_type_text(
+                                    func_body,
+                                    &printed_type_text,
+                                )
+                                .unwrap_or(printed_type_text);
+                            self.write(&printed_type_text);
+                            let _ = self.emit_non_portable_function_return_diagnostics(
+                                &printed_type_text,
+                                func_body,
+                                func_name,
+                            );
+                        }
                     }
-                    self.write(": ");
-                    self.write(&return_text);
+                } else if func_body.is_some() {
+                    let _ = self.emit_body_inferred_function_return_type(
+                        func_idx, func, func_body, func_name,
+                    );
                 }
+            } else if func_body.is_some() {
+                let _ = self
+                    .emit_body_inferred_function_return_type(func_idx, func, func_body, func_name);
             }
         } else if func_body.is_some() {
             // No type cache available, but we can infer from the body
-            if self.body_returns_void(func_body) {
-                self.write(": void");
-            } else if let Some(type_text) =
-                self.async_returned_function_initializer_promise_type_text(func, func_body)
-            {
-                self.write(": ");
-                self.write(&type_text);
-            } else if let Some(return_text) = self.function_body_return_hint(func, func_body).0 {
-                let (return_text, _) =
-                    self.function_return_type_text_for_declaration_scope(func, &return_text);
-                if let Some(name_text) = self.get_identifier_text(func_name)
-                    && let Some(name_node) = self.arena.get(func_name)
-                    && let Some(file_path) = self.current_file_path.clone()
-                {
-                    if let Some(func_type_id) = self
-                        .get_node_type_or_names(&[func_name])
-                        .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name))
-                    {
-                        self.check_non_portable_type_references(
-                            func_type_id,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                    }
-                    let _ = self.emit_non_portable_import_type_text_diagnostics(
-                        &return_text,
-                        &name_text,
-                        &file_path,
-                        name_node.pos,
-                        name_node.end - name_node.pos,
-                    );
-                }
-                self.write(": ");
-                self.write(&return_text);
-            }
+            let _ =
+                self.emit_body_inferred_function_return_type(func_idx, func, func_body, func_name);
         }
 
         self.write(";");
@@ -1248,6 +1491,7 @@ impl<'a> DeclarationEmitter<'a> {
         ) {
             self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
         }
+        self.emit_js_class_static_members_namespace(func.name, is_exported);
         self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
 
         // Skip comments within the function body to prevent them from
@@ -1255,6 +1499,58 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(body_node) = self.arena.get(func_body) {
             self.skip_comments_in_node(body_node.pos, body_node.end);
         }
+    }
+
+    pub(in crate::declaration_emitter) fn emit_body_inferred_function_return_type(
+        &mut self,
+        func_idx: NodeIndex,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+        func_name: NodeIndex,
+    ) -> bool {
+        if self.body_returns_void(func_body) {
+            self.write(": void");
+            return true;
+        }
+
+        if let Some(type_text) =
+            self.async_returned_function_initializer_promise_type_text(func, func_body)
+        {
+            self.write(": ");
+            self.write(&type_text);
+            return true;
+        }
+
+        let Some(return_text) = self.function_body_return_hint(func, func_body).0 else {
+            return false;
+        };
+        let (return_text, _) =
+            self.function_return_type_text_for_declaration_scope(func, &return_text);
+        if let Some(name_text) = self.get_identifier_text(func_name)
+            && let Some(name_node) = self.arena.get(func_name)
+            && let Some(file_path) = self.current_file_path.clone()
+        {
+            if let Some(func_type_id) = self
+                .get_node_type_or_names(&[func_name])
+                .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name))
+            {
+                self.check_non_portable_type_references(
+                    func_type_id,
+                    &name_text,
+                    &file_path,
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                );
+            }
+            let _ = self.emit_non_portable_function_return_diagnostics(
+                &return_text,
+                func_body,
+                func_name,
+            );
+        }
+        self.write(": ");
+        self.write(&return_text);
+        true
     }
 
     pub(crate) fn emit_class_declaration(&mut self, class_idx: NodeIndex) {
@@ -1368,6 +1664,10 @@ impl<'a> DeclarationEmitter<'a> {
             })
         });
         self.method_names_with_overloads = FxHashSet::default();
+        let prev_class_type_params = std::mem::replace(
+            &mut self.current_class_type_params,
+            class.type_parameters.clone(),
+        );
 
         // Suppress method implementations that share a computed name with
         // an accessor (tsc emits only the accessor in .d.ts).
@@ -1377,40 +1677,42 @@ impl<'a> DeclarationEmitter<'a> {
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
+        let delay_private_identifier_marker = self
+            .should_delay_private_identifier_marker_for_js_constructor_overloads(&class.members);
+
         // Emit `#private;` if any member has a private identifier name (e.g., #foo)
-        if self.class_has_private_identifier_member(&class.members) {
-            self.write_indent();
-            self.write("#private;");
-            self.write_line();
+        if self.class_has_private_identifier_member(&class.members)
+            && !delay_private_identifier_marker
+        {
+            self.emit_private_identifier_marker();
         }
 
-        // Members
-        for member_idx in self.class_member_emit_order(&class.members) {
-            let before_jsdoc_len = self.writer.len();
-            let saved_comment_idx = self.comment_emit_idx;
-            if let Some(mn) = self.arena.get(member_idx) {
-                self.emit_leading_jsdoc_comments(mn.pos);
-            }
-            let before_member_len = self.writer.len();
-            self.emit_class_member(member_idx);
-            if self.writer.len() == before_member_len {
-                // Member didn't emit anything (e.g., skipped implementation overload).
-                // Rollback the speculatively emitted JSDoc comments.
-                self.writer.truncate(before_jsdoc_len);
-                self.comment_emit_idx = saved_comment_idx;
-                if let Some(mn) = self.arena.get(member_idx) {
-                    self.skip_comments_in_node(mn.pos, mn.end);
-                }
-            }
+        self.emit_js_array_subclass_constructor_overloads_if_needed(
+            &class.members,
+            class.heritage_clauses.as_ref(),
+        );
+        self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
+        if self.class_has_private_identifier_member(&class.members)
+            && delay_private_identifier_marker
+        {
+            self.emit_private_identifier_marker();
         }
-
+        if self.source_is_js_file {
+            self.emit_js_class_define_property_accessors_for_name(class.name);
+            self.emit_js_class_like_prototype_members_for_declared_class(
+                class.name,
+                &class.members,
+            );
+        }
         self.decrease_indent();
         self.write_indent();
         self.write("}");
         self.write_line();
+        self.emit_js_class_static_members_namespace(class.name, is_exported);
         if shadow_alias.is_none() {
             self.emit_js_namespace_export_aliases_for_name(class.name, is_exported);
         }
+        self.current_class_type_params = prev_class_type_params;
     }
 
     pub(in crate::declaration_emitter) fn emit_class_member(&mut self, member_idx: NodeIndex) {
@@ -1462,24 +1764,23 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         member_idx: NodeIndex,
     ) -> bool {
-        let Some(member_node) = self.arena.get(member_idx) else {
-            return false;
-        };
-        let name_idx = if let Some(prop) = self.arena.get_property_decl(member_node) {
-            Some(prop.name)
-        } else if let Some(method) = self.arena.get_method_decl(member_node) {
-            Some(method.name)
-        } else {
-            self.arena
-                .get_accessor(member_node)
-                .map(|accessor| accessor.name)
-        };
-        if let Some(name_idx) = name_idx
+        if let Some(name_idx) = self.get_member_name_idx(member_idx)
             && let Some(name_node) = self.arena.get(name_idx)
         {
             return name_node.kind == SyntaxKind::PrivateIdentifier as u16;
         }
         false
+    }
+
+    /// Separator preceding a readonly property's literal value: `" = "` for
+    /// class-declaration emit (`readonly x = 0`), `": "` for object-type-literal
+    /// emit (`readonly x: 0`). Object-type literals do not permit `=` syntax.
+    const fn readonly_literal_value_separator(&self) -> &'static str {
+        if self.in_object_type_class_body {
+            ": "
+        } else {
+            " = "
+        }
     }
 
     pub(in crate::declaration_emitter) fn emit_property_declaration(
@@ -1578,19 +1879,23 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(" | undefined");
             }
         } else if !is_private {
-            // For readonly properties with an enum member access initializer (e.g., `readonly type = E.A`),
-            // emit the initializer expression directly, matching tsc behavior.
-            let use_enum_initializer = is_readonly
+            // For a readonly property whose initializer is a simple enum-member
+            // access (e.g. `readonly kind = E.A`), tsc uses the initializer form
+            // in class declarations and a literal-typed annotation in object-
+            // type-literal bodies. Separator selection is centralised.
+            let enum_initializer_text = if is_readonly
                 && !is_abstract
                 && !prop.question_token
                 && prop.initializer.is_some()
-                && self
-                    .simple_enum_access_member_text(prop.initializer)
-                    .is_some();
+            {
+                self.simple_enum_access_member_text(prop.initializer)
+            } else {
+                None
+            };
 
-            if use_enum_initializer {
-                self.write(" = ");
-                self.emit_expression(prop.initializer);
+            if let Some(enum_member_text) = enum_initializer_text {
+                self.write(self.readonly_literal_value_separator());
+                self.write(&enum_member_text);
             } else if let Some(enum_member_text) = const_asserted_enum_member {
                 self.write(": ");
                 self.write(&enum_member_text);
@@ -1624,15 +1929,14 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
-                // For readonly properties with literal types, use `= value` form
-                // (same as const declarations in tsc)
+                // Readonly literal preservation (matches tsc `const`-like emit).
                 if is_readonly
                     && !is_abstract
                     && !prop.question_token
                     && let Some(interner) = self.type_interner
                     && let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id)
                 {
-                    self.write(" = ");
+                    self.write(self.readonly_literal_value_separator());
                     self.write(&Self::format_literal_initializer(&lit, interner));
                 } else if is_readonly
                     && !is_abstract
@@ -1641,10 +1945,9 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(lit_text) =
                         self.const_literal_initializer_text_deep(prop.initializer)
                 {
-                    // The type system widened the literal (e.g., `false` → `boolean`),
-                    // but for readonly properties tsc preserves the `= value` form
-                    // when the initializer is a simple literal.
-                    self.write(" = ");
+                    // Type system widened the literal (e.g. `false` → `boolean`);
+                    // recover the original from the initializer source text.
+                    self.write(self.readonly_literal_value_separator());
                     self.write(&lit_text);
                 } else if let Some(typeof_text) = self.typeof_prefix_for_value_entity(
                     prop.initializer,
@@ -1760,10 +2063,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && prop.initializer.is_some()
                 && let Some(lit_text) = self.const_literal_initializer_text_deep(prop.initializer)
             {
-                // For readonly properties with simple literal initializers,
-                // emit `= value` form (matching tsc's const-like literal
-                // preservation for `static readonly` and `readonly` properties).
-                self.write(" = ");
+                // Readonly literal preservation via initializer source text.
+                self.write(self.readonly_literal_value_separator());
                 self.write(&lit_text);
             } else if prop.initializer.is_some()
                 && let Some(type_text) = self.allowlisted_initializer_type_text(prop.initializer)

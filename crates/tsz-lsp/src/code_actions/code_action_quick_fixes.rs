@@ -12,9 +12,14 @@ use crate::utils::find_node_at_offset;
 use rustc_hash::FxHashMap;
 use tsz_parser::NodeIndex;
 use tsz_parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 use super::code_action_provider::{CodeAction, CodeActionKind, CodeActionProvider};
 use tsz_common::position::Range;
+
+/// User-visible title for the `addMissingAwait` quick fix. Referenced from
+/// tests so the assertion stays in sync with the action title.
+pub(crate) const ADD_MISSING_AWAIT_TITLE: &str = "Add missing 'await'";
 
 impl<'a> CodeActionProvider<'a> {
     /// Add missing `await` quick fix.
@@ -43,8 +48,19 @@ impl<'a> CodeActionProvider<'a> {
             return None;
         }
 
+        // `await` is a parser error outside an async function-like, a
+        // class static block, or the top-level module body. Adding it in
+        // those positions would produce uncompilable source.
+        if !self.await_is_legal_at(node_idx) {
+            return None;
+        }
+
         // Walk up to find the expression that should be awaited
         let expr_idx = self.find_awaitable_expression(node_idx)?;
+        if !self.can_insert_await_at(expr_idx) {
+            return None;
+        }
+
         let expr_node = self.arena.get(expr_idx)?;
         let expr_text = self
             .source
@@ -64,7 +80,7 @@ impl<'a> CodeActionProvider<'a> {
         changes.insert(self.file_name.clone(), vec![edit]);
 
         Some(CodeAction {
-            title: "Add missing 'await'".to_string(),
+            title: ADD_MISSING_AWAIT_TITLE.to_string(),
             kind: CodeActionKind::QuickFix,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: true,
@@ -264,6 +280,61 @@ impl<'a> CodeActionProvider<'a> {
         })
     }
 
+    /// Returns whether an `await` expression is syntactically legal at the
+    /// given node position.
+    ///
+    /// The innermost enclosing context decides:
+    ///
+    /// - Async function-like (`FunctionDeclaration`/`Expression`/`ArrowFunction`
+    ///   with `is_async`, `MethodDeclaration` with the `async` modifier),
+    ///   class static initialization blocks, and the top-level module body
+    ///   all permit `await`.
+    /// - Any other function-like ancestor (non-async function, non-async
+    ///   generator, non-async arrow, non-async method, constructor, getter,
+    ///   setter) makes `await` a parser error.
+    ///
+    /// The walk stops at the first function-like boundary because every
+    /// inner function is its own `await` context — a nested non-async
+    /// arrow inside an `async function` is *not* allowed to use `await`.
+    fn await_is_legal_at(&self, start: NodeIndex) -> bool {
+        let mut current = start;
+        while let Some(node) = self.arena.get(current) {
+            match node.kind {
+                syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION => {
+                    return self
+                        .arena
+                        .get_function(node)
+                        .is_some_and(|data| data.is_async);
+                }
+                syntax_kind_ext::METHOD_DECLARATION => {
+                    let modifiers = self
+                        .arena
+                        .get_method_decl(node)
+                        .and_then(|data| data.modifiers.as_ref());
+                    return self
+                        .arena
+                        .has_modifier_ref(modifiers, SyntaxKind::AsyncKeyword);
+                }
+                syntax_kind_ext::CONSTRUCTOR
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR => return false,
+                // Class static initialization blocks and the top-level
+                // module body both permit `await` per TC39.
+                syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION | syntax_kind_ext::SOURCE_FILE => {
+                    return true;
+                }
+                _ => {}
+            }
+            match self.arena.get_extended(current) {
+                Some(ext) if ext.parent.is_some() => current = ext.parent,
+                _ => return true,
+            }
+        }
+        true
+    }
+
     fn find_awaitable_expression(&self, start: NodeIndex) -> Option<NodeIndex> {
         let mut current = start;
         while current.is_some() {
@@ -281,6 +352,53 @@ impl<'a> CodeActionProvider<'a> {
             current = self.arena.get_extended(current)?.parent;
         }
         None
+    }
+
+    fn can_insert_await_at(&self, start: NodeIndex) -> bool {
+        let mut current = start;
+        while current.is_some() {
+            let Some(node) = self.arena.get(current) else {
+                return false;
+            };
+
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            {
+                return self
+                    .arena
+                    .get_function(node)
+                    .is_some_and(|function| function.is_async);
+            }
+
+            if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                return self
+                    .arena
+                    .get_method_decl(node)
+                    .is_some_and(|method| self.has_async_modifier(method.modifiers.as_ref()));
+            }
+
+            if node.kind == syntax_kind_ext::CONSTRUCTOR
+                || node.kind == syntax_kind_ext::GET_ACCESSOR
+                || node.kind == syntax_kind_ext::SET_ACCESSOR
+                || node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                || node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            {
+                return false;
+            }
+
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            current = ext.parent;
+        }
+
+        true
+    }
+
+    fn has_async_modifier(&self, modifiers: Option<&tsz_parser::NodeList>) -> bool {
+        self.arena
+            .has_modifier_ref(modifiers, SyntaxKind::AsyncKeyword)
     }
 
     fn find_require_statement(&self, offset: u32) -> Option<(u32, u32, String, String)> {

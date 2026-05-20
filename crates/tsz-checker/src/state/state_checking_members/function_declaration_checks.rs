@@ -8,6 +8,7 @@ use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 impl<'a> CheckerState<'a> {
@@ -64,16 +65,6 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
             let mut checker = crate::declarations::DeclarationChecker::new(&mut self.ctx);
             checker.check_function_declaration(func_idx);
-        }
-
-        // TS2394: Check overload compatibility for function declarations with a body.
-        // When a function has overload signatures followed by an implementation,
-        // verify the implementation signature is compatible with all overloads.
-        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            && let Some(func) = self.ctx.arena.get_function(node)
-            && func.body.is_some()
-        {
-            self.check_overload_compatibility(func_idx);
         }
 
         // Validate indexed access types in the return type annotation of ambient
@@ -567,7 +558,7 @@ impl<'a> CheckerState<'a> {
             && let Some(jsdoc_callable_type) =
                 self.jsdoc_callable_type_annotation_for_function(func_idx)
         {
-            let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+            let ctx_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 jsdoc_callable_type,
                 self.ctx.compiler_options.no_implicit_any,
@@ -933,7 +924,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        if !self.is_assignable_to(predicate_type, param_type)
+        if !self.type_predicate_type_assignable_to_parameter(predicate_type, param_type)
             && let Some(type_node) = self.ctx.arena.get(pred_data.type_node)
         {
             self.ctx.error(
@@ -1355,7 +1346,11 @@ impl<'a> CheckerState<'a> {
             && has_return
             && falls_through
             && (!is_generator || has_generator_return_type_for_completeness || !has_declared_return)
-            && !self.should_skip_no_implicit_return_check(check_return_type, has_declared_return)
+            && !self.should_skip_no_implicit_return_check(
+                check_return_type,
+                has_declared_return,
+                is_generator,
+            )
         {
             // TS7030: noImplicitReturns - not all code paths return a value
             // TSC points TS7030 to: return type annotation > function name > node itself

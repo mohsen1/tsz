@@ -62,3 +62,29 @@ var {a1, a2}: { a1: number, a2: string } = { a1: 42, a2: "hello" }
         "expected no TS2322 when types match, got: {diags:?}"
     );
 }
+
+#[test]
+fn object_rest_assignment_reports_rhs_rest_source_type() {
+    let source = r#"
+let o = { a: 1, b: 'no' };
+var b: string;
+let notAssignable: { a: string };
+({ b, ...notAssignable } = o);
+"#;
+    let diags = check_source_diagnostics(source);
+    let messages: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        messages.iter().any(|message| message
+            .contains("Type '{ a: number; }' is not assignable to type '{ a: string; }'.")),
+        "expected object-rest assignment to report the RHS rest source type, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().all(|message| !message
+            .contains("Type '{ a: string; }' is not assignable to type '{ a: string; }'.")),
+        "rest assignment must not echo the target type as the source, got: {messages:?}"
+    );
+}

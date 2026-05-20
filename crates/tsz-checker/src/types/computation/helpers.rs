@@ -3,6 +3,7 @@
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::context::TypingRequest;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::type_computation::core::{
     self as expr_ops, evaluate_contextual_structure_with,
@@ -10,6 +11,7 @@ use crate::query_boundaries::type_computation::core::{
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -191,18 +193,18 @@ impl<'a> CheckerState<'a> {
         let should_suppress_contextual_branch_assignability =
             contextual_type.is_some() && !self.assignment_source_is_return_expression(idx);
         let suppress_contextual_branch_ts2322 =
-            |state: &mut Self,
-             branch_idx: NodeIndex,
-             snap: &crate::context::speculation::DiagnosticSnapshot| {
+            |state: &mut Self, branch_idx: NodeIndex, snap: DiagnosticSpeculationSnapshot| {
                 if !should_suppress_contextual_branch_assignability {
+                    snap.commit(&mut state.ctx.diagnostic_state());
                     return;
                 }
                 let Some(branch_node) = state.ctx.arena.get(branch_idx) else {
+                    snap.commit(&mut state.ctx.diagnostic_state());
                     return;
                 };
                 let branch_start = branch_node.pos;
                 let branch_end = branch_node.end;
-                state.ctx.rollback_diagnostics_filtered(snap, |diag| {
+                snap.rollback_filtered(&mut state.ctx.diagnostic_state(), |diag| {
                     let in_branch = diag.start >= branch_start && diag.start < branch_end;
                     !(in_branch && diag.code == 2322)
                 });
@@ -221,9 +223,9 @@ impl<'a> CheckerState<'a> {
             // (e.g. TS8010 grammar errors in JS files).
             self.speculative_type_of_node(cond.when_true, &true_request)
         } else {
-            let snap = self.ctx.snapshot_diagnostics();
+            let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
             let ty = self.get_type_of_node_with_request(cond.when_true, &true_request);
-            suppress_contextual_branch_ts2322(self, cond.when_true, &snap);
+            suppress_contextual_branch_ts2322(self, cond.when_true, snap);
             ty
         };
 
@@ -234,9 +236,9 @@ impl<'a> CheckerState<'a> {
             // Dead branch — suppress diagnostics but still compute type.
             self.speculative_type_of_node(cond.when_false, &false_request)
         } else {
-            let snap = self.ctx.snapshot_diagnostics();
+            let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
             let ty = self.get_type_of_node_with_request(cond.when_false, &false_request);
-            suppress_contextual_branch_ts2322(self, cond.when_false, &snap);
+            suppress_contextual_branch_ts2322(self, cond.when_false, snap);
             ty
         };
 
@@ -409,9 +411,7 @@ impl<'a> CheckerState<'a> {
                 {
                     let display_type =
                         self.operator_surface_type_for_expression(unary.operand, operand_type);
-                    let type_str = self
-                        .operator_type_parameter_annotation_text_for_expression(unary.operand)
-                        .unwrap_or_else(|| self.format_type_for_operator_display(display_type));
+                    let type_str = self.format_type_for_operator_display(display_type);
                     let message = format_message(
                         diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
                         &["+", &type_str],
@@ -1016,11 +1016,12 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            // `const k = Symbol()` — infer unique symbol type.
-            // In TypeScript, const declarations initialized with Symbol() get
-            // a unique symbol type (typeof k), not the general `symbol` type.
-            if init_type == TypeId::SYMBOL
-                && self.is_symbol_call_initializer(var_decl.initializer)
+            // `const k = Symbol()` / `const k = Symbol.for(...)` — infer unique
+            // symbol type. In TypeScript, unannotated const declarations
+            // initialized with global symbol factory calls get a unique symbol
+            // type (typeof k), not the general `symbol` type.
+            if (self.is_symbol_call_initializer(var_decl.initializer)
+                || self.is_symbol_for_call_initializer(var_decl.initializer))
                 && let Some(sym_id) = self.get_symbol_id_for_variable_name(var_decl.name)
             {
                 return self
@@ -1029,11 +1030,11 @@ impl<'a> CheckerState<'a> {
                     .unique_symbol(tsz_solver::SymbolRef(sym_id.0));
             }
 
-            // const: preserve literal type — use the literal type from the
-            // initializer directly, since get_type_of_node may have widened it
-            // (e.g., `const c = 0` should be `0`, not `number`)
+            // const: preserve literal type from the initializer directly.
             if let Some(literal) = self.literal_type_from_initializer(var_decl.initializer) {
                 literal
+            } else if self.is_bare_object_literal_expression(var_decl.initializer) {
+                self.widen_mutable_object_literal_property_types(init_type)
             } else {
                 init_type
             }
@@ -1060,6 +1061,40 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         self.identifier_resolves_to_unshadowed_global(call.expression, "Symbol")
+    }
+
+    /// Check if an initializer expression is a `Symbol.for(...)` call where
+    /// `Symbol` resolves to the built-in global, not a same-named local.
+    pub(crate) fn is_symbol_for_call_initializer(&self, init_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(node) = self.ctx.arena.get(init_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_identifier_text(access.expression)
+            .is_some_and(|name| name == "Symbol")
+            && !self.known_global_value_has_local_shadow(access.expression, "Symbol")
+            && self
+                .ctx
+                .arena
+                .get_identifier_text(access.name_or_argument)
+                .is_some_and(|name| name == "for")
     }
 
     /// Get the binder SymbolId for a variable declaration's name node.
@@ -1786,9 +1821,9 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        let snap = self.ctx.snapshot_diagnostics();
+        let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
         let ty = self.get_type_of_node_with_request(idx, request);
-        self.ctx.rollback_diagnostics(&snap);
+        snap.rollback(&mut self.ctx.diagnostic_state());
         ty
     }
 
@@ -1800,9 +1835,9 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        let snap = self.ctx.snapshot_diagnostics();
+        let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
         let ty = self.get_type_of_function_with_request(idx, request);
-        self.ctx.rollback_diagnostics(&snap);
+        snap.rollback(&mut self.ctx.diagnostic_state());
         ty
     }
 }
@@ -1812,7 +1847,6 @@ mod tests {
     use crate::test_utils::check_source_codes;
 
     #[test]
-    #[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
     fn template_expr_contextual_type_no_false_positive() {
         // Template expression `\`${scope}:${event}\`` passed to a parameter expecting
         // a template literal type should NOT produce TS2345

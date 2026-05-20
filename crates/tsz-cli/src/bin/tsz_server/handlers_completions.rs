@@ -11,7 +11,7 @@ use tsz::lsp::Project;
 use tsz::lsp::completions::{CompletionItem, CompletionItemKind, Completions, sort_priority};
 use tsz::lsp::jsdoc::{jsdoc_for_node, parse_jsdoc};
 use tsz::lsp::position::{LineMap, Position};
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 impl Server {
     fn is_class_member_snippet_context(
@@ -1044,7 +1044,8 @@ impl Server {
         current_file: &str,
         item: &CompletionItem,
     ) -> Option<CompletionItemKind> {
-        if !item.has_action || item.source.as_ref().is_none() {
+        let has_auto_import_source = item.has_action && item.source.is_some();
+        if !has_auto_import_source {
             return None;
         }
         let export_name = Self::auto_import_export_name(item)?;
@@ -2851,8 +2852,7 @@ impl Server {
             } else {
                 completion_result
                     .as_ref()
-                    .map(|r| r.is_new_identifier_location)
-                    .unwrap_or(false)
+                    .is_some_and(|r| r.is_new_identifier_location)
             };
             let default_commit_characters =
                 (!is_new_identifier_location).then_some(serde_json::json!([".", ",", ";"]));
@@ -2862,8 +2862,8 @@ impl Server {
             }
 
             let mut response = serde_json::json!({
-                "isGlobalCompletion": completion_result.as_ref().map(|r| r.is_global_completion).unwrap_or(false),
-                "isMemberCompletion": completion_result.as_ref().map(|r| r.is_member_completion).unwrap_or(false),
+                "isGlobalCompletion": completion_result.as_ref().is_some_and(|r| r.is_global_completion),
+                "isMemberCompletion": completion_result.as_ref().is_some_and(|r| r.is_member_completion),
                 "isNewIdentifierLocation": is_new_identifier_location,
                 "entries": entries,
             });
@@ -2883,7 +2883,7 @@ impl Server {
                 "entries": []
             })
         };
-        self.stub_response(seq, request, Some(result.unwrap_or(fallback)))
+        self.success_response(seq, request, Some(result.unwrap_or(fallback)))
     }
 
     pub(crate) fn handle_completion_details(
@@ -3139,7 +3139,7 @@ impl Server {
                     let is_default_auto_import_item =
                         auto_import_export_name.as_deref() == Some("default");
                     let mut display_item_owned = None;
-                    if item.is_some_and(|i| i.has_action && i.source.as_ref().is_some())
+                    if item.is_some_and(|i| i.has_action && i.source.is_some())
                         && let Some(found_item) = item
                     {
                         let mut adjusted_item = found_item.clone();
@@ -3198,7 +3198,7 @@ impl Server {
                     );
                     detail.insert("displayParts".to_string(), display_parts);
                     let is_auto_import_item =
-                        item.is_some_and(|i| i.has_action && i.source.as_ref().is_some());
+                        item.is_some_and(|i| i.has_action && i.source.is_some());
                     if !is_auto_import_item && documentation != serde_json::json!([]) {
                         detail.insert("documentation".to_string(), documentation);
                     }
@@ -3366,7 +3366,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(details))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     // Display parts rendering, signature help handler, and tokenization utilities

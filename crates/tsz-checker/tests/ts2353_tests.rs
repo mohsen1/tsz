@@ -17,6 +17,183 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+#[test]
+fn record_number_rejects_non_numeric_object_literal_key() {
+    let source = r#"
+type NumRecord = Record<number, boolean>;
+
+const good: NumRecord = { 0: true, 1: false };
+const bad: NumRecord = { foo: true };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected one TS2353 for non-numeric key against Record<number, boolean>, got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'foo'"),
+        "Expected TS2353 to mention excess key foo, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn numeric_index_signature_rejects_non_numeric_object_literal_key() {
+    let source = r#"
+type NumericIndex = { [key: number]: boolean };
+
+const good: NumericIndex = { 0: true, 1: false };
+const bad: NumericIndex = { bar: true };
+const badInline: { [key: number]: boolean } = { baz: true };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        2,
+        "Expected TS2353 for non-numeric keys against number index signatures, got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'bar'"),
+        "Expected TS2353 to mention excess key bar, got: {ts2353:?}",
+    );
+    assert!(
+        ts2353.iter().any(|(_, msg)| msg.contains("'baz'")),
+        "Expected TS2353 to mention excess key baz, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn record_number_allows_quoted_numeric_object_literal_key() {
+    let source = r#"
+type NumRecord = Record<number, boolean>;
+
+const good: NumRecord = { "0": true, "1.5": false };
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "Did not expect TS2353 for quoted numeric keys against Record<number, boolean>, got: {diags:?}",
+    );
+}
+
+#[test]
+fn noinfer_union_excess_property_display_orders_object_before_function() {
+    let source = r#"
+declare function test1<T extends { x: string }>(
+  a: T,
+  b: NoInfer<T> | (() => NoInfer<T>),
+): void;
+test1({ x: "foo" }, { x: "bar", y: 42 });
+
+declare function test3<T extends { x: string }>(
+  a: T,
+  b: NoInfer<T | (() => T)>,
+): void;
+test3({ x: "foo" }, { x: "bar", y: 42 });
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        2,
+        "Expected two TS2353 diagnostics, got: {diags:?}",
+    );
+    assert!(
+        ts2353
+            .iter()
+            .any(|(_, msg)| msg
+                .contains("'NoInfer<{ x: string; }> | (() => NoInfer<{ x: string; }>)'")),
+        "Expected NoInfer object branch before function branch, got: {ts2353:?}",
+    );
+    assert!(
+        ts2353
+            .iter()
+            .any(|(_, msg)| msg.contains("'{ x: string; } | (() => { x: string; })'")),
+        "Expected outer NoInfer union display to put object branch first, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn const_assertion_assignment_reports_excess_property() {
+    let source = r#"
+interface Point {
+    x: number;
+    y: number;
+}
+
+const point: Point = { x: 1, y: 2, z: 3 } as const;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected one TS2353 through as const, got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'z'") && ts2353[0].1.contains("'Point'"),
+        "Expected TS2353 to mention excess property z and target Point, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn parenthesized_const_assertion_assignment_reports_excess_property() {
+    let source = r#"
+interface Point {
+    x: number;
+    y: number;
+}
+
+const point: Point = ({ x: 1, y: 2, z: 3 } as const);
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected one TS2353 through parenthesized as const, got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'z'") && ts2353[0].1.contains("'Point'"),
+        "Expected TS2353 to mention excess property z and target Point, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn plain_type_assertion_assignment_keeps_excess_property_opaque() {
+    let source = r#"
+interface Point {
+    x: number;
+    y: number;
+}
+
+const point: Point = { x: 1, y: 2, z: 3 } as Point;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353),
+        "Did not expect TS2353 through plain type assertion, got: {diags:?}",
+    );
+}
+
+#[test]
+fn spread_only_excess_property_does_not_trigger_ts2353() {
+    // A spread source uses explicit-only EPC: properties that arrive only from
+    // the spread operand are not checked as fresh object-literal excess.
+    let source = r#"
+type Point = { x: number, y: number }
+const base = { x: 1, y: 2, z: 3 }
+const point: Point = { ...base }
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2353 && d.1.contains("'z'")),
+        "Did not expect TS2353 for spread-only excess property z, got: {diags:?}",
+    );
+}
+
 // --- Discriminated union excess property checking ---
 
 #[test]
@@ -311,6 +488,51 @@ b = a;
     assert!(
         !diags.iter().any(|d| d.0 == 2322 || d.0 == 2353),
         "Mapped application assignment should classify as missing properties, got: {diags:?}"
+    );
+}
+
+#[test]
+fn mapped_application_assignment_reports_missing_property_with_renamed_keys() {
+    let source = r#"
+enum Kind { Left, Right }
+
+type Source<T extends Kind> = { tag: T; } & (
+  { tag: Kind.Left, leftOnly: string } |
+  { tag: Kind.Right, rightOnly: string }
+);
+
+type Projected<T extends Kind> = {
+  [Member in keyof Source<T>]: string;
+};
+
+declare let left: Projected<Kind.Left>;
+declare let right: Projected<Kind.Right>;
+left = right;
+right = left;
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2741: Vec<_> = diags.iter().filter(|(code, _)| *code == 2741).collect();
+    assert_eq!(
+        ts2741.len(),
+        2,
+        "Expected two TS2741 diagnostics for renamed remapped mapped assignments, got: {diags:?}"
+    );
+    assert!(
+        ts2741
+            .iter()
+            .any(|(_, message)| message.contains("Property 'leftOnly' is missing")),
+        "Expected missing-property diagnostic for 'leftOnly', got: {diags:?}"
+    );
+    assert!(
+        ts2741
+            .iter()
+            .any(|(_, message)| message.contains("Property 'rightOnly' is missing")),
+        "Expected missing-property diagnostic for 'rightOnly', got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322 || *code == 2353),
+        "Renamed remapped mapped assignment should classify as missing properties, got: {diags:?}"
     );
 }
 
@@ -626,8 +848,27 @@ function test<T extends IFoo>() {
     let diags = get_diagnostics(source);
     let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
     assert!(
-        ts2353.1.contains("'{ prop: boolean; }'"),
-        "Expected TS2353 against the concrete union member, got: {}",
+        ts2353.1.contains("'name'"),
+        "Expected TS2353 for the extra property, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
+fn union_with_generic_member_ignores_any_substring_in_alias_name_for_excess_property() {
+    let source = r#"
+interface IFoo {}
+type Many<T> = T | { prop: boolean };
+function test<T extends IFoo>() {
+    const value: Many<T> = { name: "test", prop: true };
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'name'"),
+        "Expected TS2353 for the extra property, got: {}",
         ts2353.1
     );
 }
@@ -975,5 +1216,241 @@ let v: A & B = { a: 1, b: 2, foo: 1, bar: 2 };
     assert!(
         msg.contains("'foo'"),
         "Expected the first excess property 'foo' to be reported, got: {msg}"
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Multiple template literal index signatures — interface & type literal
+// ────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn interface_with_two_template_literal_index_signatures_accepts_both_patterns() {
+    // Structural rule: a property key is valid if it matches ANY index signature
+    // pattern, not just the first one declared.
+    let source = r#"
+interface TemplateIndexed {
+    [key: `data-${string}`]: string;
+    [key: `aria-${string}`]: string;
+}
+const ti: TemplateIndexed = {
+    "data-id": "123",
+    "aria-label": "test",
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "Both 'data-*' and 'aria-*' properties should be accepted; got: {diags:?}"
+    );
+}
+
+#[test]
+fn interface_with_two_template_literal_index_signatures_rejects_non_matching_property() {
+    let source = r#"
+interface TemplateIndexed {
+    [key: `data-${string}`]: string;
+    [key: `aria-${string}`]: string;
+}
+const ti: TemplateIndexed = {
+    "foo-bar": "test",
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Property 'foo-bar' doesn't match either pattern; expected TS2353, got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("'foo-bar'"),
+        "Expected 'foo-bar' in error message, got: {:?}",
+        ts2353[0].1
+    );
+}
+
+#[test]
+fn interface_with_three_template_literal_index_signatures_accepts_all_patterns() {
+    // Verify the fix generalizes beyond two patterns (three or more).
+    let source = r#"
+interface MultiPattern {
+    [key: `get${string}`]: () => unknown;
+    [key: `set${string}`]: (v: unknown) => void;
+    [key: `on${string}`]: (e: unknown) => void;
+}
+const handlers: MultiPattern = {
+    getName: () => "test",
+    setValue: (_v: unknown) => {},
+    onClick: (_e: unknown) => {},
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "All three patterns should be accepted; got: {diags:?}"
+    );
+}
+
+#[test]
+fn type_literal_with_two_template_literal_index_signatures_accepts_both_patterns() {
+    // Same fix applies to type aliases with object type literals.
+    let source = r#"
+type TemplateIndexed = {
+    [key: `data-${string}`]: string;
+    [key: `aria-${string}`]: string;
+};
+const ti: TemplateIndexed = {
+    "data-id": "123",
+    "aria-label": "test",
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "Both 'data-*' and 'aria-*' properties should be accepted in type literal; got: {diags:?}"
+    );
+}
+
+#[test]
+fn type_literal_with_two_template_literal_index_signatures_rejects_non_matching_property() {
+    let source = r#"
+type TemplateIndexed = {
+    [key: `data-${string}`]: string;
+    [key: `aria-${string}`]: string;
+};
+const ti: TemplateIndexed = {
+    "foo-bar": "test",
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Property 'foo-bar' doesn't match either pattern in type literal; expected TS2353, got: {diags:?}"
+    );
+}
+
+// --- F-bounded interface excess-property tests (regression: stale resolve_cache) ---
+//
+// Rule: When an interface I extends a generic G<I>, object literal assignability
+// to I must see the full merged type (own props + heritage props). A stale
+// resolve_cache entry can make the checker see only own props, producing false
+// TS2353 for inherited properties (`children`, `parent`, etc.).
+
+fn ts2353_diags(source: &str) -> Vec<(u32, String)> {
+    get_diagnostics(source)
+        .into_iter()
+        .filter(|d| d.0 == 2353)
+        .collect()
+}
+
+const TREE_BTREE_DECLS: &str = "
+interface Tree<T extends Tree<T>> {
+    children: T[];
+}
+interface BTree extends Tree<BTree> {
+    value: number;
+}
+";
+
+#[test]
+fn fbounded_object_literal_no_false_ts2353_for_inherited_props_children_only() {
+    // Simplest F-bounded pattern — no parent field.
+    let ts2353 = ts2353_diags(&format!(
+        "{TREE_BTREE_DECLS}const bt: BTree = {{ value: 1, children: [] }};"
+    ));
+    assert!(
+        ts2353.is_empty(),
+        "F-bounded: 'children' is an inherited property of BTree and must not trigger TS2353; got: {ts2353:?}"
+    );
+}
+
+#[test]
+fn fbounded_object_literal_no_false_ts2353_renamed_param() {
+    // Same rule, different type-parameter name (U instead of T).
+    let ts2353 = ts2353_diags(
+        r#"
+interface Hierarchical<U extends Hierarchical<U>> {
+    children: U[];
+}
+interface Section extends Hierarchical<Section> {
+    title: string;
+}
+const s: Section = {
+    title: "intro",
+    children: [],
+};
+"#,
+    );
+    assert!(
+        ts2353.is_empty(),
+        "F-bounded (U param): 'children' is an inherited property and must not trigger TS2353; got: {ts2353:?}"
+    );
+}
+
+#[test]
+fn fbounded_object_literal_no_false_ts2353_with_parent_field() {
+    // Issue #6986 original repro: F-bounded interface with parent + children.
+    let ts2353 = ts2353_diags(
+        r#"
+interface MyNode<T extends MyNode<T>> {
+    parent: T | null;
+    children: T[];
+}
+interface FileNode extends MyNode<FileNode> {
+    name: string;
+}
+const file: FileNode = {
+    name: "root",
+    parent: null,
+    children: [],
+};
+"#,
+    );
+    assert!(
+        ts2353.is_empty(),
+        "F-bounded (parent + children): inherited properties must not trigger TS2353; got: {ts2353:?}"
+    );
+}
+
+#[test]
+fn fbounded_true_excess_property_still_errors() {
+    let ts2353 = ts2353_diags(&format!(
+        "{TREE_BTREE_DECLS}const bt: BTree = {{ value: 1, children: [], extra: true }};"
+    ));
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "F-bounded: 'extra' is a genuine excess property and must produce TS2353; got: {ts2353:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("'extra'"),
+        "TS2353 message should mention 'extra'; got: {ts2353:?}"
+    );
+}
+
+#[test]
+fn fbounded_non_self_referential_generic_no_ts2353() {
+    let ts2353 = ts2353_diags(
+        r#"
+interface Container<T> {
+    items: T[];
+}
+interface StringContainer extends Container<string> {
+    name: string;
+}
+const sc: StringContainer = {
+    name: "test",
+    items: [],
+};
+"#,
+    );
+    assert!(
+        ts2353.is_empty(),
+        "Non-F-bounded: 'items' is an inherited property and must not trigger TS2353; got: {ts2353:?}"
     );
 }

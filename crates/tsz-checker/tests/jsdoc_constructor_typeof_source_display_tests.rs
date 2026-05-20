@@ -16,26 +16,18 @@
 //! The display formatter only consults `symbol_has_js_constructor_evidence`
 //! to decide whether to short-circuit to `typeof <name>`.
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
 use tsz_checker::context::CheckerOptions;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::check_js_source_code_messages_with_options;
 
 fn diagnostics_for_js(source: &str) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_source(
+    check_js_source_code_messages_with_options(
         source,
         "functions.js",
         CheckerOptions {
-            allow_js: true,
-            check_js: true,
             no_implicit_any: true,
             ..CheckerOptions::default()
         },
     )
-    .into_iter()
-    .map(|d| (d.code, d.message_text))
-    .collect()
 }
 
 /// JS-style constructor declared as `var E = function(n) { this.x = n; };`
@@ -125,37 +117,15 @@ var y4 = id3(D);
 /// against unintended regressions.
 #[test]
 fn ts2345_plain_function_identifier_does_not_use_typeof_source() {
-    let mut parser = ParserState::new(
-        "test.ts".to_string(),
+    let diags = tsz_checker::test_utils::check_source_code_messages(
         r#"
 function id3(c: new (n: number) => { unique_marker: string }): typeof c {
     return c;
 }
 const F = function (n: number) { return { length: n }; };
 const z = id3(F);
-"#
-        .to_string(),
+"#,
     );
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let types = TypeInterner::new();
-    let options = CheckerOptions::default();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-    let diags: Vec<(u32, String)> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect();
     let ts2345: Vec<_> = diags.iter().filter(|(c, _)| *c == 2345).collect();
     for (_, msg) in &ts2345 {
         assert!(

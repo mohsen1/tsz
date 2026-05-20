@@ -3,25 +3,30 @@
 //! Holds the shared state used throughout the type checking process.
 //! This separates state from logic, allowing specialized checkers (expressions, statements)
 //! to borrow the context mutably.
-//!
-//! Sub-modules:
-//! - `constructors` - `CheckerContext` constructor methods
-//! - `resolver` - `TypeResolver` trait implementation
-//! - `def_mapping` - DefId migration helpers
-//! - `compiler_options` - Compiler option accessors and solver config derivation
-//! - `lib_queries` - Library/global type availability queries
-//! - `module_entity` - Module entity resolution (`module_resolves_to_non_module_entity`)
-
 mod aliases;
+mod cache_statistics;
 mod caches;
 mod compiler_options;
-pub use caches::{NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache};
+mod cross_file_delegation_cache;
+mod cross_file_type_params_cache;
+pub use cache_statistics::CheckerContextCacheStatistics;
+pub use caches::{
+    NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache, TypeReferenceValidationCaches,
+};
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
 pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
+pub use cross_file_delegation_cache::CrossFileDelegationCache;
+pub use cross_file_type_params_cache::{
+    CrossFileTypeParamsCacheStatistics, cross_file_type_params_cache_statistics,
+};
 mod constructors;
 mod core;
 mod cross_file_query;
+mod env_eval_cache;
+mod file_session_reset;
+pub mod lifetime_shells;
+pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
 mod def_mapping;
 mod import_conflicts;
 mod parse_health;
@@ -31,12 +36,14 @@ mod lib_queries;
 mod module_entity;
 mod request_cache;
 mod resolver;
+mod source_file_symbol_type_cache_scope;
 pub(crate) mod speculation;
 mod strict_mode;
 mod symbol_file_targets;
 pub mod typing_request;
 pub use aliases::*;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
+use source_file_symbol_type_cache_scope::next_source_file_symbol_type_cache_scope;
 pub use symbol_file_targets::SymbolFileTargetsOverlay;
 pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
@@ -55,11 +62,40 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::def::{DefId, DefinitionStore};
 use tsz_solver::{PropertyInfo, TypeId};
 
-// Re-export CheckerOptions and ScriptTarget from tsz-common
+// Re-export context-facing types used by downstream crates.
+pub use tsz_binder::LibContext;
 use tsz_binder::{BinderState, ModuleAugmentation};
 pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
+
+/// T2.2 cross-file type-parameter memoization map.
+///
+/// Keyed by `(target_file_idx, decl_idx)` — never by user-chosen
+/// identifier names — and stores the `Vec<TypeParamInfo>` produced by
+/// the slow path. Shared across every checker via `Arc` so the second
+/// caller sees the first caller's work.
+pub type CrossFileTypeParamsCache =
+    Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
+
+/// Overflow state observed from relation checks that feed assignability
+/// diagnostics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RelationOverflowFlags {
+    pub depth_exceeded: bool,
+    pub iteration_exceeded: bool,
+}
+
+impl RelationOverflowFlags {
+    pub const fn has_overflow(self) -> bool {
+        self.depth_exceeded || self.iteration_exceeded
+    }
+
+    pub const fn merge(&mut self, depth_exceeded: bool, iteration_exceeded: bool) {
+        self.depth_exceeded |= depth_exceeded;
+        self.iteration_exceeded |= iteration_exceeded;
+    }
+}
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
@@ -334,6 +370,9 @@ pub struct CheckerContext<'a> {
     /// since they inherit non-optional members from Array.prototype.
     pub types_extending_array: FxHashSet<TypeId>,
 
+    /// Recovery sites; see `crate::recovery`.
+    pub(crate) recovery_sites: RefCell<crate::recovery::RecoverySites>,
+
     // --- Caches ---
     /// Cached types for symbols (dense flat-vec, O(1) lookup by symbol index).
     pub symbol_types: SymbolTypeCache,
@@ -353,12 +392,8 @@ pub struct CheckerContext<'a> {
     /// Keyed by type name and stores both hits (`Some(TypeId)`) and misses (`None`).
     pub lib_type_resolution_cache: FxHashMap<String, Option<TypeId>>,
 
-    /// Cache for lib delegation results in `delegate_cross_arena_symbol_resolution`.
-    /// Keyed by SymbolId, stores the resolved TypeId. Prevents redundant child
-    /// checker creation for the same lib symbol, which is the primary cause of
-    /// hangs in multi-file tests with complex type libraries (react.d.ts has
-    /// hundreds of DOM types that each trigger delegation).
-    pub lib_delegation_cache: FxHashMap<SymbolId, TypeId>,
+    /// File-local caches for cross-file/lib delegation results.
+    pub lib_delegation_cache: CrossFileDelegationCache,
 
     /// Per-checker cache for cross-binder namespace member resolution.
     /// Keyed by (`namespace_name`, `member_name`) and stores both hits and misses.
@@ -398,6 +433,15 @@ pub struct CheckerContext<'a> {
     /// Shared lib type resolution cache across parallel file checks.
     /// Uses `DashMap` for thread-safe concurrent access.
     pub shared_lib_type_cache: Option<Arc<dashmap::DashMap<String, Option<TypeId>>>>,
+    // T2.2 cross-file type-parameter cache type alias is defined just below.
+    /// Program-wide memoization for `extract_type_params_from_decl` slow-path
+    /// results, keyed by `(target_file_idx, decl_idx)`. T2.2: collapses
+    /// redundant child-checker constructions on the `TypeEnvironmentCore`
+    /// path (the dominant share of `with_parent_cache_constructed` per
+    /// the 2026-05-10 attribution run, ~84 % on the cliff fixtures).
+    /// Populated lazily on slow-path completion; consulted before any new
+    /// `with_parent_cache_attributed(..., TypeEnvironmentCore)` call.
+    pub cross_file_type_params_cache: Option<CrossFileTypeParamsCache>,
 
     /// When true, `resolve_lib_type_by_name` returns `None` immediately without
     /// resolving lib types. Set when TS5107/TS5101 deprecation diagnostics are
@@ -465,7 +509,7 @@ pub struct CheckerContext<'a> {
 
     /// Shared cache for narrowing operations (type resolution, property lookup).
     /// Reused across flow analysis passes to prevent O(N^2) behavior in CFA chains.
-    pub narrowing_cache: tsz_solver::NarrowingCache,
+    pub narrowing_cache: tsz_solver::narrowing::NarrowingCache,
 
     /// Cache for `is_narrowable_identifier` results.
     /// This is pure (depends only on AST structure), so it never needs invalidation.
@@ -765,6 +809,8 @@ pub struct CheckerContext<'a> {
     /// Populated during named import resolution in `compute_type_of_symbol`.
     /// Consumed by `type_reference_symbol_type` to return the type alias body in type contexts.
     pub import_type_alias_types: FxHashMap<SymbolId, TypeId>,
+    /// VALUE-side type for merged const/type-alias symbols while their alias body lowers.
+    pub merged_value_types: FxHashMap<SymbolId, TypeId>,
     /// O(1) lookup set for class instance type resolution to avoid recursion.
     pub class_instance_resolution_set: FxHashSet<SymbolId>,
     /// O(1) lookup set for class constructor type resolution to avoid recursion.
@@ -843,6 +889,9 @@ pub struct CheckerContext<'a> {
     /// Current type parameter scope.
     pub type_parameter_scope: FxHashMap<String, TypeId>,
 
+    /// Checker-local memos for type-reference argument validation.
+    pub type_reference_validation_caches: TypeReferenceValidationCaches,
+
     /// Depth counter for conditional type `extends` clauses.
     /// Incremented when recursing into the `extends_type` of a conditional type,
     /// used to validate TS1338: `infer` only allowed in conditional extends.
@@ -897,9 +946,9 @@ pub struct CheckerContext<'a> {
     /// Whether type instantiation depth was exceeded (for TS2589 emission).
     pub depth_exceeded: Cell<bool>,
 
-    /// Whether relation complexity was exceeded during an assignability check
-    /// (for TS2859 "Excessive complexity comparing types" emission).
-    pub relation_depth_exceeded: Cell<bool>,
+    /// Relation-check overflow state observed during assignability/subtype
+    /// checks that feed diagnostics.
+    pub relation_overflow: Cell<RelationOverflowFlags>,
 
     /// When true, `should_suppress_assignability_diagnostic` skips the callable-
     /// with-type-params suppression. Set by variable declaration checking to
@@ -910,7 +959,7 @@ pub struct CheckerContext<'a> {
     /// Explicit evaluation session state (replaces thread-local depth/fuel guards).
     /// Shared via `Rc` across parent/child contexts so counters survive cross-arena
     /// delegation without implicit global state.
-    pub eval_session: Rc<tsz_solver::EvaluationSession>,
+    pub eval_session: Rc<tsz_solver::evaluation::session::EvaluationSession>,
 
     /// General recursion depth counter for type checking.
     /// Prevents stack overflow by bailing out when depth exceeds the limit.
@@ -986,7 +1035,7 @@ pub struct CheckerContext<'a> {
     /// Whether per-run type results should be mirrored into the shared
     /// `DefinitionStore` result caches.
     ///
-    /// Batch project checking enables this through `ProjectEnv`; interactive/LSP
+    /// Batch project checking enables this through `ProgramContext`; interactive/LSP
     /// callers keep it disabled so persistent shared stores do not accumulate
     /// speculative request-local results across editor operations.
     pub share_owner_symbol_type_results: bool,
@@ -1040,7 +1089,7 @@ pub struct CheckerContext<'a> {
     /// the full overlay map on every cross-arena delegation.
     pub cross_file_symbol_targets: RefCell<SymbolFileTargetsOverlay>,
 
-    /// Shared base map: `SymbolId` → owning file index (pre-built from `ProjectEnv`).
+    /// Shared base map: `SymbolId` → owning file index (pre-built from `ProgramContext`).
     ///
     /// Cloned as `Arc` (O(1)) when creating child checkers, avoiding the O(N) clone
     /// of `cross_file_symbol_targets`. Read sites use `resolve_symbol_file_index()`
@@ -1251,6 +1300,11 @@ pub struct CheckerContext<'a> {
     /// This prevents widening of literal types in object/array literals.
     pub in_const_assertion: bool,
 
+    /// True while checking a `satisfies T` operand. Object-literal property
+    /// widening then uses tsc's exact `isLiteralOfContextualType` per-property
+    /// gate instead of tsz's normal coarser policy.
+    pub in_satisfies_operand: bool,
+
     /// When true, preserve literal types instead of widening.
     /// Set during evaluation of compound expression branches (conditional `?:`,
     /// logical `||`/`&&`/`??`) so that `const x = cond ? "a" : "b"` infers
@@ -1349,31 +1403,23 @@ pub struct CheckerContext<'a> {
     // object shapes distinctly.
 }
 
-/// Context for a lib file (arena + binder) for global type resolution.
-#[derive(Clone, Debug)]
-pub struct LibContext {
-    /// The AST arena for this lib file.
-    pub arena: Arc<NodeArena>,
-    /// The binder state with symbols from this lib file.
-    pub binder: Arc<BinderState>,
-}
-
 /// Project-wide shared environment for multi-file type checking.
 ///
 /// Captures all the state that is identical across every per-file `CheckerContext`
-/// in a project check run. Drivers (CLI, LSP) build one `ProjectEnv` after merge
-/// and call [`ProjectEnv::apply_to`] on each checker instead of repeating 10+
+/// in a project check run. Drivers (CLI, LSP) build one `ProgramContext` after merge
+/// and call [`ProgramContext::apply_to`] on each checker instead of repeating 10+
 /// setter calls per file.
 ///
 /// This struct is `Clone`-cheap because every field is either `Arc`-wrapped or `Copy`.
 #[derive(Clone)]
-pub struct ProjectEnv {
+pub struct ProgramContext {
     /// Lib file contexts for global type resolution.
     pub lib_contexts: Arc<Vec<LibContext>>,
     /// All AST arenas for cross-file resolution (indexed by `file_idx`).
     pub all_arenas: Arc<Vec<Arc<NodeArena>>>,
     /// All binders for cross-file resolution (indexed by `file_idx`).
     pub all_binders: Arc<Vec<Arc<BinderState>>>,
+    pub source_file_symbol_type_cache_scope: u64,
     /// Pre-computed declared modules from skeleton index.
     pub skeleton_declared_modules: Option<Arc<GlobalDeclaredModules>>,
     /// Pre-computed expando index from skeleton index.
@@ -1503,14 +1549,20 @@ pub struct ProjectEnv {
     /// Shared `DefinitionStore` for parallel checking.
     /// When set, all parallel checkers share this store for globally unique `DefIds`.
     pub shared_definition_store: Option<Arc<DefinitionStore>>,
+    /// T2.2 program-wide memo for cross-file type-parameter extraction.
+    /// Mirrors `CheckerContext::cross_file_type_params_cache`; built once
+    /// per project run by the driver and shared via `Arc` across every
+    /// checker.
+    pub cross_file_type_params_cache: Option<CrossFileTypeParamsCache>,
 }
 
-impl Default for ProjectEnv {
+impl Default for ProgramContext {
     fn default() -> Self {
         Self {
             lib_contexts: Arc::new(vec![]),
             all_arenas: Arc::new(vec![]),
             all_binders: Arc::new(vec![]),
+            source_file_symbol_type_cache_scope: next_source_file_symbol_type_cache_scope(),
             skeleton_declared_modules: None,
             skeleton_expando_index: None,
             skeleton_module_augmentations_index: None,
@@ -1543,11 +1595,12 @@ impl Default for ProjectEnv {
             has_deprecation_diagnostics: false,
             last_skeleton_fingerprint: None,
             shared_definition_store: None,
+            cross_file_type_params_cache: None,
         }
     }
 }
 
-impl ProjectEnv {
+impl ProgramContext {
     /// Apply all project-level shared state to a checker context.
     ///
     /// This replaces the 10+ individual setter calls that drivers previously
@@ -1565,6 +1618,11 @@ impl ProjectEnv {
             self.typescript_dom_replacement_globals.2,
         );
         ctx.set_has_deprecation_diagnostics(self.has_deprecation_diagnostics);
+        // Pre-install global indices before set_all_arenas/set_all_binders so
+        // those methods can skip re-computing indices already provided here.
+        if let Some(ref idx) = self.global_file_name_index {
+            ctx.global_file_name_index = Some(Arc::clone(idx));
+        }
         ctx.set_all_arenas(Arc::clone(&self.all_arenas));
         if let Some(ref dm) = self.skeleton_declared_modules {
             ctx.set_declared_modules_from_skeleton(Arc::clone(dm));
@@ -1572,8 +1630,8 @@ impl ProjectEnv {
         if let Some(ref ei) = self.skeleton_expando_index {
             ctx.set_expando_index_from_skeleton(Arc::clone(ei));
         }
-        // Pre-install global indices before set_all_binders so it can skip
-        // re-computing them. This avoids O(N) binder scans per checker.
+        // Pre-install remaining global indices before set_all_binders so it
+        // can skip re-computing them. This avoids O(N) binder scans per checker.
         if let Some(ref idx) = self.global_file_locals_index {
             ctx.global_file_locals_index = Some(Arc::clone(idx));
         }
@@ -1591,9 +1649,6 @@ impl ProjectEnv {
         }
         if let Some(ref idx) = self.global_arena_index {
             ctx.global_arena_index = Some(Arc::clone(idx));
-        }
-        if let Some(ref idx) = self.global_file_name_index {
-            ctx.global_file_name_index = Some(Arc::clone(idx));
         }
         if let Some(ref m) = self.program_reexports {
             ctx.program_reexports = Some(Arc::clone(m));
@@ -1619,6 +1674,8 @@ impl ProjectEnv {
             ctx.definition_store = Arc::clone(store);
             ctx.share_owner_symbol_type_results = true;
         }
+        ctx.definition_store
+            .set_source_file_symbol_type_cache_scope(self.source_file_symbol_type_cache_scope);
         ctx.set_all_binders(Arc::clone(&self.all_binders));
         // When the shared DefinitionStore was fully populated (via from_semantic_defs
         // during project setup), skip the expensive per-binder iteration. Instead,
@@ -1661,6 +1718,9 @@ impl ProjectEnv {
         if self.shared_definition_store.is_some() {
             ctx.warm_local_caches_from_shared_store();
         }
+        if let Some(ref m) = self.cross_file_type_params_cache {
+            ctx.cross_file_type_params_cache = Some(Arc::clone(m));
+        }
     }
 
     /// Build the 4 global binder indices from `all_binders`.
@@ -1669,6 +1729,8 @@ impl ProjectEnv {
     /// so drivers can compute it once and share via `Arc` across all checkers.
     /// When these fields are `Some`, `set_all_binders` skips re-computing them.
     pub fn build_global_indices(&mut self) {
+        self.source_file_symbol_type_cache_scope = next_source_file_symbol_type_cache_scope();
+
         // Phase 2 step 2: when the driver pre-built
         // `skeleton_module_augmentations_index` from `SkeletonIndex`, skip the
         // per-binder `module_augmentations` loop entirely and reuse the
@@ -1812,12 +1874,7 @@ impl ProjectEnv {
                     }
                 }
                 if let Some(ref mut dm) = declared_modules {
-                    let normalized = module_spec.trim_matches('"').trim_matches('\'');
-                    if normalized.contains('*') {
-                        dm.patterns.push(normalized.to_string());
-                    } else {
-                        dm.exact.insert(normalized.to_string());
-                    }
+                    dm.insert_module_name(module_spec);
                 }
             }
             if let Some(ref mut dm) = declared_modules {
@@ -1826,12 +1883,7 @@ impl ProjectEnv {
                     .iter()
                     .chain(binder.shorthand_ambient_modules.iter())
                 {
-                    let normalized = name.trim_matches('"').trim_matches('\'');
-                    if normalized.contains('*') {
-                        dm.patterns.push(normalized.to_string());
-                    } else {
-                        dm.exact.insert(normalized.to_string());
-                    }
+                    dm.insert_module_name(name);
                 }
             }
             // Phase 2 step 2: skip the per-binder module_augmentations loop
@@ -1885,9 +1937,7 @@ impl ProjectEnv {
         }
 
         if let Some(mut dm) = declared_modules {
-            dm.patterns.sort();
-            dm.patterns.dedup();
-            dm.finalize();
+            dm.finish();
             self.skeleton_declared_modules = Some(Arc::new(dm));
         }
 
@@ -1932,38 +1982,5 @@ impl ProjectEnv {
         // Filename reverse index: one O(N) build replaces the O(N²) fallback rebuild.
         let file_name_idx = crate::module_resolution::build_file_name_index(&self.all_arenas);
         self.global_file_name_index = Some(Arc::new(file_name_idx));
-    }
-
-    /// Build the shared `SymbolId` → file-index map from `symbol_file_targets`.
-    ///
-    /// Call this once after populating `symbol_file_targets`. The resulting
-    /// `Arc<FxHashMap>` is shared (O(1) clone) across all checkers, eliminating
-    /// the per-checker O(N) copy into `cross_file_symbol_targets`.
-    pub fn build_global_symbol_file_index(&mut self) {
-        let mut map: FxHashMap<SymbolId, usize> =
-            FxHashMap::with_capacity_and_hasher(self.symbol_file_targets.len(), Default::default());
-        for &(sym_id, file_idx) in self.symbol_file_targets.iter() {
-            map.insert(sym_id, file_idx);
-        }
-        self.global_symbol_file_index = Some(Arc::new(map));
-    }
-
-    /// Build global indices only when the skeleton fingerprint has changed.
-    ///
-    /// Compares `new_fingerprint` against `self.last_skeleton_fingerprint`.
-    /// If they match, the global indices are already valid and the expensive
-    /// O(N) binder scan is skipped entirely. If they differ (or this is the
-    /// first build), delegates to `build_global_indices` and stores the new
-    /// fingerprint for future comparisons.
-    ///
-    /// Returns `true` if indices were rebuilt, `false` if cached.
-    pub fn build_global_indices_if_changed(&mut self, new_fingerprint: u64) -> bool {
-        if self.last_skeleton_fingerprint == Some(new_fingerprint) {
-            // All global indices (name-based + arena) + skeleton indices are still valid.
-            return false;
-        }
-        self.build_global_indices();
-        self.last_skeleton_fingerprint = Some(new_fingerprint);
-        true
     }
 }

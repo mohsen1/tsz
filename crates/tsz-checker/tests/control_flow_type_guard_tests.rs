@@ -2,7 +2,12 @@ use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
     let options = CheckerOptions {
@@ -18,14 +23,6 @@ fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 fn checked_js_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
     let options = CheckerOptions {
         strict: true,
         allow_js: true,
@@ -34,20 +31,24 @@ fn checked_js_diagnostics(source: &str) -> Vec<(u32, String)> {
     }
     .apply_strict_defaults();
 
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
-        options,
-    );
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
+    tsz_checker::test_utils::check_source(source, "test.js", options)
         .into_iter()
         .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
+fn strict_diagnostics_with_libs(source: &str) -> Vec<(u32, String)> {
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
+
+    tsz_checker::test_utils::check_source_with_libs(source, "test.ts", options, &lib_files)
+        .into_iter()
+        .filter(|d| d.code != 2318 && d.code != 6133)
         .map(|d| (d.code, d.message_text))
         .collect()
 }
@@ -445,8 +446,7 @@ function beastFoo(beast: Object) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -552,8 +552,7 @@ function test(value: string) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -615,8 +614,7 @@ function test(value: string) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -659,6 +657,66 @@ function test(value: string) {
     }
 }
 
+/// Top-level `let` declarations without initializers still receive the
+/// predicate's narrowed type in guarded branches, even though TS2454 is also
+/// reported for the unassigned read in the guard expression.
+#[test]
+fn test_top_level_type_predicate_narrows_string_to_literal() {
+    let source = r#"
+declare function isFoo(value: string): value is "foo";
+declare function doThis(value: "foo"): void;
+declare function doThat(value: string): void;
+
+let value: string;
+if (isFoo(value)) {
+    doThis(value);
+} else {
+    doThat(value);
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        no_implicit_returns: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2454),
+        "top-level unassigned guard read should still report TS2454, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2345),
+        "type predicate narrowing should prevent TS2345 in guarded branch, got: {diagnostics:?}"
+    );
+}
+
 /// Regression test: type guard narrowing during return type inference.
 ///
 /// When a function body uses a type guard in an if-condition and then returns
@@ -688,8 +746,7 @@ function f12(x: string | (() => string) | undefined) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -754,8 +811,7 @@ function getString(x: string | number) {
 const s: string = getString("hello");
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -815,8 +871,7 @@ function getResults2(value: Results | { data: Results }): Results {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -887,6 +942,57 @@ function getResults2(value: Results | { data: Results }): Results {
     }
 }
 
+#[test]
+fn explicit_type_argument_instantiates_generic_type_predicate() {
+    let source = r#"
+function isArray<T>(x: unknown): x is T[] {
+    return Array.isArray(x);
+}
+
+function useGenericPred(x: unknown) {
+    if (isArray<number>(x)) {
+        const _n: number[] = x;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    let relevant: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        !relevant.iter().any(|(code, _)| *code == 2322),
+        "explicit type arguments should instantiate `x is T[]` as `number[]`: {relevant:?}"
+    );
+}
+
 /// Regression test: union type predicate narrowing.
 ///
 /// When a method is called on a union type (e.g., `Entry | Group`) and only
@@ -909,8 +1015,7 @@ if (chunk.isInit(chunk)) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1157,8 +1262,7 @@ function f(x: string | number) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1207,8 +1311,7 @@ function f(x: string | number) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1260,8 +1363,7 @@ function f(obj: { x: string | number }) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1298,6 +1400,166 @@ function f(obj: { x: string | number }) {
     );
 }
 
+#[test]
+fn type_predicate_narrowing_does_not_leak_after_if_without_else() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function isNumber(value: unknown): value is number {
+    return typeof value === "number";
+}
+
+function test(x: unknown) {
+    if (isNumber(x)) {
+        let n: number = x;
+    }
+    x.toFixed(2);
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 18046 && message.contains("'x' is of type 'unknown'")
+        }),
+        "expected TS18046 after predicate branch rejoins with the original type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn renamed_type_predicate_narrowing_does_not_leak_after_if_else_join() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function keepsText(input: unknown): input is string {
+    return typeof input === "string";
+}
+
+function use(candidate: unknown) {
+    if (keepsText(candidate)) {
+        let s: string = candidate;
+    } else {
+        let u: unknown = candidate;
+    }
+    candidate.trim();
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 18046 && message.contains("'candidate' is of type 'unknown'")
+        }),
+        "expected TS18046 after both predicate branches can reach the join, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn type_predicate_narrowing_survives_when_false_branch_terminates() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function isNumber(value: unknown): value is number {
+    return typeof value === "number";
+}
+
+function test(x: unknown) {
+    if (!isNumber(x)) {
+        return;
+    }
+    let n: number = x;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2322),
+        "predicate narrowing should survive after terminating false branch, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn exhaustive_typeof_chain_on_unknown_leaves_empty_object_residual() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function narrowUnknown(x: unknown) {
+    if (typeof x === "string") return;
+    if (typeof x === "number") return;
+    if (typeof x === "boolean") return;
+    if (typeof x === "undefined") return;
+    if (typeof x === "object") return;
+    if (typeof x === "function") return;
+    if (typeof x === "symbol") return;
+    if (typeof x === "bigint") return;
+
+    const remaining: never = x;
+    return remaining;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type '{}' is not assignable to type 'never'")
+        }),
+        "expected exhaustive typeof exclusions from unknown to leave {{}}, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, message)| !message
+                .contains("Type 'unknown' is not assignable to type 'never'")),
+        "exhaustive typeof exclusions should not leave unknown, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn exhaustive_typeof_chain_with_renamed_value_and_negated_conditions_leaves_empty_object() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function narrowCandidate(candidate: unknown) {
+    if (!(typeof candidate !== "string")) return;
+    if (!(typeof candidate !== "number")) return;
+    if (!(typeof candidate !== "boolean")) return;
+    if (!(typeof candidate !== "undefined")) return;
+    if (!(typeof candidate !== "object")) return;
+    if (!(typeof candidate !== "function")) return;
+    if (!(typeof candidate !== "symbol")) return;
+    if (!(typeof candidate !== "bigint")) return;
+
+    const remaining: never = candidate;
+    return remaining;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type '{}' is not assignable to type 'never'")
+        }),
+        "renamed negated typeof exclusions should leave {{}}, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn partial_typeof_chain_on_unknown_stays_unknown() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function partial(x: unknown) {
+    if (typeof x === "string") return;
+    if (typeof x === "number") return;
+
+    const remaining: never = x;
+    return remaining;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'unknown' is not assignable to type 'never'")
+        }),
+        "partial typeof exclusions should keep unknown, got: {diagnostics:?}"
+    );
+}
+
 /// Regression test: type predicate narrowing with discriminated union members.
 ///
 /// When interfaces have string literal discriminant properties (e.g., `kind: "a"`),
@@ -1318,8 +1580,7 @@ if (isA(v)) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1382,8 +1643,7 @@ function test(foo: Foo): {type: 'A', a: number} {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1443,8 +1703,7 @@ const result = capture(isB);
 const check: 'B' = result;
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1527,8 +1786,7 @@ class Foo<T extends string> {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1589,8 +1847,7 @@ class C11 {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1645,8 +1902,7 @@ function f27(outer: { obj: { kind: 'foo', foo: string } | { kind: 'bar', bar: nu
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1702,8 +1958,7 @@ function f26(outer: { readonly obj: { kind: 'foo', foo: string } | { kind: 'bar'
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1759,8 +2014,7 @@ function f(obj: { kind: 'foo', foo: string } | { kind: 'bar', bar: number }) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1796,6 +2050,97 @@ function f(obj: { kind: 'foo', foo: string } | { kind: 'bar', bar: number }) {
     );
 }
 
+#[test]
+fn destructured_boolean_discriminant_truthiness_narrows_source_object() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function processResult(
+    result: { ok: true; value: string } | { ok: false; error: string }
+): string {
+    const { ok } = result;
+    if (ok) {
+        return result.value;
+    }
+    return result.error;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2339),
+        "Expected destructured boolean discriminant to narrow source object, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn renamed_destructured_boolean_discriminant_truthiness_narrows_source_object() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function readState(
+    state: { ready: true; payload: number } | { ready: false; reason: string }
+) {
+    const { ready: isReady } = state;
+    if (isReady) {
+        const payload: number = state.payload;
+    } else {
+        const reason: string = state.reason;
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2339),
+        "Expected renamed destructured discriminant to narrow source object, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn non_const_destructured_discriminant_truthiness_does_not_narrow_source_object() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function processResult(
+    result: { ok: true; value: string } | { ok: false; error: string }
+) {
+    let { ok } = result;
+    if (ok) {
+        return result.value;
+    }
+    return result.error;
+}
+"#,
+    );
+
+    let ts2339_count = diagnostics.iter().filter(|(code, _)| *code == 2339).count();
+    assert_eq!(
+        ts2339_count, 2,
+        "Expected non-const destructured discriminant not to narrow source object, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn destructured_discriminant_with_default_does_not_narrow_source_object() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function processResult(
+    result: { ok: true; value: string } | { ok: false; error: string }
+) {
+    const { ok = true } = result;
+    if (ok) {
+        return result.value;
+    }
+    return result.error;
+}
+"#,
+    );
+
+    let ts2339_count = diagnostics.iter().filter(|(code, _)| *code == 2339).count();
+    assert_eq!(
+        ts2339_count, 2,
+        "Expected defaulted destructured discriminant not to narrow source object, got: {diagnostics:#?}"
+    );
+}
+
 /// Regression test: aliased condition with loose equality narrows discriminated union.
 ///
 /// `const isFoo = kind == 'foo'; if (isFoo && obj.foo) { ... }` should narrow `obj`
@@ -1815,8 +2160,7 @@ function f(obj: { kind: 'foo', foo?: string } | { kind: 'bar', bar?: number }) {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     assert!(parser.get_diagnostics().is_empty(), "Parse errors");
 
     let mut binder = BinderState::new();
@@ -1855,6 +2199,73 @@ function f(obj: { kind: 'foo', foo?: string } | { kind: 'bar', bar?: number }) {
         ts2339.is_empty() && ts2322.is_empty(),
         "Expected no errors: aliased loose == condition should narrow discriminated union, \
          ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}
+
+#[test]
+fn filter_truthiness_callback_does_not_inherit_type_predicate_overload() {
+    let diagnostics = strict_diagnostics_with_libs(
+        r#"
+const values: (number | null)[] = [1, null, 2];
+const filtered: number[] = values.filter(x => !!x);
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected TS2322 because `!!x` should not infer `x is number`, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn mapped_then_filter_truthiness_callback_does_not_inherit_type_predicate_overload() {
+    let diagnostics = strict_diagnostics_with_libs(
+        r#"
+const values: (number | null)[] = [1, null, 2];
+const mapped = values.map(x => x);
+const filtered: number[] = mapped.filter(x => !!x);
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected TS2322 after map/filter because `!!x` should not infer `x is number`, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn filter_null_comparison_callback_still_infers_type_predicate() {
+    let diagnostics = strict_diagnostics_with_libs(
+        r#"
+const values: (number | null)[] = [1, null, 2];
+const filtered: number[] = values.filter(x => x !== null);
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2322),
+        "`x !== null` should infer `x is number` for filter, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn contextual_type_guard_assignment_requires_explicit_or_inferred_predicate() {
+    let diagnostics = strict_diagnostics(
+        r#"
+const truthyGuard: (x: number | null) => x is number = x => !!x;
+const nullGuard: (x: number | null) => x is number = x => x !== null;
+"#,
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 for `x => !!x`; `x => x !== null` should infer a predicate. Got: {diagnostics:#?}"
     );
 }
 
@@ -2220,5 +2631,202 @@ if (annotated(foobar)) {
     assert!(
         !ts2339.is_empty(),
         "Explicit `: boolean` annotation must suppress predicate inference; diags={diags:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Symbol.hasInstance-aware instanceof narrowing — checker wiring (issue #8779)
+// ---------------------------------------------------------------------------
+//
+// When a constructor carries `[Symbol.hasInstance](v: ...): v is T`, the
+// instanceof check is a user-defined type predicate, not a runtime `instanceof`
+// check. The narrowing must use type-predicate semantics rather than instanceof
+// semantics so that:
+//   * primitive union members that are subtypes of T are KEPT in the true branch
+//   * primitive union members that are subtypes of T are EXCLUDED in the false branch
+// These tests prove the structural rule using multiple variable-name variants
+// (per CLAUDE.md §25: the fix must not be keyed to a specific parameter name).
+
+const fn sym_preamble() -> &'static str {
+    "interface SymbolConstructor { readonly hasInstance: unique symbol; }\ndeclare var Symbol: SymbolConstructor;\n"
+}
+
+/// True branch: `unknown` narrows to the predicate type.
+/// Adjacent case 1: parameter named `v`.
+#[test]
+fn instanceof_has_instance_unknown_source_narrows_to_predicate_type_v() {
+    let source = format!(
+        r#"{}
+class MyArrayLike {{
+    static [Symbol.hasInstance](v: unknown): v is MyArrayLike {{ return true; }}
+}}
+declare var x: unknown;
+if (x instanceof MyArrayLike) {{
+    x;
+}} else {{
+    x;
+}}
+"#,
+        sym_preamble()
+    );
+
+    let diags = strict_diagnostics(&source);
+    // No diagnostics expected — narrowing unknown to MyArrayLike in true branch is clean.
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.0 == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "instanceof + hasInstance on unknown should not produce TS2339: {diags:#?}"
+    );
+}
+
+/// True branch: `unknown` narrows to predicate type.
+/// Adjacent case 2: parameter named `value` (proves the rule is not name-keyed).
+#[test]
+fn instanceof_has_instance_unknown_source_narrows_to_predicate_type_value() {
+    let source = format!(
+        r#"{}
+class Wrapper {{
+    static [Symbol.hasInstance](value: unknown): value is Wrapper {{ return true; }}
+    inner: number;
+}}
+declare var x: unknown;
+if (x instanceof Wrapper) {{
+    x.inner;
+}}
+"#,
+        sym_preamble()
+    );
+
+    let diags = strict_diagnostics(&source);
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.0 == 2339).collect();
+    assert!(
+        ts2339.is_empty(),
+        "instanceof + hasInstance (param=value) on unknown should not produce TS2339: {diags:#?}"
+    );
+}
+
+/// The core bug from issue #8779: when the hasInstance predicate type is a
+/// primitive (`v is string`), the true branch must KEEP the primitive union
+/// member instead of incorrectly excluding it via instanceof's primitive-
+/// exclusion rule.
+#[test]
+fn instanceof_has_instance_primitive_predicate_keeps_primitive_in_true_branch() {
+    let source = format!(
+        r#"{}
+interface StringChecker {{
+    [Symbol.hasInstance](v: unknown): v is string;
+}}
+declare var IsString: StringChecker;
+declare var x: string | number;
+if (x instanceof IsString) {{
+    x;  // x should be `string`
+}} else {{
+    x;  // x should be `number`
+}}
+"#,
+        sym_preamble()
+    );
+
+    // No diagnostics expected. The test validates narrowing by checking that
+    // property access on the narrowed type is type-correct.
+    let diags = strict_diagnostics(&source);
+    let ts_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.0, 2339 | 2322))
+        .collect();
+    assert!(
+        ts_errors.is_empty(),
+        "instanceof + hasInstance (primitive predicate) should not produce type errors: {diags:#?}"
+    );
+}
+
+/// Adjacent case: parameter named `x` (third name variant, per §25 matrix).
+#[test]
+fn instanceof_has_instance_primitive_predicate_param_x() {
+    let source = format!(
+        r#"{}
+interface NumChecker {{
+    [Symbol.hasInstance](x: unknown): x is number;
+}}
+declare var IsNum: NumChecker;
+declare var val: string | number | boolean;
+if (val instanceof IsNum) {{
+    val;  // val should be `number`
+}} else {{
+    val;  // val should be `string | boolean`
+}}
+"#,
+        sym_preamble()
+    );
+
+    let diags = strict_diagnostics(&source);
+    let ts_errors: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.0, 2339 | 2322))
+        .collect();
+    assert!(
+        ts_errors.is_empty(),
+        "instanceof + hasInstance (param=x, number predicate) should not produce type errors: {diags:#?}"
+    );
+}
+
+/// False branch: when hasInstance predicate is `v is MyClass`, a primitive union
+/// member that is NOT a subtype of `MyClass` must be preserved in the false branch.
+/// (Regression: instanceof's primitive-keep rule was wrong for hasInstance
+/// predicates whose type is a class, since `string` is not a `MyClass` so it
+/// correctly stays in the false branch anyway — this test ensures the class
+/// case is not broken by the fix.)
+#[test]
+fn instanceof_has_instance_class_predicate_false_branch_preserves_non_matching() {
+    let source = format!(
+        r#"{}
+class Tag {{
+    static [Symbol.hasInstance](val: unknown): val is Tag {{ return true; }}
+    kind: "tag";
+}}
+declare var x: string | Tag;
+if (x instanceof Tag) {{
+    x.kind;
+}} else {{
+    x;  // should be `string`
+}}
+"#,
+        sym_preamble()
+    );
+
+    let diags = strict_diagnostics(&source);
+    let ts2339: Vec<_> = diags
+        .iter()
+        .filter(|d| d.0 == 2339)
+        .filter(|d| d.1.contains("'kind'"))
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "instanceof + hasInstance class predicate: true branch should see Tag.kind: {diags:#?}"
+    );
+}
+
+/// `instanceof` without `[Symbol.hasInstance]` must still use instanceof
+/// semantics (primitive-exclusion) — the fix must not change this.
+#[test]
+fn instanceof_without_has_instance_still_excludes_primitives() {
+    let source = r#"
+class Foo { x: number; }
+declare var y: string | Foo;
+if (y instanceof Foo) {
+    y.x;
+} else {
+    y;
+}
+"#;
+
+    let diags = strict_diagnostics(source);
+    let ts2339: Vec<_> = diags
+        .iter()
+        .filter(|d| d.0 == 2339 && d.1.contains("'x'"))
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "regular instanceof (no hasInstance) true branch should see Foo.x: {diags:#?}"
     );
 }

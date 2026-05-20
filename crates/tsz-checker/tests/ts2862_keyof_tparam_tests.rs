@@ -9,6 +9,38 @@
 use tsz_checker::test_utils::check_source_codes;
 
 #[test]
+fn ts2862_not_emitted_for_mutable_generic_array_indexed_assignment() {
+    let source = r#"
+class Container<T> {
+    private items: T[] = [];
+
+    set(index: number, value: T): void {
+        this.items[index] = value;
+    }
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.is_empty(),
+        "mutable generic array indexed assignment should not emit diagnostics; got {codes:?}"
+    );
+}
+
+#[test]
+fn ts2862_not_emitted_for_mutable_array_constrained_type_parameter_write() {
+    let source = r#"
+function f<T extends string[]>(items: T, index: number, value: string): void {
+    items[index] = value;
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.is_empty(),
+        "mutable array-constrained generic indexed assignment should not emit diagnostics; got {codes:?}"
+    );
+}
+
+#[test]
 fn ts2862_not_emitted_for_keyof_t_indexed_compound_assignment() {
     // `T extends Record<string, number>`; `key: keyof T`. tsc emits only
     // TS2322 here ("Type 'number' is not assignable to type 'T[keyof T]'");

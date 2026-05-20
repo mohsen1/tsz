@@ -26,6 +26,17 @@ pub(super) struct SymbolFileTargetsNode {
 }
 
 impl SymbolFileTargetsNode {
+    /// Entries represented by this immutable snapshot. Layered snapshots
+    /// store `parent.total_entries + entries.len()`, so shadowed keys are
+    /// counted once per layer. Flattened snapshots first merge the parent
+    /// layers and delta into this node's `entries`, so shadowed keys are
+    /// counted once there. The overlay perf counter uses this value to size
+    /// the parent snapshot handed to a child checker.
+    #[must_use]
+    pub(super) const fn total_entries(&self) -> usize {
+        self.total_entries
+    }
+
     fn get(&self, sym_id: SymbolId) -> Option<usize> {
         self.entries
             .get(&sym_id)
@@ -77,6 +88,12 @@ impl SymbolFileTargetsOverlay {
 
     pub(super) fn insert(&mut self, sym_id: SymbolId, file_idx: usize) {
         self.delta.insert(sym_id, file_idx);
+    }
+
+    pub(super) fn register(&mut self, sym_id: SymbolId, file_idx: usize) {
+        if self.get(sym_id) != Some(file_idx) {
+            self.insert(sym_id, file_idx);
+        }
     }
 
     #[must_use]

@@ -1141,22 +1141,85 @@ impl<'a> CheckerState<'a> {
         let Some(sym_id) = shape.symbol else {
             // Mixin instantiation can materialize an anonymous-class instance as
             // a merged object shape without preserving the original class symbol.
-            // The formatter still carries that provenance for declaration-emit
-            // display, so use it as a narrow TS4094 fallback.
-            return self.format_type(resolved).contains("(Anonymous class)");
+            // Follow diagnostic provenance to the underlying class-expression
+            // symbol instead of asking the type printer for a rendered name.
+            return self.type_has_anonymous_class_provenance(resolved);
         };
+        self.symbol_declares_anonymous_class_expression(sym_id)
+    }
+
+    fn type_has_anonymous_class_provenance(&self, type_id: TypeId) -> bool {
+        self.type_has_anonymous_class_provenance_inner(type_id, &mut FxHashSet::default())
+    }
+
+    fn type_has_anonymous_class_provenance_inner(
+        &self,
+        type_id: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if type_id.is_intrinsic() || !visited.insert(type_id) {
+            return false;
+        }
+
+        let db = self.ctx.types.as_type_database();
+        if let Some(shape) =
+            crate::query_boundaries::checkers::generic::get_object_shape(db, type_id)
+            && let Some(sym_id) = shape.symbol
+            && self.symbol_declares_anonymous_class_expression(sym_id)
+        {
+            return true;
+        }
+
+        if let Some(alias) = self.ctx.types.get_display_alias(type_id)
+            && self.type_has_anonymous_class_provenance_inner(alias, visited)
+        {
+            return true;
+        }
+
+        if let Some((base, _args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+        {
+            return self.type_has_anonymous_class_provenance_inner(base, visited);
+        }
+
+        if let Some(members) = crate::query_boundaries::common::intersection_members(db, type_id)
+            .or_else(|| crate::query_boundaries::common::union_members(db, type_id))
+        {
+            return members
+                .iter()
+                .any(|&member| self.type_has_anonymous_class_provenance_inner(member, visited));
+        }
+
+        false
+    }
+
+    fn symbol_declares_anonymous_class_expression(&self, sym_id: SymbolId) -> bool {
         let Some(symbol) = self.get_symbol_globally(sym_id) else {
             return false;
         };
-        let decl = symbol.value_declaration;
         let arena = self
             .ctx
             .resolve_symbol_file_index(sym_id)
             .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
             .unwrap_or(self.ctx.arena);
-        arena
-            .get(decl)
-            .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+
+        symbol.all_declarations().into_iter().any(|decl| {
+            let Some(node) = arena.get(decl) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+                return false;
+            }
+            let Some(class) = arena.get_class(node) else {
+                return false;
+            };
+            if !class.name.is_some() {
+                return true;
+            }
+            arena
+                .get(class.name)
+                .is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
+        })
     }
 
     /// Emit TS4094 for each private/protected member of an instance type, using the
@@ -1479,22 +1542,6 @@ impl<'a> CheckerState<'a> {
         let Some(assertion) = self.ctx.arena.get_type_assertion(n) else {
             return false;
         };
-        let Some(type_node) = self.ctx.arena.get(assertion.type_node) else {
-            return false;
-        };
-        if type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16 {
-            return true;
-        }
-        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE
-            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
-        {
-            return type_ref.type_arguments.is_none()
-                && self
-                    .ctx
-                    .arena
-                    .get_identifier_text(type_ref.type_name)
-                    .is_some_and(|name| name == "const");
-        }
-        false
+        self.is_const_assertion_type_node(assertion.type_node)
     }
 }

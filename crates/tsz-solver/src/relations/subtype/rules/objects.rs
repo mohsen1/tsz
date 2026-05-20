@@ -16,7 +16,9 @@ use crate::types::{
     IntrinsicKind, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility,
 };
 use crate::utils;
-use crate::visitor::{application_id, object_shape_id, object_with_index_shape_id};
+use crate::visitor::{
+    application_id, object_shape_id, object_with_index_shape_id, template_literal_id, union_list_id,
+};
 use tsz_common::interner::Atom;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -474,10 +476,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Check optional compatibility
-        // Optional in source can't satisfy required in target
+        // Optional source properties cannot satisfy required target properties.
+        // In standard mode, optional_property_type() widens the read type to `T | undefined`,
+        // but the property may still be absent.
         if source.optional && !target.optional {
-            // Trace: Optional property cannot satisfy required property
             if let Some(tracer) = &mut self.tracer
                 && !tracer.on_mismatch_dyn(
                     crate::diagnostics::SubtypeFailureReason::OptionalPropertyRequired {
@@ -494,6 +496,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // individual properties. `{ readonly x: number }` IS assignable to `{ x: number }`.
         // Readonly on properties is a usage constraint, not a structural typing constraint.
         // This is different from ReadonlyArray vs Array, where structural differences exist.
+        //
+        // Exception: when comparing types for IDENTITY (not just assignability),
+        // readonly difference IS observable. This is what makes the higher-order
+        // `IfEquals` pattern work — it relies on `{ readonly x: T }` and
+        // `{ x: T }` being distinct types when used as the extends-clause of a
+        // conditional inside `(<T>() => T extends X ? 1 : 2)`. The
+        // `strict_readonly_identity` flag is toggled on by the conditional
+        // extends-type equivalence helper for exactly that purpose.
+        if self.strict_readonly_identity && source.readonly != target.readonly {
+            return SubtypeResult::False;
+        }
 
         // Rule #26: Split Accessors (Getter/Setter Variance)
         //
@@ -598,15 +611,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // `{ readonly x: T }` IS assignable to `{ x: T }`. When the source
         // property is readonly, its write_type is irrelevant (it may be NONE or
         // a sentinel value), so skip the write check entirely.
-        // TypeId::NONE is also a sentinel for "no distinct write type" (used by
-        // readonly properties from the lowering pass). Treat NONE as "same as
-        // type_id" so it doesn't falsely trigger split-accessor detection.
-        let has_split_accessor = if source.readonly {
-            false
-        } else {
-            (source.write_type != TypeId::NONE && source.write_type != source.type_id)
-                || (target.write_type != TypeId::NONE && target.write_type != target.type_id)
-        };
+        let has_split_accessor =
+            !source.readonly && (source.has_split_accessor() || target.has_split_accessor());
 
         if !target.readonly && has_split_accessor {
             let source_write = self.bind_property_receiver_this(
@@ -648,7 +654,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(receiver) = receiver.map(|receiver| self.normalize_receiver_type(receiver))
             && crate::contains_this_type(self.interner, type_id)
         {
-            crate::substitute_this_type_cached(self.interner, self.query_db, type_id, receiver)
+            crate::instantiation::instantiate::substitute_this_type_cached(
+                self.interner,
+                self.query_db,
+                type_id,
+                receiver,
+            )
         } else {
             type_id
         }
@@ -1108,7 +1119,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 }
 
-                // Check optional compatibility
+                // Check optional compatibility (see check_property_compatibility for rationale)
                 if sp.optional && !t_prop.optional {
                     return SubtypeResult::False;
                 }
@@ -1127,10 +1138,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 {
                     return SubtypeResult::False;
                 }
-                if !t_prop.readonly
-                    && (sp.write_type != TypeId::NONE && sp.write_type != sp.type_id
-                        || t_prop.write_type != TypeId::NONE && t_prop.write_type != t_prop.type_id)
-                {
+                if !t_prop.readonly && (sp.has_split_accessor() || t_prop.has_split_accessor()) {
                     let source_write = self.bind_property_receiver_this(
                         source_receiver,
                         self.optional_property_write_type(sp),
@@ -1258,6 +1266,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         text.starts_with("__unique_") || text.starts_with("[Symbol.")
     }
 
+    fn property_name_matches_string_index_key(&mut self, name: Atom, key_type: TypeId) -> bool {
+        if key_type == TypeId::STRING {
+            return true;
+        }
+
+        if let Some(template_id) = template_literal_id(self.interner, key_type) {
+            return self
+                .check_literal_matches_template_literal(name, template_id)
+                .is_true();
+        }
+
+        if let Some(union_id) = union_list_id(self.interner, key_type) {
+            let members = self.interner.type_list(union_id).to_vec();
+            let mut saw_template_member = false;
+            for member in members {
+                if member == TypeId::STRING {
+                    return true;
+                }
+                let Some(template_id) = template_literal_id(self.interner, member) else {
+                    return true;
+                };
+                saw_template_member = true;
+                if self
+                    .check_literal_matches_template_literal(name, template_id)
+                    .is_true()
+                {
+                    return true;
+                }
+            }
+            return !saw_template_member;
+        }
+
+        true
+    }
+
     /// Check that source properties are compatible with target index signatures.
     ///
     /// When a target has an index signature, all source properties must satisfy it:
@@ -1352,6 +1395,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if self.is_symbol_named_property(prop.name) {
                     continue;
                 }
+                // Non-matching keys aren't constrained: `click` ∉ `on${string}`, so
+                // `{ click: number }` is fine against `{ [k: on${string}]: () => void }`.
+                if !self.property_name_matches_string_index_key(prop.name, string_idx.key_type) {
+                    continue;
+                }
                 // Note: We do NOT reject readonly source properties against writable
                 // string index targets. A source with readonly properties (e.g., enum
                 // namespaces, frozen objects) IS assignable to a target with a writable
@@ -1437,6 +1485,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 target_receiver,
             )
             .is_true()
+        {
+            return SubtypeResult::False;
+        }
+
+        // Named class/interface types require an explicit string index signature to
+        // satisfy a string-indexed target — compatible properties alone are not enough.
+        // Symbol-keyed indices and any-value targets are exempted (same shortcircuits
+        // as check_string_index_compatibility).
+        if target.string_index.as_ref().is_some_and(|idx| {
+            idx.key_type != TypeId::SYMBOL
+                && (self.disable_method_bivariance || !idx.value_type.is_any())
+        }) && self.requires_explicit_declared_index_signature(&source_shape)
         {
             return SubtypeResult::False;
         }

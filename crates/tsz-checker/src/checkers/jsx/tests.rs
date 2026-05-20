@@ -53,6 +53,44 @@ fn check_jsx_no_strict_codes(source: &str) -> Vec<u32> {
     check_jsx_no_strict(source).iter().map(|d| d.code).collect()
 }
 
+#[test]
+fn jsx_same_name_function_component_and_props_interface_does_not_recurse() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace JSX {
+          interface Element {
+            type: string;
+            props: Record<string, unknown>;
+          }
+          interface IntrinsicElements {
+            div: { children?: unknown };
+            span: { children?: unknown };
+          }
+        }
+
+        interface Fragment {
+          children?: unknown[];
+        }
+
+        function Fragment(props: Fragment): JSX.Element {
+          return <div>{props.children}</div>;
+        }
+
+        const frag = (
+          <Fragment>
+            <span>A</span>
+            <span>B</span>
+          </Fragment>
+        );
+        "#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Same-name JSX component and props interface should check without diagnostics, got: {diagnostics:?}"
+    );
+}
+
 /// JSX shorthand boolean attribute (`<Foo bar />`) typed as `true` for assignability.
 /// When prop expects literal `true`, shorthand must be assignable (no false positive).
 #[test]
@@ -141,6 +179,37 @@ fn jsx_component_type_missing_prop_display_uses_props_type_arg() {
         .expect("expected TS2741 for missing required prop")
         .message_text;
     assert!(msg.contains("required in type '{ someKey: string; }'") && !msg.contains("Readonly"));
+}
+
+#[test]
+fn jsx_component_type_missing_prop_unwraps_renamed_readonly_mapped_alias() {
+    let diagnostics = check_jsx_strict(
+        r#"declare namespace JSX { interface Element {} interface ElementClass { render(): any; } interface ElementAttributesProperty { props: {}; } } type MyReadonly<T> = { readonly [K in keyof T]: T[K]; }; declare namespace React { interface Component<P> { props: MyReadonly<P>; render(): JSX.Element; } interface ComponentClass<P = {}> { new(props: P, context?: any): Component<P>; } interface FunctionComponent<P = {}> { (props: P, context?: any): JSX.Element | null; } type ComponentType<P = {}> = ComponentClass<P> | FunctionComponent<P>; } declare const Elem: React.ComponentType<{ someKey: string }>; const bad = <Elem />;"#,
+    );
+    let msg = &diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741 for missing required prop through renamed readonly alias")
+        .message_text;
+    assert!(
+        msg.contains("required in type '{ someKey: string; }'") && !msg.contains("MyReadonly"),
+        "Expected renamed readonly mapped alias to unwrap transparently, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_component_type_does_not_unwrap_readonly_intersection_with_required_prop() {
+    let diagnostics = check_jsx_strict(
+        r#"declare namespace JSX { interface Element {} } type MyReadonly<T> = { readonly [K in keyof T]: T[K]; }; type PropsBox<T> = MyReadonly<T> & { required: string }; declare function Elem(props: PropsBox<{ someKey: string }>): JSX.Element; const bad = <Elem someKey="ok" required={1} />;"#,
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag.message_text.contains("number")
+                && diag.message_text.contains("string")
+        }),
+        "Expected PropsBox<T> required intersection member's string type to remain visible in TS2322, got: {diagnostics:?}"
+    );
 }
 
 #[test]
@@ -410,6 +479,73 @@ fn jsx_sfc_returning_incompatible_type_emits_ts2786() {
     assert!(
         diagnostics.contains(&2786),
         "SFC returning incompatible type should emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+/// TS2786 SHOULD fire for a union component where all members have valid props
+/// but at least one member returns an incompatible type. The props-extraction
+/// success must not suppress the return-type check.
+#[test]
+fn jsx_union_component_with_invalid_return_emits_ts2786() {
+    let source = r#"
+        declare namespace JSX {
+            interface Element { type: 'element'; }
+            interface ElementClass { render(): Element; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements { }
+        }
+        declare function BadFC(props: {}): { type: string };
+        declare class BadClass {
+            props: {};
+            constructor(props: {});
+            render(): { type: string };
+        }
+        declare var MixedComponent: typeof BadFC | typeof BadClass;
+        <MixedComponent />;
+        "#;
+    let diagnostics = check_jsx(source);
+    let expected_start = source
+        .find("<MixedComponent")
+        .map(|idx| idx as u32 + 1)
+        .expect("source contains <MixedComponent");
+    let ts2786 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2786 && diag.message_text.contains("'MixedComponent'"))
+        .expect("Union component with invalid return types should emit TS2786 at MixedComponent");
+    assert_eq!(
+        ts2786.start, expected_start,
+        "TS2786 should anchor at the MixedComponent JSX tag name, got: {diagnostics:?}"
+    );
+}
+
+/// TS2786 should NOT fire for a union where every member is a valid JSX component.
+#[test]
+fn jsx_union_component_all_valid_no_ts2786() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace JSX {
+            interface Element { type: 'element'; }
+            interface ElementClass { render(): Element; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements { }
+        }
+        declare function GoodFC(props: {}): JSX.Element;
+        declare class GoodClass {
+            props: {};
+            constructor(props: {});
+            render(): JSX.Element;
+        }
+        declare var ValidUnion: typeof GoodFC | typeof GoodClass;
+        <ValidUnion />;
+        "#,
+    );
+    assert!(
+        !diagnostics.iter().any(|diag| diag.code == 2786),
+        "Union component with all valid return types should not emit TS2786, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Union component with all valid return types should be diagnostic-free, got: {diagnostics:?}"
     );
 }
 
@@ -762,6 +898,283 @@ fn jsx_generic_sfc_incompatible_return_emits_ts2786() {
 }
 
 #[test]
+fn jsx_union_of_invalid_function_and_class_component_emits_ts2786() {
+    let source = r#"
+        declare namespace JSX {
+            interface Element { type: 'element'; }
+            interface ElementClass { type: 'element-class'; }
+            interface IntrinsicElements { }
+        }
+        function FunctionComponent<T extends string>({type}: {type?: T}) {
+            return { type };
+        }
+        class ClassComponent {
+            type = 'string';
+        }
+        declare const pick: boolean;
+        const MixedComponent = pick ? FunctionComponent : ClassComponent;
+        const elem = <MixedComponent />;
+        "#;
+    let diagnostics = check_jsx_strict(source);
+    let expected_start = source
+        .find("<MixedComponent")
+        .map(|idx| idx as u32 + 1)
+        .expect("source contains <MixedComponent");
+    let ts2786 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2786 && diag.message_text.contains("'MixedComponent'"))
+        .expect(
+            "Union component with invalid function/class members should emit TS2786 at MixedComponent",
+        );
+    assert!(
+        ts2786.message_text.contains("'MixedComponent'"),
+        "Union component with invalid function/class members should emit TS2786 at MixedComponent, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2786.start, expected_start,
+        "TS2786 should anchor at the MixedComponent JSX tag name, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_user_named_component_type_alias_union_still_checks_returns() {
+    let source = r#"
+        declare namespace JSX {
+            interface Element { ok: true; }
+            interface ElementClass { render(): Element; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {}
+        }
+        interface InvalidClassComponent<P = {}> {
+            new(props: P): { props: P; render(): { bad: true } };
+        }
+        interface InvalidFunctionComponent<P = {}> {
+            (props: P): { bad: true };
+        }
+        type ComponentType<P = {}> =
+            InvalidClassComponent<P> | InvalidFunctionComponent<P>;
+        declare const Bad: ComponentType<{ p?: boolean }>;
+        const elem = <Bad p={true} />;
+        "#;
+    let diagnostics = check_jsx_strict(source);
+    let expected_start = source
+        .find("<Bad")
+        .map(|idx| idx as u32 + 1)
+        .expect("source contains <Bad");
+    let ts2786 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2786 && diag.message_text.contains("'Bad'"))
+        .expect("User-defined ComponentType aliases should still emit TS2786 for invalid returns");
+    assert_eq!(
+        ts2786.start, expected_start,
+        "Expected TS2786 to anchor at the Bad JSX tag name, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_react_component_type_union_does_not_emit_ts2786() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any> {
+                render(): React.ReactNode;
+            }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {}
+        }
+        declare namespace React {
+            type ReactNode = ReactElement<any> | string | number | null;
+            interface ReactElement<P> { props: P; }
+            type ComponentState = any;
+            type ValidationMap<T> = any;
+            type RefObject<T> = { readonly current: T | null };
+            type Ref<T> = string | { bivarianceHack(instance: T | null): any }["bivarianceHack"] | RefObject<T>;
+            type Readonly<T> = { readonly [P in keyof T]: T[P]; };
+            interface StaticLifecycle<P, S> {}
+            interface Component<P = {}, S = {}> {
+                readonly props: Readonly<{ children?: ReactNode }> & Readonly<P>;
+                state: Readonly<S>;
+                context: any;
+                refs: { [key: string]: any };
+                render(): ReactNode;
+            }
+            interface ComponentClass<P = {}, S = ComponentState> extends StaticLifecycle<P, S> {
+                new(props: P, context?: any): Component<P, S>;
+                propTypes?: ValidationMap<P>;
+                contextTypes?: ValidationMap<any>;
+                defaultProps?: Partial<P>;
+                displayName?: string;
+            }
+            interface StatelessComponent<P = {}> {
+                (props: P & { children?: ReactNode }, context?: any): ReactElement<any> | null;
+                propTypes?: ValidationMap<P>;
+                contextTypes?: ValidationMap<any>;
+                defaultProps?: Partial<P>;
+                displayName?: string;
+            }
+            type ComponentType<P = {}> = ComponentClass<P> | StatelessComponent<P>;
+        }
+        interface P1 {
+            p?: boolean;
+            c?: string;
+        }
+        interface P2 {
+            p?: boolean;
+            c?: any;
+            d?: any;
+        }
+        var C: React.ComponentType<P1> | React.ComponentType<P2> = null as any;
+        const a = <C p={true} />;
+        "#,
+    );
+    assert!(
+        !diagnostics.iter().any(|diag| diag.code == 2786),
+        "React.ComponentType unions with compatible class/function branches should not emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_element_class_requirements_are_not_reduced_to_render_only() {
+    let source = r#"
+        declare namespace JSX {
+            interface Element { ok: true; }
+            interface ElementClass { render(): Element; props: { required: true }; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {}
+        }
+        declare function GoodFC(props: { required: true }): JSX.Element;
+        declare class MissingPropsClass {
+            render(): JSX.Element;
+        }
+        declare const Mixed: typeof GoodFC | typeof MissingPropsClass;
+        const elem = <Mixed required={true} />;
+        "#;
+    let diagnostics = check_jsx_strict(source);
+    let expected_start = source
+        .find("<Mixed")
+        .map(|idx| idx as u32 + 1)
+        .expect("source contains <Mixed");
+    let ts2786 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2786 && diag.message_text.contains("'Mixed'"))
+        .expect(
+            "Class branch missing JSX.ElementClass-required members should still trigger TS2786",
+        );
+    assert_eq!(
+        ts2786.start, expected_start,
+        "Expected TS2786 to anchor at the Mixed JSX tag name, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_react_type_union_with_string_does_not_emit_ts2786() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any> {
+                render(): React.ReactNode;
+            }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {
+                a: {};
+                button: {};
+            }
+        }
+        declare namespace React {
+            type ReactNode = ReactElement<any> | string | number | null;
+            type ReactType<P = any> = string | ComponentType<P>;
+            interface ReactElement<P> { props: P; }
+            interface Component<P = {}, S = {}> {
+                props: Readonly<P>;
+                render(): ReactNode;
+            }
+            interface ComponentClass<P = {}, S = {}> {
+                new(props: P, context?: any): Component<P, S>;
+            }
+            interface FunctionComponent<P = {}> {
+                (props: P & { children?: ReactNode }, context?: any): ReactElement<any> | null;
+            }
+            type ComponentType<P = {}> = ComponentClass<P> | FunctionComponent<P>;
+        }
+        declare const props: { component: React.ReactType };
+        const Comp: React.ReactType = props.component;
+        const elem = <Comp />;
+        "#,
+    );
+    assert!(
+        !diagnostics.iter().any(|diag| diag.code == 2786),
+        "React.ReactType unions include intrinsic string tags and should not emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_class_construct_readonly_mapped_props_uses_shape_not_alias_name() {
+    let sources = [
+        (
+            "renamed readonly mapped alias",
+            r#"
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any> {
+                render(): React.ReactNode;
+            }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {}
+        }
+        declare namespace React {
+            type ReactNode = ReactElement<any> | string | number | null;
+            interface ReactElement<P> { props: P; }
+            type Frozen<T> = { readonly [Q in keyof T]: T[Q]; };
+            class Component<P = {}> {
+                props: Frozen<P>;
+                render(): ReactNode;
+            }
+        }
+        interface Props { x?: number; }
+        class Widget extends React.Component<Props> {}
+        <Widget />;
+        "#,
+        ),
+        (
+            "readonly mapped intersection",
+            r#"
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any> {
+                render(): React.ReactNode;
+            }
+            interface ElementAttributesProperty { props: {}; }
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements { div: {}; }
+        }
+        declare namespace React {
+            type ReactNode = ReactElement<any> | string | number | null | undefined;
+            interface ReactElement<P> { props: P; }
+            type Locked<X> = { readonly [Name in keyof X]: X[Name]; };
+            class Component<P = {}> {
+                props: Locked<P> & Locked<{ children?: ReactNode }>;
+                render(): ReactNode;
+            }
+        }
+        interface Props { label?: string; }
+        class Panel extends React.Component<Props> {}
+        <Panel><div /></Panel>;
+        "#,
+        ),
+    ];
+
+    for (case_name, source) in sources {
+        let diagnostics = check_jsx_codes(source);
+        assert!(
+            !diagnostics.contains(&2786),
+            "{case_name}: readonly mapped class props should suppress TS2786 without relying on alias spelling, got: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
     let diagnostics = check_jsx_codes(
         r#"
@@ -789,6 +1202,180 @@ fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
     assert!(
         diagnostics.contains(&2786),
         "When all overload return types are invalid JSX elements, TS2786 should also be emitted, got: {diagnostics:?}"
+    );
+}
+
+/// React component alias types (`ComponentType<P>`, `ComponentClass<P>`, etc.) with
+/// multi-constructor overloads must not emit TS2786. The multi-construct path goes
+/// through `check_jsx_overloaded_sfc`; the same React-alias skip that guards the
+/// non-overload path must apply there too to avoid cycle-detection false positives.
+///
+/// This test uses two different type-parameter names (`T` and `K`) to prove the rule
+/// is structural, not tied to any specific identifier spelling.
+#[test]
+fn jsx_react_component_alias_with_multi_construct_no_ts2786() {
+    // Shared React namespace used across shape variants.
+    let make_source = |type_alias: &str, jsx_tag: &str| {
+        format!(
+            r#"
+        declare namespace JSX {{
+            interface Element extends React.ReactElement<any> {{}}
+            interface ElementClass extends React.Component<any> {{
+                render(): React.ReactNode;
+            }}
+            interface ElementAttributesProperty {{ props: {{}}; }}
+            interface IntrinsicElements {{}}
+        }}
+        declare namespace React {{
+            type ReactNode = ReactElement<any> | string | number | null;
+            interface ReactElement<P> {{ props: P; }}
+            interface Component<P = {{}}, S = {{}}> {{
+                props: Readonly<P>;
+                render(): ReactNode;
+            }}
+            // Two constructors to trigger the has_multi_construct path.
+            interface ComponentClass<P = {{}}, S = {{}}> {{
+                new(props: P, context?: any): Component<P, S>;
+                new(props: P): Component<P, S>;
+            }}
+            interface FunctionComponent<P = {{}}> {{
+                (props: P, context?: any): ReactElement<any> | null;
+            }}
+            type ComponentType<P = {{}}> = ComponentClass<P> | FunctionComponent<P>;
+        }}
+        interface Props {{ x?: number; }}
+        {type_alias}
+        const elem = <{jsx_tag} />;
+        "#
+        )
+    };
+
+    // Shape 1: variable typed as ComponentType<T> (type-param name T)
+    let src1 = make_source("declare var a: React.ComponentType<Props>;", "a");
+    let d1 = check_jsx_codes(&src1);
+    assert!(
+        !d1.contains(&2786),
+        "ComponentType<T> with multi-construct should not emit TS2786, got: {d1:?}"
+    );
+
+    // Shape 2: variable typed as ComponentClass<K> directly (type-param name K)
+    let src2 = make_source("declare var x: React.ComponentClass<Props>;", "x");
+    let d2 = check_jsx_codes(&src2);
+    assert!(
+        !d2.contains(&2786),
+        "ComponentClass<K> with multi-construct should not emit TS2786, got: {d2:?}"
+    );
+
+    // Shape 3: union ComponentType<T1> | ComponentType<T2> — members are React aliases
+    let src3 = make_source(
+        "interface Props2 { y?: string; } declare var a: React.ComponentType<Props> | React.ComponentType<Props2>;",
+        "a",
+    );
+    let d3 = check_jsx_codes(&src3);
+    assert!(
+        !d3.contains(&2786),
+        "Union of ComponentType aliases with multi-construct should not emit TS2786, got: {d3:?}"
+    );
+}
+
+/// Non-React overloaded components with invalid return types must still emit TS2786
+/// alongside TS2769 when all overloads fail — the React-alias skip must not suppress
+/// unrelated components. Both required props ensure no overload matches `<Bad />`.
+#[test]
+fn jsx_non_react_overload_with_invalid_return_still_emits_ts2786() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { marker: true; }
+            interface IntrinsicElements {}
+        }
+        // Two call signatures with required props; neither returns JSX.Element.
+        // <Bad /> provides no attributes, so both overloads fail (required props missing).
+        interface BrokenSfc {
+            (props: { a: string }): { wrong: true };
+            (props: { b: number }): { wrong: true };
+        }
+        declare var Bad: BrokenSfc;
+        <Bad />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2786),
+        "Non-React overloaded component with invalid return type should still emit TS2786, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(&2769),
+        "Non-React overloaded component should still emit TS2769 when no overload matches, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_intrinsic_excess_attrs_report_for_intersection_alias_props() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace React {
+            interface ClassAttributes<T> {
+                ref?: T;
+            }
+            type DetailedHTMLProps<E extends HTMLAttributes<T>, T> = ClassAttributes<T> & E;
+            interface HTMLAttributes<T> {
+                className?: string;
+                onClick?: (event: T) => void;
+            }
+            interface AnchorHTMLAttributes<T> extends HTMLAttributes<T> {
+                href?: string;
+            }
+        }
+        interface HTMLAnchorElement {}
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {
+                a: React.DetailedHTMLProps<React.AnchorHTMLAttributes<HTMLAnchorElement>, HTMLAnchorElement>;
+                plain: { className?: string };
+            }
+        }
+
+        <a class="" />;
+        <a for="" class="" />;
+        <plain class="" />;
+        "#,
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        3,
+        "Expected both intrinsic elements to report excess JSX attrs, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag.message_text.contains(
+            "Type '{ class: string; }' is not assignable to type 'DetailedHTMLProps<AnchorHTMLAttributes<HTMLAnchorElement>, HTMLAnchorElement>'."
+        )),
+        "Expected intersection alias intrinsic target display, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag.message_text.contains(
+            "Type '{ for: string; class: string; }' is not assignable to type 'DetailedHTMLProps<AnchorHTMLAttributes<HTMLAnchorElement>, HTMLAnchorElement>'."
+        )),
+        "Expected combined excess attrs to be reported once at the first bad attr, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diag| diag
+            .message_text
+            .contains("and 'class' does not exist in type '{ className?: string | undefined; }'")),
+        "Expected plain intrinsic excess attr diagnostic, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2322
+            .iter()
+            .filter(|diag| diag
+                .message_text
+                .contains("{ for: string; class: string; }"))
+            .count(),
+        1,
+        "Expected one synthesized excess diagnostic for multiple bad attrs, got: {diagnostics:?}"
     );
 }
 
@@ -1053,6 +1640,9 @@ fn jsx_generic_sfc_defaulted_props_contextually_type_function_attributes() {
 fn jsx_library_managed_attributes_applies_default_props_to_class_components() {
     let diagnostics = check_jsx_codes(
         r#"
+        type Exclude<T, U> = T extends U ? never : T;
+        type Extract<T, U> = T extends U ? T : never;
+        type Partial<T> = { [K in keyof T]?: T[K] };
         type Defaultize<TProps, TDefaults> =
             & { [K in Extract<keyof TProps, keyof TDefaults>]?: TProps[K] }
             & { [K in Exclude<keyof TProps, keyof TDefaults>]: TProps[K] }
@@ -1101,6 +1691,9 @@ fn jsx_library_managed_attributes_applies_default_props_to_class_components() {
 fn jsx_library_managed_attributes_preserves_function_default_props_in_jsx() {
     let diagnostics = check_jsx_codes(
         r#"
+        type Exclude<T, U> = T extends U ? never : T;
+        type Extract<T, U> = T extends U ? T : never;
+        type Partial<T> = { [K in keyof T]?: T[K] };
         type Defaultize<TProps, TDefaults> =
             & { [K in Extract<keyof TProps, keyof TDefaults>]?: TProps[K] }
             & { [K in Exclude<keyof TProps, keyof TDefaults>]: TProps[K] }
@@ -1488,7 +2081,6 @@ fn jsx_construct_sig_with_outer_type_params_no_false_ts2786() {
 /// whole-object assignability check determines the final result. Our solver
 /// currently accepts this (consistent with tsc's JSX attribute checking).
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn jsx_discriminated_union_props_full_concrete_union_no_ts2322() {
     let diagnostics = check_jsx_codes(
         r#"
@@ -1636,6 +2228,31 @@ fn jsx_multiple_children_no_ts2746_when_children_type_accepts_array() {
     assert!(
         !diagnostics.contains(&2746),
         "Multiple children should be allowed when children type includes array-like union member, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_multiple_children_readonly_mapped_wrapper_uses_shape_not_alias_name() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        type Frozen<T> = { readonly [Slot in keyof T]: T[Slot] };
+        type Renderable = string | number | Element;
+        declare namespace JSX {
+            interface Element {}
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements { span: {}; }
+        }
+        declare class ComponentBase<P = {}> {
+            props: P & Frozen<{ children: Renderable[] }>;
+            render(): Renderable;
+        }
+        class Panel extends ComponentBase {}
+        <Panel><span /><span /></Panel>;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2746),
+        "Multiple children should use the structurally readonly mapped wrapper member, got: {diagnostics:?}"
     );
 }
 
@@ -1923,6 +2540,218 @@ fn jsx_generic_class_optional_ctor_constraint_reports_errors() {
     );
 }
 
+#[test]
+fn jsx_library_managed_attributes_reports_excess_props_with_metadata() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type Exclude<T, U> = T extends U ? never : T;
+        type Extract<T, U> = T extends U ? T : never;
+        type Partial<T> = { [K in keyof T]?: T[K] };
+        type Readonly<T> = { readonly [K in keyof T]: T[K] };
+        type Defaultize<TProps, TDefaults> =
+            & { [K in Extract<keyof TProps, keyof TDefaults>]?: TProps[K] }
+            & { [K in Exclude<keyof TProps, keyof TDefaults>]: TProps[K] }
+            & Partial<TDefaults>;
+        type Inferred<S> = {
+            [K in keyof S]: S[K] extends Checker<infer V, infer R>
+                ? Checker<V, R>[typeof marker]
+                : {}
+        };
+
+        declare const marker: unique symbol;
+        interface Checker<V, Required = false> {
+            isRequired: Checker<V, true>;
+            [marker]: Required extends true ? V : V | null | undefined;
+        }
+        declare namespace Kinds {
+            const number: Checker<number>;
+            const renderable: Checker<Renderable>;
+        }
+        type Renderable = string | number | ComponentBase<{}, {}>;
+
+        declare class ComponentBase<P = {}, S = {}> {
+            constructor(props: P);
+            props: P & Readonly<{ children: Renderable[] }>;
+            setState(s: Partial<S>): S;
+            render(): Renderable;
+        }
+        declare namespace JSX {
+            interface Element extends ComponentBase {}
+            interface IntrinsicElements {}
+            type LibraryManagedAttributes<C, P> =
+                C extends { defaultProps: infer D; propTypes: infer T; }
+                    ? Defaultize<P & Inferred<T>, D>
+                    : C extends { defaultProps: infer D }
+                        ? Defaultize<P, D>
+                        : C extends { propTypes: infer T }
+                            ? P & Inferred<T>
+                            : P;
+        }
+
+        class WithBoth extends ComponentBase {
+            static propTypes = {
+                label: Kinds.renderable.isRequired,
+                count: Kinds.number,
+            };
+            static defaultProps = { count: 1 };
+        }
+        <WithBoth label="ok" extra="bad" />;
+
+        class WithDefaults extends ComponentBase {
+            static defaultProps = { count: 1 };
+        }
+        <WithDefaults count={1} extra="bad" />;
+        "#,
+    );
+    let excess_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322 && diag.message_text.contains("'extra' does not exist"))
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+    assert_eq!(
+        excess_messages.len(),
+        2,
+        "Expected excess-property TS2322 for both managed-props components, got: {diagnostics:?}"
+    );
+    assert!(
+        excess_messages
+            .iter()
+            .any(|message| message.contains("Defaultize<Inferred<")),
+        "Expected propTypes+defaultProps excess target to preserve Defaultize<Inferred<...>>, got: {excess_messages:?}"
+    );
+    assert!(
+        excess_messages
+            .iter()
+            .any(|message| message.contains("Defaultize<{}, { count: number; }>")),
+        "Expected defaultProps-only excess target to preserve Defaultize<{{}}, defaults>, got: {excess_messages:?}"
+    );
+}
+
+#[test]
+fn jsx_library_managed_attributes_preserves_inferred_union_alias_for_required_prop() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type Partial<T> = { [K in keyof T]?: T[K] };
+        type Readonly<T> = { readonly [K in keyof T]: T[K] };
+        type Inferred<S> = {
+            [K in keyof S]: S[K] extends Checker<infer V, infer R>
+                ? Checker<V, R>[typeof marker]
+                : never
+        };
+        declare const marker: unique symbol;
+        interface Checker<V, Required = false> {
+            isRequired: Checker<V, true>;
+            [marker]: Required extends true ? V : V | null | undefined;
+        }
+        declare namespace Kinds {
+            const renderable: Checker<Renderable>;
+        }
+        type Renderable = string | number | ComponentBase<{}, {}>;
+        declare class ComponentBase<P = {}, S = {}> {
+            constructor(props: P);
+            props: P & Readonly<{ children: Renderable[] }>;
+            setState(s: Partial<S>): S;
+            render(): Renderable;
+        }
+        declare namespace JSX {
+            interface Element extends ComponentBase {}
+            interface IntrinsicElements {}
+            type LibraryManagedAttributes<C, P> =
+                C extends { propTypes: infer T } ? P & Inferred<T> : P;
+        }
+        class RequiredRenderable extends ComponentBase {
+            static propTypes = {
+                item: Kinds.renderable.isRequired,
+            };
+        }
+        <RequiredRenderable item={null} />;
+        "#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for null assigned to required Renderable prop");
+    assert!(
+        diag.message_text.contains("type 'Renderable'"),
+        "Expected target display to preserve the inferred union alias, got: {diag:?}"
+    );
+    assert!(
+        !diag
+            .message_text
+            .contains("string | number | ComponentBase"),
+        "Required prop display should not expand the Renderable alias, got: {diag:?}"
+    );
+}
+
+#[test]
+fn jsx_library_managed_attributes_preserves_named_props_inside_defaultize() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type Exclude<T, U> = T extends U ? never : T;
+        type Extract<T, U> = T extends U ? T : never;
+        type Partial<T> = { [K in keyof T]?: T[K] };
+        type Readonly<T> = { readonly [K in keyof T]: T[K] };
+        type Defaultize<TProps, TDefaults> =
+            & { [K in Extract<keyof TProps, keyof TDefaults>]?: TProps[K] }
+            & { [K in Exclude<keyof TProps, keyof TDefaults>]: TProps[K] }
+            & Partial<TDefaults>;
+        type Inferred<S> = {
+            [K in keyof S]: S[K] extends Checker<infer V, infer R>
+                ? Checker<V, R>[typeof marker]
+                : {}
+        };
+        declare const marker: unique symbol;
+        interface Checker<V, Required = false> {
+            isRequired: Checker<V, true>;
+            [marker]: Required extends true ? V : V | null | undefined;
+        }
+        declare namespace Kinds {
+            const renderable: Checker<Renderable>;
+        }
+        type Renderable = string | number | ComponentBase<{}, {}>;
+        interface OwnProps {
+            title: string;
+        }
+        declare class ComponentBase<P = {}, S = {}> {
+            constructor(props: P);
+            props: P & Readonly<{ children: Renderable[] }>;
+            setState(s: Partial<S>): S;
+            render(): Renderable;
+        }
+        declare namespace JSX {
+            interface Element extends ComponentBase {}
+            interface IntrinsicElements {}
+            type LibraryManagedAttributes<C, P> =
+                C extends { defaultProps: infer D; propTypes: infer T; }
+                    ? Defaultize<P & Inferred<T>, D>
+                    : P;
+        }
+        class WithOwnProps extends ComponentBase<OwnProps> {
+            static propTypes = {
+                child: Kinds.renderable.isRequired,
+            };
+            static defaultProps = { title: "fallback" };
+        }
+        <WithOwnProps title="ok" />;
+        "#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for missing required propTypes-derived child");
+    assert!(
+        diag.message_text
+            .contains("Defaultize<OwnProps & Inferred<"),
+        "Expected Defaultize target to preserve OwnProps inside the intersection, got: {diag:?}"
+    );
+    assert!(
+        !diag
+            .message_text
+            .contains("Defaultize<{ title: string; } & Inferred<"),
+        "Defaultize target should not expand OwnProps structurally, got: {diag:?}"
+    );
+}
+
 // -- tsxNotUsingApparentTypeOfSFC fingerprint fixes ---------------------------
 
 /// Minimal JSX namespace with `IntrinsicAttributes` for the apparent-type-of-SFC tests.
@@ -2168,5 +2997,318 @@ let v = <Comp x={3} />;
     assert!(
         diagnostics.iter().any(|d| d.code == 2322),
         "Without any-spread, mismatched explicit attr must produce TS2322; got: {diagnostics:?}"
+    );
+}
+
+// --- children union (Element | Element[]) no spurious TS2322 ---
+
+const JSX_CHILDREN_UNION_PRELUDE: &str = r#"
+namespace JSX {
+    export interface Element {}
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { div: {}; h1: {}; }
+}
+"#;
+
+fn make_children_union_source(children_type: &str, jsx_body: &str) -> String {
+    format!(
+        r#"{JSX_CHILDREN_UNION_PRELUDE}
+interface Props {{ children: {children_type}; }}
+declare function Comp(p: Props): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+{jsx_body}
+"#,
+    )
+}
+
+#[test]
+fn jsx_children_union_element_or_array_two_direct_children_no_ts2322() {
+    let src = make_children_union_source(
+        "JSX.Element | JSX.Element[]",
+        "let k = <Comp><A /><B /></Comp>;",
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Two direct element children for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_single_child_no_ts2322() {
+    let src =
+        make_children_union_source("JSX.Element | JSX.Element[]", "let k = <Comp><A /></Comp>;");
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Single element child for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_three_direct_children_no_ts2322() {
+    let src = make_children_union_source(
+        "JSX.Element | JSX.Element[]",
+        "declare function C(): JSX.Element; let k = <Comp><A /><B /><C /></Comp>;",
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Three direct element children for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_node_name_variant_no_ts2322() {
+    // Verify fix is not tied to the name "Element": use a user-defined Node type.
+    let src = format!(
+        r#"{JSX_CHILDREN_UNION_PRELUDE}
+interface MyNode {{}}
+interface NodeProps {{ children: MyNode | MyNode[]; }}
+declare function Widget(p: NodeProps): JSX.Element;
+declare function Child(): JSX.Element;
+let k = <Widget><Child /><Child /></Widget>;
+"#,
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Two children for MyNode|MyNode[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+// --- TS2746 / TS2747 display: namespace-qualified children type must show
+//     resolved symbol name (no `JSX.` qualifier, no trailing AST punctuation) ---
+
+/// Brand on `Element` blocks `Array<Element>` ⊑ `Element`, so multi-child
+/// against a single-child prop actually triggers TS2746 (open `Element {}`
+/// silently accepts arrays via structural fallback).
+const JSX_CHILDREN_BRANDED_PRELUDE: &str = r#"
+namespace JSX {
+    export interface Element { __brand_element: void; }
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { div: {}; h1: {}; }
+}
+"#;
+
+/// TS2746 display: when the children type is a namespace-qualified reference like
+/// `JSX.Element`, the diagnostic must show the resolved symbol name (`Element`),
+/// not the raw AST annotation text (`JSX.Element`). tsc routes `typeToString`
+/// over the resolved type rather than printing the user's surface annotation.
+#[test]
+fn jsx_children_ts2746_strips_namespace_prefix_for_qualified_alias() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface SingleChildProp {{ children: JSX.Element; }}
+declare function SingleChildComp(p: SingleChildProp): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+declare function C(): JSX.Element;
+let k = <SingleChildComp><A /><B /><C /></SingleChildComp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against single JSX.Element; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'Element'"),
+        "TS2746 message must use 'Element' (resolved symbol name), not 'JSX.Element' or other forms; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'JSX.Element'"),
+        "TS2746 message must NOT include the 'JSX.' namespace prefix; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("Element;"),
+        "TS2746 message must NOT include a trailing semicolon from AST source text; got: {}",
+        ts2746.message_text
+    );
+}
+
+/// TS2746 display: a top-level user-defined alias must be preserved verbatim
+/// — `Cb` stays `Cb`, never the structural body it resolves to.
+#[test]
+fn jsx_children_ts2746_preserves_user_defined_alias_name() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Brand {{ __brand_cb: void; }}
+type Cb = Brand;
+interface Prop {{ children: Cb; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+declare function C(): JSX.Element;
+let k = <Comp><A /><B /><C /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against single alias-typed children; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'Cb'"),
+        "TS2746 message must use the alias name 'Cb' (matching the AST annotation), not its structural body; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("__brand_cb"),
+        "TS2746 message must NOT expand the alias to its structural body; got: {}",
+        ts2746.message_text
+    );
+}
+
+/// TS2746 display: when the children type is renamed to a non-`Element` name
+/// inside the JSX namespace, the resolved symbol name (not the qualifier) is
+/// what shows up. Proves the fix is not name-keyed to `Element`.
+#[test]
+fn jsx_children_ts2746_strips_namespace_prefix_for_arbitrary_member_name() {
+    let src = r#"
+namespace JSX {
+    export interface Element { __brand_element: void; }
+    export interface MyNode { __brand_my_node: void; }
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { div: {}; }
+}
+interface SingleChildProp { children: JSX.MyNode; }
+declare function SingleChildComp(p: SingleChildProp): JSX.Element;
+declare function A(): JSX.MyNode;
+declare function B(): JSX.MyNode;
+declare function C(): JSX.MyNode;
+let k = <SingleChildComp><A /><B /><C /></SingleChildComp>;
+"#;
+    let diagnostics = check_jsx(src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!("Expected TS2746 for multi-child against JSX.MyNode; got: {diagnostics:?}")
+        });
+    assert!(
+        ts2746.message_text.contains("'MyNode'"),
+        "TS2746 must use 'MyNode' (resolved name), not 'JSX.MyNode'; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'JSX.MyNode'"),
+        "TS2746 must NOT include 'JSX.' namespace prefix; got: {}",
+        ts2746.message_text
+    );
+}
+
+#[test]
+fn jsx_children_ts2746_preserves_dotted_string_literal_type_text() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Prop {{ children: "foo.bar"; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+let k = <Comp><A /><B /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against string-literal children; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'\"foo.bar\"'"),
+        "TS2746 must preserve dotted string literal text; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'\"bar\"'"),
+        "TS2746 must not strip dotted prefixes inside string literals; got: {}",
+        ts2746.message_text
+    );
+}
+
+#[test]
+fn jsx_children_ts2746_preserves_dotted_template_literal_type_text() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Prop {{ children: `foo.bar`; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+let k = <Comp><A /><B /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against template-literal children; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'`foo.bar`'"),
+        "TS2746 must preserve dotted template literal text; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'`bar`'"),
+        "TS2746 must not strip dotted prefixes inside template literals; got: {}",
+        ts2746.message_text
+    );
+}
+
+/// TS2747 display: same structural rule applies to text-children rejection
+/// messages. Both TS2746 and TS2747 flow through the same children-type-display
+/// helper and must produce the same namespace-stripped output.
+#[test]
+fn jsx_children_ts2747_strips_namespace_prefix() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Prop {{ children: JSX.Element | JSX.Element[]; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+let k = <Comp>hello<A /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2747 = diagnostics
+        .iter()
+        .find(|d| d.code == 2747)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2747 for text children against JSX.Element-union prop; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        !ts2747.message_text.contains("'JSX.Element"),
+        "TS2747 message must NOT include the 'JSX.' namespace prefix; got: {}",
+        ts2747.message_text
+    );
+    assert!(
+        !ts2747.message_text.contains("Element;"),
+        "TS2747 message must NOT include a trailing semicolon; got: {}",
+        ts2747.message_text
     );
 }

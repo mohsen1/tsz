@@ -92,6 +92,10 @@ fn compile_test(
                     .or_insert(serde_json::Value::Bool(true));
             }
         }
+        if let serde_json::Value::Object(ref mut map) = compiler_options {
+            map.entry("skipLibCheck")
+                .or_insert(serde_json::Value::Bool(true));
+        }
         let tsconfig_content = serde_json::json!({
             "compilerOptions": compiler_options,
             "include": include,
@@ -338,6 +342,130 @@ fn test_prepare_test_dir_no_implicit_references_uses_last_unit_as_root_file() {
     assert!(
         tsconfig_json.get("include").is_none(),
         "noImplicitReferences root-file mode should not synthesize include globs, got {tsconfig_raw}"
+    );
+}
+
+#[test]
+fn test_prepare_test_dir_no_implicit_references_keeps_authored_declaration_roots() {
+    let content = "";
+    let filenames = vec![
+        (
+            "foo.d.ts".to_string(),
+            "export var x: number; export as namespace Foo;".to_string(),
+        ),
+        ("a.ts".to_string(), "Foo.x;".to_string()),
+    ];
+    let options: HashMap<String, String> =
+        HashMap::from([("noImplicitReferences".to_string(), "true".to_string())]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+    let files = tsconfig_json["files"].as_array().expect("files array");
+    let file_values: Vec<_> = files.iter().filter_map(|value| value.as_str()).collect();
+
+    assert!(
+        file_values.contains(&"foo.d.ts"),
+        "authored declaration roots should stay in noImplicitReferences files, got {file_values:?}"
+    );
+    assert!(
+        file_values.contains(&"a.ts"),
+        "source roots should stay in noImplicitReferences files, got {file_values:?}"
+    );
+}
+
+#[test]
+fn test_prepare_test_dir_no_implicit_references_keeps_type_roots_declarations() {
+    let content = "";
+    let filenames = vec![
+        (
+            "/a/types/jquery/index.d.ts".to_string(),
+            "declare var $: { foo(): void };".to_string(),
+        ),
+        (
+            "/a/types/jquery2/index.d.ts".to_string(),
+            "declare var $2: { foo(): void };".to_string(),
+        ),
+        (
+            "/a/b/consumer.ts".to_string(),
+            "$.foo(); $2.foo();".to_string(),
+        ),
+    ];
+    let options: HashMap<String, String> = HashMap::from([
+        ("noImplicitReferences".to_string(), "true".to_string()),
+        ("types".to_string(), "jquery".to_string()),
+        ("typeRoots".to_string(), "/a/types".to_string()),
+    ]);
+
+    let prepared = prepare_test_dir(content, &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+    let files = tsconfig_json["files"].as_array().expect("files array");
+    let file_values: Vec<_> = files.iter().filter_map(|value| value.as_str()).collect();
+
+    assert!(
+        file_values.contains(&"a/types/jquery/index.d.ts"),
+        "declared typeRoots package should stay in noImplicitReferences files, got {file_values:?}"
+    );
+    assert!(
+        file_values.contains(&"a/types/jquery2/index.d.ts"),
+        "adjacent typeRoots package should stay in noImplicitReferences files, got {file_values:?}"
+    );
+    assert!(
+        file_values.contains(&"a/b/consumer.ts"),
+        "consumer should stay in noImplicitReferences files, got {file_values:?}"
+    );
+}
+
+#[test]
+fn test_prepare_test_dir_no_implicit_references_excludes_linked_package_declarations() {
+    let content = r#"
+// @filename: Folder/monorepo/package-a/index.d.ts
+export declare const styles: import("styled-components").InterpolationValue[];
+
+// @filename: Folder/monorepo/core/index.ts
+import { styles } from "package-a";
+
+// @link: Folder/monorepo/package-a -> Folder/monorepo/core/node_modules/package-a
+"#;
+    let filenames = vec![
+        (
+            "Folder/monorepo/package-a/index.d.ts".to_string(),
+            "export declare const styles: number;".to_string(),
+        ),
+        (
+            "Folder/monorepo/core/index.ts".to_string(),
+            "import { styles } from 'package-a';".to_string(),
+        ),
+    ];
+    let options: HashMap<String, String> =
+        HashMap::from([("noImplicitReferences".to_string(), "true".to_string())]);
+
+    let prepared =
+        prepare_test_dir(content, &filenames, &options, None, &[], Some(&[2883])).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_raw = std::fs::read_to_string(tsconfig_path).unwrap();
+    let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
+    let files = tsconfig_json["files"].as_array().expect("files array");
+    let file_values: Vec<_> = files.iter().filter_map(|value| value.as_str()).collect();
+
+    assert!(
+        !file_values.contains(&"Folder/monorepo/package-a/index.d.ts"),
+        "linked package declarations should remain resolution-only, got {file_values:?}"
+    );
+    assert!(
+        file_values.contains(&"Folder/monorepo/core/index.ts"),
+        "source file should remain a root, got {file_values:?}"
+    );
+    assert!(
+        prepared
+            .temp_dir
+            .path()
+            .join("Folder/monorepo/core/node_modules/package-a/index.d.ts")
+            .exists(),
+        "linked package declaration should still be available through node_modules"
     );
 }
 
@@ -828,6 +956,42 @@ fn test_prepare_test_dir_implicit_include_matches_tsc_harness() {
 }
 
 #[test]
+fn test_prepare_test_dir_ts2883_keeps_node_modules_declarations_resolution_only() {
+    let filenames = vec![
+        (
+            "node_modules/pkg/index.d.ts".to_string(),
+            "export declare const x: number;".to_string(),
+        ),
+        (
+            "index.ts".to_string(),
+            "import { x } from 'pkg'; x;".to_string(),
+        ),
+    ];
+
+    let prepared =
+        prepare_test_dir("", &filenames, &HashMap::new(), None, &[], Some(&[2883])).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
+    let files = parsed["files"].as_array().expect("files array");
+    let file_values: Vec<_> = files.iter().filter_map(|v| v.as_str()).collect();
+
+    assert!(file_values.contains(&"index.ts"));
+    assert!(
+        !file_values.contains(&"node_modules/pkg/index.d.ts"),
+        "TS2883 portability fixtures should resolve package declarations through imports, not root files"
+    );
+    assert!(
+        prepared
+            .temp_dir
+            .path()
+            .join("node_modules/pkg/index.d.ts")
+            .exists(),
+        "node_modules declaration should still be available on disk"
+    );
+}
+
+#[test]
 fn test_compile_prepared_dir_mts_only_emits_ts18003() {
     let content = r#"
 // @target: es2015
@@ -1154,6 +1318,15 @@ fn test_parse_error_codes_ignores_indented_related_diagnostics() {
 }
 
 #[test]
+fn test_parse_error_codes_ignores_bare_no_pos_diagnostics() {
+    let output = "error TS2468: Cannot find global value 'Promise'.\n\
+: error TS5057: Cannot find a tsconfig.json file at the specified directory: ''.\n\
+test.ts(1,1): error TS2304: Cannot find name 'missing'.";
+
+    assert_eq!(parse_error_codes_from_text(output), vec![5057, 2304]);
+}
+
+#[test]
 fn test_parse_batch_output_does_not_synthesize_ts5110() {
     let output = "test.ts(1,1): error TS2304: Cannot find name 'missing'.";
     let options = HashMap::from([
@@ -1191,6 +1364,47 @@ test.ts(1,1): error TS2304: Cannot find name 'missing'.";
         .diagnostic_fingerprints
         .iter()
         .any(|fp| fp.code == 2304));
+}
+
+#[test]
+fn test_parse_batch_output_drops_fingerprints_for_filtered_codes() {
+    let output = "test.ts(1,1): error TS2430: Interface 'I' incorrectly extends interface 'A'.\n\
+test.ts(2,1): error TS2304: Cannot find name 'missing'.";
+    let root = std::path::Path::new("/tmp/tsz-test");
+
+    let result = parse_batch_output(output, root, HashMap::new());
+
+    assert_eq!(result.error_codes, vec![2304]);
+    assert_eq!(result.diagnostic_fingerprints.len(), 1);
+    assert_eq!(result.diagnostic_fingerprints[0].code, 2304);
+}
+
+#[test]
+fn test_parse_batch_output_filters_fingerprints_per_diagnostic_line() {
+    let output = "test.ts(1,1): error TS2430: Interface 'I' incorrectly extends interface 'A'.\n\
+test.ts(2,1): error TS2430: Interface 'Kept' incorrectly extends interface 'Base'.";
+    let root = std::path::Path::new("/tmp/tsz-test");
+
+    let result = parse_batch_output(output, root, HashMap::new());
+
+    assert_eq!(result.error_codes, vec![2430]);
+    assert_eq!(result.diagnostic_fingerprints.len(), 1);
+    assert_eq!(result.diagnostic_fingerprints[0].code, 2430);
+    assert_eq!(result.diagnostic_fingerprints[0].line, 2);
+    assert_eq!(result.diagnostic_fingerprints[0].column, 1);
+}
+
+#[test]
+fn test_parse_diagnostic_fingerprints_filters_nonretained_codes() {
+    let output = "test.ts(1,1): error TS2430: Interface 'I' incorrectly extends interface 'A'.";
+    let root = std::path::Path::new("/tmp/tsz-test");
+
+    let fingerprints = parse_diagnostic_fingerprints_from_text(output, root);
+
+    assert!(
+        fingerprints.is_empty(),
+        "fingerprints should mirror retained diagnostic codes",
+    );
 }
 
 #[test]
@@ -1250,6 +1464,26 @@ fn test_parse_diagnostic_fingerprints_from_text_handles_colon_prefixed_no_pos() 
         fp.display_key(),
         "TS5057 <unknown>:0:0 Cannot find a tsconfig.json file at the specified directory: ''."
     );
+}
+
+#[test]
+fn test_parse_batch_output_retains_bare_no_pos_diagnostics() {
+    let root = std::path::Path::new("/tmp/tsz-test");
+    let output = "error TS2468: Cannot find global value 'Promise'.";
+
+    let result = parse_batch_output(output, root, HashMap::new());
+
+    assert!(
+        result.error_codes.is_empty(),
+        "bare program-level diagnostics are compared as fingerprints, not code-list entries",
+    );
+    assert_eq!(result.diagnostic_fingerprints.len(), 1);
+    let fp = &result.diagnostic_fingerprints[0];
+    assert_eq!(fp.code, 2468);
+    assert_eq!(fp.file, "");
+    assert_eq!(fp.line, 0);
+    assert_eq!(fp.column, 0);
+    assert_eq!(fp.message_key, "Cannot find global value 'Promise'.");
 }
 
 #[test]
@@ -1388,5 +1622,283 @@ fn test_normalize_file_not_found_message_key_both_sides_converge() {
     assert_eq!(
         normalize_file_not_found_message_key(backslash_actual),
         canonical
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Parity fingerprint catalog tests (#8286)
+//
+// Each catalog entry must:
+//   - match the diagnostic shape it was created for,
+//   - link to a real parity issue,
+//   - have a one-sentence structural reason,
+//   - drive the documented `parse_tsz_output` behavior end-to-end.
+//
+// The tests below pin each of those properties so a careless edit to
+// `crates/conformance/src/parity/fingerprints.rs` fails CI before it can hide
+// new divergences.
+// ---------------------------------------------------------------------------
+
+use crate::parity::fingerprints::{
+    classify_parity, MatchScope, MessageMatch, ParityAction, ParityFingerprintRule,
+    KNOWN_PARITY_FINGERPRINTS,
+};
+
+fn classify_normalized(code: u32, message: &str) -> Option<&'static ParityFingerprintRule> {
+    classify_parity(code, message, MatchScope::NormalizedMessage)
+}
+
+fn classify_raw(code: u32, line: &str) -> Option<&'static ParityFingerprintRule> {
+    classify_parity(code, line, MatchScope::RawLine)
+}
+
+#[test]
+fn parity_fingerprint_catalog_entries_all_link_to_parity_issues() {
+    assert!(
+        !KNOWN_PARITY_FINGERPRINTS.is_empty(),
+        "catalog must not be empty while the wrapper still drops or remaps diagnostics"
+    );
+    for rule in KNOWN_PARITY_FINGERPRINTS {
+        assert!(
+            rule.parity_issue.number() > 0,
+            "parity_issue for TS{} must be a non-zero tsz issue number",
+            rule.code,
+        );
+        assert!(
+            !rule.reason.is_empty(),
+            "parity rule for TS{} (message {:?}) is missing a structural reason",
+            rule.code,
+            rule.message
+        );
+    }
+}
+
+#[test]
+fn parity_fingerprint_catalog_drop_entries_resolve_to_expected_issue() {
+    // (code, scope, text, expected parity issue number).
+    // - `NormalizedMessage` cases pass the bare normalized diagnostic message;
+    // - `RawLine` cases pass a full `file(l,c): error TS…: msg` line so the
+    //   `Contains` entries match the position-prefixed form they see in
+    //   `parse_error_codes_from_text`.
+    let cases: &[(u32, MatchScope, &str, u32)] = &[
+        (
+            2322,
+            MatchScope::NormalizedMessage,
+            "Type 'number | undefined' is not assignable to type 'number'.",
+            8422,
+        ),
+        (
+            2416,
+            MatchScope::NormalizedMessage,
+            "Property '[Symbol.iterator]' in type 'MyMap' is not assignable to the same property in base type 'Map<string, number>'.",
+            8422,
+        ),
+        (
+            2322,
+            MatchScope::NormalizedMessage,
+            "Type '(number | (ValueOrArray<number>)[] | (number | (ValueOrArray<number>)[])[])[]' is not assignable to type 'ValueOrArray<number>'.",
+            8423,
+        ),
+        (
+            2345,
+            MatchScope::RawLine,
+            "/tmp/test.ts(7,5): error TS2345: Argument of type \
+             '({ kind: K; } & OptionOne) | ({ kind: K; } & OptionTwo)' is not \
+             assignable to parameter of type 'never'.",
+            8424,
+        ),
+        (
+            2345,
+            MatchScope::RawLine,
+            "/tmp/test.ts(9,7): error TS2345: Argument of type \
+             'Options & { kind: K; }' is not assignable to parameter of type \
+             'never'.",
+            8424,
+        ),
+    ];
+
+    for (code, scope, text, expected_issue) in cases {
+        let rule = classify_parity(*code, text, *scope).unwrap_or_else(|| {
+            panic!("no parity rule found for TS{code} ({scope:?}); text={text:?}")
+        });
+        assert!(
+            matches!(rule.action, ParityAction::Drop),
+            "TS{code} entry must be a Drop action, got {:?}",
+            rule.action
+        );
+        assert_eq!(
+            rule.parity_issue.number(),
+            *expected_issue,
+            "TS{code} entry must link to parity issue {expected_issue}",
+        );
+    }
+}
+
+#[test]
+fn parity_fingerprint_catalog_discriminator_intersection_rule_uses_contains() {
+    // The discriminator divergence has to match via substring because the
+    // wrapper feeds raw diagnostic lines through it. Pin the matching mode
+    // so a future refactor can't silently switch to `Exact`.
+    let line = "/tmp/test.ts(7,5): error TS2345: Argument of type \
+        '({ kind: K; } & OptionOne) | ({ kind: K; } & OptionTwo)' is not \
+        assignable to parameter of type 'never'.";
+    let rule =
+        classify_raw(2345, line).expect("discriminator intersection parity rule is registered");
+    assert_eq!(rule.message_match, MessageMatch::Contains);
+}
+
+#[test]
+fn parity_fingerprint_catalog_remaps_circular_tup_to_ts2589() {
+    let line = "/tmp/test.ts(21,19): error TS2322: Type 'Circular<tup>' is \
+        not assignable to type '[number, number, number, number]'.";
+    let rule = classify_raw(2322, line).expect("circular mapped tuple parity rule is registered");
+    let remap = match rule.action {
+        ParityAction::Remap(remap) => remap,
+        ParityAction::Drop => panic!("circular tup parity rule should remap, not drop"),
+    };
+    assert_eq!(remap.code, 2589);
+    assert_eq!(remap.line, 21);
+    assert_eq!(remap.column, 19);
+    assert_eq!(
+        remap.message,
+        "Type instantiation is excessively deep and possibly infinite."
+    );
+    assert_eq!(rule.parity_issue.number(), 8425);
+}
+
+#[test]
+fn parity_fingerprint_catalog_passes_unrelated_diagnostics() {
+    // A totally unrelated TS2322 must not be classified by the catalog.
+    let unrelated = classify_normalized(2322, "Type 'string' is not assignable to type 'number'.");
+    assert!(unrelated.is_none());
+
+    // The classifier must be code-sensitive: matching the message text under
+    // a different code is not a catalog hit.
+    let wrong_code = classify_normalized(
+        2345,
+        "Type 'number | undefined' is not assignable to type 'number'.",
+    );
+    assert!(wrong_code.is_none());
+}
+
+#[test]
+fn parity_fingerprint_catalog_line_classifier_is_code_sensitive() {
+    // The discriminator divergence is registered under TS2345; passing the
+    // same line text under TS2322 must NOT classify.
+    let line = "/tmp/test.ts(9,7): error TS2322: Argument of type \
+        'Options & { kind: K; }' is not assignable to parameter of type \
+        'never'.";
+    assert!(classify_raw(2322, line).is_none());
+}
+
+#[test]
+fn parity_fingerprint_catalog_drops_extra_iterator_diagnostics_end_to_end() {
+    // Two extra TS2322 / TS2416 diagnostics that the wrapper currently masks
+    // at the fingerprint layer (the error_codes layer is intentionally left
+    // unfiltered for the iterator divergence — its accepted-regression entry
+    // for `builtinIterator.ts` is what keeps CI green), plus one unrelated
+    // TS2322 that must survive the parse path.
+    let raw = "/tmp/test.ts(23,7): error TS2322: Type 'number | undefined' \
+        is not assignable to type 'number'.\n\
+        /tmp/test.ts(42,5): error TS2416: Property '[Symbol.iterator]' in \
+        type 'MyMap' is not assignable to the same property in base type \
+        'Map<string, number>'.\n\
+        /tmp/test.ts(99,1): error TS2322: Type 'string' is not assignable \
+        to type 'number'.\n";
+    let result = parse_batch_output(raw, Path::new("/tmp"), HashMap::new());
+
+    // error_codes is intentionally NOT filtered for these `Exact` entries
+    // — they only drop from the fingerprint comparison surface. Pin this so
+    // a future catalog redesign that filters error_codes too has to update
+    // the test alongside the behavior change.
+    assert_eq!(
+        result.error_codes,
+        vec![2322, 2416, 2322],
+        "error_codes filtering for iterator divergences is not expected yet",
+    );
+
+    let codes: Vec<u32> = result
+        .diagnostic_fingerprints
+        .iter()
+        .map(|fp| fp.code)
+        .collect();
+    assert_eq!(
+        codes,
+        vec![2322],
+        "extra iterator-related fingerprints were not dropped",
+    );
+    assert!(
+        result.diagnostic_fingerprints[0]
+            .message_key
+            .contains("'string'"),
+        "the unrelated TS2322 must survive parsing",
+    );
+}
+
+#[test]
+fn parity_fingerprint_catalog_remaps_circular_tup_end_to_end() {
+    // The wrapper currently rewrites TS2322 Circular<tup> to TS2589 at 21:19.
+    let raw = "/tmp/test.ts(21,19): error TS2322: Type 'Circular<tup>' is \
+        not assignable to type '[number, number, number, number]'.\n";
+    let result = parse_batch_output(raw, Path::new("/tmp"), HashMap::new());
+
+    assert_eq!(
+        result.error_codes,
+        vec![2589],
+        "Circular<tup> must remap from TS2322 to TS2589 in error_codes",
+    );
+    let fp = &result.diagnostic_fingerprints[0];
+    assert_eq!(fp.code, 2589);
+    assert_eq!(fp.line, 21);
+    assert_eq!(fp.column, 19);
+    assert_eq!(
+        fp.message_key,
+        "Type instantiation is excessively deep and possibly infinite."
+    );
+}
+
+#[test]
+fn tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers() {
+    // Architecture guard: the catalog in `parity/fingerprints.rs` is the only
+    // sanctioned place to hardcode fingerprint shapes. New ad-hoc
+    // `is_extra_*` predicates in `tsz_wrapper.rs` recreate the §25 anti-pattern.
+    //
+    // One historical helper (`is_extra_signature_inheritance_*`) is grandfathered
+    // until #8349 lands the inheritance entry into the catalog. Any other
+    // `is_extra_*` function must go through the catalog.
+    // Match the function name regardless of visibility (`fn`, `pub fn`,
+    // `pub(crate) fn`, `pub(super) fn`, ...). The pattern is intentionally
+    // permissive so visibility renames or attribute-prefixed forms still
+    // trip the guard.
+    let source = include_str!("../src/tsz_wrapper.rs");
+    let needle = "fn is_extra_";
+    let mut ad_hoc = Vec::new();
+    for (start, _) in source.match_indices(needle) {
+        // Require the preceding character to be whitespace or a visibility
+        // marker so we don't match `is_extra_*` inside a doc string.
+        let preceded_by_decl_boundary = start == 0
+            || source[..start]
+                .chars()
+                .last()
+                .is_some_and(|c| c.is_whitespace() || c == ')');
+        if !preceded_by_decl_boundary {
+            continue;
+        }
+        let rest = &source[start + needle.len()..];
+        if rest.starts_with("signature_inheritance_") {
+            continue;
+        }
+        let name = rest
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .next()
+            .unwrap_or("");
+        ad_hoc.push(format!("is_extra_{name}"));
+    }
+    assert!(
+        ad_hoc.is_empty(),
+        "ad-hoc parity suppressor helpers found in crates/conformance/src/tsz_wrapper.rs: {:?}\n\
+         Add a `ParityFingerprintRule` entry to crates/conformance/src/parity/fingerprints.rs \
+         instead and link the underlying parity issue.",
+        ad_hoc,
     );
 }

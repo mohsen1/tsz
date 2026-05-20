@@ -20,7 +20,7 @@ pub(crate) use tsz_checker::state::CheckerState;
 pub(crate) use tsz_common::ModuleKind;
 pub(crate) use tsz_common::checker_options::JsxMode;
 pub(crate) use tsz_parser::parser::ParserState;
-pub(crate) use tsz_solver::TypeInterner;
+pub(crate) use tsz_solver::construction::TypeInterner;
 
 /// Helper to compile TypeScript and get diagnostics
 pub(crate) fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
@@ -195,12 +195,92 @@ pub(crate) fn compile_named_files_get_diagnostics_with_options_and_import_report
         .collect()
 }
 
+pub(crate) fn compile_named_project_get_diagnostics_with_options(
+    files: &[(&str, &str)],
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+    let resolved_module_paths = Arc::new(resolved_module_paths);
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut diagnostics = Vec::new();
+
+    for (file_idx, file_name) in file_names.iter().enumerate() {
+        let mut checker = CheckerState::new(
+            all_arenas[file_idx].as_ref(),
+            all_binders[file_idx].as_ref(),
+            &types,
+            file_name.clone(),
+            options.clone(),
+        );
+        checker.enable_source_file_test_pragmas();
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(file_idx);
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules.clone());
+        checker.check_source_file(roots[file_idx]);
+        diagnostics.extend(
+            checker
+                .ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code != 2318)
+                .map(|d| (d.code, d.message_text.clone())),
+        );
+    }
+
+    diagnostics
+}
+
 pub(crate) fn compile_named_files_get_diagnostics_with_lib_and_options(
     files: &[(&str, &str)],
     entry_file: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, String)> {
     let lib_files = load_lib_files_for_test();
+    compile_named_files_get_diagnostics_with_lib_files_and_options(
+        files, entry_file, options, lib_files,
+    )
+}
+
+pub(crate) fn compile_named_files_get_diagnostics_with_compiled_libs_and_options(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    lib_names: &[&str],
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(lib_names);
+    compile_named_files_get_diagnostics_with_lib_files_and_options(
+        files, entry_file, options, lib_files,
+    )
+}
+
+fn compile_named_files_get_diagnostics_with_lib_files_and_options(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+    lib_files: Vec<Arc<LibFile>>,
+) -> Vec<(u32, String)> {
     let mut arenas = Vec::with_capacity(files.len());
     let mut binders = Vec::with_capacity(files.len());
     let mut roots = Vec::with_capacity(files.len());
@@ -1231,6 +1311,28 @@ c?.foo;
 }
 
 #[test]
+fn test_in_narrowing_cache_preserves_no_property_access_from_index_signature() {
+    let source = r#"
+// @noPropertyAccessFromIndexSignature: true
+interface B { [k: string]: string }
+declare const b: B;
+function hasFoo(value: B) {
+    return "foo" in value;
+}
+hasFoo(b);
+b.foo;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts4111_count = diagnostics.iter().filter(|(code, _)| *code == 4111).count();
+
+    assert_eq!(
+        ts4111_count, 1,
+        "`in` narrowing must not cache an index-signature property as a named property. Diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_variance_annotations_require_direct_supported_type_alias_bodies() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
@@ -1263,7 +1365,7 @@ type VarianceFunction<in out Value> = (value: Value) => Value;
 }
 
 #[test]
-fn test_variance_reference_assignability_preserves_literal_alias_display() {
+fn test_variance_reference_assignability_uses_tsc_alias_display() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
 type NumericConstraint<Value extends number> = Value;
@@ -1281,6 +1383,19 @@ type VarianceShape<in out Value> = Shape<Value>;
 declare let vs1: VarianceShape<1>;
 declare let vs12: VarianceShape<1 | 2>;
 vs1 = vs12;
+
+type Level2<Value> = Shape<Value>;
+type Level1<Value> = Level2<Value>;
+type VarianceDeepShape<in out Value> = Level1<Value>;
+
+declare let vds1: VarianceDeepShape<1>;
+declare let vds12: VarianceDeepShape<1 | 2>;
+vds1 = vds12;
+
+type PlainShapeAlias<Value> = Shape<Value>;
+declare let ps1: PlainShapeAlias<1>;
+declare let ps12: PlainShapeAlias<1 | 2>;
+ps1 = ps12;
 "#,
         CheckerOptions {
             target: ScriptTarget::ES2015,
@@ -1296,17 +1411,74 @@ vs1 = vs12;
         .collect();
 
     assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type '2 | 1' is not assignable to type '1'.")),
+        "Expected scalar alias assignment to expand to the literal union, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|message| message
+            .contains("Type 'VarianceShape<2 | 1>' is not assignable to type 'VarianceShape<1>'.")),
+        "Expected shallow object alias assignment to preserve the outer alias surface, got: {diagnostics:?}"
+    );
+    assert!(
         ts2322.iter().any(|message| message.contains(
-            "Type 'NumericConstraint<1 | 2>' is not assignable to type 'NumericConstraint<1>'."
+            "Type 'VarianceDeepShape<2 | 1>' is not assignable to type 'VarianceDeepShape<1>'."
         )),
-        "Expected direct alias assignment to preserve the alias surface, got: {diagnostics:?}"
+        "Expected deep object alias assignment to preserve the outer alias surface, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|message| message.contains(
+            "Type 'PlainShapeAlias<2 | 1>' is not assignable to type 'PlainShapeAlias<1>'."
+        )),
+        "Expected non-variance object alias assignment to preserve the target alias surface, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_function_type_parameter_constraint_display_preserves_numeric_union_origin() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface NMap {
+  1: 'A'
+  2: 'B'
+  3: 'C'
+  4: 'D'
+}
+
+declare const g: <T extends 1 | 2 | 3>(x: `${T}`) => NMap[T]
+type G2 = <T extends 1 | 2 | 3 | 4>(x: `${T}`) => NMap[T]
+const g2: G2 = g;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one TS2322 for template-literal generic parameter mismatch, got: {diagnostics:?}"
     );
     assert!(
         ts2322
             .iter()
-            .any(|message| message
-                .contains("Type 'Shape<1 | 2>' is not assignable to type 'Shape<1>'.")),
-        "Expected object alias assignment to preserve the object alias surface, got: {diagnostics:?}"
+            .any(|message| message.contains("<T extends 1 | 2 | 3>")),
+        "Expected function constraint display to preserve source numeric-union order, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|message| !message.contains("<T extends 2 | 1 | 3>")),
+        "Assignment numeric-union canonicalization must not rewrite function type-parameter constraints, got: {diagnostics:?}"
     );
 }
 
@@ -1614,6 +1786,103 @@ var r14 = foo7(1, c);
     );
 }
 
+#[test]
+fn test_generic_construct_signature_arg_survives_concrete_target() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function foo<T>(x: new(a: T) => T) {
+    return new x(null);
+}
+
+interface I {
+    new <T>(x: T): T;
+}
+interface I2<T> {
+    new (x: T): T;
+}
+declare var i: I;
+declare var i2: I2<string>;
+declare var a: {
+    new <T>(x: T): T;
+}
+
+var r = foo(i);
+var r2 = foo<string>(i);
+var r3 = foo(i2);
+var r3b = foo(a);
+
+function foo2<T, U>(x: T, cb: new(a: T) => U) {
+    return new cb(x);
+}
+
+var r4 = foo2(1, i2);
+var r4b = foo2(1, a);
+var r5 = foo2(1, i);
+var r6 = foo2<string, string>('', i2);
+
+function foo3<T, U>(x: T, cb: new(a: T) => U, y: U) {
+    return new cb(x);
+}
+
+var r7 = foo3(null, i, '');
+var r7b = foo3(null, a, '');
+var r8 = foo3(1, i2, 1);
+var r9 = foo3<string, string>('', i2, '');
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        3,
+        "Expected only the three tsc TS2345s from genericCallWithFunctionTypedArguments2, got: {diagnostics:?}"
+    );
+    assert!(
+        !ts2345.iter().any(|(_, message)| message.contains(
+            "Argument of type 'new <T>(x: T) => T' is not assignable to parameter of type 'new (a: null) => string'"
+        )),
+        "Did not expect TS2345 for foo3(null, generic constructor, ''), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_object_literal_generic_construct_signature_argument_survives_concrete_return_context() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function foo3<T, U>(x: T, cb: new(a: T) => U, y: U) {
+    return new cb(x);
+}
+
+declare var ctor: { new <T>(x: T): T };
+var ok = foo3(null, ctor, '');
+
+declare var nongeneric: { new (x: string): string };
+var err = foo3(null, nongeneric, '');
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected only the non-generic constructor argument to remain TS2345, got: {diagnostics:?}"
+    );
+}
+
 /// Generic constructor calls should widen scalar literal argument types
 /// (e.g., `true` → `boolean`) for TS2345 error messages, matching tsc.
 /// Regression test for exportAssignmentConstrainedGenericType conformance.
@@ -1791,5 +2060,39 @@ class Customers {
     assert!(
         has_error(&diagnostics, 2394),
         "Expected TS2394 for constructor overload/implementation arity mismatch, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_repeated_generic_call_does_not_reuse_prior_inferred_literal_object() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface Named { name: string }
+interface Aged { age: number }
+
+function greet<T extends Named & Aged>(person: T): string {
+  return person.name;
+}
+
+greet({ name: "Alice", age: 30 });
+greet({ name: "Bob" });
+
+export {};
+"#,
+        CheckerOptions {
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for the second call missing age, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Bob") && message.contains("Alice")
+        }),
+        "A later generic call must not compare against a previous call's inferred literal object, got: {diagnostics:?}"
     );
 }

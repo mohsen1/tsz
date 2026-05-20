@@ -35,7 +35,10 @@ struct PreservedLibMeaning {
 }
 
 impl BinderState {
-    fn declaration_span(arena: &NodeArena, declaration: NodeIndex) -> Option<(u32, u32)> {
+    pub(crate) fn declaration_span(
+        arena: &NodeArena,
+        declaration: NodeIndex,
+    ) -> Option<(u32, u32)> {
         arena.get(declaration).map(|node| (node.pos, node.end))
     }
 
@@ -58,6 +61,13 @@ impl BinderState {
         existing_id: SymbolId,
         local_flags: u32,
     ) -> Option<PreservedLibMeaning> {
+        // Imports create local bindings that shadow same-named globals in both
+        // value and type positions. If we preserve lib declarations on the alias
+        // symbol, `import { Boolean }` can still resolve as global `Boolean`.
+        if (local_flags & symbol_flags::ALIAS) != 0 {
+            return None;
+        }
+
         let local_has_value = (local_flags & symbol_flags::VALUE) != 0;
         let local_has_type = (local_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
 
@@ -160,6 +170,12 @@ impl BinderState {
         if existing_symbol.value_declaration.is_none() {
             return true;
         }
+        if existing_symbol.is_type_only
+            && existing_symbol.has_any_flags(symbol_flags::ALIAS)
+            && (new_flags & symbol_flags::VALUE) != 0
+        {
+            return true;
+        }
 
         let non_module_value_flags = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
         let existing_has_non_module_value = (existing_symbol.flags & non_module_value_flags) != 0;
@@ -168,6 +184,61 @@ impl BinderState {
         !existing_has_non_module_value
             && (existing_symbol.flags & symbol_flags::MODULE) != 0
             && new_has_non_module_value
+    }
+
+    fn variable_declaration_is_block_scoped(
+        arena: &NodeArena,
+        declaration: NodeIndex,
+    ) -> Option<bool> {
+        let node = arena.get(declaration)?;
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let parent = arena.get_extended(declaration)?.parent;
+        let parent_node = arena.get(parent)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return None;
+        }
+        Some(node_flags::is_block_scoped(parent_node.flags as u32))
+    }
+
+    fn should_use_new_value_declaration_for_non_merge_variable_conflict(
+        &self,
+        existing_id: SymbolId,
+        new_flags: u32,
+        new_declaration: NodeIndex,
+        arena: &NodeArena,
+    ) -> bool {
+        if (new_flags & symbol_flags::VARIABLE) == 0 {
+            return false;
+        }
+
+        let Some(existing_symbol) = self.symbols.get(existing_id) else {
+            return false;
+        };
+        let existing_declaration = existing_symbol.value_declaration;
+        let Some(existing_is_block_scoped) =
+            Self::variable_declaration_is_block_scoped(arena, existing_declaration)
+        else {
+            return false;
+        };
+        let Some(new_is_block_scoped) =
+            Self::variable_declaration_is_block_scoped(arena, new_declaration)
+        else {
+            return false;
+        };
+        if existing_is_block_scoped == new_is_block_scoped {
+            return false;
+        }
+
+        let Some(existing_pos) = arena.get(existing_declaration).map(|node| node.pos) else {
+            return false;
+        };
+        let Some(new_pos) = arena.get(new_declaration).map(|node| node.pos) else {
+            return false;
+        };
+
+        new_pos < existing_pos
     }
 
     pub(crate) fn is_inside_class_member_computed_property_name(
@@ -1750,6 +1821,13 @@ impl BinderState {
                     declaration,
                     arena,
                 );
+            let should_use_new_value_decl_for_non_merge_variable_conflict = !can_merge
+                && self.should_use_new_value_declaration_for_non_merge_variable_conflict(
+                    existing_id,
+                    flags,
+                    declaration,
+                    arena,
+                );
 
             if let Some(sym) = self.symbols.get_mut(existing_id) {
                 if can_merge {
@@ -1760,6 +1838,11 @@ impl BinderState {
                             Self::declaration_span(arena, declaration),
                         );
                     }
+                } else if should_use_new_value_decl_for_non_merge_variable_conflict {
+                    sym.set_value_declaration(
+                        declaration,
+                        Self::declaration_span(arena, declaration),
+                    );
                 }
 
                 sym.add_declaration(declaration, Self::declaration_span(arena, declaration));

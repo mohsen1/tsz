@@ -1,13 +1,138 @@
 //! Element access helper methods: index type validation, generic index detection,
 //! numeric index extraction, and union/tuple diagnostic support.
 
+use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
+use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{SymbolRef, TypeId};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(key_expr_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                let ident = self.ctx.arena.get_identifier(node)?;
+                let name = &ident.escaped_text;
+
+                // Resolve through the binder the same way detect_expando_assignment
+                // does, so the key matches what was stored at bind time.
+                let binder_sym = self
+                    .ctx
+                    .binder
+                    .get_node_symbol(key_expr_idx)
+                    .or_else(|| {
+                        self.ctx
+                            .binder
+                            .resolve_identifier(self.ctx.arena, key_expr_idx)
+                    })
+                    .or_else(|| self.ctx.binder.file_locals.get(name));
+                if let Some(sym_id) = binder_sym
+                    && let Some(key) = self.resolved_const_expando_key_from_binder(sym_id, 0)
+                {
+                    return Some(key);
+                }
+
+                // Fallback: resolve through the type system for non-binder cases.
+                let prev = self.ctx.preserve_literal_types;
+                self.ctx.preserve_literal_types = true;
+                let key_type = self.get_type_of_node(key_expr_idx);
+                self.ctx.preserve_literal_types = prev;
+
+                if let Some(lit) =
+                    crate::query_boundaries::common::literal_value(self.ctx.types, key_type)
+                {
+                    return Some(match lit {
+                        tsz_solver::LiteralValue::String(s) => self.ctx.types.resolve_atom(s),
+                        tsz_solver::LiteralValue::Number(n) => n.0.to_string(),
+                        tsz_solver::LiteralValue::Boolean(b) => b.to_string(),
+                        tsz_solver::LiteralValue::BigInt(b) => self.ctx.types.resolve_atom(b),
+                    });
+                }
+
+                if let Some(sym_ref) =
+                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, key_type)
+                {
+                    return Some(format!("__unique_{}", sym_ref.0));
+                }
+
+                Some(name.clone())
+            }
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.ctx.arena.get_literal(node).map(|lit| lit.text.clone())
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn is_direct_expando_element_write_base(&self, object_expr_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(object_expr_idx) else {
+            return false;
+        };
+        node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    }
+
+    pub(crate) fn is_expando_element_access_read(
+        &mut self,
+        object_expr_idx: NodeIndex,
+        key_expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(obj_key) = property_access_chain_text_in_arena(self.ctx.arena, object_expr_idx)
+        else {
+            return false;
+        };
+        let Some(prop_key) = self.expando_element_key_name(key_expr_idx) else {
+            return false;
+        };
+
+        if self
+            .ctx
+            .binder
+            .expando_properties
+            .get(&obj_key)
+            .is_some_and(|props| {
+                props
+                    .iter()
+                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+            })
+        {
+            return true;
+        }
+
+        // Use global expando index for O(1) lookup instead of O(N) binder scan.
+        if let Some(expando_idx) = &self.ctx.global_expando_index {
+            if expando_idx.get(&obj_key).is_some_and(|props| {
+                props
+                    .iter()
+                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+            }) {
+                return true;
+            }
+        } else if let Some(all_binders) = &self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if binder
+                    .expando_properties
+                    .get(&obj_key)
+                    .is_some_and(|props| {
+                        props
+                            .iter()
+                            .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
+                    })
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn get_number_value_from_element_index(&self, idx: NodeIndex) -> Option<f64> {
         let node = self.ctx.arena.get(idx)?;
 
@@ -191,6 +316,97 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    pub(crate) fn union_has_no_common_numeric_index_surface(
+        &self,
+        object_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> bool {
+        if literal_index.is_none() {
+            return false;
+        }
+
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+
+        // Array and tuple unions have positional semantics and their own diagnostics.
+        // Keep this helper focused on object index signatures.
+        if members
+            .iter()
+            .any(|&member| self.is_array_like_type(member))
+        {
+            return false;
+        }
+
+        let mut all_have_string_surface = true;
+        let mut all_have_number_surface = true;
+        let mut saw_indexed_member = false;
+
+        for &member in &members {
+            if !self.is_index_signature_only_member(member) {
+                return false;
+            }
+            let Some((has_string, has_number)) = self.numeric_index_surfaces(member) else {
+                return false;
+            };
+            saw_indexed_member = true;
+            all_have_string_surface &= has_string;
+            all_have_number_surface &= has_number;
+        }
+
+        saw_indexed_member && !all_have_string_surface && !all_have_number_surface
+    }
+
+    fn numeric_index_surfaces(&self, object_type: TypeId) -> Option<(bool, bool)> {
+        match query::classify_element_indexable(self.ctx.types, object_type) {
+            query::ElementIndexableKind::ObjectWithIndex {
+                has_string,
+                has_number,
+            } => Some((has_string, has_number)),
+            query::ElementIndexableKind::Intersection(members) => {
+                let mut has_string = false;
+                let mut has_number = false;
+                for member in members {
+                    if let Some((member_string, member_number)) =
+                        self.numeric_index_surfaces(member)
+                    {
+                        has_string |= member_string;
+                        has_number |= member_number;
+                    }
+                }
+                (has_string || has_number).then_some((has_string, has_number))
+            }
+            query::ElementIndexableKind::Union(members) => {
+                let mut all_have_string_surface = true;
+                let mut all_have_number_surface = true;
+                let mut saw_indexed_member = false;
+
+                for member in members {
+                    let (has_string, has_number) = self.numeric_index_surfaces(member)?;
+                    saw_indexed_member = true;
+                    all_have_string_surface &= has_string;
+                    all_have_number_surface &= has_number;
+                }
+
+                saw_indexed_member.then_some((all_have_string_surface, all_have_number_surface))
+            }
+            query::ElementIndexableKind::Array
+            | query::ElementIndexableKind::Tuple
+            | query::ElementIndexableKind::StringLike
+            | query::ElementIndexableKind::Other => None,
+        }
+    }
+
+    fn is_index_signature_only_member(&self, object_type: TypeId) -> bool {
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
+            .is_some_and(|shape| {
+                shape.properties.is_empty()
+                    && (shape.string_index.is_some() || shape.number_index.is_some())
+            })
+    }
+
     /// Check if a type is a union of tuples where ALL members are out of bounds
     /// for the given literal index. Used to emit TS2339 instead of TS2493.
     pub(crate) fn is_union_of_tuples_all_out_of_bounds(
@@ -226,9 +442,24 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         index_type: TypeId,
     ) -> bool {
-        let Some(shape) =
+        // For Mapped types (e.g. `{ [K in \`on${string}\`]?: V }`), `object_shape_for_type`
+        // returns None because the shape is not directly accessible. Evaluate the type first
+        // to get the underlying ObjectWithIndex, then extract the string index.
+        let shape =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
-        else {
+                .or_else(|| {
+                    let evaluated =
+                        crate::query_boundaries::common::evaluate_type(self.ctx.types, object_type);
+                    if evaluated != object_type {
+                        crate::query_boundaries::common::object_shape_for_type(
+                            self.ctx.types,
+                            evaluated,
+                        )
+                    } else {
+                        None
+                    }
+                });
+        let Some(shape) = shape else {
             return false;
         };
         let Some(string_index) = shape.string_index.as_ref() else {
@@ -326,6 +557,44 @@ impl<'a> CheckerState<'a> {
 
         let resolved = self.resolve_lazy_type(object_type);
         crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved).is_some()
+    }
+
+    /// Choose the best receiver `TypeId` for a write-position indexed-access
+    /// diagnostic, matching tsc's displayed form.
+    ///
+    /// - `raw_object_type` is the pre-evaluation form (may be an application
+    ///   like `Errors<T>`); used as-is when available so the alias name is
+    ///   preserved in the message.
+    /// - `object_type` is the evaluated form; used as the fallback to strip
+    ///   transparent empty-object members from intersections like `A & {}`.
+    pub(crate) fn display_receiver_for_generic_indexed_write(
+        &self,
+        object_type: TypeId,
+        raw_object_type: TypeId,
+    ) -> TypeId {
+        // When the caller already has the Application form (e.g. `Errors<T>`),
+        // use it directly — the evaluated form would be the expanded structural
+        // intersection, which produces a noisier diagnostic.
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, raw_object_type)
+        {
+            return raw_object_type;
+        }
+
+        let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
+        else {
+            return object_type;
+        };
+
+        // Strip transparent `{}` members; return the sole meaningful member or
+        // the full intersection when two or more meaningful members are present.
+        let mut it = members
+            .into_iter()
+            .filter(|&m| !crate::query_boundaries::common::is_empty_object_type(self.ctx.types, m));
+        match (it.next(), it.next()) {
+            (Some(single), None) => single,
+            _ => object_type,
+        }
     }
 
     /// Decide whether a write-context element access on a *concrete* receiver
@@ -703,5 +972,35 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// When `index_node` is a `symbol`-typed identifier, follow its import
+    /// chain to the canonical binding and return
+    /// `UniqueSymbol(SymbolRef(canonical_id))`.
+    ///
+    /// Returns `None` when the node is not a plain identifier.  The caller
+    /// uses this to override the `index_type_for_access` so the solver's
+    /// property-lookup loop can match `__unique_<id>` entries produced by
+    /// `get_property_name_resolved` for non-unique symbol computed properties.
+    pub(crate) fn nonunique_symbol_index_type(&self, index_node: NodeIndex) -> Option<TypeId> {
+        let node = self.ctx.arena.get(index_node)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.resolve_identifier_symbol_without_tracking(index_node)?;
+        // Follow import aliases to the canonical declaration symbol.
+        let mut current = sym_id;
+        let mut hops = 0usize;
+        while hops < 32 {
+            hops += 1;
+            let Some(next) = self.ctx.binder.resolve_import_symbol(current) else {
+                break;
+            };
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+        Some(self.ctx.types.unique_symbol(SymbolRef(current.0)))
     }
 }

@@ -49,6 +49,7 @@ use rayon::prelude::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -58,6 +59,27 @@ use tsz_scanner::SyntaxKind;
 
 type ModuleExportEntry = FxHashMap<String, (String, Option<String>)>;
 type Reexports = FxHashMap<String, ModuleExportEntry>;
+
+enum LibSourceText {
+    Owned(String),
+    Static {
+        text: &'static str,
+        content_hash: u64,
+    },
+}
+
+impl LibSourceText {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Owned(text) => text,
+            Self::Static { text, .. } => text,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.as_str().len()
+    }
+}
 
 fn build_sym_to_decl_indices(declaration_arenas: &DeclarationArenaMap) -> SymToDeclIndicesMap {
     let mut sym_to_decl_indices: SymToDeclIndicesMap = FxHashMap::default();
@@ -341,6 +363,11 @@ fn resolve_default_lib_files(_target: ScriptTarget) -> anyhow::Result<Vec<PathBu
 #[cfg(not(target_arch = "wasm32"))]
 static RAYON_POOL_INIT: Once = Once::new();
 
+#[cfg(not(target_arch = "wasm32"))]
+const SMALL_WORKLOAD_RAYON_MAX_ITEMS: usize = 32;
+#[cfg(not(target_arch = "wasm32"))]
+const SMALL_WORKLOAD_RAYON_THREADS: usize = 4;
+
 /// Ensure Rayon global pool is configured once with stack size suitable for checker recursion.
 ///
 /// We initialize lazily to avoid paying global pool startup cost for single-file sequential paths.
@@ -354,14 +381,68 @@ static RAYON_POOL_INIT: Once = Once::new();
 pub fn ensure_rayon_global_pool() {
     RAYON_POOL_INIT.call_once(|| {
         // If the pool was already initialized through another rayon call, keep going.
-        let _ = rayon::ThreadPoolBuilder::new()
-            .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
-            .build_global();
+        let builder =
+            rayon::ThreadPoolBuilder::new().stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES);
+        let _ = builder.build_global();
     });
+}
+
+/// Run work on a scoped Rayon pool sized for a known source workload.
+///
+/// Tiny generated app projects have enough independent parse/bind work to
+/// benefit from Rayon, but on high-core machines a full-width pool spends
+/// disproportionate time in worker startup and scheduler/system overhead. Use
+/// a scoped local pool for this small-workload regime so the process-global
+/// Rayon pool remains available at its default width for later larger projects.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_with_rayon_pool_for_work_items<R>(
+    work_item_count: usize,
+    f: impl FnOnce() -> R + Send,
+) -> R
+where
+    R: Send,
+{
+    let worker_count = rayon_worker_count_for_work_items(
+        work_item_count,
+        std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1),
+        std::env::var_os("RAYON_NUM_THREADS").is_some(),
+    );
+    if let Some(worker_count) = worker_count
+        && let Ok(pool) = rayon::ThreadPoolBuilder::new()
+            .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
+            .num_threads(worker_count)
+            .build()
+    {
+        return pool.install(f);
+    }
+
+    ensure_rayon_global_pool();
+    f()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn rayon_worker_count_for_work_items(
+    work_item_count: usize,
+    available_parallelism: usize,
+    env_override_set: bool,
+) -> Option<usize> {
+    if env_override_set || work_item_count == 0 || work_item_count > SMALL_WORKLOAD_RAYON_MAX_ITEMS
+    {
+        return None;
+    }
+
+    Some(available_parallelism.clamp(1, SMALL_WORKLOAD_RAYON_THREADS))
 }
 
 #[cfg(target_arch = "wasm32")]
 pub fn ensure_rayon_global_pool() {}
+
+#[cfg(target_arch = "wasm32")]
+pub fn run_with_rayon_pool_for_work_items<R>(_work_item_count: usize, f: impl FnOnce() -> R) -> R {
+    f()
+}
 
 /// Conditionally use parallel or sequential iteration based on target.
 /// For WASM, Rayon parallelism creates oversubscription when combined with
@@ -1073,7 +1154,7 @@ pub fn load_lib_files_for_binding_strict(
     }
 
     let mut loaded = FxHashSet::default();
-    let mut file_contents: Vec<(String, String)> = Vec::new();
+    let mut file_contents: Vec<(String, LibSourceText)> = Vec::new();
     for path in lib_files {
         collect_lib_files_recursive_cached(path, &mut loaded, &mut file_contents, &file_cache)?;
     }
@@ -1088,67 +1169,176 @@ pub fn load_lib_files_for_binding_strict(
     // file #81 of 87 and becomes the critical-path bottleneck.
     file_contents.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
 
-    // Parse and bind all lib files in parallel using the global rayon pool.
-    // The global pool threads are already warm (no thread creation overhead).
-    #[cfg(not(target_arch = "wasm32"))]
-    ensure_rayon_global_pool();
-
-    let results: Vec<Result<Arc<lib_loader::LibFile>>> = maybe_parallel_into!(file_contents)
-        .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
+    let snapshot_keys: Vec<(&str, u64)> = file_contents
+        .iter()
+        .map(snapshot_key_for_lib_source)
         .collect();
+    if let Some(cached) = super::lib_snapshot::try_load_many(&snapshot_keys) {
+        return Ok(cached);
+    }
+    let snapshot_keys_for_store: Vec<(String, u64)> = snapshot_keys
+        .iter()
+        .map(|(file_name, content_hash)| ((*file_name).to_string(), *content_hash))
+        .collect();
+    drop(snapshot_keys);
 
     // Collect results, propagating any parse errors
-    results.into_iter().collect()
+    let results: Vec<Arc<lib_loader::LibFile>> = parse_and_bind_lib_files(file_contents)
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+    let snapshot_keys_for_store: Vec<(&str, u64)> = snapshot_keys_for_store
+        .iter()
+        .map(|(file_name, content_hash)| (file_name.as_str(), *content_hash))
+        .collect();
+    if let Err(err) = super::lib_snapshot::try_store_many(&snapshot_keys_for_store, &results) {
+        tracing::debug!(
+            target: "wasm::lib_snapshot",
+            error = %err,
+            "lib snapshot set write failed (compilation continues normally)",
+        );
+    }
+    Ok(results)
 }
 
-/// Clone lib files into fresh checker-only binders using the already-loaded source text.
+fn parse_and_bind_lib_files(
+    file_contents: Vec<(String, LibSourceText)>,
+) -> Vec<Result<Arc<lib_loader::LibFile>>> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return file_contents
+            .into_iter()
+            .map(|(file_name, source_text)| parse_and_bind_lib_source(file_name, source_text))
+            .collect();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let worker_count = std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1)
+            .min(8)
+            .min(file_contents.len().max(1));
+        if worker_count <= 1 {
+            return file_contents
+                .into_iter()
+                .map(|(file_name, source_text)| parse_and_bind_lib_source(file_name, source_text))
+                .collect();
+        }
+
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(worker_count)
+            .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
+            .build()
+        {
+            Ok(pool) => pool.install(|| {
+                file_contents
+                    .into_par_iter()
+                    .map(|(file_name, source_text)| {
+                        parse_and_bind_lib_source(file_name, source_text)
+                    })
+                    .collect()
+            }),
+            Err(_) => file_contents
+                .into_par_iter()
+                .map(|(file_name, source_text)| parse_and_bind_lib_source(file_name, source_text))
+                .collect(),
+        }
+    }
+}
+
+/// Clone lib files into fresh checker-only binders.
 ///
 /// The binders used during program construction are mutated while merging lib symbols into
 /// user-file binders. Checker-facing lib contexts and lib-file checks need fresh binder state
 /// so declaration merging and semantic lookups run against clean lib binders.
 ///
-/// The clone re-parses and re-binds every lib file (parse+bind is the heavy step in
-/// `LibFile::from_source`). With ~40 lib files in the full ES2020+DOM lib set, doing
-/// this sequentially leaves all but one core idle. Run the parse+bind across rayon's
-/// global pool, mirroring `load_lib_files_for_binding_strict`. Output order matches
-/// input order via rayon's order-preserving `collect`.
+/// The clone needs an independent parsed + bound copy of every lib file, but
+/// the source lib files have already been loaded into clean parsed/bound state.
+/// Deep-cloning that state in memory preserves distinct arena/binder identity
+/// for checker resolution while avoiding a second pass through the disk-backed
+/// lib snapshot cache. Output order matches input order via rayon's
+/// order-preserving `collect`.
 #[must_use]
 pub fn clone_lib_files_for_checker(
     lib_files: &[Arc<lib_loader::LibFile>],
+    should_clone_libs_in_parallel: bool,
 ) -> Vec<Arc<lib_loader::LibFile>> {
-    #[cfg(not(target_arch = "wasm32"))]
-    ensure_rayon_global_pool();
+    let clone_lib_file = |lib: &Arc<lib_loader::LibFile>| {
+        let mut binder = (*lib.binder).clone();
+        binder.clear_resolution_caches();
+        Arc::new(lib_loader::LibFile::new(
+            lib.file_name.clone(),
+            Arc::new((*lib.arena).clone()),
+            Arc::new(binder),
+            lib.root_index,
+        ))
+    };
 
-    maybe_parallel_iter!(lib_files)
-        .map(|lib| {
-            let source = lib
-                .arena
-                .get_source_file_at(lib.root_index)
-                .unwrap_or_else(|| panic!("missing source text for lib file {}", lib.file_name));
-            Arc::new(lib_loader::LibFile::from_source(
-                lib.file_name.clone(),
-                source.text.to_string(),
-            ))
-        })
-        .collect()
+    if should_clone_libs_in_parallel {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            ensure_rayon_global_pool();
+            return maybe_parallel_iter!(lib_files)
+                .map(clone_lib_file)
+                .collect();
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            return lib_files.iter().map(clone_lib_file).collect();
+        }
+    }
+
+    lib_files.iter().map(clone_lib_file).collect()
 }
 
 /// Parse and bind a single lib file, returning a `LibFile` or error.
 ///
-/// When `TSZ_LIB_CACHE=1` is set, this consults the disk-backed snapshot
-/// cache before parsing. On a hit the parsed arena and bound state are
-/// loaded from disk (skipping both parse and bind). On a miss the
-/// parse + bind result is written back. See
+/// This consults the disk-backed snapshot cache before parsing unless
+/// `TSZ_LIB_CACHE` explicitly disables it. On a hit the parsed arena and
+/// bound state are loaded from disk, skipping both parse and bind. On a
+/// miss the parse + bind result is written back. See
 /// `crates/tsz-core/src/parallel/lib_snapshot.rs` and
 /// `docs/plan/PERFORMANCE_PLAN.md`.
 fn parse_and_bind_lib_file(
     file_name: String,
     source_text: String,
 ) -> Result<Arc<lib_loader::LibFile>> {
-    if let Some(cached) = super::lib_snapshot::try_load(&file_name, &source_text) {
+    parse_and_bind_lib_file_with_source(file_name, Cow::Owned(source_text))
+}
+
+fn parse_and_bind_lib_source(
+    file_name: String,
+    source_text: LibSourceText,
+) -> Result<Arc<lib_loader::LibFile>> {
+    match source_text {
+        LibSourceText::Owned(source_text) => parse_and_bind_lib_file(file_name, source_text),
+        LibSourceText::Static {
+            text: source_text, ..
+        } => parse_and_bind_lib_file_with_source(file_name, Cow::Borrowed(source_text)),
+    }
+}
+
+fn snapshot_key_for_lib_source((file_name, source_text): &(String, LibSourceText)) -> (&str, u64) {
+    let content_hash = match source_text {
+        LibSourceText::Owned(source_text) => {
+            super::lib_snapshot::content_hash(file_name, source_text.as_str())
+        }
+        LibSourceText::Static { content_hash, .. } => {
+            super::lib_snapshot::content_hash_from_source_hash(file_name, *content_hash)
+        }
+    };
+    (file_name.as_str(), content_hash)
+}
+
+fn parse_and_bind_lib_file_with_source(
+    file_name: String,
+    source_text: Cow<'_, str>,
+) -> Result<Arc<lib_loader::LibFile>> {
+    if let Some(cached) = super::lib_snapshot::try_load(&file_name, source_text.as_ref()) {
         return Ok(cached);
     }
 
+    let source_text = source_text.into_owned();
     let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
     let source_file_idx = lib_parser.parse_source_file();
     let diagnostics = lib_parser.get_diagnostics();
@@ -1192,7 +1382,7 @@ fn parse_and_bind_lib_file(
 fn collect_lib_files_recursive_cached(
     path: &Path,
     loaded: &mut FxHashSet<PathBuf>,
-    file_contents: &mut Vec<(String, String)>,
+    file_contents: &mut Vec<(String, LibSourceText)>,
     file_cache: &FxHashMap<PathBuf, String>,
 ) -> Result<()> {
     // Skip canonicalize (stat syscall) when using embedded content.
@@ -1217,29 +1407,69 @@ fn collect_lib_files_recursive_cached(
     let embedded_key = basename.strip_prefix("lib.").unwrap_or(basename);
     let source_text = if let Some(cached) = file_cache.get(&lib_path) {
         // File was read from disk (custom lib dir with non-standard files) — use it
-        cached.clone()
+        LibSourceText::Owned(cached.clone())
+    } else if lib_path.starts_with(Path::new("/embedded-lib"))
+        && let Some(embedded) = crate::embedded_libs::get_lib_content(embedded_key)
+    {
+        // Embedded virtual-root paths are never real files; avoid a failed stat
+        // before reading the built-in content.
+        LibSourceText::Static {
+            text: embedded,
+            content_hash: crate::embedded_libs::get_lib_content_hash(embedded_key)
+                .expect("embedded lib content hash missing"),
+        }
     } else if lib_path.exists() {
-        std::fs::read_to_string(&lib_path)
-            .with_context(|| format!("failed to read lib file {}", lib_path.display()))?
+        LibSourceText::Owned(
+            std::fs::read_to_string(&lib_path)
+                .with_context(|| format!("failed to read lib file {}", lib_path.display()))?,
+        )
     } else if let Some(embedded) = crate::embedded_libs::get_lib_content(embedded_key) {
         // Built-in embedded content — zero I/O, comment-stripped for faster parsing
-        embedded.to_string()
+        LibSourceText::Static {
+            text: embedded,
+            content_hash: crate::embedded_libs::get_lib_content_hash(embedded_key)
+                .expect("embedded lib content hash missing"),
+        }
     } else {
         // Fallback to disk read
-        std::fs::read_to_string(&lib_path)
-            .with_context(|| format!("failed to read lib file {}", lib_path.display()))?
+        LibSourceText::Owned(
+            std::fs::read_to_string(&lib_path)
+                .with_context(|| format!("failed to read lib file {}", lib_path.display()))?,
+        )
     };
 
-    // Resolve references before adding this file (dependencies come first)
-    for ref_lib in parse_lib_references(&source_text) {
-        if let Some(ref_path) = resolve_lib_reference_path(&lib_path, &ref_lib) {
-            collect_lib_files_recursive_cached(&ref_path, loaded, file_contents, file_cache)?;
+    // Resolve references before adding this file (dependencies come first).
+    // Embedded libs have a generated reference table, so cache-hit startup
+    // does not need to rescan source text just to rediscover lib headers.
+    match &source_text {
+        LibSourceText::Static { .. } => {
+            for ref_lib in crate::embedded_libs::get_embedded_lib_references(embedded_key) {
+                let ref_path = resolve_generated_embedded_lib_reference_path(ref_lib);
+                collect_lib_files_recursive_cached(&ref_path, loaded, file_contents, file_cache)?;
+            }
+        }
+        LibSourceText::Owned(_) => {
+            for ref_lib in parse_lib_references(source_text.as_str()) {
+                if let Some(ref_path) = resolve_lib_reference_path(&lib_path, &ref_lib) {
+                    collect_lib_files_recursive_cached(
+                        &ref_path,
+                        loaded,
+                        file_contents,
+                        file_cache,
+                    )?;
+                }
+            }
         }
     }
 
     let file_name = lib_path.to_string_lossy().to_string();
     file_contents.push((file_name, source_text));
     Ok(())
+}
+
+fn resolve_generated_embedded_lib_reference_path(lib_name: &str) -> PathBuf {
+    let embedded_name = crate::embedded_libs::embedded_reference_filename(lib_name);
+    PathBuf::from(format!("/embedded-lib/{embedded_name}"))
 }
 
 fn parse_lib_references(content: &str) -> Vec<String> {
@@ -1296,6 +1526,13 @@ fn resolve_lib_reference_path(base_path: &Path, lib_name: &str) -> Option<PathBu
         "dom.iterable.generated" => candidate_names.push("dom.iterable".to_string()),
         "dom.asynciterable.generated" => candidate_names.push("dom.asynciterable".to_string()),
         _ => {}
+    }
+    if base_path.starts_with(Path::new("/embedded-lib")) {
+        return candidate_names.into_iter().find_map(|name| {
+            let embedded_name = format!("{name}.d.ts");
+            crate::embedded_libs::is_embedded_lib(&embedded_name)
+                .then(|| lib_dir.join(embedded_name))
+        });
     }
     let candidates: Vec<PathBuf> = candidate_names
         .into_iter()
@@ -1381,6 +1618,14 @@ pub fn parse_and_bind_parallel_with_libs_and_target(
     lib_files: &[Arc<lib_loader::LibFile>],
     language_version: ScriptTarget,
 ) -> Vec<BindResult> {
+    let premerged_lib_binder = if files.len() > 1 && !lib_files.is_empty() {
+        let mut binder = BinderState::new();
+        binder.merge_lib_symbols(lib_files);
+        Some(Arc::new(binder))
+    } else {
+        None
+    };
+
     if files.len() <= 1 {
         return files
             .into_iter()
@@ -1390,6 +1635,7 @@ pub fn parse_and_bind_parallel_with_libs_and_target(
                     source_text,
                     lib_files,
                     language_version,
+                    premerged_lib_binder.as_deref(),
                 )
             })
             .collect();
@@ -1405,6 +1651,7 @@ pub fn parse_and_bind_parallel_with_libs_and_target(
                 source_text,
                 lib_files,
                 language_version,
+                premerged_lib_binder.as_deref(),
             )
         })
         .collect()
@@ -1415,6 +1662,7 @@ fn bind_file_with_libs_with_language_version(
     source_text: String,
     lib_files: &[Arc<lib_loader::LibFile>],
     language_version: ScriptTarget,
+    premerged_lib_binder: Option<&BinderState>,
 ) -> BindResult {
     // Skip parsing .json files - they should not be parsed as TypeScript.
     // JSON module imports should be resolved during module resolution and
@@ -1431,12 +1679,14 @@ fn bind_file_with_libs_with_language_version(
     let (arena, parse_diagnostics) = parser.into_parts();
 
     // Bind with lib symbols
-    let mut binder = BinderState::new();
+    let mut binder = premerged_lib_binder
+        .cloned()
+        .unwrap_or_else(BinderState::new);
     binder.set_debug_file(&file_name);
 
     // IMPORTANT: Merge lib symbols BEFORE binding source file
     // so that symbols like console, Array, Promise are available during binding
-    if !lib_files.is_empty() {
+    if premerged_lib_binder.is_none() && !lib_files.is_empty() {
         binder.merge_lib_symbols(lib_files);
     }
 
@@ -2042,8 +2292,8 @@ impl BoundFile {
     }
 }
 
-use tsz_solver::TypeInterner;
-use tsz_solver::def::DefinitionStore;
+use crate::tsz_solver::construction::TypeInterner;
+use crate::tsz_solver::def::DefinitionStore;
 
 /// Merged program state after parallel binding
 pub struct MergedProgram {
@@ -2225,6 +2475,34 @@ impl MergedProgram {
             }
         }
         file_locals
+    }
+
+    /// Build the `lib_type_namespace` map for a reconstructed binder.
+    ///
+    /// Scans only the per-file locals for `file_idx` (not merged globals) for
+    /// VALUE-only user symbols whose names also appear as TYPE symbols in
+    /// `self.globals`. This lets the checker's symbol resolver fall back to
+    /// the lib TYPE symbol when a local VALUE-only symbol would otherwise block it.
+    #[must_use]
+    pub fn build_lib_type_namespace(&self, file_idx: usize) -> FxHashMap<String, SymbolId> {
+        use crate::binder::symbol_flags;
+        let Some(file_locals) = self.file_locals.get(file_idx) else {
+            return FxHashMap::default();
+        };
+        let mut result = FxHashMap::default();
+        for (name, &sym_id) in file_locals.iter() {
+            let sym_flags = self.symbols.get(sym_id).map_or(0, |s| s.flags);
+            if (sym_flags & symbol_flags::VALUE) == 0 || (sym_flags & symbol_flags::TYPE) != 0 {
+                continue;
+            }
+            if let Some(global_id) = self.globals.get(name) {
+                let global_flags = self.symbols.get(global_id).map_or(0, |s| s.flags);
+                if (global_flags & symbol_flags::TYPE) != 0 {
+                    result.insert(name.clone(), global_id);
+                }
+            }
+        }
+        result
     }
 }
 
@@ -2521,7 +2799,7 @@ pub fn resolve_heritage_in_store(
     store: &DefinitionStore,
     interner: &TypeInterner,
 ) {
-    use tsz_solver::def::DefKind;
+    use crate::tsz_solver::def::DefKind;
 
     for (&sym_id, entry) in semantic_defs {
         let def_id = match store.find_def_by_symbol(sym_id.0) {
@@ -2753,6 +3031,16 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     // Symbols from nested scopes should NEVER be merged across files/scopes
     let mut merged_symbols: FxHashMap<Atom, SymbolId> = FxHashMap::default();
 
+    // Track nested-symbol merging keyed by (global_parent_id, name_atom).
+    // A nested symbol (e.g., `Intl.ResolvedDateTimeFormatOptions`) declared in two
+    // sibling lib files (lib.es5.d.ts + lib.es2021.intl.d.ts) must collapse into
+    // one merged symbol once their parent namespace has merged. Without this,
+    // each lib file allocates its own copy of `ResolvedDateTimeFormatOptions`,
+    // causing one declaration's members (e.g. `dateStyle`) to win and the
+    // other's members (e.g. `calendar`) to silently disappear from the merged
+    // namespace shape returned by `resolvedOptions(): ResolvedDateTimeFormatOptions`.
+    let mut nested_merged: FxHashMap<(SymbolId, Atom), SymbolId> = FxHashMap::default();
+
     // ==========================================================================
     // PHASE 1: Remap lib symbols to global arena
     // ==========================================================================
@@ -2862,10 +3150,63 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                         new_id
                     }
                 } else {
-                    // Nested symbol - always allocate new, never merge
-
-                    // NOTE: Don't add to merged_symbols - nested symbols should never be cross-file merged
-                    global_symbols.alloc_from(lib_sym)
+                    // Nested symbol (e.g. a namespace member). Two lib files may
+                    // declare the same nested name under a parent that *itself*
+                    // has merged across files — for example
+                    // `interface Intl.ResolvedDateTimeFormatOptions` is split
+                    // across lib.es5.d.ts and lib.es2021.intl.d.ts, both inside
+                    // the merged `Intl` namespace. Without merging the nested
+                    // pair, interface lowering only sees one lib's declaration
+                    // body and members from the other lib (e.g. `calendar` from
+                    // es5) silently disappear from the resolved shape.
+                    //
+                    // Keyed by (global parent id, name): unrelated `Foo`s nested
+                    // inside *different* namespaces have different parent ids
+                    // and therefore do not collide.
+                    let nested_key = lib_symbol_remap
+                        .get(&(lib_binder_ptr, lib_sym.parent))
+                        .copied()
+                        .map(|gp| (gp, name_interner.intern(&lib_sym.escaped_name)));
+                    let existing_mergeable = nested_key
+                        .and_then(|key| nested_merged.get(&key).copied())
+                        .filter(|&existing_id| {
+                            global_symbols.get(existing_id).is_some_and(|existing| {
+                                can_merge_symbols_cross_file(existing.flags, lib_sym.flags)
+                            })
+                        });
+                    if let Some(existing_id) = existing_mergeable {
+                        if let Some(existing_mut) = global_symbols.get_mut(existing_id) {
+                            if let Some(ref aug_nodes) = global_aug_nodes {
+                                // External module lib binder: only fold in declarations
+                                // from `declare global` blocks, never module-scoped ones.
+                                let filtered: Vec<_> = lib_sym
+                                    .declarations
+                                    .iter()
+                                    .copied()
+                                    .filter(|d| aug_nodes.contains(d))
+                                    .collect();
+                                if !filtered.is_empty() {
+                                    append_unique_declarations(
+                                        &mut existing_mut.declarations,
+                                        &filtered,
+                                    );
+                                }
+                            } else {
+                                existing_mut.flags |= lib_sym.flags;
+                                append_unique_declarations(
+                                    &mut existing_mut.declarations,
+                                    &lib_sym.declarations,
+                                );
+                            }
+                        }
+                        existing_id
+                    } else {
+                        let new_id = global_symbols.alloc_from(lib_sym);
+                        if let Some(key) = nested_key {
+                            nested_merged.insert(key, new_id);
+                        }
+                        new_id
+                    }
                 };
 
                 // Store the remapping
@@ -4190,7 +4531,7 @@ use crate::checker::diagnostics::Diagnostic;
 use crate::checker::state::CheckerState;
 use crate::lib_loader::LibFile;
 use crate::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use crate::tsz_solver::TypeId;
 
 /// Result of type checking a single function body
 #[derive(Debug)]
@@ -4440,6 +4781,360 @@ fn add_reexported_module_augmentation_enum_conflict_diagnostics(
             .diagnostics
             .sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
     }
+}
+
+const PARALLEL_INTERFACE_MEMBER_KIND_PROPERTY: u8 = 1;
+const PARALLEL_INTERFACE_MEMBER_KIND_METHOD: u8 = 1 << 1;
+
+#[derive(Clone)]
+struct ParallelGlobalAugmentationMember {
+    file_idx: usize,
+    name: String,
+    name_node: NodeIndex,
+    kind: u8,
+}
+
+fn add_parallel_global_augmentation_member_conflict_diagnostics(
+    program: &MergedProgram,
+    file_results: &mut [FileCheckResult],
+) {
+    use crate::checker::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+    let mut members_by_interface: FxHashMap<String, Vec<ParallelGlobalAugmentationMember>> =
+        FxHashMap::default();
+
+    for (file_idx, file) in program.files.iter().enumerate() {
+        for (interface_name, augmentations) in file.global_augmentations.iter() {
+            let members = members_by_interface
+                .entry(interface_name.clone())
+                .or_default();
+            for augmentation in augmentations {
+                let arena = augmentation
+                    .arena
+                    .as_deref()
+                    .unwrap_or_else(|| file.arena.as_ref());
+                let Some(node) = arena.get(augmentation.node) else {
+                    continue;
+                };
+                let Some(interface) = arena.get_interface(node) else {
+                    continue;
+                };
+
+                for &member_idx in &interface.members.nodes {
+                    let Some(member_node) = arena.get(member_idx) else {
+                        continue;
+                    };
+                    let kind = match member_node.kind {
+                        syntax_kind_ext::PROPERTY_SIGNATURE => {
+                            PARALLEL_INTERFACE_MEMBER_KIND_PROPERTY
+                        }
+                        syntax_kind_ext::METHOD_SIGNATURE => PARALLEL_INTERFACE_MEMBER_KIND_METHOD,
+                        _ => continue,
+                    };
+                    let Some(signature) = arena.get_signature(member_node) else {
+                        continue;
+                    };
+                    let Some(name) =
+                        parallel_global_augmentation_member_name(arena, signature.name)
+                    else {
+                        continue;
+                    };
+                    members.push(ParallelGlobalAugmentationMember {
+                        file_idx,
+                        name,
+                        name_node: signature.name,
+                        kind,
+                    });
+                }
+            }
+        }
+    }
+
+    let mut seen = FxHashSet::default();
+    for members in members_by_interface.values() {
+        for member in members {
+            let opposite_kind = if member.kind == PARALLEL_INTERFACE_MEMBER_KIND_METHOD {
+                PARALLEL_INTERFACE_MEMBER_KIND_PROPERTY
+            } else {
+                PARALLEL_INTERFACE_MEMBER_KIND_METHOD
+            };
+            let has_remote_conflict = members.iter().any(|other| {
+                other.file_idx != member.file_idx
+                    && other.name == member.name
+                    && other.kind == opposite_kind
+            });
+            if !has_remote_conflict {
+                continue;
+            }
+
+            let Some(file_result) = file_results.get_mut(member.file_idx) else {
+                continue;
+            };
+            let Some(file) = program.files.get(member.file_idx) else {
+                continue;
+            };
+            let Some(name_node) = file.arena.get(member.name_node) else {
+                continue;
+            };
+            let key = (
+                member.file_idx,
+                name_node.pos,
+                diagnostic_codes::DUPLICATE_IDENTIFIER,
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+
+            let message =
+                format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&member.name]);
+            file_result.diagnostics.push(Diagnostic::error(
+                file.file_name.clone(),
+                name_node.pos,
+                name_node.end.saturating_sub(name_node.pos),
+                message,
+                diagnostic_codes::DUPLICATE_IDENTIFIER,
+            ));
+        }
+    }
+
+    for result in file_results {
+        result
+            .diagnostics
+            .sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+        result
+            .diagnostics
+            .dedup_by(|a, b| a.start == b.start && a.code == b.code);
+    }
+}
+
+fn parallel_global_augmentation_member_name(
+    arena: &NodeArena,
+    name_idx: NodeIndex,
+) -> Option<String> {
+    let node = arena.get(name_idx)?;
+    if node.kind == SyntaxKind::Identifier as u16 {
+        return arena
+            .get_identifier(node)
+            .map(|ident| ident.escaped_text.clone());
+    }
+    arena.get_literal(node).map(|literal| literal.text.clone())
+}
+
+fn suppress_parallel_import_shadowing_namespace_type_diagnostics(
+    program: &MergedProgram,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+    file_results: &mut [FileCheckResult],
+) {
+    use crate::checker::diagnostics::diagnostic_codes;
+
+    for result in file_results {
+        let Some(file) = program.files.get(result.file_idx) else {
+            continue;
+        };
+        let arena = file.arena.as_ref();
+        result.diagnostics.retain(|diagnostic| {
+            if diagnostic.code != diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_TYPE {
+                return true;
+            }
+            let Some(name) = source_text_at_span(arena, diagnostic.start, diagnostic.length) else {
+                return true;
+            };
+            !named_import_targets_shadowed_namespace_type(
+                program,
+                resolved_module_paths,
+                result.file_idx,
+                name,
+            )
+        });
+    }
+}
+
+fn source_text_at_span(arena: &NodeArena, start: u32, length: u32) -> Option<&str> {
+    let source = arena.source_files.first()?.text.as_ref();
+    let start = usize::try_from(start).ok()?;
+    let end = start.checked_add(usize::try_from(length).ok()?)?;
+    source.get(start..end)
+}
+
+fn named_import_targets_shadowed_namespace_type(
+    program: &MergedProgram,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+    file_idx: usize,
+    local_name: &str,
+) -> bool {
+    let Some(file) = program.files.get(file_idx) else {
+        return false;
+    };
+    let arena = file.arena.as_ref();
+    let Some(source_file) = arena.source_files.first() else {
+        return false;
+    };
+
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+            continue;
+        }
+        let Some(import_decl) = arena.get_import_decl(stmt_node) else {
+            continue;
+        };
+        let Some(module_name) = arena
+            .get(import_decl.module_specifier)
+            .and_then(|node| arena.get_literal(node))
+            .map(|literal| literal.text.as_str())
+        else {
+            continue;
+        };
+        let Some(clause_node) = arena.get(import_decl.import_clause) else {
+            continue;
+        };
+        let Some(clause) = arena.get_import_clause(clause_node) else {
+            continue;
+        };
+        let Some(bindings_node) = arena.get(clause.named_bindings) else {
+            continue;
+        };
+        if bindings_node.kind != syntax_kind_ext::NAMED_IMPORTS {
+            continue;
+        }
+        let Some(named) = arena.get_named_imports(bindings_node) else {
+            continue;
+        };
+        for &spec_idx in &named.elements.nodes {
+            let Some(spec_node) = arena.get(spec_idx) else {
+                continue;
+            };
+            let Some(spec) = arena.get_specifier(spec_node) else {
+                continue;
+            };
+            let local_name_idx = if spec.name.is_some() {
+                spec.name
+            } else {
+                spec.property_name
+            };
+            let Some(local_ident) = arena.get_identifier_at(local_name_idx) else {
+                continue;
+            };
+            if local_ident.escaped_text != local_name {
+                continue;
+            }
+            let imported_name_idx = if spec.property_name.is_some() {
+                spec.property_name
+            } else {
+                local_name_idx
+            };
+            let Some(imported_ident) = arena.get_identifier_at(imported_name_idx) else {
+                continue;
+            };
+            let Some(&target_file_idx) =
+                resolved_module_paths.get(&(file_idx, module_name.to_string()))
+            else {
+                continue;
+            };
+            if exported_namespace_import_has_type_companion(
+                program,
+                target_file_idx,
+                &imported_ident.escaped_text,
+            ) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn exported_namespace_import_has_type_companion(
+    program: &MergedProgram,
+    file_idx: usize,
+    export_name: &str,
+) -> bool {
+    let Some(file) = program.files.get(file_idx) else {
+        return false;
+    };
+    if !program
+        .module_exports
+        .get(file.file_name.as_str())
+        .is_some_and(|exports| exports.has(export_name))
+    {
+        return false;
+    }
+    file_has_namespace_import_named(file.arena.as_ref(), export_name)
+        && file_has_type_declaration_named(file.arena.as_ref(), export_name)
+}
+
+fn file_has_namespace_import_named(arena: &NodeArena, name: &str) -> bool {
+    let Some(source_file) = arena.source_files.first() else {
+        return false;
+    };
+    source_file
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .any(|stmt_idx| {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                return false;
+            }
+            let Some(import_decl) = arena.get_import_decl(stmt_node) else {
+                return false;
+            };
+            let Some(clause_node) = arena.get(import_decl.import_clause) else {
+                return false;
+            };
+            let Some(clause) = arena.get_import_clause(clause_node) else {
+                return false;
+            };
+            let Some(bindings_node) = arena.get(clause.named_bindings) else {
+                return false;
+            };
+            if bindings_node.kind != syntax_kind_ext::NAMESPACE_IMPORT {
+                return false;
+            }
+            arena
+                .get_named_imports(bindings_node)
+                .and_then(|namespace_import| arena.get_identifier_at(namespace_import.name))
+                .is_some_and(|ident| ident.escaped_text == name)
+        })
+}
+
+fn file_has_type_declaration_named(arena: &NodeArena, name: &str) -> bool {
+    let Some(source_file) = arena.source_files.first() else {
+        return false;
+    };
+    source_file
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .any(|stmt_idx| {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                return false;
+            };
+            let name_idx = match stmt_node.kind {
+                kind if kind == syntax_kind_ext::INTERFACE_DECLARATION => arena
+                    .get_interface(stmt_node)
+                    .map(|interface| interface.name),
+                kind if kind == syntax_kind_ext::CLASS_DECLARATION => {
+                    arena.get_class(stmt_node).map(|class| class.name)
+                }
+                kind if kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    arena.get_type_alias(stmt_node).map(|alias| alias.name)
+                }
+                kind if kind == syntax_kind_ext::ENUM_DECLARATION => {
+                    arena.get_enum(stmt_node).map(|enum_decl| enum_decl.name)
+                }
+                _ => None,
+            };
+            name_idx
+                .and_then(|idx| arena.get_identifier_at(idx))
+                .is_some_and(|ident| ident.escaped_text == name)
+        })
 }
 
 fn collect_lib_interface_node_symbols(
@@ -4883,6 +5578,10 @@ fn affected_lib_interface_names(
     checker_lib_files: &[Arc<LibFile>],
 ) -> FxHashSet<String> {
     let seed_interfaces = collect_user_global_interface_seeds(program);
+    if seed_interfaces.is_empty() {
+        return FxHashSet::default();
+    }
+
     let mut affected = seed_interfaces.clone();
     let user_member_names = collect_user_global_interface_member_names(program);
     let mut inheritance_graph: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
@@ -5261,6 +5960,12 @@ fn collect_functions_from_node(
 ///
 /// # Returns
 /// `CheckResult` with diagnostics from all functions
+///
+/// This is a reusable core/test-harness entry point, not the production CLI
+/// diagnostic scheduler. CLI semantic-diagnostic behavior is owned by
+/// `crates/tsz-cli/src/driver/check.rs::collect_diagnostics`, which also owns
+/// file scheduling, cache/watch invalidation, checker reuse, and diagnostic
+/// ordering.
 pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
     ensure_rayon_global_pool();
 
@@ -5338,7 +6043,7 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
 
             // Create a per-thread QueryCache for memoized evaluate_type/is_subtype_of calls.
             // Each thread gets its own cache using RefCell/Cell (no atomic overhead).
-            let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+            let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
 
             // Create checker for this file, using the shared type interner
             let compiler_options = crate::checker::context::CheckerOptions::default();
@@ -5406,6 +6111,12 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
 /// Diagnostics are sorted by `(start, code)` within each file and deduplicated
 /// by `(start, code)` after collection, ensuring deterministic output regardless
 /// of thread scheduling.
+///
+/// This helper remains lower-level reusable infrastructure. Production CLI
+/// diagnostics flow through `collect_diagnostics` in `tsz-cli` so the driver can
+/// preserve CLI diagnostics, cache invalidation, and file-session reuse policy.
+/// Feature and fidelity fixes for CLI checking should usually start in that
+/// scheduler before changing this helper.
 pub fn check_files_parallel(
     program: &MergedProgram,
     checker_options: &CheckerOptions,
@@ -5423,7 +6134,8 @@ pub fn check_files_parallel(
         crate::checker::module_resolution::build_module_resolution_maps(&file_names);
     let resolved_module_paths = Arc::new(resolved_module_paths);
 
-    let checker_lib_files = clone_lib_files_for_checker(lib_files);
+    let should_clone_libs_in_parallel = program.files.len() > 1;
+    let checker_lib_files = clone_lib_files_for_checker(lib_files, should_clone_libs_in_parallel);
 
     // Create fresh checker lib contexts from cloned lib files (contains both arena and binder).
     // Wrapped in Arc so that per-file checkers and child delegations share
@@ -5510,7 +6222,7 @@ pub fn check_files_parallel(
     // DashMap for thread-safe concurrent access and eliminates redundant
     // computation across parallel file checkers.
     let shared_query_cache = if program.files.len() > 1 {
-        Some(tsz_solver::SharedQueryCache::new())
+        Some(tsz_solver::construction::SharedQueryCache::new())
     } else {
         None
     };
@@ -5524,9 +6236,9 @@ pub fn check_files_parallel(
         // Each thread gets its own cache using RefCell/Cell (no atomic overhead).
         // For multi-file projects, the shared cache provides L2 cross-file caching.
         let query_cache = if let Some(ref shared) = shared_query_cache {
-            tsz_solver::QueryCache::new_with_shared(&program.type_interner, shared)
+            tsz_solver::construction::QueryCache::new_with_shared(&program.type_interner, shared)
         } else {
-            tsz_solver::QueryCache::new(&program.type_interner)
+            tsz_solver::construction::QueryCache::new(&program.type_interner)
         };
 
         let mut checker = CheckerState::with_options_and_shared_def_store(
@@ -5605,9 +6317,9 @@ pub fn check_files_parallel(
         }
 
         let query_cache = if let Some(ref shared) = shared_query_cache {
-            tsz_solver::QueryCache::new_with_shared(&program.type_interner, shared)
+            tsz_solver::construction::QueryCache::new_with_shared(&program.type_interner, shared)
         } else {
-            tsz_solver::QueryCache::new(&program.type_interner)
+            tsz_solver::construction::QueryCache::new(&program.type_interner)
         };
 
         let lib_bound_file =
@@ -5691,7 +6403,7 @@ pub fn check_files_parallel(
             };
         }
 
-        let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+        let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
 
         let mut checker = CheckerState::with_options(
             &lib_file.arena,
@@ -5799,6 +6511,12 @@ pub fn check_files_parallel(
         resolved_module_paths.as_ref(),
         &mut file_results,
     );
+    suppress_parallel_import_shadowing_namespace_type_diagnostics(
+        program,
+        resolved_module_paths.as_ref(),
+        &mut file_results,
+    );
+    add_parallel_global_augmentation_member_conflict_diagnostics(program, &mut file_results);
 
     let diagnostic_count: usize = file_results.iter().map(|r| r.diagnostics.len()).sum();
 
@@ -5950,6 +6668,7 @@ pub fn create_binder_from_bound_file(
     binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
     binder.lib_binders = program.lib_binders.clone();
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+    binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
 
     // Compose semantic_defs: start with the global map (cross-file + lib entries)
     // then overlay the file's own entries. Per-file entries take precedence for
@@ -6045,6 +6764,7 @@ pub fn create_binder_from_bound_file_with_shared(
     binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
     binder.lib_binders = program.lib_binders.clone();
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
+    binder.lib_type_namespace = Arc::new(program.build_lib_type_namespace(file_idx));
 
     if !program.definition_store.is_fully_populated() {
         if file.semantic_defs.is_empty() {

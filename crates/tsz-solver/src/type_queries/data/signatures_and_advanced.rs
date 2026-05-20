@@ -7,7 +7,7 @@ use super::accessors::get_object_shape;
 use super::content_predicates::{
     contains_infer_types_db, contains_type_parameters_db, get_intersection_members,
 };
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
@@ -21,6 +21,12 @@ use crate::type_queries::traversal::collect_property_name_atoms_for_diagnostics;
 // recursive DFS. Mirrors the pool pattern from #4722 / #4790 and follow-up PRs.
 thread_local! {
     static SIGS_ADV_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ExactLiteralPropertyKey {
+    pub name: Atom,
+    pub is_symbol_named: bool,
 }
 
 #[inline]
@@ -355,6 +361,21 @@ pub fn construct_return_type_for_type(db: &dyn TypeDatabase, type_id: TypeId) ->
                 None
             }
         }
+        InstanceTypeKind::Intersection(members) => {
+            let returns = members
+                .into_iter()
+                .filter_map(|member| construct_return_type_for_type(db, member))
+                .collect::<Vec<_>>();
+            (!returns.is_empty()).then(|| crate::utils::intersection_or_single(db, returns))
+        }
+        InstanceTypeKind::Union(members) => {
+            let mut returns = Vec::with_capacity(members.len());
+            for member in members {
+                returns.push(construct_return_type_for_type(db, member)?);
+            }
+            (!returns.is_empty()).then(|| crate::utils::union_or_single(db, returns))
+        }
+        InstanceTypeKind::Readonly(inner) => construct_return_type_for_type(db, inner),
         _ => None,
     }
 }
@@ -373,6 +394,20 @@ pub fn get_function_shape(
         Some(TypeData::Function(shape_id)) => Some(db.function_shape(shape_id)),
         _ => None,
     }
+}
+
+/// Returns `true` if `type_id` is callable and its first call signature was declared with
+/// method-shorthand syntax (`is_method = true`).
+pub fn callable_first_sig_is_method(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if let Some(shape) = get_function_shape(db, type_id) {
+        return shape.is_method;
+    }
+    if let Some(shape) = get_callable_shape(db, type_id)
+        && let Some(sig) = shape.call_signatures.first()
+    {
+        return sig.is_method;
+    }
+    false
 }
 
 /// Return a function type with all `ERROR` parameter and return positions rewritten to `ANY`.
@@ -554,6 +589,26 @@ pub fn rewrite_function_error_slots_to_any(db: &dyn TypeDatabase, type_id: TypeI
     })
 }
 
+/// Return a copy of a function type with the `type_predicate` field cleared.
+/// Returns `type_id` unchanged when it is not a function type or already has no predicate.
+pub fn strip_function_type_predicate(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let Some(shape) = get_function_shape(db, type_id) else {
+        return type_id;
+    };
+    if shape.type_predicate.is_none() {
+        return type_id;
+    }
+    db.function(crate::types::FunctionShape {
+        type_params: shape.type_params.clone(),
+        params: shape.params.clone(),
+        this_type: shape.this_type,
+        return_type: shape.return_type,
+        type_predicate: None,
+        is_constructor: shape.is_constructor,
+        is_method: shape.is_method,
+    })
+}
+
 /// Return a function type with the same signature but a replaced return type.
 ///
 /// Returns the original `type_id` when:
@@ -677,6 +732,36 @@ pub fn classify_body_for_arg_preservation(
     BodyArgPreservation::EvaluateAll
 }
 
+/// Returns `true` if the generic body type contains structural type operations
+/// that require type arguments to be in their concrete (expanded, non-Application)
+/// form for correct evaluation.
+///
+/// When this returns `false`, Application-form type arguments can be safely
+/// preserved during generic instantiation. Preserving the Application form
+/// maintains generic identity so the solver's variance fast path can fire
+/// during compatibility checks (e.g., `Map<any,any> <: Map<string,unknown>`
+/// checks the type args via variance rather than expanding both to structural
+/// objects and doing a deep property comparison).
+///
+/// Operations requiring concrete args:
+/// - `Conditional`: `T extends Map<K,V> ? ... : ...` (needs T's structure)
+/// - `IndexAccess`: `T[K]` (needs T's property shape)
+/// - `KeyOf`: `keyof T` (needs T's property names)
+/// - `Mapped`: `{ [P in keyof T]: ... }` (needs T's key space)
+/// - `TemplateLiteral`: `` `${T}` `` (needs T to be string-like)
+pub fn body_arg_requires_concrete_form(db: &dyn TypeDatabase, body_type: TypeId) -> bool {
+    crate::visitors::visitor_predicates::contains_type_matching(db, body_type, |key| {
+        matches!(
+            key,
+            TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_)
+                | TypeData::Mapped(_)
+                | TypeData::TemplateLiteral(_)
+        )
+    })
+}
+
 /// Get the mapped type info for a mapped type.
 ///
 /// Returns None if the type is not a Mapped type.
@@ -789,11 +874,43 @@ fn index_access_object_type_arg_alias_hint(
             .and_then(|alias| get_type_application(db, alias))
     })?;
     let &arg = app.args.first()?;
-    let TypeData::Lazy(def_id) = db.lookup(arg)? else {
-        return None;
+    let def_id = if let TypeData::Lazy(def_id) = db.lookup(arg)? {
+        def_id
+    } else {
+        def_store.find_type_alias_by_body(arg).or_else(|| {
+            let canonical_arg = canonical_alias_lookup_body(db, arg)?;
+            def_store.find_type_alias_by_body(canonical_arg)
+        })?
     };
     let def = def_store.get(def_id)?;
-    (def.kind == crate::def::DefKind::TypeAlias && def.type_params.is_empty()).then_some(arg)
+    (def.kind == crate::def::DefKind::TypeAlias && def.type_params.is_empty())
+        .then(|| db.lazy(def_id))
+}
+
+fn canonical_alias_lookup_body(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id)? {
+        TypeData::Union(list_id) => {
+            let members = db.type_list(list_id);
+            let canonical = db.union_literal_reduce(
+                members
+                    .iter()
+                    .map(|&member| db.get_display_alias(member).unwrap_or(member))
+                    .collect(),
+            );
+            (canonical != type_id).then_some(canonical)
+        }
+        TypeData::Intersection(list_id) => {
+            let members = db.type_list(list_id);
+            let canonical = db.intersection(
+                members
+                    .iter()
+                    .map(|&member| db.get_display_alias(member).unwrap_or(member))
+                    .collect(),
+            );
+            (canonical != type_id).then_some(canonical)
+        }
+        _ => None,
+    }
 }
 
 /// Get the operand of a `KeyOf` type. Returns `Some(inner)` for `keyof T`.
@@ -808,6 +925,8 @@ pub fn get_keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeI
     }
 }
 
+/// Instantiate a mapped type template for a specific property key.
+///
 /// Instantiate a mapped type template for a specific property key, handling
 /// name collisions between the mapped key parameter and outer type parameters.
 ///
@@ -855,10 +974,10 @@ pub fn instantiate_mapped_template_for_property(
     instantiate_type(db, template, &subst)
 }
 
-fn collect_exact_literal_property_keys_inner(
+fn collect_exact_literal_property_keys_with_symbol_info_inner(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-    keys: &mut FxHashSet<Atom>,
+    keys: &mut FxHashSet<ExactLiteralPropertyKey>,
     visited: &mut FxHashSet<TypeId>,
 ) -> Option<()> {
     if !visited.insert(type_id) {
@@ -867,36 +986,53 @@ fn collect_exact_literal_property_keys_inner(
 
     let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
     if evaluated != type_id {
-        return collect_exact_literal_property_keys_inner(db, evaluated, keys, visited);
+        return collect_exact_literal_property_keys_with_symbol_info_inner(
+            db, evaluated, keys, visited,
+        );
     }
 
     match db.lookup(type_id) {
         Some(TypeData::Literal(LiteralValue::String(atom))) => {
-            keys.insert(atom);
+            keys.insert(ExactLiteralPropertyKey {
+                name: atom,
+                is_symbol_named: false,
+            });
             Some(())
         }
         Some(TypeData::Literal(LiteralValue::Number(n))) => {
             let atom = db.intern_string(
                 &crate::relations::subtype::rules::literals::format_number_for_template(n.0),
             );
-            keys.insert(atom);
+            keys.insert(ExactLiteralPropertyKey {
+                name: atom,
+                is_symbol_named: false,
+            });
             Some(())
         }
         Some(TypeData::UniqueSymbol(sym)) => {
             let atom = db.intern_string(&format!("__unique_{}", sym.0));
-            keys.insert(atom);
+            keys.insert(ExactLiteralPropertyKey {
+                name: atom,
+                is_symbol_named: true,
+            });
             Some(())
         }
         Some(TypeData::Union(members)) => {
             for &member in db.type_list(members).iter() {
-                collect_exact_literal_property_keys_inner(db, member, keys, visited)?;
+                collect_exact_literal_property_keys_with_symbol_info_inner(
+                    db, member, keys, visited,
+                )?;
             }
             Some(())
         }
         Some(TypeData::Intersection(members)) => {
             let mut saw_precise_member = false;
             for &member in db.type_list(members).iter() {
-                if collect_exact_literal_property_keys_inner(db, member, keys, visited).is_some() {
+                if collect_exact_literal_property_keys_with_symbol_info_inner(
+                    db, member, keys, visited,
+                )
+                .is_some()
+                {
                     saw_precise_member = true;
                     continue;
                 }
@@ -908,45 +1044,57 @@ fn collect_exact_literal_property_keys_inner(
             saw_precise_member.then_some(())
         }
         Some(TypeData::Enum(_, members)) => {
-            collect_exact_literal_property_keys_inner(db, members, keys, visited)
+            collect_exact_literal_property_keys_with_symbol_info_inner(db, members, keys, visited)
         }
         Some(TypeData::Conditional(cond_id)) => {
             let cond = db.conditional_type(cond_id);
             let branch = resolve_concrete_conditional_branch(db, &cond)?;
-            collect_exact_literal_property_keys_inner(db, branch, keys, visited)
+            collect_exact_literal_property_keys_with_symbol_info_inner(db, branch, keys, visited)
         }
         Some(TypeData::KeyOf(operand)) => {
-            collect_exact_literal_property_keys_from_keyof_operand(db, operand, keys, visited)
+            collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
+                db, operand, keys, visited,
+            )
         }
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
             info.constraint.and_then(|constraint| {
-                collect_exact_literal_property_keys_inner(db, constraint, keys, visited)
+                collect_exact_literal_property_keys_with_symbol_info_inner(
+                    db, constraint, keys, visited,
+                )
             })
         }
         Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
-            collect_exact_literal_property_keys_inner(db, inner, keys, visited)
+            collect_exact_literal_property_keys_with_symbol_info_inner(db, inner, keys, visited)
         }
         Some(TypeData::Intrinsic(crate::types::IntrinsicKind::Never)) => Some(()),
         _ => None,
     }
 }
 
-pub fn collect_exact_literal_property_keys(
+pub fn collect_exact_literal_property_keys_with_symbol_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> Option<FxHashSet<Atom>> {
+) -> Option<FxHashSet<ExactLiteralPropertyKey>> {
     let mut keys = FxHashSet::default();
     let success = with_sigs_adv_visited(|visited| {
-        collect_exact_literal_property_keys_inner(db, type_id, &mut keys, visited)
+        collect_exact_literal_property_keys_with_symbol_info_inner(db, type_id, &mut keys, visited)
     });
     success?;
     Some(keys)
 }
 
-fn collect_exact_literal_property_keys_from_keyof_operand(
+pub fn collect_exact_literal_property_keys(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<FxHashSet<Atom>> {
+    collect_exact_literal_property_keys_with_symbol_info(db, type_id)
+        .map(|keys| keys.into_iter().map(|key| key.name).collect())
+}
+
+fn collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
     db: &dyn TypeDatabase,
     operand: TypeId,
-    keys: &mut FxHashSet<Atom>,
+    keys: &mut FxHashSet<ExactLiteralPropertyKey>,
     visited: &mut FxHashSet<TypeId>,
 ) -> Option<()> {
     let evaluated_operand = crate::evaluation::evaluate::evaluate_type(db, operand);
@@ -963,7 +1111,10 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
                 return None;
             }
             for prop in &shape.properties {
-                keys.insert(prop.name);
+                keys.insert(ExactLiteralPropertyKey {
+                    name: prop.name,
+                    is_symbol_named: prop.is_symbol_named,
+                });
             }
             Some(())
         }
@@ -973,7 +1124,10 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
                 return None;
             }
             for prop in &shape.properties {
-                keys.insert(prop.name);
+                keys.insert(ExactLiteralPropertyKey {
+                    name: prop.name,
+                    is_symbol_named: prop.is_symbol_named,
+                });
             }
             Some(())
         }
@@ -982,7 +1136,7 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
             let members = match db.lookup(narrowed_operand) {
                 Some(TypeData::Union(members)) => db.type_list(members).to_vec(),
                 _ => {
-                    return collect_exact_literal_property_keys_from_keyof_operand(
+                    return collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
                         db,
                         narrowed_operand,
                         keys,
@@ -991,7 +1145,9 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
                 }
             };
             for member in members {
-                collect_exact_literal_property_keys_from_keyof_operand(db, member, keys, visited)?;
+                collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
+                    db, member, keys, visited,
+                )?;
             }
             Some(())
         }
@@ -1002,7 +1158,7 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
                 let narrowed_member = narrow_keyof_intersection_member_by_literal_discriminants(
                     db, member, &members, member_idx,
                 );
-                if collect_exact_literal_property_keys_from_keyof_operand(
+                if collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
                     db,
                     narrowed_member,
                     keys,
@@ -1022,11 +1178,15 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
         }
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
             info.constraint.and_then(|constraint| {
-                collect_exact_literal_property_keys_inner(db, constraint, keys, visited)
+                collect_exact_literal_property_keys_with_symbol_info_inner(
+                    db, constraint, keys, visited,
+                )
             })
         }
         Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
-            collect_exact_literal_property_keys_from_keyof_operand(db, inner, keys, visited)
+            collect_exact_literal_property_keys_from_keyof_operand_with_symbol_info(
+                db, inner, keys, visited,
+            )
         }
         _ => {
             let atoms = collect_property_name_atoms_for_diagnostics(db, operand, 8);
@@ -1034,7 +1194,10 @@ fn collect_exact_literal_property_keys_from_keyof_operand(
                 None
             } else {
                 for atom in atoms {
-                    keys.insert(atom);
+                    keys.insert(ExactLiteralPropertyKey {
+                        name: atom,
+                        is_symbol_named: false,
+                    });
                 }
                 Some(())
             }
@@ -1098,7 +1261,7 @@ pub(crate) fn narrow_keyof_intersection_member_by_literal_discriminants(
                     return true;
                 };
                 !crate::type_queries::is_unit_type(db, prop.type_id)
-                    || crate::is_subtype_of(db, disc_type, prop.type_id)
+                    || crate::relations::subtype::is_subtype_of(db, disc_type, prop.type_id)
             })
         })
         .collect();
@@ -1139,8 +1302,8 @@ fn intersection_has_impossible_literal_discriminants(
 
             let seen = discriminants.entry(prop.name).or_default();
             if seen.iter().any(|&other| {
-                !crate::is_subtype_of(db, prop.type_id, other)
-                    && !crate::is_subtype_of(db, other, prop.type_id)
+                !crate::relations::subtype::is_subtype_of(db, prop.type_id, other)
+                    && !crate::relations::subtype::is_subtype_of(db, other, prop.type_id)
             }) {
                 return true;
             }
@@ -1200,7 +1363,8 @@ fn unit_intersection_is_impossible(db: &dyn TypeDatabase, type_id: TypeId) -> bo
             continue;
         }
         if units.iter().any(|&other| {
-            !crate::is_subtype_of(db, member, other) && !crate::is_subtype_of(db, other, member)
+            !crate::relations::subtype::is_subtype_of(db, member, other)
+                && !crate::relations::subtype::is_subtype_of(db, other, member)
         }) {
             return true;
         }
@@ -1312,11 +1476,13 @@ fn resolve_concrete_conditional_result(
         return None;
     }
 
-    Some(if crate::is_subtype_of(db, check_type, extends_type) {
-        cond.true_type
-    } else {
-        cond.false_type
-    })
+    Some(
+        if crate::relations::subtype::is_subtype_of(db, check_type, extends_type) {
+            cond.true_type
+        } else {
+            cond.false_type
+        },
+    )
 }
 
 /// Find the private brand name for a type.

@@ -17,7 +17,7 @@ use tsz_checker::CheckerState;
 use tsz_common::checker_options::CheckerOptions;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn checker_diagnostics(source: &str) -> Vec<(u32, String)> {
     let file_name = "test.ts";

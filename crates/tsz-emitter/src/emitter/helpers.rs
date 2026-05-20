@@ -1,8 +1,8 @@
 use super::{JsxEmit, ModuleKind, Printer};
-use crate::output::source_writer::SourcePosition;
+use crate::output::source_writer::{DelimiterKind, SourcePosition};
 use crate::safe_slice;
 use tsz_parser::parser::node::{Node, NodeAccess};
-use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 fn starts_with_keyword_token(text: &str, keyword: &str) -> bool {
@@ -13,31 +13,13 @@ fn starts_with_keyword_token(text: &str, keyword: &str) -> bool {
     })
 }
 
+const fn is_identifier_continue(byte: u8) -> bool {
+    byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
+}
+
 impl<'a> Printer<'a> {
     pub(super) const fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
-    }
-
-    pub(in crate::emitter) fn has_recovered_accessor_modifier(&self, node: &Node) -> bool {
-        let Some(source_text) = self.source_text else {
-            return false;
-        };
-        let mut end = std::cmp::min(node.pos as usize, source_text.len());
-        let bytes = source_text.as_bytes();
-
-        while end > 0 && matches!(bytes[end - 1], b' ' | b'\t') {
-            end -= 1;
-        }
-        if end == 0 || matches!(bytes[end - 1], b'\n' | b'\r') {
-            return false;
-        }
-
-        let mut start = end;
-        while start > 0 && bytes[start - 1].is_ascii_alphabetic() {
-            start -= 1;
-        }
-
-        &source_text[start..end] == "accessor"
     }
 
     // =========================================================================
@@ -47,6 +29,16 @@ impl<'a> Printer<'a> {
 
     /// Write text to output.
     pub(super) fn write(&mut self, text: &str) {
+        self.write_pending_block_comment_space_before(text);
+        if let Some(source_pos) = self.take_pending_source_pos() {
+            self.writer.write_node(text, source_pos);
+        } else {
+            self.writer.write(text);
+        }
+    }
+
+    /// Preserve tsc spacing after inline block comments before the next token.
+    fn write_pending_block_comment_space_before(&mut self, text: &str) {
         // If an inline block comment was just emitted, insert a separating space
         // before non-whitespace text to match tsc output (e.g. `/*comment*/ yield`).
         if self.pending_block_comment_space {
@@ -59,27 +51,12 @@ impl<'a> Printer<'a> {
                 self.writer.write_space();
             }
         }
-        if let Some(source_pos) = self.take_pending_source_pos() {
-            self.writer.write_node(text, source_pos);
-        } else {
-            self.writer.write(text);
-        }
     }
 
     /// Write a mapped token and also emit an end-of-token mapping.
     /// tsc emits these for single-character tokens like `;`, `{`, `}`.
     pub(super) fn write_with_end_marker(&mut self, text: &str) {
-        // Handle pending block comment space (e.g., `/*comment*/ ;`).
-        if self.pending_block_comment_space {
-            self.pending_block_comment_space = false;
-            if !text.is_empty()
-                && !text.starts_with(' ')
-                && !text.starts_with('\n')
-                && !text.starts_with('\r')
-            {
-                self.writer.write_space();
-            }
-        }
+        self.write_pending_block_comment_space_before(text);
         if let Some(source_pos) = self.take_pending_source_pos() {
             self.writer.write_node_with_end(text, source_pos);
         } else {
@@ -89,17 +66,7 @@ impl<'a> Printer<'a> {
 
     /// Write identifier text to output with name mapping when available.
     pub(super) fn write_identifier(&mut self, text: &str) {
-        // Handle pending block comment space (e.g., `/** comment */ identifier`).
-        if self.pending_block_comment_space {
-            self.pending_block_comment_space = false;
-            if !text.is_empty()
-                && !text.starts_with(' ')
-                && !text.starts_with('\n')
-                && !text.starts_with('\r')
-            {
-                self.writer.write_space();
-            }
-        }
+        self.write_pending_block_comment_space_before(text);
         if let Some(source_pos) = self.take_pending_source_pos() {
             self.writer.write_node_with_name(text, source_pos, text);
         } else {
@@ -129,6 +96,74 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn write_open_delimiter(&mut self, delimiter: DelimiterKind) {
+        let mut buf = [0u8; 4];
+        let text = delimiter.open_char().encode_utf8(&mut buf);
+        self.write_pending_block_comment_space_before(text);
+        if let Some(source_pos) = self.take_pending_source_pos() {
+            self.writer.write_open_delimiter_node(delimiter, source_pos);
+        } else {
+            self.writer.write_open_delimiter(delimiter);
+        }
+    }
+
+    fn write_close_delimiter(&mut self, delimiter: DelimiterKind) {
+        let mut buf = [0u8; 4];
+        let text = delimiter.close_char().encode_utf8(&mut buf);
+        self.write_pending_block_comment_space_before(text);
+        if let Some(source_pos) = self.take_pending_source_pos() {
+            self.writer
+                .write_close_delimiter_node(delimiter, source_pos);
+        } else {
+            self.writer.write_close_delimiter(delimiter);
+        }
+    }
+
+    pub(super) fn open_paren(&mut self) {
+        self.write_open_delimiter(DelimiterKind::Paren);
+    }
+
+    pub(super) fn close_paren(&mut self) {
+        self.write_close_delimiter(DelimiterKind::Paren);
+    }
+
+    pub(super) fn open_bracket(&mut self) {
+        self.write_open_delimiter(DelimiterKind::Bracket);
+    }
+
+    pub(super) fn close_bracket(&mut self) {
+        self.write_close_delimiter(DelimiterKind::Bracket);
+    }
+
+    pub(super) fn open_brace(&mut self) {
+        self.write_open_delimiter(DelimiterKind::Brace);
+    }
+
+    pub(super) fn close_brace(&mut self) {
+        self.write_close_delimiter(DelimiterKind::Brace);
+    }
+
+    pub(super) fn parenthesized<R>(&mut self, emit: impl FnOnce(&mut Self) -> R) -> R {
+        self.open_paren();
+        let result = emit(self);
+        self.close_paren();
+        result
+    }
+
+    pub(super) fn bracketed<R>(&mut self, emit: impl FnOnce(&mut Self) -> R) -> R {
+        self.open_bracket();
+        let result = emit(self);
+        self.close_bracket();
+        result
+    }
+
+    pub(super) fn braced<R>(&mut self, emit: impl FnOnce(&mut Self) -> R) -> R {
+        self.open_brace();
+        let result = emit(self);
+        self.close_brace();
+        result
+    }
+
     /// Write a runtime helper call name (e.g. `__awaiter`).
     /// When `importHelpers` is active and the module is CJS, this prefixes with
     /// the per-file collision-free `tslib` import binding.
@@ -149,6 +184,76 @@ impl<'a> Printer<'a> {
             return;
         }
         self.write(name);
+    }
+
+    pub(in crate::emitter) fn should_emit_invalid_namespace_static_modifier(
+        &self,
+        node: &Node,
+        modifiers: &Option<NodeList>,
+    ) -> bool {
+        if !self.in_namespace_iife {
+            return false;
+        }
+        if self.ctx.target_es5 {
+            return false;
+        }
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::StaticKeyword)
+            || self.has_recovered_namespace_static_modifier(node)
+    }
+
+    fn has_recovered_namespace_static_modifier(&self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let token_start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        if token_start >= bytes.len() {
+            return false;
+        }
+
+        let Some(remaining) = text.get(token_start..(node.end as usize).min(text.len())) else {
+            return false;
+        };
+        if starts_with_keyword_token(remaining, "static") {
+            let after_static = &remaining["static".len()..];
+            let after_static = after_static.trim_start_matches([' ', '\t']);
+            return ["var", "let", "const", "function", "async"]
+                .iter()
+                .any(|keyword| starts_with_keyword_token(after_static, keyword));
+        }
+
+        let mut static_end = token_start;
+        while static_end > 0 && matches!(bytes[static_end - 1], b' ' | b'\t') {
+            static_end -= 1;
+        }
+        if static_end >= "async".len()
+            && text.get(static_end - "async".len()..static_end) == Some("async")
+            && static_end
+                .checked_sub("async".len() + 1)
+                .is_none_or(|idx| !is_identifier_continue(bytes[idx]))
+        {
+            static_end -= "async".len();
+            while static_end > 0 && matches!(bytes[static_end - 1], b' ' | b'\t') {
+                static_end -= 1;
+            }
+        }
+        let static_start = static_end.saturating_sub("static".len());
+        if static_start >= static_end
+            || text.get(static_start..static_end) != Some("static")
+            || static_start
+                .checked_sub(1)
+                .is_some_and(|idx| is_identifier_continue(bytes[idx]))
+        {
+            return false;
+        }
+
+        let Some(leading_token) = text.get(token_start..(node.end as usize).min(text.len())) else {
+            return false;
+        };
+        ["var", "let", "const", "function", "async"]
+            .iter()
+            .any(|keyword| starts_with_keyword_token(leading_token, keyword))
     }
 
     /// Emit an expression, unwrapping `ExpressionWithTypeArguments` without parens.
@@ -180,12 +285,11 @@ impl<'a> Printer<'a> {
             } else {
                 false
             };
+            let expression = data.expression;
             if needs_parens {
-                self.write("(");
-            }
-            self.emit(data.expression);
-            if needs_parens {
-                self.write(")");
+                self.parenthesized(|emitter| emitter.emit(expression));
+            } else {
+                self.emit(expression);
             }
         } else {
             self.emit(idx);
@@ -481,6 +585,69 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(super) fn write_binding_identifier_text(&mut self, idx: NodeIndex) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(ident) = self.arena.get_identifier(node) else {
+            return;
+        };
+
+        let original_text = &ident.escaped_text;
+        let emit_text = ident.original_text.as_deref().unwrap_or(original_text);
+        if let Some(renamed) = self.ctx.block_scope_state.get_emitted_name(original_text)
+            && renamed != *original_text
+        {
+            if let Some(source_pos) = self.take_pending_source_pos() {
+                self.writer
+                    .write_node_with_name(&renamed, source_pos, original_text);
+            } else {
+                self.writer.write(&renamed);
+            }
+            return;
+        }
+
+        self.write_identifier(emit_text);
+    }
+
+    pub(in crate::emitter) fn is_static_block_await_identifier(&self, idx: NodeIndex) -> bool {
+        self.ctx.flags.in_class_static_block && self.get_identifier_text_idx(idx) == "await"
+    }
+
+    pub(in crate::emitter) fn is_static_block_await_arrow_recovery(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> bool {
+        if !self.ctx.flags.in_class_static_block || func.parameters.nodes.len() != 1 {
+            return false;
+        }
+        let Some(&param_idx) = func.parameters.nodes.first() else {
+            return false;
+        };
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+        self.get_identifier_text_idx(param.name) == "await"
+    }
+
+    pub(in crate::emitter) fn static_block_await_arrow_recovery_body(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let node = self.arena.get(idx)?;
+        let func = self.arena.get_function(node)?;
+        if !self.is_static_block_await_arrow_recovery(func) {
+            return None;
+        }
+        self.arena
+            .get(func.body)
+            .is_some_and(|body| body.kind == tsz_parser::parser::syntax_kind_ext::BLOCK)
+            .then_some(func.body)
+    }
+
     // =========================================================================
     // Unique Name Generation (mirrors TypeScript's makeUniqueName)
     // =========================================================================
@@ -489,10 +656,16 @@ impl<'a> Printer<'a> {
     /// Used when entering a function to reset temp names (_a, _b, etc.)
     /// since each function scope has its own temp naming.
     pub(super) fn push_temp_scope(&mut self) {
+        if self.temp_scope_stack.is_empty() {
+            self.reserve_pending_file_level_class_temps();
+        }
+
         let saved_counter = self.ctx.destructuring_state.temp_var_counter;
         let saved_names = std::mem::take(&mut self.generated_temp_names);
+        let saved_reserved = self.reserved_nested_temp_names.clone();
         let saved_for_of = self.first_for_of_emitted;
         let saved_preallocated = std::mem::take(&mut self.preallocated_temp_names);
+        let saved_preallocated_hoisted = std::mem::take(&mut self.preallocated_hoisted_temp_names);
         let saved_preallocated_assignment_temps =
             std::mem::take(&mut self.preallocated_assignment_temps);
         let saved_preallocated_logical_value_temps =
@@ -504,8 +677,10 @@ impl<'a> Printer<'a> {
         self.temp_scope_stack.push(super::TempScopeState {
             temp_var_counter: saved_counter,
             generated_temp_names: saved_names,
+            reserved_nested_temp_names: saved_reserved,
             first_for_of_emitted: saved_for_of,
             preallocated_temp_names: saved_preallocated,
+            preallocated_hoisted_temp_names: saved_preallocated_hoisted,
             preallocated_assignment_temps: saved_preallocated_assignment_temps,
             preallocated_logical_assignment_value_temps: saved_preallocated_logical_value_temps,
             hoisted_assignment_value_temps: saved_value_temps,
@@ -522,8 +697,10 @@ impl<'a> Printer<'a> {
         if let Some(state) = self.temp_scope_stack.pop() {
             self.ctx.destructuring_state.temp_var_counter = state.temp_var_counter;
             self.generated_temp_names = state.generated_temp_names;
+            self.reserved_nested_temp_names = state.reserved_nested_temp_names;
             self.first_for_of_emitted = state.first_for_of_emitted;
             self.preallocated_temp_names = state.preallocated_temp_names;
+            self.preallocated_hoisted_temp_names = state.preallocated_hoisted_temp_names;
             self.preallocated_assignment_temps = state.preallocated_assignment_temps;
             self.preallocated_logical_assignment_value_temps =
                 state.preallocated_logical_assignment_value_temps;
@@ -557,7 +734,9 @@ impl<'a> Printer<'a> {
                 format!("_{}", counter - 26)
             };
 
-            if !self.file_identifiers.contains(&name) && !self.generated_temp_names.contains(&name)
+            if !self.file_identifiers.contains(&name)
+                && !self.generated_temp_names.contains(&name)
+                && !self.reserved_nested_temp_names.contains(&name)
             {
                 self.generated_temp_names.insert(name.clone());
                 return name;
@@ -577,11 +756,18 @@ impl<'a> Printer<'a> {
         self.generate_fresh_temp_name()
     }
 
+    pub(super) fn make_unique_name_reserved_for_nested(&mut self) -> String {
+        let name = self.generate_fresh_temp_name();
+        self.reserved_nested_temp_names.insert(name.clone());
+        name
+    }
+
     pub(super) fn make_unique_name_from_base(&mut self, base: &str) -> String {
         for suffix in 1..=1000 {
             let candidate = format!("{base}_{suffix}");
             if !self.file_identifiers.contains(&candidate)
                 && !self.generated_temp_names.contains(&candidate)
+                && !self.ctx.block_scope_state.is_reserved_name(&candidate)
             {
                 self.generated_temp_names.insert(candidate.clone());
                 self.ctx.block_scope_state.reserve_name(candidate.clone());
@@ -594,10 +780,44 @@ impl<'a> Printer<'a> {
         name
     }
 
+    pub(super) fn make_unique_name_from_base_in_temp_scope(&mut self, base: &str) -> String {
+        for suffix in 1..=1000 {
+            let candidate = format!("{base}_{suffix}");
+            if !self.file_identifiers.contains(&candidate)
+                && !self.generated_temp_names.contains(&candidate)
+            {
+                self.generated_temp_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
+
+        self.make_unique_name_fresh()
+    }
+
+    pub(super) fn blocked_disposable_names_for_transform(&self) -> Vec<String> {
+        self.file_identifiers
+            .iter()
+            .chain(self.generated_temp_names.iter())
+            .chain(
+                self.temp_scope_stack
+                    .iter()
+                    .flat_map(|state| state.generated_temp_names.iter()),
+            )
+            .cloned()
+            .collect()
+    }
+
     pub(super) fn preallocate_temp_names(&mut self, count: usize) {
         for _ in 0..count {
             let name = self.generate_fresh_temp_name();
             self.preallocated_temp_names.push_back(name);
+        }
+    }
+
+    pub(super) fn preallocate_hoisted_temp_names(&mut self, count: usize) {
+        for _ in 0..count {
+            let name = self.generate_fresh_temp_name();
+            self.preallocated_hoisted_temp_names.push_back(name);
         }
     }
 
@@ -697,10 +917,22 @@ impl<'a> Printer<'a> {
                 && binary.operator_token == SyntaxKind::EqualsToken as u16
                 && self.assignment_pattern_has_object_rest(binary.left)
             {
-                let source_simple = self
+                let mut source_simple = self
                     .arena
                     .get(binary.right)
                     .is_some_and(|n| n.is_identifier());
+                if source_simple {
+                    let rhs_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        binary.right,
+                    );
+                    if let Some(left_node) = self.arena.get(binary.left)
+                        && !rhs_name.is_empty()
+                        && self.assignment_lhs_reassigns_identifier(left_node, &rhs_name)
+                    {
+                        source_simple = false;
+                    }
+                }
                 count +=
                     self.estimate_object_rest_assignment_pattern_temps(binary.left, source_simple);
             }
@@ -726,6 +958,14 @@ impl<'a> Printer<'a> {
             return 0;
         };
 
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && self.assignment_pattern_has_object_rest(binary.left)
+        {
+            return 2 + self.estimate_object_rest_assignment_pattern_temps(binary.left, true);
+        }
+
         if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             let Some(lit) = self.arena.get_literal_expr(node) else {
                 return 0;
@@ -744,16 +984,34 @@ impl<'a> Printer<'a> {
                 };
                 if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
                     && let Some(prop) = self.arena.get_property_assignment(elem_node)
-                    && self.assignment_pattern_has_object_rest(prop.initializer)
                 {
-                    let nested_source_simple = self
-                        .arena
-                        .get(prop.initializer)
-                        .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
-                    count += self.estimate_object_rest_assignment_pattern_temps(
-                        prop.initializer,
-                        nested_source_simple,
-                    );
+                    let is_dynamic_computed =
+                        self.arena.get(prop.name).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        }) && self.get_property_key_text(prop.name).is_none();
+                    if is_dynamic_computed {
+                        count += 1;
+                        if self.arena.get(prop.initializer).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                || n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        }) {
+                            count += 1;
+                        }
+                    }
+
+                    if self.assignment_pattern_has_object_rest(prop.initializer) {
+                        let nested_source_simple = self
+                            .arena
+                            .get(prop.initializer)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
+                        count += self.estimate_object_rest_assignment_pattern_temps(
+                            prop.initializer,
+                            nested_source_simple,
+                        );
+                    }
                 }
             }
 
@@ -800,8 +1058,25 @@ impl<'a> Printer<'a> {
     /// Like `make_unique_name` but also records the temp for hoisting as a `var` declaration.
     /// Used for assignment destructuring temps which need `var _a, _b, ...;` at scope top.
     pub(super) fn make_unique_name_hoisted(&mut self) -> String {
-        let name = self.make_unique_name();
+        let name = if let Some(name) = self.preallocated_hoisted_temp_names.pop_front() {
+            name
+        } else {
+            self.make_unique_name()
+        };
         self.hoisted_assignment_temps.push(name.clone());
+        name
+    }
+
+    /// Like `make_unique_name_hoisted`, but records the declaration in the
+    /// outer file scope even when currently emitting a function body.
+    pub(super) fn make_unique_name_file_hoisted(&mut self) -> String {
+        let name = self.make_unique_name();
+        if let Some(outer_scope) = self.temp_scope_stack.last_mut() {
+            outer_scope.generated_temp_names.insert(name.clone());
+            outer_scope.hoisted_assignment_temps.push(name.clone());
+        } else {
+            self.hoisted_assignment_temps.push(name.clone());
+        }
         name
     }
 
@@ -871,6 +1146,29 @@ impl<'a> Printer<'a> {
     /// meaning a newline was already written — callers should NOT write an additional newline.
     pub(crate) fn emit_unemitted_comments_between(&mut self, from_pos: u32, to_pos: u32) -> bool {
         self.emit_unemitted_comments_between_impl(from_pos, to_pos, true)
+    }
+
+    pub(in crate::emitter) fn skip_recovered_empty_statement_skipped_token_comments(
+        &mut self,
+        node: &Node,
+    ) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        let Some(slice) = text.get(start..end) else {
+            return;
+        };
+        if !slice.as_bytes().contains(&b'\\') {
+            return;
+        }
+
+        while self.comment_emit_idx < self.all_comments.len()
+            && self.all_comments[self.comment_emit_idx].end <= node.end
+        {
+            self.comment_emit_idx += 1;
+        }
     }
 
     fn emit_unemitted_comments_between_impl(
@@ -954,13 +1252,13 @@ impl<'a> Printer<'a> {
             // the chain is lowered to a conditional expression that needs parens in extends.
             let needs_parens = self.heritage_expr_needs_optional_chain_parens(expr.expression);
             if needs_parens {
-                self.write("(");
-            }
-            if !self.try_emit_parent_namespace_heritage_reference(expr.expression) {
+                self.parenthesized(|emitter| {
+                    if !emitter.try_emit_parent_namespace_heritage_reference(expr.expression) {
+                        emitter.emit(expr.expression);
+                    }
+                });
+            } else if !self.try_emit_parent_namespace_heritage_reference(expr.expression) {
                 self.emit(expr.expression);
-            }
-            if needs_parens {
-                self.write(")");
             }
             // Type arguments are erased in JS output since JavaScript doesn't
             // support generics at runtime. Skip any comments inside the erased
@@ -978,13 +1276,13 @@ impl<'a> Printer<'a> {
             // Direct expression (no ExpressionWithTypeArguments wrapper).
             let needs_parens = self.heritage_expr_needs_optional_chain_parens(idx);
             if needs_parens {
-                self.write("(");
-            }
-            if !self.try_emit_parent_namespace_heritage_reference(idx) {
+                self.parenthesized(|emitter| {
+                    if !emitter.try_emit_parent_namespace_heritage_reference(idx) {
+                        emitter.emit(idx);
+                    }
+                });
+            } else if !self.try_emit_parent_namespace_heritage_reference(idx) {
                 self.emit(idx);
-            }
-            if needs_parens {
-                self.write(")");
             }
         }
     }
@@ -1076,7 +1374,8 @@ impl<'a> Printer<'a> {
                     self.arena
                         .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
                         || (func.body.is_none()
-                            && !self.has_recovered_declaration_trailing_comma(node))
+                            && !self.has_recovered_declaration_trailing_comma(node)
+                            && !self.has_recovered_anonymous_function_arrow(node, func.name))
                 } else {
                     false
                 }
@@ -1287,6 +1586,12 @@ impl<'a> Printer<'a> {
                             module_node.kind == SyntaxKind::StringLiteral as u16
                                 || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
                         });
+                if self
+                    .arena
+                    .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
+                {
+                    return false;
+                }
                 if self.recovered_module_syntax_block_depth > 0 {
                     return !is_external;
                 }
@@ -1295,7 +1600,19 @@ impl<'a> Printer<'a> {
                 if is_external && self.in_namespace_iife {
                     return true;
                 }
+                // In Node ESM emit, `import x = require("...")` is not erased.
+                // TypeScript lowers it to a per-file `createRequire` binding and
+                // rewrites each alias to `const x = __require("...")`.
+                if is_external && self.ctx.options.resolved_node_module_to_esm {
+                    return false;
+                }
                 if is_es_module_output && is_external {
+                    return true;
+                }
+                if !is_external
+                    && self.in_namespace_iife
+                    && !self.import_decl_has_runtime_value(import_data)
+                {
                     return true;
                 }
                 if self.ctx.is_commonjs() && is_external {
@@ -1411,6 +1728,40 @@ impl<'a> Printer<'a> {
         false
     }
 
+    pub(super) fn has_recovered_anonymous_function_arrow(
+        &self,
+        node: &Node,
+        name: NodeIndex,
+    ) -> bool {
+        if name.is_some()
+            && self
+                .arena
+                .get(name)
+                .and_then(|name_node| self.arena.get_identifier(name_node))
+                .is_some_and(|ident| !ident.escaped_text.is_empty())
+        {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = (node.pos as usize).min(text.len());
+        let end = (node.end as usize).min(text.len());
+        let Some(slice) = text.get(start..end) else {
+            return false;
+        };
+        let trimmed = slice.trim_start();
+        let Some(after_function) = trimmed.strip_prefix("function") else {
+            return false;
+        };
+        if after_function.trim_start().starts_with("=>") {
+            return true;
+        }
+
+        text.get(end..)
+            .is_some_and(|tail| tail.trim_start().starts_with("=>"))
+    }
+
     /// Check if a `declare;` expression statement is an artifact of the parser not
     /// recognizing `declare` as a modifier before certain keywords. Looks at the source
     /// text after `declare` to see if the next non-whitespace content on the same line
@@ -1424,7 +1775,7 @@ impl<'a> Printer<'a> {
         // Start scanning after the `declare` keyword (7 chars: "declare")
         let declare_end = node.pos as usize + 7;
         let node_end = node.end as usize;
-        if declare_end >= bytes.len() || declare_end >= node_end {
+        if declare_end >= bytes.len() || declare_end > node_end {
             return false;
         }
         // Skip leading trivia (whitespace) to find where `declare` actually starts

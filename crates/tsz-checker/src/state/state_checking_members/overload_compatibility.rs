@@ -9,7 +9,7 @@
 
 use crate::query_boundaries::assignability::{
     erase_function_type_params_to_any, get_function_return_type, replace_function_return_type,
-    rewrite_function_error_slots_to_any,
+    rewrite_function_error_slots_to_any, strip_function_type_predicate,
 };
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -42,6 +42,20 @@ impl<'a> CheckerState<'a> {
                         .filter(|param| param.is_required())
                         .count()
                 })
+            })
+    }
+
+    fn has_rest_parameter_for_overload_compatibility(&self, type_id: tsz_solver::TypeId) -> bool {
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+        {
+            return shape.params.iter().any(|param| param.rest);
+        }
+
+        crate::query_boundaries::common::construct_signatures_for_type(self.ctx.types, type_id)
+            .is_some_and(|sigs| {
+                sigs.first()
+                    .is_some_and(|sig| sig.params.iter().any(|param| param.rest))
             })
     }
 
@@ -822,8 +836,13 @@ impl<'a> CheckerState<'a> {
     /// 1. Check if return types are compatible in EITHER direction (or target is void)
     /// 2. If so, check parameter-only assignability (with return types ignored)
     ///
-    /// Uses bivariant assignability because tsc uses non-strict function types
-    /// for overload compatibility (implementation params can be wider or narrower).
+    /// Return types use bivariant assignability (tsc allows either direction).
+    /// Parameters use strict assignability: the implementation type must be strictly
+    /// assignable to the overload type, which enforces contravariance for
+    /// function-typed parameters (e.g. `(e: MouseEvent) => void` is not assignable
+    /// to `(e: Event) => void`, so an overload requiring the former is incompatible
+    /// with an implementation accepting the latter). This matches tsc's use of
+    /// `isSignatureAssignableTo` with `assignableRelation` in the same function.
     pub(crate) fn is_implementation_compatible_with_overload(
         &mut self,
         impl_type: tsz_solver::TypeId,
@@ -849,6 +868,7 @@ impl<'a> CheckerState<'a> {
             self.required_parameter_count_for_overload_compatibility(impl_type),
             self.required_parameter_count_for_overload_compatibility(overload_type),
         ) && impl_required > overload_required
+            && !self.has_rest_parameter_for_overload_compatibility(overload_type)
         {
             return false;
         }
@@ -870,14 +890,18 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
 
-                // Now check parameter-only compatibility by creating versions
-                // with ANY return types. Use bivariant check to match tsc's
-                // non-strict function types for overload compatibility.
+                // Parameter-only check via strict assignability, matching tsc's
+                // `isSignatureAssignableTo(..., assignableRelation)`. Strip predicates
+                // first: return compatibility was already checked above, so predicates
+                // must not re-participate in the param comparison.
+                let impl_stripped = strip_function_type_predicate(self.ctx.types, impl_type);
+                let overload_stripped =
+                    strip_function_type_predicate(self.ctx.types, overload_type);
                 let impl_with_any_ret =
-                    self.replace_return_type(impl_type, tsz_solver::TypeId::ANY);
+                    self.replace_return_type(impl_stripped, tsz_solver::TypeId::ANY);
                 let overload_with_any_ret =
-                    self.replace_return_type(overload_type, tsz_solver::TypeId::ANY);
-                self.is_assignable_to_bivariant(impl_with_any_ret, overload_with_any_ret)
+                    self.replace_return_type(overload_stripped, tsz_solver::TypeId::ANY);
+                self.is_assignable_to(impl_with_any_ret, overload_with_any_ret)
             }
             _ => {
                 // If we can't get return types, fall back to bivariant assignability

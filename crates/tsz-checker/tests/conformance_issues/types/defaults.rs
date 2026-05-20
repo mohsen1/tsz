@@ -615,6 +615,243 @@ three<number>();
     );
 }
 
+#[test]
+fn test_conditional_boolean_result_satisfies_generic_constraint() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Bit = 0 | 1;
+type Choose<B extends Bit, Then, Else = never> = B extends 1 ? Then : Else;
+type Has<Seen, Value> = [Value] extends [Seen] ? 1 : 0;
+
+type ComputeDeep<Value, Seen = never> =
+    Choose<Has<Seen, Value>, Value, { [Key in keyof Value]: ComputeDeep<Value[Key], Value | Seen> }>;
+
+type Flag = 0 | 1;
+type Select<Predicate extends Flag, Left, Right = never> =
+    Predicate extends 0 ? Right : Left;
+type Contains<Pool, Item> = [Item] extends [Pool] ? 0 : 1;
+
+type Walk<Input, Visited = never> =
+    Select<Contains<Visited, Input>, Input, { [Prop in keyof Input]: Walk<Input[Prop], Input | Visited> }>;
+
+type A = ComputeDeep<{ a: { b: string } }>;
+type B = Walk<{ x: { y: number } }>;
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2344),
+        "Conditional results with all branches inside the constraint should not emit TS2344.\nActual errors: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_conditional_result_branch_outside_constraint_still_fails() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Bit = 0 | 1;
+type Choose<B extends Bit, Then, Else = never> = B extends 1 ? Then : Else;
+type BadHas<Seen, Value> = [Value] extends [Seen] ? 1 : "no";
+
+type Bad = Choose<BadHas<never, string>, string, number>;
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant, 2344),
+        "A conditional branch outside the constraint must still emit TS2344.\nActual errors: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_concrete_conditional_application_default_satisfies_tuple_constraint() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Iteration = [
+    value: number,
+    sign: "-" | "0" | "+",
+    prev: keyof IterationMap,
+    next: keyof IterationMap,
+    opposite: keyof IterationMap,
+];
+type IterationMap = {
+    "__": [number, "-" | "0" | "+", "__", "__", "__"],
+    "0": [0, "0", "__", "__", "__"],
+};
+type IterationOf<N extends number> =
+    `${N}` extends keyof IterationMap
+    ? IterationMap[`${N}`]
+    : IterationMap["__"];
+
+type Probe<I extends Iteration = IterationOf<0>> = I;
+type Renamed<Step extends Iteration = IterationOf<0>> = Step;
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2344),
+        "A concrete conditional application default should be checked through its evaluated tuple form.\nActual errors: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_imported_conditional_application_default_satisfies_tuple_constraint() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "Iteration/Iteration.ts",
+                r#"
+export type Iteration = [
+    value: number,
+    sign: "-" | "0" | "+",
+    prev: keyof IterationMap,
+    next: keyof IterationMap,
+    opposite: keyof IterationMap,
+];
+export type IterationMap = {
+    "__": [number, "-" | "0" | "+", "__", "__", "__"],
+    "0": [0, "0", "__", "__", "__"],
+};
+                "#,
+            ),
+            (
+                "Iteration/IterationOf.ts",
+                r#"
+import {IterationMap} from "./Iteration";
+
+export type IterationOf<N extends number> =
+    `${N}` extends keyof IterationMap
+    ? IterationMap[`${N}`]
+    : IterationMap["__"];
+                "#,
+            ),
+            (
+                "Community/IncludesDeep.ts",
+                r#"
+import {Iteration} from "../Iteration/Iteration";
+import {IterationOf} from "../Iteration/IterationOf";
+
+type IncludesDeep<I extends Iteration = IterationOf<0>> = I;
+                "#,
+            ),
+        ],
+        "Community/IncludesDeep.ts",
+        CheckerOptions::default(),
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2344),
+        "An imported concrete conditional application default should satisfy its imported tuple constraint.\nActual errors: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_nested_generic_conditional_check_defers_before_eager_expansion() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface ReadonlyArray<T> {
+    readonly length: number;
+    readonly [n: number]: T;
+}
+type Key = string | number | symbol;
+type List<A = unknown> = ReadonlyArray<A>;
+type Cast<A1 extends unknown, A2 extends unknown> =
+    A1 extends A2 ? A1 : A2;
+type Replace<U extends unknown, M extends unknown, A extends unknown> =
+    U extends unknown ? {1: A, 0: U}[U extends M ? 1 : 0] : never;
+type Update<Obj extends object, Keys extends Key, Value extends unknown> = {
+    [Prop in keyof Obj]: Prop extends Keys ? Replace<Value, never, Obj[Prop]> : Obj[Prop]
+} & {};
+
+type ListUpdate<Seq extends List, Slot extends Key, Value extends unknown> =
+    Cast<Update<Seq, `${Slot & number}` | Slot, Value>, List>;
+type RenamedUpdate<Rows extends List, Position extends Key, Item extends unknown> =
+    Cast<Update<Rows, `${Position & number}` | Position, Item>, List>;
+
+type A = ListUpdate<ReadonlyArray<1>, 0, string>;
+type B = RenamedUpdate<ReadonlyArray<2>, 1, number>;
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2344),
+        "Nested generic conditional checks should defer instead of expanding the generic check side eagerly.\nActual errors: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_missing_name_walk_keeps_nested_type_argument_diagnostics() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Holder<T extends object> = T;
+type A<Param> = Holder<{ value: MissingName<Param> }>;
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant, 2304),
+        "Names-only type-reference walking should still report nested unresolved type arguments.\nActual errors: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_generic_application_type_argument_still_fails_eager_string_constraint() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Box<Value> = { value: Value };
+type NeedString<Input extends string> = Input;
+type Probe<Item> = NeedString<Box<Item>>;
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant, 2344),
+        "A generic application that is structurally outside a string constraint must still emit TS2344.\nActual errors: {relevant:#?}"
+    );
+}
+
 /// TS2339: Property access on `this` in static methods should use constructor type
 ///
 /// In static methods, `this` refers to `typeof C` (the constructor type), not an

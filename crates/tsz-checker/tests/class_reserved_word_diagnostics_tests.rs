@@ -37,6 +37,12 @@ class H extends package.A { }
     assert!(
         diagnostics
             .iter()
+            .any(|(code, message)| *code == 1213 && message.contains("'static'")),
+        "expected TS1213 for constructor parameter `static`; got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
             .any(|(code, message)| *code == 2702 && message.contains("'public'")),
         "expected TS2702 for type-only heritage left side `public`; got {diagnostics:#?}"
     );

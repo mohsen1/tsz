@@ -76,21 +76,7 @@ fn compare_import_specifier_local_names(a: &str, b: &str, ignore_case: bool) -> 
 
     let a_folded = a.to_ascii_lowercase();
     let b_folded = b.to_ascii_lowercase();
-    let a_case_rank = if a.chars().next().is_some_and(|ch| ch.is_ascii_lowercase()) {
-        0
-    } else {
-        1
-    };
-    let b_case_rank = if b.chars().next().is_some_and(|ch| ch.is_ascii_lowercase()) {
-        0
-    } else {
-        1
-    };
-
-    a_folded
-        .cmp(&b_folded)
-        .then_with(|| a_case_rank.cmp(&b_case_rank))
-        .then_with(|| a.cmp(b))
+    a_folded.cmp(&b_folded)
 }
 
 fn module_specifier_match_for_merge(existing: &str, candidate: &str) -> bool {
@@ -258,6 +244,7 @@ impl<'a> CodeActionProvider<'a> {
                     .get_identifier_text(clause.named_bindings)
                     .map(std::string::ToString::to_string);
             } else if let Some(named) = self.arena.get_named_imports(bindings_node) {
+                named_specs.reserve(named.elements.nodes.len());
                 for &spec_idx in &named.elements.nodes {
                     let spec_node = self.arena.get(spec_idx)?;
                     let spec = self.arena.get_specifier(spec_node)?;
@@ -307,7 +294,7 @@ impl<'a> CodeActionProvider<'a> {
             return Some((edit, title));
         }
 
-        let mut parts = Vec::new();
+        let mut parts = Vec::with_capacity(3);
         if let Some(default_name) = default_name {
             parts.push(default_name);
         }
@@ -315,7 +302,7 @@ impl<'a> CodeActionProvider<'a> {
             parts.push(format!("* as {namespace_name}"));
         }
         if has_named {
-            let mut items = Vec::new();
+            let mut items = Vec::with_capacity(named_specs.len());
             for spec in named_specs {
                 let mut item = String::new();
                 if spec.is_type_only && !clause.is_type_only {
@@ -569,18 +556,33 @@ impl<'a> CodeActionProvider<'a> {
         let insert_at_file_start = insert_pos.line == 0 && insert_pos.character == 0;
         let has_leading_import = insert_at_file_start && self.first_statement_is_import(root);
         // Match tsserver's behavior of picking the file's existing newline
-        // style (preferring the first observed sequence), falling back to
-        // CRLF when the source has no newlines (matches tsserver default).
+        // style (preferring the first observed sequence), falling back to CRLF
+        // when the source has no newlines.
         // An explicit override (from `format.newLineCharacter`) wins over
         // both the source scan and the CRLF default.
         let newline = if let Some(override_nl) = self.new_line_override.as_deref() {
             override_nl
-        } else if self.source.contains("\r\n") {
-            "\r\n"
-        } else if self.source.contains('\n') {
-            "\n"
         } else {
-            "\r\n"
+            let bytes = self.source.as_bytes();
+            let mut newline = "\r\n";
+            for (idx, byte) in bytes.iter().enumerate() {
+                match byte {
+                    b'\r' => {
+                        newline = if bytes.get(idx + 1) == Some(&b'\n') {
+                            "\r\n"
+                        } else {
+                            "\r"
+                        };
+                        break;
+                    }
+                    b'\n' => {
+                        newline = "\n";
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            newline
         };
         let mut new_text = String::new();
         if needs_newline {
@@ -995,7 +997,7 @@ impl<'a> CodeActionProvider<'a> {
                 return None;
             }
             let had_trailing_comma = trimmed.starts_with(',');
-            let mut edits = Vec::new();
+            let mut edits = Vec::with_capacity(2);
             if !had_trailing_comma {
                 let last_pos = self.line_map.offset_to_position(last_end, self.source);
                 edits.push(TextEdit {
@@ -1053,9 +1055,14 @@ impl<'a> CodeActionProvider<'a> {
             let Some(existing_local_name) = self.arena.get_identifier_text(local_ident) else {
                 continue;
             };
-            if compare_import_specifier_local_names(local_name, existing_local_name, ignore_case)
-                == std::cmp::Ordering::Less
-            {
+            let ordering = if ignore_case {
+                local_name
+                    .to_ascii_lowercase()
+                    .cmp(&existing_local_name.to_ascii_lowercase())
+            } else {
+                local_name.cmp(existing_local_name)
+            };
+            if ordering != std::cmp::Ordering::Greater {
                 return Some(spec_node.pos);
             }
         }
@@ -1312,8 +1319,8 @@ impl<'a> CodeActionProvider<'a> {
         let root_node = self.arena.get(root)?;
         let source_file = self.arena.get_source_file(root_node)?;
 
-        let mut edits = Vec::new();
         let statements = &source_file.statements.nodes;
+        let mut edits = Vec::with_capacity(statements.len());
         let mut i = 0;
 
         while i < statements.len() {
@@ -1391,7 +1398,7 @@ impl<'a> CodeActionProvider<'a> {
             is_side_effect: bool,
         }
 
-        let mut imports = Vec::new();
+        let mut imports = Vec::with_capacity(import_nodes.len());
         let mut block_start = u32::MAX;
         let mut block_end = 0u32;
 
@@ -1432,9 +1439,9 @@ impl<'a> CodeActionProvider<'a> {
             return None;
         }
 
-        let mut groups: Vec<Vec<ImportInfo>> = Vec::new();
-        let mut separators: Vec<String> = Vec::new();
-        let mut current = Vec::new();
+        let mut groups: Vec<Vec<ImportInfo>> = Vec::with_capacity(imports.len());
+        let mut separators: Vec<String> = Vec::with_capacity(imports.len().saturating_sub(1));
+        let mut current = Vec::with_capacity(imports.len());
 
         for idx in 0..imports.len() {
             let mut info = imports[idx].clone();
@@ -1464,8 +1471,8 @@ impl<'a> CodeActionProvider<'a> {
 
         let mut new_text = String::new();
         for (group_idx, group) in groups.into_iter().enumerate() {
-            let mut new_chunks = Vec::new();
-            let mut pending = Vec::new();
+            let mut new_chunks = Vec::with_capacity(group.len());
+            let mut pending = Vec::with_capacity(group.len());
             for info in group {
                 if info.is_side_effect {
                     pending.sort_by(|a: &ImportInfo, b: &ImportInfo| {
@@ -1566,7 +1573,7 @@ impl<'a> CodeActionProvider<'a> {
             return None;
         }
 
-        let mut entries = Vec::new();
+        let mut entries = Vec::with_capacity(named.elements.nodes.len());
         for &specifier_idx in &named.elements.nodes {
             let specifier_node = self.arena.get(specifier_idx)?;
             let specifier = self.arena.get_specifier(specifier_node)?;
@@ -1591,17 +1598,37 @@ impl<'a> CodeActionProvider<'a> {
             } else {
                 rendered.push_str(&format!("{import_name} as {local_name}"));
             }
-            entries.push((local_name.to_string(), rendered));
+            entries.push((specifier.is_type_only, local_name.to_string(), rendered));
         }
 
-        entries.sort_by(|(left, _), (right, _)| {
-            compare_import_specifier_local_names(left, right, self.organize_imports_ignore_case)
-        });
+        entries.sort_by(
+            |(left_is_type_only, left, _), (right_is_type_only, right, _)| {
+                let type_order = self.organize_imports_type_order.as_deref();
+                let left_group = match type_order {
+                    Some("last") if *left_is_type_only => 1,
+                    Some("first") if !*left_is_type_only => 1,
+                    _ => 0,
+                };
+                let right_group = match type_order {
+                    Some("last") if *right_is_type_only => 1,
+                    Some("first") if !*right_is_type_only => 1,
+                    _ => 0,
+                };
+                left_group.cmp(&right_group).then_with(|| {
+                    if !self.organize_imports_ignore_case {
+                        return left.cmp(right);
+                    }
+                    let left_folded = left.to_ascii_lowercase();
+                    let right_folded = right.to_ascii_lowercase();
+                    left_folded.cmp(&right_folded)
+                })
+            },
+        );
         let replacement = format!(
             " {} ",
             entries
                 .iter()
-                .map(|(_, rendered)| rendered.as_str())
+                .map(|(_, _, rendered)| rendered.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         );

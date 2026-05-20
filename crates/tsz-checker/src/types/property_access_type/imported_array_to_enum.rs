@@ -8,7 +8,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn imported_array_to_enum_member_literal_type(
+    pub(crate) fn imported_array_to_enum_member_literal_type(
         &self,
         base_expr: NodeIndex,
         member_name_idx: NodeIndex,
@@ -48,12 +48,16 @@ impl<'a> CheckerState<'a> {
 
         let file_idx = self.ctx.resolve_symbol_file_index(target_sym_id)?;
         let arena = self.ctx.get_arena_for_file(file_idx as u32);
-        let value_decl = if target_symbol.value_declaration.is_some() {
+        let mut value_decl = if target_symbol.value_declaration.is_some() {
             target_symbol.value_declaration
         } else {
             target_symbol.primary_declaration()?
         };
-        let value_node = arena.get(value_decl)?;
+        let mut value_node = arena.get(value_decl)?;
+        if value_node.kind == SyntaxKind::Identifier as u16 {
+            value_decl = arena.get_extended(value_decl)?.parent;
+            value_node = arena.get(value_decl)?;
+        }
         if value_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
             || !arena.is_const_variable_declaration(value_decl)
         {

@@ -26,7 +26,7 @@ pub type ProjectedModuleExportsByName = FxHashMap<String, Vec<(usize, SymbolId)>
 /// `module_specifier` to its [`ProjectedModuleExportsByName`] inner map.
 ///
 /// This is the legacy shape understood by
-/// `ProjectEnv::global_module_exports_index` consumers — produced by
+/// `ProgramContext::global_module_exports_index` consumers — produced by
 /// [`SkeletonIndex::build_module_exports_index`] from skeleton data plus the
 /// post-merge `program.module_exports` map.
 pub type ProjectedModuleExportsIndex = FxHashMap<String, ProjectedModuleExportsByName>;
@@ -596,7 +596,7 @@ pub struct SkeletonIndex {
     /// member under the (raw) module specifier `spec`. The reducer also
     /// records the de-quoted ("normalized") variant when it differs from the
     /// raw form, mirroring the legacy per-binder loop in
-    /// `ProjectEnv::build_global_indices`.
+    /// `ProgramContext::build_global_indices`.
     ///
     /// Entries are recorded in driver file order (the same order the reducer
     /// observes the input skeletons). For a single file that declares both
@@ -618,7 +618,7 @@ pub struct SkeletonIndex {
     /// Entries are recorded in driver file order, then by export-name within a
     /// single `(spec, file)` slot. Both the raw spec and its de-quoted
     /// ("normalized") variant are recorded when they differ — same as the
-    /// legacy per-binder loop in `ProjectEnv::build_global_indices`.
+    /// legacy per-binder loop in `ProgramContext::build_global_indices`.
     pub module_exports_index_by_spec: SkeletonModuleExportsIndex,
     /// All declared ambient modules across all files.
     pub declared_modules: FxHashSet<String>,
@@ -630,7 +630,7 @@ pub struct SkeletonIndex {
     /// Maps identifier name -> set of property names assigned via `X.prop = value`.
     ///
     /// Shared so project drivers can install the skeleton-derived index into
-    /// `ProjectEnv` without deep-cloning the program-wide map.
+    /// `ProgramContext` without deep-cloning the program-wide map.
     pub expando_properties: Arc<FxHashMap<String, FxHashSet<String>>>,
     /// Total number of top-level symbols across all files (before merge).
     pub total_symbol_count: usize,
@@ -779,7 +779,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
 
         // Phase 2 step 4: project per-file module-export specifiers into the
         // cross-file `module_spec -> [file_idx]` index. Mirrors the legacy
-        // per-binder loop in `ProjectEnv::build_global_indices` which iterates
+        // per-binder loop in `ProgramContext::build_global_indices` which iterates
         // `binder.module_exports.iter()` and pushes `file_idx` for both the
         // raw spec and its de-quoted ("normalized") form when they differ.
         for spec in &skeleton.module_export_specifiers {
@@ -798,7 +798,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
 
         // Phase 2 step 6: project per-file module-export entries into the
         // cross-file `spec -> export_name -> [file_idx]` index. Mirrors the
-        // legacy per-binder loop in `ProjectEnv::build_global_indices` which
+        // legacy per-binder loop in `ProgramContext::build_global_indices` which
         // iterates `binder.module_exports[spec].iter()` and pushes
         // `(file_idx, sym_id)` per export name. SymbolIds are looked up at
         // projection time from `program.module_exports` (post-merge global
@@ -1523,7 +1523,7 @@ impl SkeletonIndex {
     /// Both the raw module specifier (e.g. `"\"foo\""`) and its de-quoted
     /// ("normalized") variant (e.g. `"foo"`) resolve to the same file index
     /// list — same as the legacy per-binder loop in
-    /// `ProjectEnv::build_global_indices`.
+    /// `ProgramContext::build_global_indices`.
     ///
     /// Entries are recorded in driver file order — the same order the legacy
     /// `binder.module_exports.iter()` loop's enumeration would produce when
@@ -1541,7 +1541,7 @@ impl SkeletonIndex {
     ///
     /// Phase 2 step 4 helper: projects the skeleton-recorded
     /// `module_binder_index_by_spec` into the legacy shape understood by
-    /// `ProjectEnv::global_module_binder_index` consumers (e.g.
+    /// `ProgramContext::global_module_binder_index` consumers (e.g.
     /// `import/declaration.rs`, `module_entity.rs`, `type_resolution/module.rs`).
     /// This lets the build path skip the per-binder `module_exports` loop
     /// entirely for the binder-index slot.
@@ -1638,7 +1638,7 @@ impl SkeletonIndex {
     /// Phase 2 step 6 helper: projects the skeleton-recorded
     /// `module_exports_index_by_spec` (which carries `[file_idx]` per
     /// `(spec, export_name)`) into the legacy shape understood by
-    /// `ProjectEnv::global_module_exports_index` consumers (e.g.
+    /// `ProgramContext::global_module_exports_index` consumers (e.g.
     /// `type_only.rs`, `state/type_resolution/module.rs`,
     /// `state/type_resolution/import_type.rs`).
     ///
@@ -1653,7 +1653,7 @@ impl SkeletonIndex {
     /// preserve the driver file order recorded by [`reduce_skeletons`]. Both
     /// the raw and normalized (de-quoted) spec keys are present when they
     /// differ — same as the legacy per-binder loop in
-    /// `ProjectEnv::build_global_indices`.
+    /// `ProgramContext::build_global_indices`.
     #[must_use]
     pub fn build_module_exports_index(
         &self,

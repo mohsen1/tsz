@@ -4,14 +4,16 @@
 //! using the visitor pattern. Each function takes a `TypeDatabase` and `TypeId` and returns
 //! the relevant data if the type matches the expected variant.
 
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
     CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
     ObjectShapeId, OrderedFloat, StringIntrinsicKind, TemplateLiteralId, TemplateSpan, TupleListId,
     TypeApplicationId, TypeListId, TypeParamInfo,
 };
 use crate::visitor::TypeVisitor;
-use crate::{SymbolRef, TypeData, TypeDatabase, TypeId};
+use crate::{SymbolRef, TypeData, TypeId};
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 use tsz_common::interner::Atom;
@@ -207,6 +209,23 @@ pub fn literal_string(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom>
     }
 }
 
+/// Return the `IntrinsicKind` for any primitive type: intrinsic or literal.
+///
+/// Combines `intrinsic_kind` (handles `string`, `number`, etc.) with the
+/// literal-value path (handles `"foo"`, `42`, `true`) so callers don't need
+/// to duplicate the two-step pattern.  Uses a single `types.lookup()` call to
+/// avoid the double shard-lock that sequential `intrinsic_kind` + `literal_value`
+/// would pay for literal types.
+pub fn apparent_intrinsic_kind(types: &dyn TypeDatabase, type_id: TypeId) -> Option<IntrinsicKind> {
+    match types.lookup(type_id)? {
+        TypeData::Intrinsic(kind) => Some(kind),
+        TypeData::Literal(lit) => {
+            Some(crate::objects::apparent::literal_value_intrinsic_kind(&lit))
+        }
+        _ => None,
+    }
+}
+
 /// Extract the numeric literal if this is a number literal type.
 #[inline]
 pub fn literal_number(types: &dyn TypeDatabase, type_id: TypeId) -> Option<OrderedFloat> {
@@ -322,27 +341,35 @@ pub fn resolve_default_type_args(
     types: &dyn TypeDatabase,
     type_params: &[TypeParamInfo],
 ) -> Vec<TypeId> {
-    type_params
-        .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let Some(default) = p.default else {
-                return TypeId::UNKNOWN;
-            };
-            // Check if the default is a type parameter that references itself or a
-            // later-declared type parameter (a forward reference). tsc resolves such
-            // invalid defaults to `any` (cf. fillMissingTypeArguments).
-            if let Some(tp_info) = type_param_info(types, default) {
-                let is_self_or_forward = type_params[i..]
-                    .iter()
-                    .any(|other| other.name == tp_info.name);
-                if is_self_or_forward {
-                    return TypeId::ANY;
+    let mut substitution = TypeSubstitution::new();
+    let mut defaults = Vec::with_capacity(type_params.len());
+
+    for (i, p) in type_params.iter().enumerate() {
+        let default = match p.default {
+            Some(default) => {
+                // Check if the default is a type parameter that references itself or a
+                // later-declared type parameter (a forward reference). tsc resolves such
+                // invalid defaults to `any` (cf. fillMissingTypeArguments).
+                if let Some(tp_info) = type_param_info(types, default) {
+                    let is_self_or_forward = type_params[i..]
+                        .iter()
+                        .any(|other| other.name == tp_info.name);
+                    if is_self_or_forward {
+                        TypeId::ANY
+                    } else {
+                        instantiate_type(types, default, &substitution)
+                    }
+                } else {
+                    instantiate_type(types, default, &substitution)
                 }
             }
-            default
-        })
-        .collect()
+            None => TypeId::UNKNOWN,
+        };
+        defaults.push(default);
+        substitution.insert(p.name, default);
+    }
+
+    defaults
 }
 
 /// Extract the lazy `DefId` if this is a Lazy type.

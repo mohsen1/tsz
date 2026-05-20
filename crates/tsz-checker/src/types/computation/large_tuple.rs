@@ -2,12 +2,12 @@
 
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
+use crate::types_domain::unique_symbol_arena::unwrap_parenthesized_type;
 use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
+use tsz_common::limits::MAX_REPRESENTABLE_TUPLE_LENGTH;
 use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-
-const MAX_REPRESENTABLE_TUPLE_LENGTH: usize = 10_000;
 const MAX_AST_RECURSION_DEPTH: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,8 +41,10 @@ impl TupleLengthEstimate {
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn type_node_produces_too_large_tuple(&self, type_node: NodeIndex) -> bool {
-        self.estimate_tuple_type_node_length(type_node, &mut FxHashSet::default(), 0)
-            .is_too_large()
+        self.type_node_contains_tuple_spread(type_node, 0)
+            && self
+                .estimate_tuple_type_node_length(type_node, &mut FxHashSet::default(), 0)
+                .is_too_large()
     }
 
     pub(crate) fn array_literal_produces_too_large_tuple(&self, expr: NodeIndex) -> bool {
@@ -50,9 +52,22 @@ impl<'a> CheckerState<'a> {
             .is_too_large()
     }
 
-    pub(crate) fn type_alias_symbol_contains_tuple_spread(&self, alias_sym: SymbolId) -> bool {
+    /// Returns true when the alias body has a tuple spread **and** its top-level node is
+    /// not a conditional type (modulo parentheses).
+    ///
+    /// `TS2799` applies to unconditional exponential spread chains (e.g. `type T = [...A, ...B]`).
+    /// Conditional-type aliases express termination via their false branch; if depth is exceeded
+    /// for those, the correct diagnostic is `TS2589`, not `TS2799`.
+    pub(crate) fn type_alias_is_unconditional_tuple_spread(&self, alias_sym: SymbolId) -> bool {
         self.type_alias_type_node(alias_sym)
-            .is_some_and(|type_node| self.type_node_contains_tuple_spread(type_node, 0))
+            .is_some_and(|type_node| {
+                let inner = unwrap_parenthesized_type(self.ctx.arena, type_node);
+                self.ctx
+                    .arena
+                    .get(inner)
+                    .is_none_or(|n| n.kind != syntax_kind_ext::CONDITIONAL_TYPE)
+                    && self.type_node_contains_tuple_spread(type_node, 0)
+            })
     }
 
     fn estimate_tuple_type_node_length(
@@ -100,6 +115,28 @@ impl<'a> CheckerState<'a> {
                 return TupleLengthEstimate::Unknown;
             };
             return self.estimate_type_alias_length(sym_id, alias_stack, depth + 1);
+        }
+
+        if node.kind == syntax_kind_ext::UNION_TYPE {
+            let Some(union) = self.ctx.arena.get_composite_type(node) else {
+                return TupleLengthEstimate::Unknown;
+            };
+            // A union used as a spread can expand to any arm; the cardinality of the
+            // worst-case arm determines whether the limit is breached.
+            let mut max = TupleLengthEstimate::Known(0);
+            for &arm in &union.types.nodes {
+                let arm_len = self.estimate_tuple_type_node_length(arm, alias_stack, depth + 1);
+                if arm_len.is_too_large() {
+                    return TupleLengthEstimate::TooLarge;
+                }
+                max = match (max, arm_len) {
+                    (TupleLengthEstimate::Known(a), TupleLengthEstimate::Known(b)) => {
+                        TupleLengthEstimate::Known(a.max(b))
+                    }
+                    _ => TupleLengthEstimate::Unknown,
+                };
+            }
+            return max;
         }
 
         TupleLengthEstimate::Unknown
@@ -230,11 +267,11 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol(sym_id)
             .map(|symbol| symbol.value_declaration)
-            .filter(|decl_idx| !decl_idx.is_none())
+            .filter(|decl_idx| decl_idx.is_some())
             .filter(|&decl_idx| self.ctx.arena.is_const_variable_declaration(decl_idx))
             .and_then(|decl_idx| self.ctx.arena.get(decl_idx))
             .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
-            .and_then(|decl| (!decl.initializer.is_none()).then_some(decl.initializer))
+            .and_then(|decl| decl.initializer.is_some().then_some(decl.initializer))
             .map(|initializer| {
                 self.estimate_array_literal_length(initializer, value_stack, depth + 1)
             })
@@ -257,6 +294,21 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// `dot_dot_dot_token` on `NAMED_TUPLE_MEMBER` is a boolean field, not an
+    /// AST child, so it is invisible to the generic `get_children` traversal
+    /// and must be checked explicitly.
+    fn tuple_element_is_spread(&self, element: NodeIndex) -> bool {
+        self.ctx.arena.get(element).is_some_and(|node| {
+            node.kind == syntax_kind_ext::REST_TYPE
+                || (node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER
+                    && self
+                        .ctx
+                        .arena
+                        .get_named_tuple_member(node)
+                        .is_some_and(|m| m.dot_dot_dot_token))
+        })
+    }
+
     fn type_node_contains_tuple_spread(&self, type_node: NodeIndex, depth: usize) -> bool {
         if type_node.is_none() || depth > MAX_AST_RECURSION_DEPTH {
             return false;
@@ -264,17 +316,16 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(type_node) else {
             return false;
         };
-        if node.kind == syntax_kind_ext::REST_TYPE {
+        if self.tuple_element_is_spread(type_node) {
             return true;
         }
         if node.kind == syntax_kind_ext::TUPLE_TYPE
             && let Some(tuple) = self.ctx.arena.get_tuple_type(node)
-            && tuple.elements.nodes.iter().any(|&element| {
-                self.ctx
-                    .arena
-                    .get(element)
-                    .is_some_and(|element_node| element_node.kind == syntax_kind_ext::REST_TYPE)
-            })
+            && tuple
+                .elements
+                .nodes
+                .iter()
+                .any(|&el| self.tuple_element_is_spread(el))
         {
             return true;
         }

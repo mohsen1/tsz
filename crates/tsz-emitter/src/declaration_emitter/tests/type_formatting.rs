@@ -1,4 +1,9 @@
 use super::*;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // =============================================================================
 // 5. Type Formatting
@@ -32,8 +37,7 @@ fn test_type_printer_preserves_union_display_origin() {
 #[test]
 fn test_type_printer_prints_named_unique_symbol_as_typeof() {
     let source = "export const x = Symbol();\nexport const y = Symbol();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -58,6 +62,62 @@ fn test_intersection_type_in_declaration() {
 }
 
 #[test]
+fn test_type_printer_orders_nameable_applications_before_anonymous_intersection_members() {
+    let source = r#"
+type ModuleWithState<TState> = {
+    state: TState;
+};
+type MoreState = {
+    z: string;
+};
+"#;
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let module_sym = binder
+        .file_locals
+        .get("ModuleWithState")
+        .expect("missing ModuleWithState symbol");
+    let more_state_sym = binder
+        .file_locals
+        .get("MoreState")
+        .expect("missing MoreState symbol");
+    let interner = TypeInterner::new();
+    let module_def = DefId(9119);
+    let module_ref = interner.lazy(module_def);
+    let more_state_def = DefId(9120);
+    let more_state_ref = interner.lazy(more_state_def);
+    let mut type_cache = TypeCacheView::default();
+    type_cache.def_to_symbol.insert(module_def, module_sym);
+    type_cache
+        .def_to_symbol
+        .insert(more_state_def, more_state_sym);
+    let state_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let action_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("foo"),
+        TypeId::BOOLEAN_TRUE,
+    )]);
+    let expanded_state = interner.intersection(vec![state_obj, more_state_ref]);
+    let converted_module = interner.application(module_ref, vec![expanded_state]);
+    let original_module = interner.application(module_ref, vec![state_obj]);
+    let result_type = interner.intersection(vec![action_obj, converted_module, original_module]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner)
+        .with_symbols(&binder.symbols)
+        .with_type_cache(&type_cache)
+        .print_type(result_type);
+
+    assert_eq!(
+        printed,
+        "ModuleWithState<{ a: number } & MoreState> & ModuleWithState<{ a: number }> & { foo: true }"
+    );
+}
+
+#[test]
 fn test_function_type_in_declaration() {
     let output = emit_dts("export type Callback = (x: number, y: string) => void;");
     assert!(
@@ -69,8 +129,7 @@ fn test_function_type_in_declaration() {
 #[test]
 fn test_global_class_name_shadowed_by_type_param_uses_global_this() {
     let source = "class A {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, _root);
 
@@ -101,8 +160,7 @@ declare const createExperiment: <Name extends string>(
     options: Experiment<Name>
 ) => Experiment<Name>;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
 
@@ -166,6 +224,104 @@ fn test_node_modules_types_entry_uses_bare_package_specifier() {
     assert_eq!(specifier, "@babel/parser");
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_symlinked_workspace_dependency_uses_declared_package_specifier() {
+    let root = std::env::temp_dir().join(format!(
+        "tsz-emitter-symlinked-workspace-dep-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let package_a = root.join("workspace/packageA");
+    let package_c = root.join("workspace/packageC");
+    std::fs::create_dir_all(&package_a).expect("create package A");
+    std::fs::create_dir_all(package_c.join("node_modules")).expect("create package C");
+    std::fs::write(package_a.join("index.d.ts"), "export declare class Foo {}")
+        .expect("write package A declaration");
+    std::fs::write(
+        package_c.join("package.json"),
+        r#"{"private":true,"dependencies":{"package-a":"file:../packageA"}}"#,
+    )
+    .expect("write package C package json");
+    std::os::unix::fs::symlink(&package_a, package_c.join("node_modules/package-a"))
+        .expect("create package symlink");
+
+    let arena = tsz_parser::parser::node::NodeArena::default();
+    let emitter = DeclarationEmitter::new(&arena);
+    let specifier = emitter
+        .package_specifier_for_symlinked_dependency_path(
+            package_c
+                .join("index.ts")
+                .to_str()
+                .expect("current path utf8"),
+            package_a
+                .join("index.d.ts")
+                .to_str()
+                .expect("source path utf8"),
+        )
+        .expect("package specifier");
+
+    assert_eq!(specifier, "package-a");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_symlinked_workspace_dependency_uses_exported_subpath() {
+    let root = std::env::temp_dir().join(format!(
+        "tsz-emitter-symlinked-workspace-subpath-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let package_a = root.join("workspace/packageA");
+    let package_c = root.join("workspace/packageC");
+    std::fs::create_dir_all(&package_a).expect("create package A");
+    std::fs::create_dir_all(package_c.join("node_modules")).expect("create package C");
+    std::fs::write(package_a.join("foo.d.ts"), "export declare class Foo {}")
+        .expect("write package A declaration");
+    std::fs::write(
+        package_a.join("package.json"),
+        r#"{"name":"package-a","exports":{"./cls":"./foo.js"}}"#,
+    )
+    .expect("write package A package json");
+    std::fs::write(
+        package_c.join("package.json"),
+        r#"{"private":true,"dependencies":{"package-a":"file:../packageA"}}"#,
+    )
+    .expect("write package C package json");
+    std::os::unix::fs::symlink(&package_a, package_c.join("node_modules/package-a"))
+        .expect("create package symlink");
+
+    let arena = tsz_parser::parser::node::NodeArena::default();
+    let emitter = DeclarationEmitter::new(&arena);
+    let specifier = emitter
+        .package_specifier_for_symlinked_dependency_path(
+            package_c
+                .join("index.ts")
+                .to_str()
+                .expect("current path utf8"),
+            package_a
+                .join("foo.d.ts")
+                .to_str()
+                .expect("source path utf8"),
+        )
+        .expect("package specifier");
+
+    assert_eq!(specifier, "package-a/cls");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn test_zero_arg_return_type_import_wrapper_unwraps_to_import_type() {
+    let type_text = r#"ReturnType<() => import("package-a/cls").Foo>"#;
+    let unwrapped = DeclarationEmitter::unwrap_return_type_zero_arg_import_type(type_text)
+        .expect("expected import return wrapper to unwrap");
+
+    assert_eq!(unwrapped, r#"import("package-a/cls").Foo"#);
 }
 
 #[test]
@@ -252,8 +408,7 @@ const foo = <T,>(x: T) => {
     return inner;
 };
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let root_node = parser.arena.get(root).expect("missing root node");
@@ -295,8 +450,7 @@ export function needsRenameForShadowing<T>() {
   }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let func = parser
@@ -320,6 +474,63 @@ export function needsRenameForShadowing<T>() {
 }
 
 #[test]
+fn test_direct_returned_function_expression_expands_rest_tuple_aliases() {
+    let output = emit_dts(
+        r#"
+function f() {
+    type A = [a: string];
+    type B = [b: string];
+    type C = [...A, ...A, ...B];
+
+    return function fn(...args: C) { }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f(): (a: string, a_1: string, b: string) => void;"),
+        "expected rest tuple alias to expand into positional parameters: {output}"
+    );
+}
+
+#[test]
+fn test_direct_returned_function_expression_rest_tuple_alias_avoids_existing_param_name_collision()
+{
+    let output = emit_dts(
+        r#"
+function f() {
+    type T = [a: string, b: string];
+
+    return function fn(a: number, ...args: T) { }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f(): (a: number, a_1: string, b: string) => void;"),
+        "expected rest tuple expansion to avoid collisions with existing parameter names: {output}"
+    );
+}
+
+#[test]
+fn test_direct_returned_function_expression_expands_unlabeled_rest_tuple_alias_elements() {
+    let output = emit_dts(
+        r#"
+function f() {
+    type T = [string, number];
+
+    return function fn(...args: T) { }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f(): (arg0: string, arg1: number) => void;"),
+        "expected unlabeled rest tuple alias elements to expand into synthesized positional parameters: {output}"
+    );
+}
+
+#[test]
 fn test_returned_class_expression_preserves_extends_type_parameter() {
     let source = r#"
 export type Constructor<T = {}> = new (...args: any[]) => T;
@@ -330,8 +541,7 @@ export function Timestamped<TBase extends Constructor>(Base: TBase) {
     };
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
     let source_file = parser
@@ -520,8 +730,7 @@ function test(fn) {
 #[test]
 fn test_any_dataview_new_expression_falls_back_to_generic_type() {
     let source = "const dataView = new DataView(new ArrayBuffer(80));";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let Some(root_node) = parser.arena.get(root) else {
         panic!("missing root node");
@@ -566,8 +775,7 @@ class C {
 }
 var methodValue = C.s2;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
@@ -634,6 +842,204 @@ var methodValue = C.s2;
 }
 
 #[test]
+fn test_new_expression_uses_construct_return_from_intersection_constructor_alias() {
+    let source = r#"
+class C {}
+const Enhanced = C as typeof C & { enhanced: unknown };
+export default new Enhanced();
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let source_file = parser
+        .arena
+        .get_source_file_at(root)
+        .expect("missing source file");
+    let class_idx = source_file.statements.nodes[0];
+    let class_data = parser
+        .arena
+        .get_class_at(class_idx)
+        .expect("missing class declaration");
+    let local_decl = parser
+        .arena
+        .get_variable_at(source_file.statements.nodes[1])
+        .and_then(|stmt| parser.arena.get_variable_at(stmt.declarations.nodes[0]))
+        .and_then(|list| {
+            parser
+                .arena
+                .get_variable_declaration_at(list.declarations.nodes[0])
+        })
+        .expect("missing local declaration");
+    let export_assignment = parser
+        .arena
+        .get_export_decl_at(source_file.statements.nodes[2])
+        .expect("missing default export");
+    let new_expr = parser
+        .arena
+        .get_call_expr_at(export_assignment.export_clause)
+        .expect("missing new expression");
+
+    let interner = TypeInterner::new();
+    let c_instance = interner.object_with_index(ObjectShape {
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: binder
+            .get_node_symbol(class_data.name)
+            .or_else(|| binder.get_node_symbol(class_idx)),
+        flags: ObjectFlags::default(),
+    });
+    let c_constructor = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), c_instance)],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: binder
+            .get_node_symbol(class_data.name)
+            .or_else(|| binder.get_node_symbol(class_idx)),
+        is_abstract: false,
+    });
+    let enhanced_shape = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("enhanced"),
+        TypeId::UNKNOWN,
+    )]);
+    let enhanced_constructor = interner.intersection(vec![c_constructor, enhanced_shape]);
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(local_decl.name.0, enhanced_constructor);
+    type_cache
+        .node_types
+        .insert(new_expr.expression.0, enhanced_constructor);
+    type_cache
+        .node_types
+        .insert(export_assignment.export_clause.0, TypeId::ANY);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const _default: C;"),
+        "Expected default new expression to use construct return type: {output}"
+    );
+    assert!(
+        !output.contains("declare const _default: Enhanced;"),
+        "Default export must not reuse the enhanced constructor alias as an instance type: {output}"
+    );
+    assert!(
+        !output.contains("declare const _default: C &")
+            && !output.contains("declare const _default: typeof C"),
+        "Constructor augmentation properties must not leak into the instance type: {output}"
+    );
+}
+
+#[test]
+fn test_new_expression_uses_construct_return_from_renamed_intersection_constructor_alias() {
+    let source = r#"
+class Renamed {}
+const Mixed = Renamed as typeof Renamed & { marker: unknown };
+const value = new Mixed();
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let source_file = parser
+        .arena
+        .get_source_file_at(root)
+        .expect("missing source file");
+    let class_idx = source_file.statements.nodes[0];
+    let class_data = parser
+        .arena
+        .get_class_at(class_idx)
+        .expect("missing class declaration");
+    let alias_decl = parser
+        .arena
+        .get_variable_at(source_file.statements.nodes[1])
+        .and_then(|stmt| parser.arena.get_variable_at(stmt.declarations.nodes[0]))
+        .and_then(|list| {
+            parser
+                .arena
+                .get_variable_declaration_at(list.declarations.nodes[0])
+        })
+        .expect("missing alias declaration");
+    let value_decl = parser
+        .arena
+        .get_variable_at(source_file.statements.nodes[2])
+        .and_then(|stmt| parser.arena.get_variable_at(stmt.declarations.nodes[0]))
+        .and_then(|list| {
+            parser
+                .arena
+                .get_variable_declaration_at(list.declarations.nodes[0])
+        })
+        .expect("missing value declaration");
+    let new_expr = parser
+        .arena
+        .get_call_expr_at(value_decl.initializer)
+        .expect("missing new expression");
+
+    let interner = TypeInterner::new();
+    let instance = interner.object_with_index(ObjectShape {
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: binder
+            .get_node_symbol(class_data.name)
+            .or_else(|| binder.get_node_symbol(class_idx)),
+        flags: ObjectFlags::default(),
+    });
+    let constructor = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), instance)],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: binder
+            .get_node_symbol(class_data.name)
+            .or_else(|| binder.get_node_symbol(class_idx)),
+        is_abstract: false,
+    });
+    let marker_shape = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("marker"),
+        TypeId::UNKNOWN,
+    )]);
+    let mixed_constructor = interner.intersection(vec![constructor, marker_shape]);
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(alias_decl.name.0, mixed_constructor);
+    type_cache
+        .node_types
+        .insert(new_expr.expression.0, mixed_constructor);
+    type_cache.node_types.insert(value_decl.name.0, TypeId::ANY);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const value: Renamed;"),
+        "Expected variable new expression to use construct return type: {output}"
+    );
+    assert!(
+        !output.contains("declare const value: Mixed;"),
+        "Variable declaration must not reuse the constructor alias as an instance type: {output}"
+    );
+    assert!(
+        !output.contains("declare const value: Renamed &")
+            && !output.contains("declare const value: typeof Renamed"),
+        "Renamed augmentation property must not leak into the instance type: {output}"
+    );
+}
+
+#[test]
 fn test_function_initializer_prefers_asserted_return_type_with_typeof_members() {
     let source = r#"
 export const nImported = "nImported";
@@ -642,8 +1048,7 @@ const nPrivate = "private";
 export const o = (p1: typeof nImported, p2: typeof nNotImported, p3: typeof nPrivate) => null! as { foo: typeof nImported, bar: typeof nPrivate, baz: typeof nNotImported };
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let root_node = parser.arena.get(root).expect("missing root node");
     let source_file = parser
         .arena
@@ -722,8 +1127,7 @@ type Box<T> = {
 declare function box<T>(value: T): Box<T>;
 const bn1 = box(0);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
@@ -804,8 +1208,7 @@ fn test_non_null_call_initializer_recovers_return_type() {
 declare const fn: (() => string) | undefined;
 const a = fn!();
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
@@ -885,6 +1288,50 @@ fn test_tuple_type_in_declaration() {
     assert!(
         output.contains("[string, number]"),
         "Expected tuple type: {output}"
+    );
+}
+
+#[test]
+fn test_tuple_object_index_signature_preserves_parameter_name() {
+    let output = emit_dts("export type H = string | [string, { [key: string]: unknown }, ...H[]];");
+    assert!(
+        output.contains(
+            "export type H = string | [string, {\n    [key: string]: unknown;\n}, ...H[]];"
+        ),
+        "Expected object index signature inside tuple to preserve its parameter name: {output}"
+    );
+}
+
+#[test]
+fn test_multiline_tuple_type_argument_preserves_tuple_breaks() {
+    let output = emit_dts(
+        r#"
+export type Point = TypedObject<[
+    {
+        name: "x";
+        type: "f64";
+    },
+    {
+        name: "y";
+        type: "f64";
+    }
+]>;
+"#,
+    );
+    assert!(
+        output.contains(
+            "export type Point = TypedObject<[\n    {\n        name: \"x\";\n        type: \"f64\";\n    },\n    {\n        name: \"y\";\n        type: \"f64\";\n    }\n]>;"
+        ),
+        "Expected multiline tuple type argument to preserve tuple breaks: {output}"
+    );
+}
+
+#[test]
+fn test_single_line_tuple_type_argument_stays_compact() {
+    let output = emit_dts("export type PairBox = Box<[string, number]>;");
+    assert!(
+        output.contains("export type PairBox = Box<[string, number]>;"),
+        "Expected single-line tuple type argument to stay compact: {output}"
     );
 }
 

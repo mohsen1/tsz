@@ -35,6 +35,7 @@ use crate::context::transform::TransformContext;
 use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::ir::IRNode;
 use crate::transforms::ir_printer::IRPrinter;
+use tsz_common::common::ModuleKind;
 use tsz_common::source_map::Mapping;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -70,6 +71,8 @@ pub struct ClassES5Emitter<'a> {
     transformer: ES5ClassTransformer<'a>,
     /// Transform directives for `ASTRef` nodes
     transforms: Option<TransformContext>,
+    /// When true, emit TC39 decorator application around the ES5 class IIFE.
+    tc39_decorators: bool,
     /// Leading comment text to place after `WeakMap` decls and before the class IIFE.
     leading_comment: Option<String>,
     /// When true, suppress `/** @class */` annotation and leading comments.
@@ -79,6 +82,7 @@ pub struct ClassES5Emitter<'a> {
     tslib_import_binding: String,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     printer_options: Option<crate::emitter::PrinterOptions>,
+    externally_hoisted_decls: rustc_hash::FxHashSet<String>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -91,25 +95,48 @@ impl<'a> ClassES5Emitter<'a> {
             mappings: Vec::new(),
             transformer: ES5ClassTransformer::new(arena),
             transforms: None,
+            tc39_decorators: false,
             leading_comment: None,
             remove_comments: false,
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             printer_options: None,
+            externally_hoisted_decls: rustc_hash::FxHashSet::default(),
         }
     }
 
     pub const fn set_tslib_prefix(&mut self, enable: bool) {
         self.tslib_prefix = enable;
+        self.transformer.set_tslib_prefix(enable);
     }
 
     pub fn set_tslib_import_binding(&mut self, binding: String) {
+        self.transformer.set_tslib_import_binding(binding.clone());
         self.tslib_import_binding = binding;
     }
 
     pub fn set_printer_options(&mut self, options: crate::emitter::PrinterOptions) {
+        self.transformer.set_module_kind(options.module);
+        self.transformer
+            .set_downlevel_iteration(options.downlevel_iteration);
         self.printer_options = Some(options);
+    }
+
+    pub const fn set_module_kind(&mut self, module_kind: ModuleKind) {
+        self.transformer.set_module_kind(module_kind);
+    }
+
+    pub fn set_async_generator_inner_name_counts(
+        &mut self,
+        counts: rustc_hash::FxHashMap<String, u32>,
+    ) {
+        self.transformer
+            .set_async_generator_inner_name_counts(counts);
+    }
+
+    pub fn take_async_generator_inner_name_counts(&mut self) -> rustc_hash::FxHashMap<String, u32> {
+        self.transformer.take_async_generator_inner_name_counts()
     }
 
     pub fn set_commonjs_import_substitutions(
@@ -121,8 +148,17 @@ impl<'a> ClassES5Emitter<'a> {
         self.commonjs_import_substitutions = subs;
     }
 
+    pub fn set_externally_hoisted_decls(&mut self, decls: Vec<String>) {
+        self.externally_hoisted_decls = decls.into_iter().collect();
+    }
+
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
         self.transformer.set_use_define_for_class_fields(enable);
+    }
+
+    pub const fn set_tc39_decorators(&mut self, enabled: bool) {
+        self.tc39_decorators = enabled;
+        self.transformer.set_tc39_decorators(enabled);
     }
 
     pub const fn set_skip_static_members(&mut self, skip: bool) {
@@ -139,6 +175,22 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.transformer.temp_var_counter()
+    }
+
+    pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.transformer
+            .set_disposable_env_context(next_id, blocked_names);
+    }
+
+    pub const fn disposable_env_counter(&self) -> u32 {
+        self.transformer.disposable_env_counter()
+    }
+
+    pub fn take_generated_disposable_env_names(&mut self) -> Vec<String> {
+        self.transformer.take_generated_disposable_env_names()
     }
 
     /// Set transform directives for `ASTRef` nodes
@@ -216,6 +268,155 @@ impl<'a> ClassES5Emitter<'a> {
         self.emit_class_internal(class_idx, Some(name))
     }
 
+    /// Emit a class expression as an IIFE expression and return structured parts
+    /// so callers can build the outer comma-expression pattern:
+    ///
+    /// ```js
+    /// (_classTemp = IIFE, _propTemp = propNameExpr, _classTemp)
+    /// ```
+    ///
+    /// Returns `(iife_expr, computed_prop_decls, computed_prop_init_exprs)` where:
+    /// - `iife_expr` is the rendered `/** @class */ (function () { ... }())` expression
+    /// - `computed_prop_decls` are temp names to hoist as `var _a, ...;`
+    /// - `computed_prop_init_exprs` are structured assignment IR nodes like `_a = x`
+    pub fn emit_class_as_iife_expr(
+        &mut self,
+        class_idx: NodeIndex,
+        name: &str,
+    ) -> (String, Vec<String>, Vec<IRNode>) {
+        self.transformer.set_emit_computed_props_outside(true);
+        let ir_opt = self
+            .transformer
+            .transform_class_to_ir_with_name(class_idx, Some(name));
+        self.transformer.set_emit_computed_props_outside(false);
+
+        let Some(ir) = ir_opt else {
+            return (String::new(), Vec::new(), Vec::new());
+        };
+
+        let IRNode::ES5ClassIIFE {
+            name: ir_name,
+            binding_name: _,
+            base_class,
+            super_param,
+            body,
+            weakmap_decls: _,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+            weakmap_inits: _,
+            leading_comment: _,
+            deferred_static_blocks: _,
+            deferred_block_class_alias: _,
+        } = ir
+        else {
+            return (
+                self.emit_class_ir(class_idx, Some(name), ir),
+                Vec::new(),
+                Vec::new(),
+            );
+        };
+
+        let mut printer = self.make_ir_printer();
+        printer.emit_es5_class_expression(
+            &ir_name,
+            base_class.as_deref(),
+            super_param.as_deref(),
+            &body,
+        );
+        let iife_expr = printer.take_output();
+
+        (
+            iife_expr,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+        )
+    }
+
+    /// Emit a class declaration with a different outer binding name while
+    /// preserving the class's own lexical name inside the generated IIFE.
+    pub fn emit_class_with_binding_name(
+        &mut self,
+        class_idx: NodeIndex,
+        binding_name: &str,
+    ) -> String {
+        let mut ir = match self.transformer.transform_class_to_ir(class_idx) {
+            Some(ir) => ir,
+            None => return String::new(),
+        };
+        if let IRNode::ES5ClassIIFE {
+            binding_name: ref mut class_binding_name,
+            ..
+        } = ir
+        {
+            *class_binding_name = Some(binding_name.to_string().into());
+        }
+        self.emit_class_ir(class_idx, Some(binding_name), ir)
+    }
+
+    /// Emit a class declaration as an assignment to an already-hoisted binding.
+    pub fn emit_class_assignment_with_name(
+        &mut self,
+        class_idx: NodeIndex,
+        assignment_name: &str,
+    ) -> String {
+        let ir = match self
+            .transformer
+            .transform_class_to_ir_with_name(class_idx, Some(assignment_name))
+        {
+            Some(ir) => ir,
+            None => return String::new(),
+        };
+        let IRNode::ES5ClassIIFE {
+            name,
+            binding_name: _,
+            base_class,
+            super_param,
+            body,
+            weakmap_decls,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_block_class_alias,
+        } = ir
+        else {
+            return self.emit_class_ir(class_idx, Some(assignment_name), ir);
+        };
+
+        let mut output = String::new();
+        for decl_name in weakmap_decls
+            .into_iter()
+            .chain(computed_prop_temp_decls)
+            .chain(deferred_block_class_alias.iter().cloned())
+        {
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str("var ");
+            output.push_str(&decl_name);
+            output.push(';');
+        }
+
+        let assignment_ir = IRNode::ES5ClassAssignment {
+            name,
+            base_class,
+            super_param,
+            body,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_block_class_alias,
+        };
+        let assignment = self.emit_class_ir(class_idx, Some(assignment_name), assignment_ir);
+        if !output.is_empty() && !assignment.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&assignment);
+        output
+    }
+
     fn emit_class_internal(&mut self, class_idx: NodeIndex, override_name: Option<&str>) -> String {
         let ir = if let Some(name) = override_name {
             self.transformer
@@ -224,21 +425,16 @@ impl<'a> ClassES5Emitter<'a> {
             self.transformer.transform_class_to_ir(class_idx)
         };
 
-        let mut ir = match ir {
+        let ir = match ir {
             Some(ir) => ir,
             None => return String::new(),
         };
 
-        // Inject leading comment from the main emitter's comment system.
-        if let Some(comment) = self.leading_comment.take()
-            && let IRNode::ES5ClassIIFE {
-                ref mut leading_comment,
-                ..
-            } = ir
-        {
-            *leading_comment = Some(comment);
-        }
+        self.emit_class_ir(class_idx, override_name, ir)
+    }
 
+    /// Build a configured `IRPrinter` ready to emit IR nodes for this class.
+    fn make_ir_printer(&self) -> IRPrinter<'a> {
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_indent_level(self.indent_level);
         printer.set_remove_comments(self.remove_comments);
@@ -257,7 +453,121 @@ impl<'a> ClassES5Emitter<'a> {
         if let Some(ref opts) = self.printer_options {
             printer.set_base_printer_options(opts.clone());
         }
+        printer
+    }
+
+    /// Like `emit_class_assignment_with_name` but returns the class assignment
+    /// string and each deferred static block as separate strings so callers can
+    /// interleave `exports_1(...)` calls between the class body and static
+    /// initialisation.
+    pub fn emit_class_assignment_split_statics(
+        &mut self,
+        class_idx: NodeIndex,
+        assignment_name: &str,
+    ) -> (String, Vec<String>) {
+        let ir = match self
+            .transformer
+            .transform_class_to_ir_with_name(class_idx, Some(assignment_name))
+        {
+            Some(ir) => ir,
+            None => return (String::new(), Vec::new()),
+        };
+        let IRNode::ES5ClassIIFE {
+            name,
+            binding_name: _,
+            base_class,
+            super_param,
+            body,
+            weakmap_decls,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_block_class_alias,
+        } = ir
+        else {
+            return (
+                self.emit_class_ir(class_idx, Some(assignment_name), ir),
+                Vec::new(),
+            );
+        };
+
+        let mut output = String::new();
+        for decl_name in weakmap_decls
+            .into_iter()
+            .chain(computed_prop_temp_decls)
+            .chain(deferred_block_class_alias.iter().cloned())
+        {
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str("var ");
+            output.push_str(&decl_name);
+            output.push(';');
+        }
+
+        // Build class assignment IR with no deferred blocks — we emit them separately.
+        let assignment_ir = IRNode::ES5ClassAssignment {
+            name,
+            base_class,
+            super_param,
+            body,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks: Vec::new(),
+            deferred_block_class_alias,
+        };
+        let assignment = self.emit_class_ir(class_idx, Some(assignment_name), assignment_ir);
+        if !output.is_empty() && !assignment.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&assignment);
+
+        // Render each deferred static block as a separate string.
+        let static_strings: Vec<String> = deferred_static_blocks
+            .into_iter()
+            .map(|block| self.make_ir_printer().emit(&block).to_string())
+            .collect();
+
+        (output, static_strings)
+    }
+
+    fn emit_class_ir(
+        &mut self,
+        class_idx: NodeIndex,
+        override_name: Option<&str>,
+        mut ir: IRNode,
+    ) -> String {
+        if !self.externally_hoisted_decls.is_empty()
+            && let IRNode::ES5ClassIIFE {
+                ref mut weakmap_decls,
+                ..
+            } = ir
+        {
+            weakmap_decls.retain(|decl| !self.externally_hoisted_decls.contains(decl));
+        }
+
+        // Inject leading comment from the main emitter's comment system.
+        if let Some(comment) = self.leading_comment.take()
+            && let IRNode::ES5ClassIIFE {
+                ref mut leading_comment,
+                ..
+            } = ir
+        {
+            *leading_comment = Some(comment);
+        }
+
+        let mut printer = self.make_ir_printer();
         let mut output = printer.emit(&ir).to_string();
+        if self.tc39_decorators
+            && let Some(wrapped) =
+                self.transformer
+                    .wrap_tc39_es5_output(class_idx, override_name, &output)
+        {
+            output = wrapped;
+        }
         if let Some(recovery_emit) = self.emit_var_function_recovery(class_idx) {
             output.push('\n');
             output.push_str(&recovery_emit);

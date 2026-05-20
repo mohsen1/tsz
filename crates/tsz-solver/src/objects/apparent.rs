@@ -1,7 +1,18 @@
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::types::{
-    IndexSignature, IntrinsicKind, ObjectFlags, ObjectShape, PropertyInfo, TypeId, Visibility,
+    IndexSignature, IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
+    Visibility,
 };
+
+/// Map a `LiteralValue` to its apparent `IntrinsicKind`.
+pub const fn literal_value_intrinsic_kind(lit: &LiteralValue) -> IntrinsicKind {
+    match lit {
+        LiteralValue::String(_) => IntrinsicKind::String,
+        LiteralValue::Number(_) => IntrinsicKind::Number,
+        LiteralValue::Boolean(_) => IntrinsicKind::Boolean,
+        LiteralValue::BigInt(_) => IntrinsicKind::Bigint,
+    }
+}
 
 pub enum ApparentMemberKind {
     Value(TypeId),
@@ -90,6 +101,9 @@ const OBJECT_METHODS_RETURN_BOOLEAN: &[&str] =
     &["hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable"];
 const OBJECT_METHODS_RETURN_STRING: &[&str] = &["toString"];
 const OBJECT_METHODS_RETURN_ANY: &[&str] = &["valueOf"];
+
+const FUNCTION_METHODS_RETURN_ANY: &[&str] = &["apply", "bind", "call"];
+const FUNCTION_VALUES_ANY: &[&str] = &["arguments", "caller", "prototype"];
 
 pub(crate) fn is_member(name: &str, list: &[&str]) -> bool {
     list.contains(&name)
@@ -287,7 +301,58 @@ pub fn apparent_primitive_member_kind(
             object_member_kind(name, true)
         }
         IntrinsicKind::Object => object_member_kind(name, true),
+        IntrinsicKind::Function => {
+            if is_member(name, FUNCTION_METHODS_RETURN_ANY) {
+                return Some(ApparentMemberKind::Method(TypeId::ANY));
+            }
+            if is_member(name, FUNCTION_VALUES_ANY) {
+                return Some(ApparentMemberKind::Value(TypeId::ANY));
+            }
+            match name {
+                "length" => Some(ApparentMemberKind::Value(TypeId::NUMBER)),
+                "name" => Some(ApparentMemberKind::Value(TypeId::STRING)),
+                _ => object_member_kind(name, false),
+            }
+        }
         _ => None,
+    }
+}
+
+fn object_member_capacity(include_to_locale: bool) -> usize {
+    3 + OBJECT_METHODS_RETURN_BOOLEAN.len()
+        + OBJECT_METHODS_RETURN_STRING.len()
+        + OBJECT_METHODS_RETURN_ANY.len()
+        + usize::from(include_to_locale)
+}
+
+fn apparent_primitive_member_capacity(kind: IntrinsicKind) -> usize {
+    match kind {
+        IntrinsicKind::String => {
+            1 + STRING_METHODS_RETURN_STRING.len()
+                + STRING_METHODS_RETURN_NUMBER.len()
+                + STRING_METHODS_RETURN_BOOLEAN.len()
+                + STRING_METHODS_RETURN_ANY.len()
+                + STRING_METHODS_RETURN_STRING_ARRAY.len()
+                + object_member_capacity(true)
+        }
+        IntrinsicKind::Number => {
+            NUMBER_METHODS_RETURN_STRING.len() + 1 + object_member_capacity(false)
+        }
+        IntrinsicKind::Boolean => {
+            BOOLEAN_METHODS_RETURN_STRING.len() + 1 + object_member_capacity(false)
+        }
+        IntrinsicKind::Bigint => {
+            BIGINT_METHODS_RETURN_STRING.len() + 1 + object_member_capacity(false)
+        }
+        IntrinsicKind::Symbol => 3 + object_member_capacity(true),
+        IntrinsicKind::Object => object_member_capacity(true),
+        IntrinsicKind::Function => {
+            FUNCTION_METHODS_RETURN_ANY.len()
+                + FUNCTION_VALUES_ANY.len()
+                + 2
+                + object_member_capacity(false)
+        }
+        _ => 0,
     }
 }
 
@@ -295,7 +360,7 @@ pub fn apparent_primitive_members(
     interner: &dyn TypeDatabase,
     kind: IntrinsicKind,
 ) -> Vec<ApparentMember> {
-    let mut members = Vec::new();
+    let mut members = Vec::with_capacity(apparent_primitive_member_capacity(kind));
 
     match kind {
         IntrinsicKind::String => {
@@ -393,6 +458,33 @@ pub fn apparent_primitive_members(
         }
         IntrinsicKind::Object => {
             push_object_members(&mut members, true);
+        }
+        IntrinsicKind::Function => {
+            // ES5 Function prototype members present on every callable value.
+            // `name` is ES2015, but included in the bootstrap because the no-lib
+            // path targets modern runtimes; `resolve_function_property` gates it
+            // behind `!boxed_function_loaded` when a real lib is present.
+            for &name in FUNCTION_METHODS_RETURN_ANY {
+                members.push(ApparentMember {
+                    name,
+                    kind: ApparentMemberKind::Method(TypeId::ANY),
+                });
+            }
+            for &name in FUNCTION_VALUES_ANY {
+                members.push(ApparentMember {
+                    name,
+                    kind: ApparentMemberKind::Value(TypeId::ANY),
+                });
+            }
+            members.push(ApparentMember {
+                name: "length",
+                kind: ApparentMemberKind::Value(TypeId::NUMBER),
+            });
+            members.push(ApparentMember {
+                name: "name",
+                kind: ApparentMemberKind::Value(TypeId::STRING),
+            });
+            push_object_members(&mut members, false);
         }
         _ => {}
     }

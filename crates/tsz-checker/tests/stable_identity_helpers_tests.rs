@@ -72,6 +72,56 @@ const x: JsonValue = [1, "hello", [true, null]];
     );
 }
 
+#[test]
+fn cross_file_recursive_json_aliases_with_alias_wrapped_array_and_object_no_ts2456() {
+    // Matches ts-essentials' JsonValue shape: the recursion passes through
+    // array and object aliases, both of which are structural deferral points.
+    let diags = tsz_checker::test_utils::check_multi_file(
+        &[
+            (
+                "json-primitive.ts",
+                "export type JsonPrimitive = string | number | boolean | null;\n",
+            ),
+            (
+                "json-array.ts",
+                r#"
+import { JsonValue } from "./json-value";
+export type JsonArray = JsonValue[] | readonly JsonValue[];
+"#,
+            ),
+            (
+                "json-object.ts",
+                r#"
+import { JsonValue } from "./json-value";
+export type JsonObject = {
+    [Key in string]: JsonValue;
+};
+"#,
+            ),
+            (
+                "json-value.ts",
+                r#"
+import { JsonArray } from "./json-array";
+import { JsonObject } from "./json-object";
+import { JsonPrimitive } from "./json-primitive";
+
+export type JsonValue = JsonPrimitive | JsonArray | JsonObject;
+"#,
+            ),
+        ],
+        "json-value.ts",
+        tsz_common::CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            strict: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2456),
+        "expected recursive JsonValue aliases to defer instead of TS2456, got {diags:?}"
+    );
+}
+
 // =========================================================================
 // Namespace-qualified type references
 // =========================================================================

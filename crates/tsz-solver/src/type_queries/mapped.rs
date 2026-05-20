@@ -7,7 +7,8 @@
 //! - Finite key collection and property type resolution
 //! - Modifier computation and property expansion
 
-use crate::TypeDatabase;
+use super::data::ExactLiteralPropertyKey;
+use crate::construction::TypeDatabase;
 use crate::types::{MappedModifier, PropertyInfo, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
@@ -109,6 +110,370 @@ fn add_mapped_property_optional_undefined(
     } else {
         value_type
     }
+}
+
+const MAPPED_PROPERTY_ALIAS_PROVENANCE_VISIT_LIMIT: usize = 128;
+
+/// Preserve alias provenance when a mapped property's evaluated type exactly
+/// matches a direct non-generic alias referenced by the instantiated template.
+///
+/// Mapped helpers like `Inferred<T>` often materialize a property by indexing
+/// through another generic helper (`Checker<Renderable, true>[marker]`). The
+/// evaluated property is the structural body of `Renderable`, but the alias was
+/// still present in the instantiated template as a type argument. This helper
+/// walks that instantiated template, finds alias-bearing non-application
+/// candidates, evaluates them, and records the candidate alias only when it
+/// evaluates to the same `TypeId` as the mapped property.
+pub fn preserve_mapped_property_alias_provenance(
+    db: &dyn TypeDatabase,
+    instantiated_template: TypeId,
+    evaluated_property_type: TypeId,
+) -> TypeId {
+    preserve_mapped_property_alias_provenance_with(
+        db,
+        instantiated_template,
+        evaluated_property_type,
+        |candidate| crate::evaluation::evaluate::evaluate_type(db, candidate),
+    )
+}
+
+pub fn preserve_mapped_property_alias_provenance_with(
+    db: &dyn TypeDatabase,
+    instantiated_template: TypeId,
+    evaluated_property_type: TypeId,
+    mut evaluate_candidate: impl FnMut(TypeId) -> TypeId,
+) -> TypeId {
+    if evaluated_property_type.is_intrinsic() || evaluated_property_type == TypeId::ERROR {
+        return evaluated_property_type;
+    }
+
+    let comparison_property_type = evaluate_candidate(evaluated_property_type);
+    let alias_target = if comparison_property_type == TypeId::ERROR {
+        evaluated_property_type
+    } else {
+        comparison_property_type
+    };
+    if alias_target.is_intrinsic() || alias_target == TypeId::ERROR {
+        return evaluated_property_type;
+    }
+
+    let mut visited = FxHashSet::default();
+    let mut remaining = MAPPED_PROPERTY_ALIAS_PROVENANCE_VISIT_LIMIT;
+    if let Some(alias_origin) = find_mapped_property_alias_provenance_candidate(
+        db,
+        instantiated_template,
+        alias_target,
+        &mut evaluate_candidate,
+        &mut visited,
+        &mut remaining,
+    ) {
+        db.store_display_alias(alias_target, alias_origin);
+    }
+
+    evaluated_property_type
+}
+
+fn find_mapped_property_alias_provenance_candidate(
+    db: &dyn TypeDatabase,
+    current: TypeId,
+    evaluated_property_type: TypeId,
+    evaluate_candidate: &mut impl FnMut(TypeId) -> TypeId,
+    visited: &mut FxHashSet<TypeId>,
+    remaining: &mut usize,
+) -> Option<TypeId> {
+    if current.is_intrinsic() || !visited.insert(current) || *remaining == 0 {
+        return None;
+    }
+    *remaining -= 1;
+
+    if let Some(alias_origin) = mapped_property_alias_origin_candidate(db, current) {
+        let evaluated_candidate = evaluate_candidate(alias_origin);
+        if evaluated_candidate == evaluated_property_type {
+            return Some(alias_origin);
+        }
+    }
+
+    match db.lookup(current)? {
+        TypeData::Application(app_id) => {
+            let app = db.type_application(app_id);
+            // Generic helper applications are not display candidates here, but
+            // their type arguments can carry the alias we need to preserve.
+            for &arg in &app.args {
+                if let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                    db,
+                    arg,
+                    evaluated_property_type,
+                    evaluate_candidate,
+                    visited,
+                    remaining,
+                ) {
+                    return Some(candidate);
+                }
+            }
+        }
+        TypeData::Conditional(cond_id) => {
+            let cond = db.get_conditional(cond_id);
+            for child in [
+                cond.check_type,
+                cond.extends_type,
+                cond.true_type,
+                cond.false_type,
+            ] {
+                if let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                    db,
+                    child,
+                    evaluated_property_type,
+                    evaluate_candidate,
+                    visited,
+                    remaining,
+                ) {
+                    return Some(candidate);
+                }
+            }
+        }
+        TypeData::IndexAccess(object, index) => {
+            for child in [object, index] {
+                if let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                    db,
+                    child,
+                    evaluated_property_type,
+                    evaluate_candidate,
+                    visited,
+                    remaining,
+                ) {
+                    return Some(candidate);
+                }
+            }
+        }
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
+            let members = db.type_list(list_id);
+            for &member in members.iter() {
+                if let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                    db,
+                    member,
+                    evaluated_property_type,
+                    evaluate_candidate,
+                    visited,
+                    remaining,
+                ) {
+                    return Some(candidate);
+                }
+            }
+        }
+        TypeData::Array(element) | TypeData::ReadonlyType(element) | TypeData::NoInfer(element) => {
+            return find_mapped_property_alias_provenance_candidate(
+                db,
+                element,
+                evaluated_property_type,
+                evaluate_candidate,
+                visited,
+                remaining,
+            );
+        }
+        TypeData::Tuple(tuple_id) => {
+            let elements = db.tuple_list(tuple_id);
+            for element in elements.iter() {
+                if let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                    db,
+                    element.type_id,
+                    evaluated_property_type,
+                    evaluate_candidate,
+                    visited,
+                    remaining,
+                ) {
+                    return Some(candidate);
+                }
+            }
+        }
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = db.object_shape(shape_id);
+            for prop in &shape.properties {
+                for child in [prop.type_id, prop.write_type] {
+                    if let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                        db,
+                        child,
+                        evaluated_property_type,
+                        evaluate_candidate,
+                        visited,
+                        remaining,
+                    ) {
+                        return Some(candidate);
+                    }
+                }
+            }
+            for index in [shape.string_index.as_ref(), shape.number_index.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                if let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                    db,
+                    index.value_type,
+                    evaluated_property_type,
+                    evaluate_candidate,
+                    visited,
+                    remaining,
+                ) {
+                    return Some(candidate);
+                }
+            }
+        }
+        TypeData::Function(shape_id) => {
+            let shape = db.function_shape(shape_id);
+            for param in &shape.params {
+                if let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                    db,
+                    param.type_id,
+                    evaluated_property_type,
+                    evaluate_candidate,
+                    visited,
+                    remaining,
+                ) {
+                    return Some(candidate);
+                }
+            }
+            return find_mapped_property_alias_provenance_candidate(
+                db,
+                shape.return_type,
+                evaluated_property_type,
+                evaluate_candidate,
+                visited,
+                remaining,
+            );
+        }
+        TypeData::Callable(shape_id) => {
+            let shape = db.callable_shape(shape_id);
+            for sig in shape
+                .call_signatures
+                .iter()
+                .chain(shape.construct_signatures.iter())
+            {
+                for param in &sig.params {
+                    if let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                        db,
+                        param.type_id,
+                        evaluated_property_type,
+                        evaluate_candidate,
+                        visited,
+                        remaining,
+                    ) {
+                        return Some(candidate);
+                    }
+                }
+                if let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                    db,
+                    sig.return_type,
+                    evaluated_property_type,
+                    evaluate_candidate,
+                    visited,
+                    remaining,
+                ) {
+                    return Some(candidate);
+                }
+            }
+        }
+        TypeData::Mapped(mapped_id) => {
+            let mapped = db.get_mapped(mapped_id);
+            for child in [
+                Some(mapped.constraint),
+                Some(mapped.template),
+                mapped.name_type,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                    db,
+                    child,
+                    evaluated_property_type,
+                    evaluate_candidate,
+                    visited,
+                    remaining,
+                ) {
+                    return Some(candidate);
+                }
+            }
+        }
+        TypeData::TemplateLiteral(list_id) => {
+            let spans = db.template_list(list_id);
+            for span in spans.iter() {
+                if let crate::types::TemplateSpan::Type(child) = span
+                    && let Some(candidate) = find_mapped_property_alias_provenance_candidate(
+                        db,
+                        *child,
+                        evaluated_property_type,
+                        evaluate_candidate,
+                        visited,
+                        remaining,
+                    )
+                {
+                    return Some(candidate);
+                }
+            }
+        }
+        TypeData::KeyOf(inner)
+        | TypeData::StringIntrinsic {
+            type_arg: inner, ..
+        } => {
+            return find_mapped_property_alias_provenance_candidate(
+                db,
+                inner,
+                evaluated_property_type,
+                evaluate_candidate,
+                visited,
+                remaining,
+            );
+        }
+        TypeData::Enum(_, member_type) => {
+            return find_mapped_property_alias_provenance_candidate(
+                db,
+                member_type,
+                evaluated_property_type,
+                evaluate_candidate,
+                visited,
+                remaining,
+            );
+        }
+        TypeData::TypeParameter(_)
+        | TypeData::Infer(_)
+        | TypeData::Intrinsic(_)
+        | TypeData::Literal(_)
+        | TypeData::Lazy(_)
+        | TypeData::Recursive(_)
+        | TypeData::BoundParameter(_)
+        | TypeData::TypeQuery(_)
+        | TypeData::UniqueSymbol(_)
+        | TypeData::ThisType
+        | TypeData::ModuleNamespace(_)
+        | TypeData::Error
+        | TypeData::UnresolvedTypeName(_) => {}
+    }
+
+    None
+}
+
+fn mapped_property_alias_origin_candidate(
+    db: &dyn TypeDatabase,
+    candidate: TypeId,
+) -> Option<TypeId> {
+    if is_direct_mapped_property_alias_origin(db, candidate) {
+        return Some(candidate);
+    }
+    let alias_origin = db.get_display_alias(candidate)?;
+    if is_direct_mapped_property_alias_origin(db, alias_origin) {
+        Some(alias_origin)
+    } else {
+        None
+    }
+}
+
+fn is_direct_mapped_property_alias_origin(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() || super::contains_generic_type_parameters_db(db, type_id) {
+        return false;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::Lazy(_) | TypeData::TypeQuery(_) | TypeData::UnresolvedTypeName(_))
+    )
 }
 
 fn specialize_mapped_property_value_type_for_key(
@@ -224,21 +589,22 @@ fn narrow_union_by_literal_discriminant_property(
     None
 }
 
-fn collect_mapped_property_names_from_source_keys(
+fn collect_mapped_property_keys_from_source_keys(
     db: &dyn TypeDatabase,
     mapped: &crate::types::MappedType,
-    source_keys: FxHashSet<Atom>,
-) -> Option<FxHashSet<Atom>> {
-    let mut property_names = FxHashSet::default();
+    source_keys: FxHashSet<ExactLiteralPropertyKey>,
+) -> Option<FxHashSet<ExactLiteralPropertyKey>> {
+    let mut property_keys = FxHashSet::default();
 
     for source_key in source_keys {
-        let key_literal = property_key_atom_to_type(db, source_key);
+        let key_literal = property_key_to_type(db, source_key);
         let mapped_key = remap_mapped_property_key(db, mapped, key_literal);
-        let mapped_names = super::data::collect_exact_literal_property_keys(db, mapped_key)?;
-        property_names.extend(mapped_names);
+        let mapped_keys =
+            super::data::collect_exact_literal_property_keys_with_symbol_info(db, mapped_key)?;
+        property_keys.extend(mapped_keys);
     }
 
-    Some(property_names)
+    Some(property_keys)
 }
 
 /// Collect exact property names for a mapped type when its key constraint can be reduced
@@ -247,9 +613,20 @@ pub fn collect_finite_mapped_property_names(
     db: &dyn TypeDatabase,
     mapped_id: crate::types::MappedTypeId,
 ) -> Option<FxHashSet<Atom>> {
+    collect_finite_mapped_property_keys(db, mapped_id)
+        .map(|keys| keys.into_iter().map(|key| key.name).collect())
+}
+
+/// Collect exact property keys for a mapped type when its key constraint can be
+/// reduced to a finite set of literal property keys, preserving symbol metadata.
+pub fn collect_finite_mapped_property_keys(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+) -> Option<FxHashSet<ExactLiteralPropertyKey>> {
     let mapped = db.mapped_type(mapped_id);
-    let source_keys = super::data::collect_exact_literal_property_keys(db, mapped.constraint)?;
-    collect_mapped_property_names_from_source_keys(db, &mapped, source_keys)
+    let source_keys =
+        super::data::collect_exact_literal_property_keys_with_symbol_info(db, mapped.constraint)?;
+    collect_mapped_property_keys_from_source_keys(db, &mapped, source_keys)
 }
 
 /// Resolve the exact property type for a property on a mapped type when its key
@@ -259,16 +636,29 @@ pub fn get_finite_mapped_property_type(
     mapped_id: crate::types::MappedTypeId,
     property_name: &str,
 ) -> Option<TypeId> {
+    get_finite_mapped_property_type_with_evaluator(db, mapped_id, property_name, |type_id| {
+        crate::evaluation::evaluate::evaluate_type(db, type_id)
+    })
+}
+
+pub fn get_finite_mapped_property_type_with_evaluator(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+    property_name: &str,
+    mut evaluate: impl FnMut(TypeId) -> TypeId,
+) -> Option<TypeId> {
     let mapped = db.mapped_type(mapped_id);
-    let source_keys = super::data::collect_exact_literal_property_keys(db, mapped.constraint)?;
+    let source_keys =
+        super::data::collect_exact_literal_property_keys_with_symbol_info(db, mapped.constraint)?;
     let target_atom = db.intern_string(property_name);
     let mut matches = Vec::new();
 
     for source_key in source_keys {
-        let key_literal = property_key_atom_to_type(db, source_key);
+        let key_literal = property_key_to_type(db, source_key);
         let remapped = remap_mapped_property_key(db, &mapped, key_literal);
-        let remapped_keys = super::data::collect_exact_literal_property_keys(db, remapped)?;
-        if !remapped_keys.contains(&target_atom) {
+        let remapped_keys =
+            super::data::collect_exact_literal_property_keys_with_symbol_info(db, remapped)?;
+        if !remapped_keys.iter().any(|key| key.name == target_atom) {
             continue;
         }
 
@@ -278,10 +668,13 @@ pub fn get_finite_mapped_property_type(
             mapped.type_param.name,
             key_literal,
         );
-        let value_type = specialize_mapped_property_value_type_for_key(
+        let value_type =
+            specialize_mapped_property_value_type_for_key(db, evaluate(instantiated), key_literal);
+        let value_type = preserve_mapped_property_alias_provenance_with(
             db,
-            crate::evaluation::evaluate::evaluate_type(db, instantiated),
-            key_literal,
+            instantiated,
+            value_type,
+            &mut evaluate,
         );
         matches.push(add_mapped_property_optional_undefined(
             db, &mapped, value_type,
@@ -308,15 +701,17 @@ pub fn get_finite_mapped_property_display_type(
     property_name: &str,
 ) -> Option<TypeId> {
     let mapped = db.mapped_type(mapped_id);
-    let source_keys = super::data::collect_exact_literal_property_keys(db, mapped.constraint)?;
+    let source_keys =
+        super::data::collect_exact_literal_property_keys_with_symbol_info(db, mapped.constraint)?;
     let target_atom = db.intern_string(property_name);
     let mut matches = Vec::new();
 
     for source_key in source_keys {
-        let key_literal = property_key_atom_to_type(db, source_key);
+        let key_literal = property_key_to_type(db, source_key);
         let remapped = remap_mapped_property_key(db, &mapped, key_literal);
-        let remapped_keys = super::data::collect_exact_literal_property_keys(db, remapped)?;
-        if !remapped_keys.contains(&target_atom) {
+        let remapped_keys =
+            super::data::collect_exact_literal_property_keys_with_symbol_info(db, remapped)?;
+        if !remapped_keys.iter().any(|key| key.name == target_atom) {
             continue;
         }
 
@@ -362,9 +757,10 @@ pub fn get_finite_mapped_property_display_type(
     }
 }
 
-fn property_key_atom_to_type(db: &dyn TypeDatabase, key: Atom) -> TypeId {
-    let key_str = db.resolve_atom(key);
-    if let Some(symbol_ref) = key_str.strip_prefix("__unique_")
+fn property_key_to_type(db: &dyn TypeDatabase, key: ExactLiteralPropertyKey) -> TypeId {
+    let key_str = db.resolve_atom(key.name);
+    if key.is_symbol_named
+        && let Some(symbol_ref) = key_str.strip_prefix("__unique_")
         && let Ok(id) = symbol_ref.parse::<u32>()
     {
         return db.unique_symbol(crate::types::SymbolRef(id));
@@ -457,6 +853,27 @@ fn classify_mapped_source_inner(db: &dyn TypeDatabase, source: TypeId) -> Mapped
         }
         _ => MappedSourceKind::Object,
     }
+}
+
+/// Whether a mapped template references K (the iteration variable). Used as a
+/// cheap precheck before full template substitution: when K is absent, the
+/// substitution would round-trip the template unchanged. Matches both
+/// `TypeParameter` by name and `BoundParameter` (in-flight instantiations) —
+/// the latter distinguishes this from the more general
+/// `contains_type_parameter_named` predicate.
+pub fn template_references_iter_param(
+    db: &dyn TypeDatabase,
+    template: TypeId,
+    iter_name: Atom,
+) -> bool {
+    if matches!(template, TypeId::ANY | TypeId::ERROR | TypeId::NEVER) {
+        return false;
+    }
+    crate::visitor::contains_type_matching(db, template, |key| match key {
+        TypeData::BoundParameter(_) => true,
+        TypeData::TypeParameter(info) => info.name == iter_name,
+        _ => false,
+    })
 }
 
 /// Check if a mapped type's `as` clause is identity-preserving (no remapping).
@@ -880,6 +1297,10 @@ pub fn collect_homomorphic_source_property_infos(
     ) -> Vec<PropertyInfo> {
         let mut ordered = props.to_vec();
         if let Some(display_props) = db.get_display_properties(source) {
+            let mut display_props = display_props.as_ref().clone();
+            if display_props.iter().any(|prop| prop.declaration_order > 0) {
+                display_props.sort_by_key(|prop| prop.declaration_order);
+            }
             let order_map: FxHashMap<Atom, usize> = display_props
                 .iter()
                 .enumerate()
@@ -902,13 +1323,14 @@ pub fn collect_homomorphic_source_property_infos(
         else {
             return Vec::new();
         };
-        let base_props = collect_homomorphic_source_property_infos(db, array_base);
+        let mut base_props = collect_homomorphic_source_property_infos(db, array_base);
         let Some(array_param) = db.get_array_base_type_params().first() else {
+            sort_array_homomorphic_source_properties(db, &mut base_props);
             return base_props;
         };
         let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
         subst.insert(array_param.name, element_type);
-        base_props
+        let mut props: Vec<_> = base_props
             .into_iter()
             .map(|mut prop| {
                 prop.type_id = crate::evaluation::evaluate::evaluate_type(
@@ -925,7 +1347,33 @@ pub fn collect_homomorphic_source_property_infos(
                 );
                 prop
             })
-            .collect()
+            .collect();
+        sort_array_homomorphic_source_properties(db, &mut props);
+        props
+    }
+
+    fn sort_array_homomorphic_source_properties(db: &dyn TypeDatabase, props: &mut [PropertyInfo]) {
+        fn head_rank(db: &dyn TypeDatabase, prop: &PropertyInfo) -> Option<usize> {
+            match db.resolve_atom_ref(prop.name).as_ref() {
+                "length" => Some(0),
+                "toString" => Some(1),
+                "toLocaleString" => Some(2),
+                _ => None,
+            }
+        }
+
+        props.sort_by(|a, b| match (head_rank(db, a), head_rank(db, b)) {
+            (Some(a_rank), Some(b_rank)) => a_rank.cmp(&b_rank),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => {
+                if a.declaration_order > 0 && b.declaration_order > 0 {
+                    a.declaration_order.cmp(&b.declaration_order)
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            }
+        });
     }
 
     if !source.is_intrinsic()
@@ -1021,6 +1469,7 @@ pub fn expand_mapped_type_to_properties(
         subst.insert(mapped.type_param.name, key_literal);
         let instantiated = instantiate_type(db, mapped.template, &subst);
         let mut property_type = crate::evaluation::evaluate::evaluate_type(db, instantiated);
+        property_type = preserve_mapped_property_alias_provenance(db, instantiated, property_type);
 
         // Look up source property info for modifier computation
         let source_info = source_props.get(&key_name);
@@ -1072,8 +1521,8 @@ pub fn expand_mapped_type_to_properties(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
     use crate::caches::db::QueryDatabase;
+    use crate::construction::TypeInterner;
     use crate::types::TypeParamInfo;
 
     #[test]

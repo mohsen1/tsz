@@ -399,3 +399,64 @@ fn test_collect_properties_nested_intersections() {
         assert_eq!(properties.len(), 3);
     }
 }
+
+#[test]
+fn test_collect_properties_deep_intersection_chain_is_iterative() {
+    let interner = TypeInterner::new();
+    let resolver = MockResolver;
+
+    let mut ty = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("p0"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }]);
+
+    for i in 1..4096 {
+        let prop_name = interner.intern_string(&format!("p{i}"));
+        let next = interner.object(vec![PropertyInfo {
+            name: prop_name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: i,
+            is_string_named: false,
+            is_symbol_named: false,
+            single_quoted_name: false,
+        }]);
+        ty = interner.intersection2(ty, next);
+    }
+
+    let result = collect_properties(ty, &interner, &resolver);
+
+    let PropertyCollectionResult::Properties { properties, .. } = result else {
+        panic!("deep intersection should still collect object properties");
+    };
+    assert_eq!(properties.len(), 4096);
+    assert!(
+        properties
+            .iter()
+            .any(|prop| prop.name == interner.intern_string("p0")),
+        "expected the deepest property to be preserved"
+    );
+    assert!(
+        properties
+            .iter()
+            .any(|prop| prop.name == interner.intern_string("p4095")),
+        "expected the outermost property to be preserved"
+    );
+}

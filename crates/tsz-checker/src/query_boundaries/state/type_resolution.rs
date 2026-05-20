@@ -1,4 +1,5 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::super::common::lazy_def_id as get_lazy_def_id;
 pub(crate) use super::super::common::{
@@ -46,6 +47,11 @@ pub(crate) fn get_application_info(
 
 pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_type_parameters_db(db, type_id)
+}
+
+pub(crate) fn is_union_or_intersection(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_union_type(db, type_id)
+        || tsz_solver::type_queries::is_intersection_type(db, type_id)
 }
 
 #[cfg(test)]

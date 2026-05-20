@@ -322,6 +322,42 @@ fn test_accessor_pair_combined() {
 }
 
 #[test]
+fn accessor_body_tail_comment_survives_accessor_boundary_comment() {
+    let source = r#"class C {
+            get x() {
+                return 1; // keep body
+            } // keep accessor
+            set x(value: number) {
+                this.value = value; // keep setter body
+            } // keep setter accessor
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("return 1; // keep body"),
+        "Getter body-tail comment should stay inside the lowered getter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("} // keep accessor"),
+        "Getter accessor-boundary comment should stay on the lowered descriptor function.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this.value = value; // keep setter body"),
+        "Setter body-tail comment should stay inside the lowered setter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("} // keep setter accessor"),
+        "Setter accessor-boundary comment should stay on the lowered descriptor function.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return 1; // keep accessor")
+            && !output.contains("this.value = value; // keep setter accessor"),
+        "Accessor-boundary comments must not be attached to the final body statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_static_accessor_combined() {
     let source = r#"class Config {
             static _instance: Config | null = null;
@@ -389,7 +425,10 @@ fn test_computed_method_name() {
 }
 
 #[test]
-fn type_only_computed_field_side_effect_emits_inside_iife() {
+fn type_only_computed_field_side_effect_emits_after_iife() {
+    // When a class has only an instance computed property that is erased
+    // (type annotation, no value), the key expression is a side-effect
+    // statement. tsc emits it *after* the class IIFE, not inside it.
     let source = r#"class C {
             [Symbol.isRegExp]: string;
         }"#;
@@ -397,17 +436,20 @@ fn type_only_computed_field_side_effect_emits_inside_iife() {
     let output = transform_class(source).expect("transform should succeed in test");
 
     assert!(
-        output.contains("Symbol.isRegExp;\n    return C;"),
-        "type-only computed field side effect should emit inside the class IIFE.\nOutput:\n{output}"
+        output.contains("return C;\n}());\nSymbol.isRegExp;"),
+        "type-only computed field side effect should be deferred after the class IIFE.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("return C;\n}());\nSymbol.isRegExp;"),
-        "type-only computed field side effect should not be deferred after the class IIFE.\nOutput:\n{output}"
+        !output.contains("Symbol.isRegExp;\n    return C;"),
+        "type-only computed field side effect should not be emitted inside the class IIFE.\nOutput:\n{output}"
     );
 }
 
 #[test]
-fn computed_field_temp_assignment_emits_inside_iife() {
+fn computed_field_temp_assignment_emits_outside_iife() {
+    // When a class has only instance computed-property fields (no static
+    // computed value), tsc places `var _a;` before the IIFE and `_a = key;`
+    // after the IIFE so the constructor can close over the outer binding.
     let source = r#"class C {
             [Symbol.toStringTag]: string = "";
         }"#;
@@ -415,16 +457,20 @@ fn computed_field_temp_assignment_emits_inside_iife() {
     let output = transform_class(source).expect("transform should succeed in test");
 
     assert!(
-        output.contains("function C() {\n        this[_a] = \"\";\n    }\n    var _a;\n    _a = Symbol.toStringTag;\n    return C;"),
-        "computed field temp should be declared and assigned inside the class IIFE.\nOutput:\n{output}"
-    );
-    assert!(
         output.contains("this[_a] = \"\";"),
         "constructor should reference the computed field temp.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("}());\n_a = Symbol.toStringTag;"),
-        "computed field temp assignment should not be deferred after the class IIFE.\nOutput:\n{output}"
+        output.contains("var _a;\nvar C"),
+        "computed field temp var should be declared before the class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("}());\n_a = Symbol.toStringTag;"),
+        "computed field temp assignment should be deferred after the class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;\n    _a = Symbol.toStringTag;\n    return C;"),
+        "computed field temp should not be inside the class IIFE.\nOutput:\n{output}"
     );
 }
 
@@ -708,6 +754,149 @@ fn test_static_block_only_class_alias_preamble() {
     assert!(
         assign_idx < block_idx,
         "alias must be assigned before the static-block IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_static_block_super_call_does_not_emit_unused_alias() {
+    let source = r#"class B {}
+        class C extends B {
+            static {
+                super();
+            }
+        }"#;
+
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser.arena.get_source_file(root_node).expect("sf");
+    let class_idx = source_file.statements.nodes[1];
+
+    let mut transformer = ES5ClassTransformer::new(&parser.arena);
+    transformer.set_source_text(source);
+    let ir = transformer
+        .transform_class_to_ir(class_idx)
+        .expect("class should lower to ES5 IR");
+    let mut printer = IRPrinter::with_arena(&parser.arena);
+    printer.set_source_text(source);
+    let output = printer.emit(&ir).to_string();
+
+    assert!(
+        output.contains("_super.call(this)"),
+        "Recovered static-block super() should still lower through _super.call(this).\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;") && !output.contains("_a = C;"),
+        "Deferred static blocks should not emit an unused class-value alias.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        transformer.temp_var_counter(),
+        0,
+        "Static-block super recovery should not consume a temp name when no class alias is emitted."
+    );
+}
+
+#[test]
+fn test_static_block_await_recovery_uses_yield_in_es5_ir() {
+    let source = r#"class C {
+            static {
+                await: if (true) {
+                }
+                await;
+            }
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("yield ;\n    if (true)"),
+        "Recovered await labels in static blocks should emit a yield statement before the labeled statement body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("yield ;\n})();"),
+        "Recovered bare await statements in static blocks should emit as yield.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await:") && !output.contains("await;"),
+        "Static block recovery should not preserve await labels or bare await identifiers in ES5 IR.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_nested_class_declaration_in_static_block_uses_structured_ir() {
+    let source = r#"class B {}
+        class CC {
+            constructor() {
+                class C extends B {
+                    static {
+                        class DD extends B {
+                            constructor() {
+                                super();
+                            }
+                        }
+                        super();
+                    }
+                }
+            }
+        }"#;
+
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser.arena.get_source_file(root_node).expect("sf");
+    let class_idx = source_file.statements.nodes[1];
+
+    let mut transformer = ES5ClassTransformer::new(&parser.arena);
+    transformer.set_source_text(source);
+    let ir = transformer
+        .transform_class_to_ir(class_idx)
+        .expect("class should lower to ES5 IR");
+    let mut printer = IRPrinter::with_arena(&parser.arena);
+    printer.set_source_text(source);
+    let output = printer.emit(&ir).to_string();
+
+    assert!(
+        output.contains("function CC() {\n        var C = /** @class */"),
+        "Nested class declarations in constructor bodies should be emitted as structured IR at the current indentation.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("        (function () {\n            var DD = /** @class */"),
+        "Nested class declarations inside deferred static blocks should stay inside the static-block IIFE indentation.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\nvar C = /** @class */"),
+        "Nested class declarations should not restart at file indentation.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_static_block_this_alias_preserves_trailing_comments() {
+    let source = r#"class C {
+            static {
+                this.b; // should error
+                let b: typeof this.b; // ok
+                if (1) {
+                    this.b; // should error
+                }
+            }
+            static b = 1;
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("var _a;\n    _a = C;"),
+        "Static block value-position `this` should use the class alias `_a`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.b; // should error"),
+        "Trailing comments on aliased static-block expression statements should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var b; // ok"),
+        "Trailing comments on erased typed declarations in static blocks should be preserved.\nOutput:\n{output}"
     );
 }
 

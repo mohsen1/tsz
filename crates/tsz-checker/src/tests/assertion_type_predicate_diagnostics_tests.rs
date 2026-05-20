@@ -9,7 +9,7 @@ use crate::test_utils::{
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn check_require_assertion_from_dts() -> Vec<u32> {
     let files = [
@@ -121,6 +121,104 @@ v.toUpperCase();
 }
 
 #[test]
+fn unannotated_asserts_this_receiver_emits_ts2775_and_does_not_narrow() {
+    let codes = check_source_strict_codes(
+        r#"
+class Validator {
+    value: unknown;
+
+    constructor(value: unknown) {
+        this.value = value;
+    }
+
+    assertIsNumber(): asserts this is Validator & { value: number } {
+        if (typeof this.value !== "number") throw "";
+    }
+}
+
+function useThisAssert() {
+    const v = new Validator(42);
+    v.assertIsNumber();
+    const n: number = v.value;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2775),
+        "expected TS2775 for assertion method receiver without explicit declaration type, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&2322),
+        "invalid assertion method call must not narrow receiver value, got {codes:?}"
+    );
+}
+
+#[test]
+fn annotated_asserts_this_receiver_narrows_without_ts2775() {
+    let codes = check_source_strict_codes(
+        r#"
+class Validator {
+    value: unknown;
+
+    constructor(value: unknown) {
+        this.value = value;
+    }
+
+    assertIsNumber(): asserts this is Validator & { value: number } {
+        if (typeof this.value !== "number") throw "";
+    }
+}
+
+function useThisAssert() {
+    const v: Validator = new Validator(42);
+    v.assertIsNumber();
+    const n: number = v.value;
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2775),
+        "did not expect TS2775 for explicitly annotated assertion receiver, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "explicitly annotated assertion receiver should narrow value, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_target_must_name_function_parameter() {
+    let codes = check_source_codes(
+        r#"
+type PredicateCheck<T> = T extends (...args: any[]) => T is infer U ? U : never;
+type PC = PredicateCheck<(x: unknown) => x is string>;
+"#,
+    );
+    assert!(
+        codes.contains(&1225),
+        "expected TS1225 when a type predicate names type parameter `T` instead of a function parameter, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_cannot_reference_rest_parameter() {
+    let codes = check_source_codes(
+        r#"
+function isAllStrings(...values: unknown[]): values is string[] {
+    return values.every(value => typeof value === "string");
+}
+
+function assertAllStrings(...values: unknown[]): asserts values is string[] {}
+"#,
+    );
+    let ts1229_count = codes.iter().filter(|&&code| code == 1229).count();
+    assert_eq!(
+        ts1229_count, 2,
+        "expected TS1229 for type and assertion predicates that reference rest parameters, got {codes:?}"
+    );
+}
+
+#[test]
 fn assertion_element_access_emits_ts2776() {
     let codes = check_source_codes(
         r#"
@@ -136,7 +234,7 @@ a[0](true);
 }
 
 #[test]
-fn asserts_this_method_does_not_require_receiver_annotation() {
+fn asserts_this_for_of_variable_from_annotated_iterable_does_not_emit_ts2775() {
     let codes = check_source_codes(
         r#"
 class Test {
@@ -151,7 +249,28 @@ function f(items: Test[]) {
     );
     assert!(
         !codes.contains(&2775),
-        "asserts-this methods should not require a receiver annotation, got {codes:?}"
+        "asserts-this for-of variables from annotated iterables should not require a receiver annotation, got {codes:?}"
+    );
+}
+
+#[test]
+fn asserts_this_for_of_variable_from_inferred_iterable_emits_ts2775() {
+    let codes = check_source_codes(
+        r#"
+class Test {
+    assertIsTest(): asserts this is Test {}
+}
+function f() {
+    const items = [new Test()];
+    for (let item of items) {
+        item.assertIsTest();
+    }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2775),
+        "expected TS2775 for asserts-this for-of variable from inferred iterable, got {codes:?}"
     );
 }
 
@@ -247,5 +366,159 @@ fn interface_construct_signature_type_predicate_does_not_emit_ts1228() {
     assert!(
         !codes.contains(&1228),
         "did not expect TS1228 for predicate return in interface construct signature, got {codes:?}"
+    );
+}
+
+#[test]
+fn assertion_predicate_intersection_with_narrower_object_type_does_not_emit_ts2677() {
+    let codes = check_source_codes(
+        r#"
+interface Data {
+    status: "pending" | "complete";
+    value?: string;
+}
+
+function assertComplete(d: Data): asserts d is Data & { status: "complete"; value: string } {
+    if (d.status !== "complete" || !d.value) throw "";
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2677),
+        "did not expect TS2677 for narrowing intersection assertion predicate, got {codes:?}"
+    );
+}
+
+#[test]
+fn assertion_function_type_intersection_predicate_does_not_emit_ts2677() {
+    let codes = check_source_codes(
+        r#"
+interface Data {
+    status: "pending" | "complete";
+    value?: string;
+}
+
+type AssertComplete = (d: Data) => asserts d is Data & { status: "complete"; value: string };
+"#,
+    );
+    assert!(
+        !codes.contains(&2677),
+        "did not expect TS2677 for narrowing intersection assertion function type, got {codes:?}"
+    );
+}
+
+#[test]
+fn assertion_predicate_that_widens_parameter_still_emits_ts2677() {
+    let codes = check_source_codes(
+        r#"
+interface Data {
+    status: "pending" | "complete";
+    value?: string;
+}
+
+function assertAnyData(d: { status: "complete" }): asserts d is Data {
+    if (d.status !== "complete") throw "";
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2677),
+        "expected TS2677 for widening assertion predicate, got {codes:?}"
+    );
+}
+
+// --- Generic assertion function narrowing (Issue #5790) ---
+// When a generic assertion function's type parameter T does not appear in any
+// parameter type (e.g., `assertType<T>(value: unknown): asserts value is T`),
+// the solver-instantiated type must be used for narrowing, not the raw T.
+
+#[test]
+fn generic_assertion_with_explicit_type_arg_narrows_correctly() {
+    // `assertType<T>(value: unknown): asserts value is T` called with explicit <string>
+    // must narrow `val` to `string` so `.toUpperCase()` is valid.
+    let codes = check_source_codes(
+        r#"
+function assertType<T>(value: unknown): asserts value is T {}
+let val: unknown = 'hello';
+assertType<string>(val);
+val.toUpperCase();
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "expected no TS2339 after assertType<string>(val), got {codes:?}"
+    );
+}
+
+#[test]
+fn generic_assertion_type_param_name_independent() {
+    // The fix must be structural (not keyed on identifier names).
+    // Using a different type-parameter name (U instead of T) must work the same way.
+    let codes = check_source_codes(
+        r#"
+function assertIs<U>(value: unknown): asserts value is U {}
+let x: unknown = 42;
+assertIs<number>(x);
+x.toFixed(2);
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "expected no TS2339 after assertIs<number>(x), got {codes:?}"
+    );
+}
+
+#[test]
+fn generic_assertion_param_in_predicate_only_different_param_name() {
+    // `assertKind<K>(label: string): asserts label is K` — K is not in any param type.
+    // After assertKind<"foo">(s), s should be narrowed to "foo".
+    let codes = check_source_codes(
+        r#"
+function assertKind<K>(label: unknown): asserts label is K {}
+let s: unknown = 'foo';
+assertKind<string>(s);
+s.toUpperCase();
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "expected no TS2339 for generic assertion with type param only in predicate, got {codes:?}"
+    );
+}
+
+#[test]
+fn generic_assertion_with_param_in_both_predicate_and_arg_still_resolves() {
+    // Regression guard: `assertEqual<T>(value: unknown, expected: T): asserts value is T`
+    // — T IS in a parameter type, so the existing arg-inference path applies.
+    // This must still produce no TS2339.
+    let codes = check_source_codes(
+        r#"
+function assertEqual<T>(value: unknown, expected: T): asserts value is T {}
+let n: unknown = 42;
+assertEqual(n, 0);
+n.toFixed(2);
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "expected no TS2339 for assertEqual<T> where T is in a param, got {codes:?}"
+    );
+}
+
+#[test]
+fn generic_assertion_without_explicit_type_arg_does_not_emit_ts2339() {
+    // Without an explicit type arg, T defaults to `unknown`; the narrowed type is
+    // `unknown` (same as before), so any property access gives TS18046, not TS2339.
+    let codes = check_source_codes(
+        r#"
+function assertType<T>(value: unknown): asserts value is T {}
+let val: unknown = 'hello';
+assertType(val);
+val.toUpperCase();
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "generic assertion without type arg must not produce TS2339 (wrong for 'T'), got {codes:?}"
     );
 }

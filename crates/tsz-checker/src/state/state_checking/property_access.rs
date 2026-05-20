@@ -6,9 +6,12 @@
 
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     fn simple_member_name_in_arena(
@@ -49,7 +52,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let declarations = symbol.declarations.clone();
-        for decl_idx in declarations {
+
+        for &decl_idx in &declarations {
             if let Some(interface) = self
                 .ctx
                 .arena
@@ -98,7 +102,298 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Pass 2: the solver's noop resolver can't evaluate Lazy/Application types
+        // in inherited member signatures; recover by walking AST heritage clauses
+        // and substituting type args explicitly.
+        for &decl_idx in &declarations {
+            if let Some(found) =
+                self.recover_inherited_member_from_heritage(sym_id, decl_idx, prop_name)
+            {
+                return Some(found);
+            }
+        }
+
         None
+    }
+
+    /// Resolve a heritage extends expression to a `SymbolId` using a specific arena/binder.
+    ///
+    /// Handles the simple `Identifier` case (the common F-bounded pattern) with a
+    /// cross-file fallback, and delegates complex qualified names to the primary-arena
+    /// resolver for the edge cases.
+    fn resolve_heritage_sym_in_arena(
+        &self,
+        arena: &tsz_parser::NodeArena,
+        binder: &tsz_binder::BinderState,
+        expr_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let node = arena.get(expr_idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            // Resolve via the foreign binder; fall back to cross-file global search.
+            binder.resolve_identifier(arena, expr_idx).or_else(|| {
+                let name = arena.get_identifier(node)?.escaped_text.as_str();
+                self.ctx.all_binders.as_ref()?.iter().find_map(|b| {
+                    if std::ptr::eq(b.as_ref() as *const _, binder as *const _) {
+                        return None;
+                    }
+                    b.file_locals.get(name)
+                })
+            })
+        } else {
+            // Qualified names and property accesses: delegate to the primary-arena helper.
+            self.resolve_heritage_symbol(expr_idx)
+        }
+    }
+
+    fn find_named_member_in_iface_decl(
+        arena: &tsz_parser::NodeArena,
+        decl_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<NodeIndex> {
+        let iface = arena.get(decl_idx).and_then(|n| arena.get_interface(n))?;
+        iface
+            .members
+            .nodes
+            .iter()
+            .copied()
+            .find(|&m| Self::simple_member_name_in_arena(arena, m).as_deref() == Some(prop_name))
+    }
+
+    fn collect_extends_entries(
+        arena: &tsz_parser::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Vec<(NodeIndex, Vec<NodeIndex>)> {
+        let Some(node) = arena.get(decl_idx) else {
+            return Vec::new();
+        };
+        let Some(interface) = arena.get_interface(node) else {
+            return Vec::new();
+        };
+        let Some(ref heritage_clauses) = interface.heritage_clauses else {
+            return Vec::new();
+        };
+
+        let mut entries = Vec::new();
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            for &type_idx in &heritage.types.nodes {
+                let Some(type_node) = arena.get(type_idx) else {
+                    continue;
+                };
+                let (expr_idx, arg_idxs) = if let Some(eta) = arena.get_expr_type_args(type_node) {
+                    (
+                        eta.expression,
+                        eta.type_arguments
+                            .as_ref()
+                            .map(|l| l.nodes.clone())
+                            .unwrap_or_default(),
+                    )
+                } else {
+                    (type_idx, Vec::new())
+                };
+                entries.push((expr_idx, arg_idxs));
+            }
+        }
+        entries
+    }
+
+    fn recover_inherited_member_from_heritage(
+        &mut self,
+        derived_sym_id: SymbolId,
+        decl_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        // Determine the file that owns this declaration so we use the right arena.
+        // `decl_idx` is valid only in the arena where the derived symbol was declared.
+        let derived_file_idx: u32 = {
+            self.get_cross_file_symbol(derived_sym_id)
+                .map(|s| s.decl_file_idx)
+                .unwrap_or(u32::MAX)
+        };
+
+        let entries: Vec<(NodeIndex, Vec<NodeIndex>)> = {
+            let arena = self.ctx.get_arena_for_file(derived_file_idx);
+            Self::collect_extends_entries(arena, decl_idx)
+        };
+        if let Some(found) = self.process_heritage_entries(&entries, derived_file_idx, prop_name) {
+            return Some(found);
+        }
+
+        // Also walk lib-cloned arenas (declaration_arenas is populated for lib declarations).
+        let cross_arenas = self
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(derived_sym_id, decl_idx))
+            .cloned()
+            .unwrap_or_default();
+        for foreign_arc in cross_arenas {
+            let foreign_file_idx = self
+                .ctx
+                .get_file_idx_for_arena(foreign_arc.as_ref())
+                .map(|i| i as u32)
+                .unwrap_or(u32::MAX);
+            if foreign_file_idx == derived_file_idx {
+                continue;
+            }
+            let cross_entries: Vec<(NodeIndex, Vec<NodeIndex>)> =
+                Self::collect_extends_entries(foreign_arc.as_ref(), decl_idx);
+            if let Some(found) =
+                self.process_heritage_entries(&cross_entries, foreign_file_idx, prop_name)
+            {
+                return Some(found);
+            }
+        }
+
+        None
+    }
+
+    /// Walk one set of heritage entries — all from the same arena identified by
+    /// `entry_file_idx` — and return the first resolved member type.
+    fn process_heritage_entries(
+        &mut self,
+        entries: &[(NodeIndex, Vec<NodeIndex>)],
+        entry_file_idx: u32,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        for (expr_idx, arg_idxs) in entries {
+            // Resolve the base symbol using arena/binder for the entry file.
+            // Scoped block releases the immutable borrows before mutable calls below.
+            let Some(base_sym_id) = ({
+                let arena = self.ctx.get_arena_for_file(entry_file_idx);
+                let binder = self
+                    .ctx
+                    .get_binder_for_file(entry_file_idx as usize)
+                    .unwrap_or(self.ctx.binder);
+                self.resolve_heritage_sym_in_arena(arena, binder, *expr_idx)
+            }) else {
+                continue;
+            };
+
+            // Resolve type args from the correct arena.
+            let entry_is_primary =
+                std::ptr::eq(self.ctx.get_arena_for_file(entry_file_idx), self.ctx.arena);
+            let type_args: Vec<TypeId> = if entry_is_primary {
+                arg_idxs
+                    .iter()
+                    .map(|&idx| {
+                        let raw = self.get_type_from_type_node(idx);
+                        self.resolve_lazy_type(raw)
+                    })
+                    .collect()
+            } else {
+                arg_idxs
+                    .iter()
+                    .map(|&idx| self.resolve_cross_file_type_arg(idx, entry_file_idx))
+                    .collect()
+            };
+
+            let base_type_params = self.get_type_params_for_symbol(base_sym_id);
+            let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+                self.ctx.types,
+                &base_type_params,
+                &type_args,
+            );
+
+            let (base_file_idx, base_decl_list) = {
+                self.get_cross_file_symbol(base_sym_id)
+                    .map(|s| (s.decl_file_idx, s.declarations.clone()))
+                    .unwrap_or((u32::MAX, Vec::new()))
+            };
+
+            for &base_decl_idx in &base_decl_list {
+                let member_idx = {
+                    let arena = self.ctx.get_arena_for_file(base_file_idx);
+                    Self::find_named_member_in_iface_decl(arena, base_decl_idx, prop_name)
+                };
+
+                if let Some(member_idx) = member_idx {
+                    let base_is_primary =
+                        std::ptr::eq(self.ctx.get_arena_for_file(base_file_idx), self.ctx.arena);
+                    if base_is_primary {
+                        let raw = self.get_type_of_interface_member_simple(member_idx);
+                        return Some(crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            raw,
+                            &substitution,
+                        ));
+                    }
+                    // Get the Arc so the borrow doesn't conflict with &mut self.
+                    let base_arc = self
+                        .ctx
+                        .all_arenas
+                        .as_ref()
+                        .and_then(|arenas| arenas.get(base_file_idx as usize).cloned());
+                    if let Some(arc) = base_arc {
+                        return self.delegate_cross_arena_interface_member_simple_type(
+                            base_decl_idx,
+                            member_idx,
+                            arc.as_ref(),
+                            (!type_args.is_empty()).then_some(type_args.as_slice()),
+                        );
+                    }
+                }
+
+                // Check lib-cloned arenas for the base declaration.
+                let lib_cross_arenas = self
+                    .ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(base_sym_id, base_decl_idx))
+                    .cloned()
+                    .unwrap_or_default();
+                for arena in lib_cross_arenas {
+                    if let Some(member_idx) = Self::find_named_member_in_iface_decl(
+                        arena.as_ref(),
+                        base_decl_idx,
+                        prop_name,
+                    ) && let Some(member_type) = self
+                        .delegate_cross_arena_interface_member_simple_type(
+                            base_decl_idx,
+                            member_idx,
+                            arena.as_ref(),
+                            (!type_args.is_empty()).then_some(type_args.as_slice()),
+                        )
+                    {
+                        return Some(member_type);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Resolve a single type-argument node from a foreign file's arena.
+    ///
+    /// For simple type references (the common F-bounded case), resolves via the
+    /// foreign binder's identifier lookup. Falls back to `ANY` for unsupported shapes.
+    fn resolve_cross_file_type_arg(&mut self, arg_idx: NodeIndex, file_idx: u32) -> TypeId {
+        let sym_id = {
+            let arena = self.ctx.get_arena_for_file(file_idx);
+            let binder = self
+                .ctx
+                .get_binder_for_file(file_idx as usize)
+                .unwrap_or(self.ctx.binder);
+            arena
+                .get(arg_idx)
+                .and_then(|node| arena.get_type_ref(node))
+                .and_then(|tr| binder.resolve_identifier(arena, tr.type_name))
+        };
+        if let Some(sym_id) = sym_id {
+            let lazy = self.resolve_symbol_as_lazy_type(sym_id);
+            self.resolve_lazy_type(lazy)
+        } else {
+            TypeId::ANY
+        }
     }
 
     fn mapped_constraint_accepts_property_name(&self, constraint: TypeId, prop_name: &str) -> bool {
@@ -529,6 +824,15 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+        ) && let Some(merged_result) =
+            self.resolve_actual_lib_namespace_merged_property(resolved_object_type, prop_name)
+        {
+            return merged_result;
+        }
+
         // If property not found and the type is a Mapped type (e.g. { [P in Keys]: T }),
         // the solver's NoopResolver can't resolve Lazy(DefId) constraints (type alias refs).
         // Evaluate the mapped type via the solver's TypeEvaluator with full resolver
@@ -548,6 +852,49 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn resolve_actual_lib_namespace_merged_property(
+        &mut self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> Option<tsz_solver::operations::property::PropertyAccessResult> {
+        let sym_id =
+            crate::query_boundaries::common::type_shape_symbol(self.ctx.types, object_type)?;
+        if !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+            return None;
+        }
+
+        let export_name = {
+            let lib_binders = self.get_lib_binders();
+            let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+            symbol.escaped_name.clone()
+        };
+
+        // `Intl` interfaces are namespace exports split across multiple lib files.
+        // If a stale single-file shape misses a property, re-query the namespace
+        // export's merged direct-lib type before reporting TS2339.
+        let namespace = "Intl";
+        let export_sym_id = self.resolve_lib_namespace_export_symbol(namespace, &export_name)?;
+        if export_sym_id != sym_id {
+            return None;
+        }
+
+        let cache_name = format!("{namespace}.{export_name}");
+        self.ctx.lib_type_resolution_cache.remove(&cache_name);
+        let merged_type = self.resolve_lib_interface_type_by_symbol(&cache_name, export_sym_id)?;
+        if merged_type == object_type {
+            return None;
+        }
+
+        let merged_result = self.resolve_property_access_via_boundary(merged_type, prop_name);
+        match merged_result {
+            tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+            | tsz_solver::operations::property::PropertyAccessResult::PossiblyNullOrUndefined {
+                ..
+            } => Some(merged_result),
+            _ => None,
+        }
     }
 
     /// Pre-resolve a mapped type's constraint through the checker's `TypeEnvironment`.
@@ -599,7 +946,11 @@ impl<'a> CheckerState<'a> {
         let mapped = self.ctx.types.mapped_type(mapped_id);
 
         let prop_atom = self.ctx.types.intern_string(prop_name);
-        let cache_key = (mapped_type, prop_atom);
+        let cache_key = (
+            mapped_type,
+            TypeResolver::resolver_generation(&self.ctx),
+            prop_atom,
+        );
 
         if let Some(cached) = self
             .ctx
@@ -610,10 +961,10 @@ impl<'a> CheckerState<'a> {
             .copied()
         {
             return Some(match cached {
-                Some(type_id) => tsz_solver::operations::property::PropertyAccessResult::Success {
-                    type_id,
+                Some(entry) => tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id: entry.type_id,
                     write_type: None,
-                    from_index_signature: false,
+                    from_index_signature: entry.from_index_signature,
                 },
                 None => tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
                     type_id: mapped_type,
@@ -664,11 +1015,12 @@ impl<'a> CheckerState<'a> {
                 prop_name,
             )
         {
-            self.ctx
-                .narrowing_cache
-                .property_cache
-                .borrow_mut()
-                .insert(cache_key, Some(property_type));
+            self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
+                cache_key,
+                Some(tsz_solver::narrowing::CachedPropertyType::explicit(
+                    property_type,
+                )),
+            );
             return Some(
                 tsz_solver::operations::property::PropertyAccessResult::Success {
                     type_id: property_type,
@@ -801,11 +1153,12 @@ impl<'a> CheckerState<'a> {
             _ => self.ctx.types.factory().union(property_types),
         };
 
-        self.ctx
-            .narrowing_cache
-            .property_cache
-            .borrow_mut()
-            .insert(cache_key, Some(property_type));
+        self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
+            cache_key,
+            Some(tsz_solver::narrowing::CachedPropertyType::explicit(
+                property_type,
+            )),
+        );
 
         Some(
             tsz_solver::operations::property::PropertyAccessResult::Success {

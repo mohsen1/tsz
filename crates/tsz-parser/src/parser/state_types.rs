@@ -286,7 +286,7 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_type_predicate(
             syntax_kind_ext::TYPE_PREDICATE,
@@ -344,7 +344,7 @@ impl ParserState {
         // Parse false type
         let false_type = self.parse_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_conditional_type(
             syntax_kind_ext::CONDITIONAL_TYPE,
@@ -380,7 +380,11 @@ impl ParserState {
             types.push(self.parse_intersection_type());
         }
 
-        let end_pos = self.token_end();
+        // Use token_full_start() (start of next un-consumed token's trivia) rather than
+        // token_end() (end of that token). After the loop exits, the scanner sits on the
+        // first token that is NOT part of this union type (e.g. `;`). token_end() would
+        // overshoot to include that token's text, causing node_text() to return "A | B;".
+        let end_pos = self.token_full_start();
         self.arena.add_composite_type(
             syntax_kind_ext::UNION_TYPE,
             start_pos,
@@ -424,7 +428,7 @@ impl ParserState {
             fallback_next_import_type_options = false;
         }
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_composite_type(
             syntax_kind_ext::INTERSECTION_TYPE,
             start_pos,
@@ -672,7 +676,7 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         let kind = if is_constructor {
             syntax_kind_ext::CONSTRUCTOR_TYPE
@@ -936,7 +940,10 @@ impl ParserState {
         start_pos: u32,
         base_type: NodeIndex,
     ) -> NodeIndex {
-        if self.is_token(SyntaxKind::OpenBracketToken) && !self.scanner.has_preceding_line_break() {
+        if self.is_token(SyntaxKind::OpenBracketToken) {
+            if self.look_ahead_is_computed_type_member_boundary() {
+                return base_type;
+            }
             return self.parse_array_type(start_pos, base_type);
         }
 
@@ -1075,7 +1082,7 @@ impl ParserState {
         let inner = self.parse_type();
         self.context_flags = saved_flags;
         self.parse_expected(SyntaxKind::CloseParenToken);
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_wrapped_type(
             syntax_kind_ext::PARENTHESIZED_TYPE,
             start_pos,
@@ -1155,7 +1162,7 @@ impl ParserState {
             self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
             let element_type = self.parse_type();
             self.context_flags = saved_flags;
-            let rest_end = self.token_end();
+            let rest_end = self.token_full_start();
             let rest_node = self.arena.add_wrapped_type(
                 syntax_kind_ext::REST_TYPE,
                 start_pos,
@@ -1169,7 +1176,7 @@ impl ParserState {
             // (TS17019), but tsc still parses it as an optional wrapping the
             // rest so the type displays as `[...?T]` in declaration emit.
             if self.parse_optional(SyntaxKind::QuestionToken) {
-                let end_pos = self.token_end();
+                let end_pos = self.token_full_start();
                 let (diag_start, suggestion) = if let Some(node) = self.arena.get(element_type) {
                     (
                         node.pos,
@@ -1240,7 +1247,7 @@ impl ParserState {
 
         // Check for optional marker: T?
         if self.parse_optional(SyntaxKind::QuestionToken) {
-            let end_pos = self.token_end();
+            let end_pos = self.token_full_start();
             return self.arena.add_wrapped_type(
                 syntax_kind_ext::OPTIONAL_TYPE,
                 start_pos,
@@ -1269,7 +1276,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ColonToken);
         let type_node = self.parse_named_tuple_member_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         // Create a named tuple member node
         self.arena.add_named_tuple_member(
@@ -1295,7 +1302,7 @@ impl ParserState {
             self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
             let element_type = self.parse_type();
             self.context_flags = saved_flags;
-            let rest_end = self.token_end();
+            let rest_end = self.token_full_start();
             self.arena.add_wrapped_type(
                 syntax_kind_ext::REST_TYPE,
                 start_pos,
@@ -1314,7 +1321,7 @@ impl ParserState {
         };
 
         if self.parse_optional(SyntaxKind::QuestionToken) {
-            let end_pos = self.token_end();
+            let end_pos = self.token_full_start();
             return self.arena.add_wrapped_type(
                 syntax_kind_ext::OPTIONAL_TYPE,
                 start_pos,
@@ -1352,7 +1359,7 @@ impl ParserState {
         }
 
         self.parse_expected(SyntaxKind::CloseBracketToken);
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         let tuple = self.arena.add_tuple_type(
             syntax_kind_ext::TUPLE_TYPE,
@@ -1387,7 +1394,7 @@ impl ParserState {
             }
         };
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_literal_type(
             syntax_kind_ext::LITERAL_TYPE,
@@ -1414,7 +1421,7 @@ impl ParserState {
             self.parse_numeric_literal()
         };
 
-        let prefix_end = self.token_end();
+        let prefix_end = self.token_full_start();
 
         // Create prefix unary expression node
         let prefix_expr = self.arena.add_unary_expr(
@@ -1452,8 +1459,11 @@ impl ParserState {
             // diagnostics (e.g. `'with' expected`) instead of expression fallback.
             let saved_import_type_options_context = self.in_import_type_options_context;
             self.in_import_type_options_context = true;
+            let diag_count_before = self.parse_diagnostics.len();
             let parsed = self.parse_import_expression();
             self.in_import_type_options_context = saved_import_type_options_context;
+            let had_parse_errors = self.parse_diagnostics.len() > diag_count_before;
+            self.check_import_type_argument_is_string_literal(parsed, had_parse_errors);
             parsed
         } else {
             self.parse_entity_name_allow_reserved()
@@ -1518,27 +1528,7 @@ impl ParserState {
         self.in_import_type_options_context = saved_import_type_options_context;
         let had_parse_errors = self.parse_diagnostics.len() > diag_count_before;
 
-        // Check that the argument is a string literal (TS1141)
-        // Only emit if the import expression parsed without errors — if there are
-        // already parse errors (e.g. during error recovery on garbage input), the
-        // TS1141 would be cascading noise that tsc does not emit.
-        if !had_parse_errors
-            && let Some(call_node) = self.arena.get(argument)
-            && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
-            && let Some(call_data) = self.arena.get_call_expr(call_node)
-            && let Some(args) = &call_data.arguments
-            && let Some(&first_arg) = args.nodes.first()
-            && let Some(arg_node) = self.arena.get(first_arg)
-            && arg_node.kind != SyntaxKind::StringLiteral as u16
-        {
-            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.parse_error_at(
-                arg_node.pos,
-                arg_node.end.saturating_sub(arg_node.pos),
-                diagnostic_messages::STRING_LITERAL_EXPECTED,
-                diagnostic_codes::STRING_LITERAL_EXPECTED,
-            );
-        }
+        self.check_import_type_argument_is_string_literal(argument, had_parse_errors);
 
         // Parse member access after import: import("./a").Type.SubType
         let mut qualifier = argument;
@@ -1583,6 +1573,33 @@ impl ParserState {
         )
     }
 
+    fn check_import_type_argument_is_string_literal(
+        &mut self,
+        import_call: NodeIndex,
+        had_parse_errors: bool,
+    ) {
+        // Only emit if the import expression parsed without errors — if there are
+        // already parse errors (e.g. during error recovery on garbage input), the
+        // TS1141 would be cascading noise that tsc does not emit.
+        if !had_parse_errors
+            && let Some(call_node) = self.arena.get(import_call)
+            && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call_data) = self.arena.get_call_expr(call_node)
+            && let Some(args) = &call_data.arguments
+            && let Some(&first_arg) = args.nodes.first()
+            && let Some(arg_node) = self.arena.get(first_arg)
+            && arg_node.kind != SyntaxKind::StringLiteral as u16
+        {
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at(
+                arg_node.pos,
+                arg_node.end.saturating_sub(arg_node.pos),
+                diagnostic_messages::STRING_LITERAL_EXPECTED,
+                diagnostic_codes::STRING_LITERAL_EXPECTED,
+            );
+        }
+    }
+
     /// Parse keyof type: keyof T
     pub(crate) fn parse_keyof_type(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
@@ -1592,7 +1609,7 @@ impl ParserState {
         // Parse the type operand
         let type_node = self.parse_primary_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_type_operator(
             syntax_kind_ext::TYPE_OPERATOR,
@@ -1614,7 +1631,7 @@ impl ParserState {
         // Parse the type operand (unique symbol)
         let type_node = self.parse_primary_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_type_operator(
             syntax_kind_ext::TYPE_OPERATOR,
@@ -1636,7 +1653,7 @@ impl ParserState {
         // Parse the type operand
         let type_node = self.parse_primary_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_type_operator(
             syntax_kind_ext::TYPE_OPERATOR,
@@ -1665,7 +1682,7 @@ impl ParserState {
         // Parse the type parameter with speculative infer-extends handling
         let type_parameter = self.parse_type_parameter_of_infer_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_infer_type(
             syntax_kind_ext::INFER_TYPE,
@@ -1724,7 +1741,7 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_type_parameter(
             crate::parser::syntax_kind_ext::TYPE_PARAMETER,
@@ -1747,7 +1764,7 @@ impl ParserState {
         if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral) {
             // Simple template literal type with no substitutions: `hello`
             let head = self.parse_template_literal_head();
-            let end_pos = self.token_end();
+            let end_pos = self.token_full_start();
 
             return self.arena.add_template_literal_type(
                 syntax_kind_ext::TEMPLATE_LITERAL_TYPE,
@@ -1779,7 +1796,7 @@ impl ParserState {
 
             // Parse the template middle/tail literal
             let literal = self.parse_template_literal_span();
-            let span_end = self.token_end();
+            let span_end = self.token_full_start();
 
             // Create a template span node
             // Note: We reuse TemplateSpanData, using 'expression' field for the type node
@@ -1799,7 +1816,7 @@ impl ParserState {
             }
         }
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_template_literal_type(
             syntax_kind_ext::TEMPLATE_LITERAL_TYPE,
@@ -1821,7 +1838,7 @@ impl ParserState {
         let literal_end = self.token_end();
         self.report_invalid_string_or_template_escape_errors();
         self.next_token();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         if is_unterminated {
             self.error_unterminated_template_literal_at(start_pos, literal_end);
         }
@@ -2492,45 +2509,59 @@ impl ParserState {
         }
 
         let mut args = Vec::new();
-        let mut depth = 1;
+        let mut expecting_argument = true;
+        let mut closed_type_arguments = false;
+        let mut has_trailing_comma = false;
 
-        // Parse type arguments
-        while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
-            // Try to parse a type
-            if args.is_empty() || self.is_token(SyntaxKind::CommaToken) {
-                if !args.is_empty() {
-                    self.next_token(); // consume comma
-                }
-
-                // Check for nested < (generic types within type arguments)
-                let type_node = self.parse_type_argument_in_type_arguments();
-                args.push(type_node);
+        while !self.is_token(SyntaxKind::EndOfFileToken) {
+            if self.is_plain_greater_than_for_expression_type_arguments() {
+                closed_type_arguments = true;
+                break;
             }
 
-            if self.is_plain_greater_than_for_expression_type_arguments() {
-                depth -= 1;
-            } else if self.is_token(SyntaxKind::CommaToken) {
-                // Comma indicates another type argument follows.
-            } else if self.is_token(SyntaxKind::SemicolonToken)
+            if self.is_token(SyntaxKind::CommaToken) {
+                let comma_can_be_trailing = !expecting_argument;
+                if expecting_argument {
+                    self.error_type_expected();
+                    args.push(self.error_node());
+                }
+
+                self.next_token();
+                if comma_can_be_trailing
+                    && self.is_plain_greater_than_for_expression_type_arguments()
+                {
+                    has_trailing_comma = true;
+                }
+                expecting_argument = true;
+                continue;
+            }
+
+            if !expecting_argument {
+                break;
+            }
+
+            if self.is_token(SyntaxKind::SemicolonToken)
                 || self.is_token(SyntaxKind::CloseBraceToken)
                 || self.is_token(SyntaxKind::EndOfFileToken)
             {
-                // Invalid - not type arguments
-                break;
-            } else {
-                // Something unexpected - might not be type arguments
                 break;
             }
+
+            let type_node = self.parse_type_argument_in_type_arguments();
+            args.push(type_node);
+            expecting_argument = false;
         }
 
-        if depth == 0 {
+        if closed_type_arguments {
             // Successfully parsed type arguments, now consume >
             self.parse_expected_greater_than();
 
             // Check if the following token indicates these were type arguments
             // (call, tagged template, or instantiation expression)
             if self.can_follow_type_arguments_in_expression() {
-                return Some(self.make_node_list(args));
+                let mut list = self.make_node_list(args);
+                list.has_trailing_comma = has_trailing_comma;
+                return Some(list);
             }
         }
 
@@ -2600,6 +2631,9 @@ impl ParserState {
         let mut current = element_type;
 
         while self.is_token(SyntaxKind::OpenBracketToken) {
+            if self.look_ahead_is_computed_type_member_boundary() {
+                break;
+            }
             if self.look_ahead_is_index_signature() {
                 break;
             }
@@ -2609,7 +2643,7 @@ impl ParserState {
             if self.is_token(SyntaxKind::CloseBracketToken) {
                 // Array type: T[]
                 self.next_token();
-                let end_pos = self.token_end();
+                let end_pos = self.token_full_start();
 
                 current = self.arena.add_array_type(
                     syntax_kind_ext::ARRAY_TYPE,
@@ -2633,7 +2667,7 @@ impl ParserState {
                 // Indexed access type: T[K]
                 let index_type = self.parse_type();
                 self.parse_expected(SyntaxKind::CloseBracketToken);
-                let end_pos = self.token_end();
+                let end_pos = self.token_full_start();
 
                 current = self.arena.add_indexed_access_type(
                     syntax_kind_ext::INDEXED_ACCESS_TYPE,
@@ -2648,6 +2682,66 @@ impl ParserState {
         }
 
         current
+    }
+
+    fn look_ahead_is_computed_type_member_boundary(&mut self) -> bool {
+        if !self.scanner.has_preceding_line_break() || !self.is_token(SyntaxKind::OpenBracketToken)
+        {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token(); // skip `[`
+        let empty_brackets = self.is_token(SyntaxKind::CloseBracketToken);
+        let mut bracket_depth = 1_u32;
+        while bracket_depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
+            match self.token() {
+                SyntaxKind::OpenBracketToken => {
+                    bracket_depth += 1;
+                    self.next_token();
+                }
+                SyntaxKind::CloseBracketToken => {
+                    bracket_depth -= 1;
+                    self.next_token();
+                }
+                _ => {
+                    self.next_token();
+                }
+            }
+        }
+
+        let is_boundary = if bracket_depth == 0 {
+            match self.token() {
+                SyntaxKind::ColonToken | SyntaxKind::OpenParenToken | SyntaxKind::LessThanToken => {
+                    true
+                }
+                SyntaxKind::SemicolonToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::CloseBraceToken
+                    if empty_brackets =>
+                {
+                    true
+                }
+                SyntaxKind::QuestionToken => {
+                    self.next_token();
+                    matches!(
+                        self.token(),
+                        SyntaxKind::ColonToken
+                            | SyntaxKind::OpenParenToken
+                            | SyntaxKind::LessThanToken
+                    )
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_boundary
     }
 
     /// Check if current keyword can be used as a property name

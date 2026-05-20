@@ -16,13 +16,15 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::file_extensions::is_ts_declaration_file_name;
 use tsz_common::limits::MAX_PARSER_RECURSION_DEPTH;
 
+use std::cell::Cell;
+
 use crate::parser::{
     NodeIndex, NodeList,
     node::{IdentifierData, NodeArena},
     syntax_kind_ext,
 };
 use rustc_hash::FxHashMap;
-use tracing::trace;
+use tracing::{trace, warn};
 use tsz_common::interner::Atom;
 use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
 use tsz_scanner::{SyntaxKind, token_is_keyword};
@@ -82,7 +84,8 @@ pub const CONTEXT_FLAG_GENERATOR_MEMBER_NAME: u32 = 131072;
 pub const CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION: u32 = 262144;
 /// Context flag: parsing a binding pattern as a function parameter name.
 pub const CONTEXT_FLAG_PARAMETER_BINDING_PATTERN: u32 = 524288;
-
+/// Context flag: parsing a function-like body.
+pub const CONTEXT_FLAG_FUNCTION_BODY: u32 = 1048576;
 // =============================================================================
 // Parse Diagnostic
 // =============================================================================
@@ -151,6 +154,12 @@ pub struct ParserState {
     /// not suppress a follow-up TS1005 the parser emits at the same position
     /// the way tsc's single `parseDiagnostics` vec does.
     pub(crate) scanner_diagnostics_high_water_mark: usize,
+    /// Tracks whether we've already reported a usize->u32 offset overflow
+    /// during the current parse session to avoid log spam on pathological input.
+    pub(crate) reported_offset_overflow: Cell<bool>,
+    /// Tracks whether we've already reported a u32->u16 node-flag overflow
+    /// during the current parse session to avoid log spam on pathological input.
+    pub(crate) reported_node_flag_overflow: Cell<bool>,
     /// Stack of label scopes for duplicate label detection (TS1114)
     /// Each scope is a map from label name to the position where it was first defined
     pub(crate) label_scopes: Vec<FxHashMap<String, u32>>,
@@ -164,6 +173,9 @@ pub struct ParserState {
     /// Whether the most recently parsed named import list hit a structural
     /// recovery path rather than a semantic-only specifier error.
     pub(crate) last_named_imports_had_structural_error: bool,
+    /// Whether the current import/export specifier consumed scanner debris from
+    /// an invalid braced unicode escape in an identifier tail.
+    pub(crate) current_specifier_recovered_braced_unicode_escape_debris: bool,
     /// When recovery consumes a malformed arrow-body `}` directly, keep a small
     /// number of following module-closing braces in the token stream so outer
     /// list recovery can report them as stray braces.
@@ -196,6 +208,20 @@ pub struct ParserState {
     /// Recovery already reported a missing `)` at a later synchronized position,
     /// so the immediate caller should suppress its fallback `parse_expected(')')`.
     pub(crate) suppress_next_missing_close_paren_error_once: bool,
+    /// Class-member recovery has already treated a previously consumed `}` as the
+    /// class close, so the enclosing class parser should not also emit `}` expected.
+    pub(crate) suppress_next_missing_class_close_brace_error_once: bool,
+    /// A class declaration recovered from a missing `{` at a stray `.`, so the
+    /// next non-block `}` should be treated as a stray statement-list token.
+    pub(crate) non_block_close_brace_statement_errors_remaining: u8,
+    /// Recovery has already consumed stray outer `}` tokens, so do not add a
+    /// final missing-`}` cascade at EOF for the abandoned statement-list
+    /// container. The stored depth scopes the suppression to that container,
+    /// so nested EOF close-brace expectations still report their own errors.
+    pub(crate) suppress_missing_close_brace_at_eof_statement_depth: Option<u32>,
+    /// Number of active block-like statement lists being parsed. Used only to
+    /// scope abandoned-container EOF close-brace suppression.
+    pub(crate) statement_list_depth: u32,
     /// Speculative async-arrow parsing consumed `=>` while recovering a malformed
     /// parameter list, so the async-arrow candidate must roll back.
     pub(crate) saw_arrow_parameter_recovery: bool,
@@ -212,6 +238,10 @@ pub struct ParserState {
     /// statement that deferred a missing `}`. When the statement terminator is
     /// reached, emit TS1005 `'}' expected.` at `;` to match tsc recovery.
     pub(crate) pending_jsx_missing_close_brace_in_expression_statement: u32,
+    /// Extra expression statements recovered while parsing a preceding statement.
+    /// Used for invalid conditional tails after block-bodied arrows where tsc
+    /// still emits the branch expressions as standalone statements.
+    pub(crate) pending_recovered_expression_statements: Vec<NodeIndex>,
     /// Current lower bound for scanning parse diagnostics when JSX recovery
     /// absorbs statement terminators into `JsxText`.
     pub(crate) jsx_missing_brace_semicolon_window_start: Option<u32>,
@@ -244,15 +274,35 @@ impl ParserState {
     #[inline]
     #[must_use]
     pub(crate) fn u32_from_usize(&self, value: usize) -> u32 {
-        let _ = self;
-        u32::try_from(value).expect("parser offsets must fit in u32")
+        match u32::try_from(value) {
+            Ok(value) => value,
+            Err(_) => {
+                if !self.reported_offset_overflow.replace(true) {
+                    warn!(
+                        overflow_value = value,
+                        "parser offset overflowed u32; clamping to u32::MAX"
+                    );
+                }
+                u32::MAX
+            }
+        }
     }
 
     #[inline]
     #[must_use]
     pub(crate) fn u16_from_node_flags(&self, value: u32) -> u16 {
-        let _ = self;
-        u16::try_from(value).expect("parser node flags must fit in u16")
+        match u16::try_from(value) {
+            Ok(value) => value,
+            Err(_) => {
+                if !self.reported_node_flag_overflow.replace(true) {
+                    warn!(
+                        overflow_value = value,
+                        "parser node flags overflowed u16; truncating high bits"
+                    );
+                }
+                (value & u32::from(u16::MAX)) as u16
+            }
+        }
     }
 
     /// Create a new Parser for the given source text.
@@ -285,11 +335,14 @@ impl ParserState {
             recursion_depth: 0,
             last_error_pos: 0,
             scanner_diagnostics_high_water_mark: 0,
+            reported_offset_overflow: Cell::new(false),
+            reported_node_flag_overflow: Cell::new(false),
             label_scopes: vec![FxHashMap::default()],
             seen_module_indicator: false,
             last_named_imports_consumed_closing_brace: false,
             last_named_imports_recovered_to_from: false,
             last_named_imports_had_structural_error: false,
+            current_specifier_recovered_braced_unicode_escape_debris: false,
             deferred_module_close_braces: 0,
             abort_intersection_continuation: false,
             deferred_type_member_close_braces: 0,
@@ -299,11 +352,16 @@ impl ParserState {
             import_attribute_tail_recovered: false,
             suppress_object_literal_comma_once: false,
             suppress_next_missing_close_paren_error_once: false,
+            suppress_next_missing_class_close_brace_error_once: false,
+            non_block_close_brace_statement_errors_remaining: 0,
+            suppress_missing_close_brace_at_eof_statement_depth: None,
+            statement_list_depth: 0,
             saw_arrow_parameter_recovery: false,
             pending_failed_async_arrow_colon_recovery: false,
             type_member_container_depth: 0,
             in_tagged_template: false,
             pending_jsx_missing_close_brace_in_expression_statement: 0,
+            pending_recovered_expression_statements: Vec::new(),
             jsx_missing_brace_semicolon_window_start: None,
             suppress_next_jsx_missing_brace_at_semicolon: false,
             in_jsx_attribute_initializer_element: false,
@@ -325,12 +383,15 @@ impl ParserState {
         self.node_count = 0;
         self.recursion_depth = 0;
         self.last_error_pos = 0;
+        self.reported_offset_overflow.set(false);
+        self.reported_node_flag_overflow.set(false);
         self.label_scopes.clear();
         self.label_scopes.push(FxHashMap::default());
         self.seen_module_indicator = false;
         self.last_named_imports_consumed_closing_brace = false;
         self.last_named_imports_recovered_to_from = false;
         self.last_named_imports_had_structural_error = false;
+        self.current_specifier_recovered_braced_unicode_escape_debris = false;
         self.deferred_module_close_braces = 0;
         self.deferred_type_member_close_braces = 0;
         self.abort_intersection_continuation = false;
@@ -340,11 +401,16 @@ impl ParserState {
         self.import_attribute_tail_recovered = false;
         self.suppress_object_literal_comma_once = false;
         self.suppress_next_missing_close_paren_error_once = false;
+        self.suppress_next_missing_class_close_brace_error_once = false;
+        self.non_block_close_brace_statement_errors_remaining = 0;
+        self.suppress_missing_close_brace_at_eof_statement_depth = None;
+        self.statement_list_depth = 0;
         self.saw_arrow_parameter_recovery = false;
         self.pending_failed_async_arrow_colon_recovery = false;
         self.type_member_container_depth = 0;
         self.in_tagged_template = false;
         self.pending_jsx_missing_close_brace_in_expression_statement = 0;
+        self.pending_recovered_expression_statements.clear();
         self.jsx_missing_brace_semicolon_window_start = None;
         self.suppress_next_jsx_missing_brace_at_semicolon = false;
         self.in_jsx_attribute_initializer_element = false;
@@ -542,6 +608,110 @@ impl ParserState {
     pub(crate) fn next_token(&mut self) -> SyntaxKind {
         self.current_token = self.scanner.scan();
         self.current_token
+    }
+
+    /// Returns true when the current `Unknown` token is the leading backslash
+    /// of scanner debris for a braced unicode escape (`\u{...}`).
+    pub(crate) fn current_unknown_starts_braced_unicode_escape_debris(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::Unknown) || self.scanner.get_token_text_ref() != "\\" {
+            return false;
+        }
+
+        let unknown_end = self.token_end();
+        let saved_token = self.current_token;
+        let saved_state = self.scanner.save_state();
+
+        self.next_token();
+        let saw_escape_u = self.token_pos() == unknown_end
+            && self.is_identifier_or_keyword()
+            && self.scanner.get_token_text_ref() == "u";
+        let u_end = self.token_end();
+
+        let result = if saw_escape_u {
+            self.next_token();
+            self.token_pos() == u_end && self.is_token(SyntaxKind::OpenBraceToken)
+        } else {
+            false
+        };
+
+        self.scanner.restore_state(saved_state);
+        self.current_token = saved_token;
+        result
+    }
+
+    /// Consume the current invalid-character token and the adjacent `u` token
+    /// from braced unicode escape debris, leaving the parser at `{`.
+    pub(crate) fn consume_braced_unicode_escape_debris_after_unknown(&mut self) {
+        debug_assert!(self.current_unknown_starts_braced_unicode_escape_debris());
+        self.parse_error_at_current_token(
+            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+            tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+        );
+        self.next_token(); // consume `\`
+        if self.is_identifier_or_keyword() && self.scanner.get_token_text_ref() == "u" {
+            self.next_token(); // consume `u`, leaving `{`
+        }
+    }
+
+    /// Returns true when the current `Unknown` token is non-braced
+    /// backslash/escape debris from an invalid unicode escape in a declaration
+    /// identifier.
+    pub(crate) fn current_unknown_starts_invalid_unicode_identifier_debris(&self) -> bool {
+        if !self.is_token(SyntaxKind::Unknown) {
+            return false;
+        }
+
+        let src = self.scanner.source_text();
+        let start = self.scanner.get_token_start();
+        let bytes = src.as_bytes();
+        bytes.get(start) == Some(&b'\\')
+            && bytes.get(start + 1) == Some(&b'u')
+            && bytes.get(start + 2) != Some(&b'{')
+    }
+
+    /// Recover an invalid unicode escape that appears where a declaration
+    /// identifier is required. `tsc` drops the leading backslash and keeps the
+    /// `u...` debris as identifier text, optionally merging the adjacent
+    /// identifier token when the scanner split after a valid-but-illegal
+    /// identifier-start escape such as `\u0031a`.
+    pub(crate) fn parse_recovered_invalid_unicode_escape_identifier(&mut self) -> NodeIndex {
+        debug_assert!(self.current_unknown_starts_invalid_unicode_identifier_debris());
+        let start_pos = self.token_pos();
+        let mut end_pos = self.token_end();
+        let token_text = self.scanner.get_token_text_ref();
+        let mut recovered = token_text
+            .strip_prefix('\\')
+            .unwrap_or(token_text)
+            .to_string();
+
+        self.parse_error_at_current_token(
+            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+            tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+        );
+        self.next_token();
+
+        while self.token_pos() == end_pos && self.is_identifier_or_keyword() {
+            let text = if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
+                self.scanner.get_token_value_ref().to_string()
+            } else {
+                self.scanner.get_token_text_ref().to_string()
+            };
+            recovered.push_str(&text);
+            end_pos = self.token_end();
+            self.next_token();
+        }
+
+        self.arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            start_pos,
+            end_pos,
+            IdentifierData {
+                atom: Atom::NONE,
+                escaped_text: recovered,
+                original_text: None,
+                type_arguments: None,
+            },
+        )
     }
 
     /// Consume a keyword token, checking for TS1260 (keywords cannot contain escape characters).
@@ -818,6 +988,10 @@ impl ParserState {
         (self.context_flags & CONTEXT_FLAG_PARAMETER_DEFAULT) != 0
     }
 
+    pub(crate) const fn in_function_body_context(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_FUNCTION_BODY) != 0
+    }
+
     /// Check if 'in' is disallowed as a binary operator (e.g., in for-statement initializers)
     #[inline]
     pub(crate) const fn in_disallow_in_context(&self) -> bool {
@@ -966,6 +1140,23 @@ impl ParserState {
         {
             self.suppress_next_missing_close_paren_error_once = false;
             if !self.is_token(SyntaxKind::CloseParenToken) {
+                return false;
+            }
+        }
+        if kind == SyntaxKind::CloseBraceToken
+            && self.suppress_next_missing_class_close_brace_error_once
+        {
+            self.suppress_next_missing_class_close_brace_error_once = false;
+            if !self.is_token(SyntaxKind::CloseBraceToken) {
+                return false;
+            }
+        }
+        if kind == SyntaxKind::CloseBraceToken && self.is_token(SyntaxKind::EndOfFileToken) {
+            let suppress_for_this_statement_list = self
+                .suppress_missing_close_brace_at_eof_statement_depth
+                .is_some_and(|depth| depth == self.statement_list_depth);
+            if suppress_for_this_statement_list {
+                self.suppress_missing_close_brace_at_eof_statement_depth = None;
                 return false;
             }
         }
@@ -2976,6 +3167,13 @@ impl ParserState {
         }
     }
 
+    pub(crate) fn drain_pending_recovered_expression_statements(
+        &mut self,
+        statements: &mut Vec<NodeIndex>,
+    ) {
+        statements.append(&mut self.pending_recovered_expression_statements);
+    }
+
     /// Get operator precedence
     pub(crate) const fn get_operator_precedence(&self, token: SyntaxKind) -> u8 {
         // NOTE: Assignment operators (=, +=, -=, etc.) are NOT handled by the
@@ -3061,6 +3259,42 @@ impl ParserState {
             current_scope.insert(label_name.to_string(), label_pos);
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ParserState;
+
+    #[test]
+    fn u32_from_usize_clamps_overflow_without_panicking() {
+        let parser = ParserState::new("a.ts".to_string(), String::new());
+
+        assert_eq!(parser.u32_from_usize(usize::MAX), u32::MAX);
+        assert!(parser.reported_offset_overflow.get());
+    }
+
+    #[test]
+    fn u16_from_node_flags_truncates_overflow_without_panicking() {
+        let parser = ParserState::new("a.ts".to_string(), String::new());
+
+        assert_eq!(parser.u16_from_node_flags(0x1_0001), 1);
+        assert!(parser.reported_node_flag_overflow.get());
+    }
+
+    #[test]
+    fn reset_clears_conversion_overflow_markers() {
+        let mut parser = ParserState::new("a.ts".to_string(), String::new());
+        let _ = parser.u32_from_usize(usize::MAX);
+        let _ = parser.u16_from_node_flags(0x1_0001);
+
+        assert!(parser.reported_offset_overflow.get());
+        assert!(parser.reported_node_flag_overflow.get());
+
+        parser.reset("b.ts".to_string(), String::new());
+
+        assert!(!parser.reported_offset_overflow.get());
+        assert!(!parser.reported_node_flag_overflow.get());
     }
 }
 

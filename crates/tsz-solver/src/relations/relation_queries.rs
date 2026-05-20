@@ -4,9 +4,9 @@
 //! overlap) behind one API so checker code can call Solver queries instead
 //! of wiring checker internals directly to concrete checker engines.
 
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
 use crate::classes::inheritance::InheritanceGraph;
+use crate::construction::TypeDatabase;
 use crate::operations::AssignabilityChecker;
 use crate::relations::compat::{
     AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider,
@@ -87,6 +87,23 @@ impl Default for RelationPolicy {
 }
 
 impl RelationPolicy {
+    /// Construct the historical no-flags compatibility policy.
+    ///
+    /// This is equivalent to `RelationPolicy::from_flags(0)`, but keeps
+    /// default relation wrappers on a typed policy constructor instead of
+    /// spelling the legacy packed flag protocol at every no-flags call site.
+    pub const fn unflagged_compatibility() -> Self {
+        Self {
+            flags: 0,
+            strict_subtype_checking: false,
+            strict_any_propagation: false,
+            any_propagation_mode: AnyPropagationMode::All,
+            assume_related_on_cycle: true,
+            skip_weak_type_checks: false,
+            erase_generics: true,
+        }
+    }
+
     /// Construct a policy from the legacy packed `u16` bitmask.
     ///
     /// Only explicit bits in `flags` are applied. In particular,
@@ -152,7 +169,7 @@ impl RelationPolicy {
     /// `config` field of a [`RelationCacheKey`]. Every behavior-affecting field
     /// on `RelationPolicy` must be reflected here.
     pub const fn cache_config(self) -> RelationCacheConfig {
-        let mut bits = RelationFlags::from_bits_truncate(self.flags as u32);
+        let mut bits = Self::cache_flags_from_packed(self.flags);
         if self.strict_subtype_checking {
             bits = bits.union(RelationFlags::STRICT_SUBTYPE_CHECKING);
         }
@@ -182,6 +199,59 @@ impl RelationPolicy {
         };
         RelationCacheConfig::new(bits, any_mode)
     }
+
+    const fn cache_flags_from_packed(flags: u16) -> RelationFlags {
+        let mut bits = RelationFlags::empty();
+        if flags & RelationCacheKey::FLAG_STRICT_NULL_CHECKS != 0 {
+            bits = bits.union(RelationFlags::STRICT_NULL_CHECKS);
+        }
+        if flags & RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES != 0 {
+            bits = bits.union(RelationFlags::STRICT_FUNCTION_TYPES);
+        }
+        if flags & RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES != 0 {
+            bits = bits.union(RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES);
+        }
+        if flags & RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS != 0 {
+            bits = bits.union(RelationFlags::NO_UNCHECKED_INDEXED_ACCESS);
+        }
+        if flags & RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE != 0 {
+            bits = bits.union(RelationFlags::DISABLE_METHOD_BIVARIANCE);
+        }
+        if flags & RelationCacheKey::FLAG_ALLOW_VOID_RETURN != 0 {
+            bits = bits.union(RelationFlags::ALLOW_VOID_RETURN);
+        }
+        if flags & RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST != 0 {
+            bits = bits.union(RelationFlags::ALLOW_BIVARIANT_REST);
+        }
+        if flags & RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT != 0 {
+            bits = bits.union(RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT);
+        }
+        if flags & RelationCacheKey::FLAG_NO_ERASE_GENERICS != 0 {
+            bits = bits.union(RelationFlags::NO_ERASE_GENERICS);
+        }
+        if flags & RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY != 0 {
+            bits = bits.union(RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY);
+        }
+        if flags & RelationFlags::STRICT_SUBTYPE_CHECKING.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::STRICT_SUBTYPE_CHECKING);
+        }
+        if flags & RelationFlags::STRICT_ANY_PROPAGATION.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::STRICT_ANY_PROPAGATION);
+        }
+        if flags & RelationFlags::SKIP_WEAK_TYPE_CHECKS.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::SKIP_WEAK_TYPE_CHECKS);
+        }
+        if flags & RelationFlags::ASSUME_RELATED_ON_CYCLE.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
+        }
+        if flags & RelationFlags::IN_CALLBACK_PARAM_CHECK.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::IN_CALLBACK_PARAM_CHECK);
+        }
+        if flags & RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16 != 0 {
+            bits = bits.union(RelationFlags::STRICT_READONLY_IDENTITY);
+        }
+        bits
+    }
 }
 
 /// Optional shared context needed by relation engines.
@@ -197,7 +267,10 @@ pub struct RelationContext<'a> {
 pub struct RelationResult {
     pub kind: RelationKind,
     pub related: bool,
+    /// Stack-depth limit (nesting) was exceeded → TS2321 "Excessive stack depth".
     pub depth_exceeded: bool,
+    /// Iteration-count budget was exhausted → TS2859 "Excessive complexity".
+    pub iteration_exceeded: bool,
 }
 
 impl RelationResult {
@@ -294,42 +367,67 @@ pub fn query_relation_with_overrides<
     )
     .entered();
 
-    let (related, depth_exceeded) = match kind {
+    let (related, depth_exceeded, iteration_exceeded) = match kind {
         RelationKind::Assignable => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
             let related = checker.is_assignable_with_overrides(source, target, overrides);
-            (related, checker.depth_exceeded())
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
         }
         RelationKind::AssignableBivariantCallbacks => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
             let _ = overrides;
             let related = checker.is_assignable_to_bivariant_callback(source, target);
-            (related, checker.depth_exceeded())
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
         }
         RelationKind::Subtype => {
             let mut checker = configured_subtype_checker(interner, resolver, policy, context);
             let related = checker.is_subtype_of(source, target);
-            (related, checker.depth_exceeded())
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
         }
         RelationKind::Overlap => {
             let checker = configured_subtype_checker(interner, resolver, policy, context);
-            (checker.are_types_overlapping(source, target), false)
+            let related = checker.are_types_overlapping(source, target);
+            (
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
+            )
         }
         RelationKind::RedeclarationIdentical => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
+            let related = checker.are_types_identical_for_redeclaration(source, target);
             (
-                checker.are_types_identical_for_redeclaration(source, target),
-                false,
+                related,
+                checker.depth_exceeded(),
+                checker.iteration_exceeded(),
             )
         }
     };
 
-    tracing::debug!(related, depth_exceeded, "query_relation result");
+    tracing::debug!(
+        related,
+        depth_exceeded,
+        iteration_exceeded,
+        "query_relation result"
+    );
 
     RelationResult {
         kind,
         related,
         depth_exceeded,
+        iteration_exceeded,
     }
 }
 
@@ -345,7 +443,7 @@ pub struct RelationQueryInputs<'a, R: TypeResolver, P: AssignabilityOverrideProv
     pub overrides: &'a P,
 }
 
-fn configured_compat_checker<'a, R: TypeResolver>(
+pub(crate) fn configured_compat_checker<'a, R: TypeResolver>(
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
     policy: RelationPolicy,
@@ -365,7 +463,7 @@ fn configured_compat_checker<'a, R: TypeResolver>(
     checker
 }
 
-fn configured_subtype_checker<'a, R: TypeResolver>(
+pub(crate) fn configured_subtype_checker<'a, R: TypeResolver>(
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
     policy: RelationPolicy,
@@ -541,7 +639,27 @@ pub fn check_application_variance<R: TypeResolver>(
             return None;
         }
     }
+    if alias_body_application_uses_type_parameters(db, resolver, def_id) {
+        return None;
+    }
     Some(false)
+}
+
+fn alias_body_application_uses_type_parameters<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    def_id: crate::def::DefId,
+) -> bool {
+    let Some(body) = resolver.resolve_lazy(def_id, db) else {
+        return false;
+    };
+    let Some(app_id) = crate::visitor::application_id(db, body) else {
+        return false;
+    };
+    let app = db.type_application(app_id);
+    app.args
+        .iter()
+        .any(|&arg| crate::visitors::visitor_predicates::contains_type_parameters(db, arg))
 }
 
 /// Check if two type parameters are assignable to each other.

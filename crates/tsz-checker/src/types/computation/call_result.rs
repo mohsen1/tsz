@@ -3,12 +3,15 @@
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
+use crate::query_boundaries::type_computation::core as expr_ops;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::TypeResolver;
 use tsz_solver::{ParamInfo, TupleElement, TypeId};
 
 pub(super) struct CallResultContext<'a> {
@@ -24,6 +27,47 @@ pub(super) struct CallResultContext<'a> {
 }
 
 impl<'a> CheckerState<'a> {
+    fn correlated_union_call_recovery_return(
+        &mut self,
+        callee_type: TypeId,
+        arg_index: usize,
+        actual: TypeId,
+    ) -> Option<TypeId> {
+        if !self.is_generic_indexed_access_surface(actual) {
+            return None;
+        }
+
+        let signatures =
+            common::get_call_signatures(self.ctx.types, callee_type).or_else(|| {
+                self.ctx
+                    .types
+                    .get_display_alias(callee_type)
+                    .and_then(|alias| common::get_call_signatures(self.ctx.types, alias))
+            })?;
+        if signatures.len() < 2 {
+            return None;
+        }
+
+        let param_types: Vec<TypeId> = signatures
+            .iter()
+            .filter_map(|signature| signature.params.get(arg_index).map(|param| param.type_id))
+            .collect();
+        if param_types.len() < 2 {
+            return None;
+        }
+
+        let param_union = self.ctx.types.factory().union(param_types);
+        if !self.is_assignable_to(actual, param_union) {
+            return None;
+        }
+
+        let return_types = signatures
+            .iter()
+            .map(|signature| signature.return_type)
+            .collect();
+        Some(self.ctx.types.factory().union(return_types))
+    }
+
     fn normalized_builtin_object_entries_return_type(
         &self,
         callee_expr: NodeIndex,
@@ -53,7 +97,7 @@ impl<'a> CheckerState<'a> {
                 name: None,
             },
             tsz_solver::TupleElement {
-                type_id: TypeId::UNKNOWN,
+                type_id: TypeId::ANY,
                 optional: false,
                 rest: false,
                 name: None,
@@ -65,30 +109,23 @@ impl<'a> CheckerState<'a> {
     fn finalize_call_return_like_success(
         &mut self,
         callee_expr: NodeIndex,
+        callee_type: TypeId,
         arg_types: &[TypeId],
         return_type: TypeId,
         is_optional_chain: bool,
     ) -> TypeId {
         let return_type = self.apply_this_substitution_to_call_return(return_type, callee_expr);
-        let return_type = self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
+        let return_type =
+            self.apply_direct_callable_this_substitution(return_type, callee_expr, callee_type);
+        let return_type =
+            self.refine_mixin_call_return_type(callee_expr, callee_type, arg_types, return_type);
         let return_type = if !self.ctx.compiler_options.sound_mode {
             common::widen_freshness(self.ctx.types, return_type)
         } else {
             return_type
         };
-        // Eagerly evaluate monomorphic TypeApplication return types to prevent
-        // deeply nested application chains from accumulating. Without this,
-        // sequential calls like `merge(merge(merge(...)))` build a chain of
-        // unevaluated TypeApplications where each level references the previous
-        // one. Later evaluation of the outermost type re-evaluates the entire
-        // chain from scratch, leading to exponential blowup.
-        //
-        // Skip eager evaluation for Promise-like applications (Promise<T>,
-        // PromiseLike<T>). The await expression handler relies on the
-        // Application wrapper to extract T via promise_like_return_type_argument.
-        // Evaluating Promise<T> into its structural Object form destroys the
-        // Application wrapper and causes `await fn()` to produce the structural
-        // Promise object instead of the unwrapped T.
+        // Eagerly evaluate monomorphic TypeApplications to avoid nested return
+        // chains, but keep Promise-like applications wrapped for await handling.
         let return_type = if common::is_generic_application(self.ctx.types, return_type)
             && !self.contains_type_parameters_cached(return_type)
             && !self.is_promise_type(return_type)
@@ -104,6 +141,27 @@ impl<'a> CheckerState<'a> {
                 .union2(return_type, TypeId::UNDEFINED)
         } else {
             return_type
+        }
+    }
+
+    fn apply_direct_callable_this_substitution(
+        &mut self,
+        ty: TypeId,
+        expr: NodeIndex,
+        callee: TypeId,
+    ) -> TypeId {
+        if ty.is_intrinsic()
+            || matches!(callee, TypeId::ERROR | TypeId::ANY)
+            || !common::contains_this_type(self.ctx.types, ty)
+            || self
+                .ctx
+                .arena
+                .get(expr)
+                .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
+        {
+            ty
+        } else {
+            common::substitute_this_type_at_return_position(self.ctx.types, ty, callee)
         }
     }
 
@@ -342,6 +400,73 @@ impl<'a> CheckerState<'a> {
         changed.then(|| self.ctx.types.tuple(elements))
     }
 
+    pub(crate) fn inline_literal_satisfies_has_permissive_target(
+        &mut self,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized(arg_idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let satisfies_idx = if node.kind == syntax_kind_ext::SATISFIES_EXPRESSION {
+            idx
+        } else if matches!(
+            node.kind,
+            syntax_kind_ext::OBJECT_LITERAL_EXPRESSION | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        ) {
+            let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|info| info.parent) else {
+                return false;
+            };
+            let parent_idx = self.ctx.arena.skip_parenthesized(parent_idx);
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind != syntax_kind_ext::SATISFIES_EXPRESSION {
+                return false;
+            }
+            parent_idx
+        } else {
+            return false;
+        };
+        let Some(assertion) = self
+            .ctx
+            .arena
+            .get(satisfies_idx)
+            .and_then(|node| self.ctx.arena.get_type_assertion(node))
+        else {
+            return false;
+        };
+        let Some(inner_node) = self
+            .ctx
+            .arena
+            .get(self.ctx.arena.skip_parenthesized(assertion.expression))
+        else {
+            return false;
+        };
+        if !matches!(
+            inner_node.kind,
+            syntax_kind_ext::OBJECT_LITERAL_EXPRESSION | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        ) {
+            return false;
+        }
+        self.satisfies_target_is_permissive(assertion.type_node)
+    }
+
+    fn satisfies_target_is_permissive(&mut self, type_node: NodeIndex) -> bool {
+        let type_node = self.ctx.arena.skip_parenthesized(type_node);
+        if let Some(node) = self.ctx.arena.get(type_node)
+            && matches!(
+                node.kind,
+                k if k == SyntaxKind::UnknownKeyword as u16
+                    || k == SyntaxKind::AnyKeyword as u16
+                    || k == SyntaxKind::NeverKeyword as u16
+            )
+        {
+            return true;
+        }
+        expr_ops::is_literal_permissive_object_context(self.get_type_from_type_node(type_node))
+    }
+
     fn expected_tuple_element_for_aggregate_actual(
         &mut self,
         expected: TypeId,
@@ -501,6 +626,28 @@ impl<'a> CheckerState<'a> {
         if common::literal_value(self.ctx.types, expected).is_some() {
             return expected;
         }
+        let parameter_was_generic_target = self
+            .ctx
+            .generic_excess_skip
+            .as_ref()
+            .is_some_and(|skip| mismatch_index < skip.len() && skip[mismatch_index]);
+        let allow_generic_literal_display =
+            callee_has_declared_generic_signature || parameter_was_generic_target;
+        if allow_generic_literal_display {
+            let initializer_literal_types: Vec<_> = args
+                .iter()
+                .filter_map(|&arg_idx| self.literal_type_from_initializer(arg_idx))
+                .collect();
+            if let Some(expected) = expr_ops::generic_application_literal_expected_for_mismatch(
+                self.ctx.types,
+                true,
+                expected,
+                arg_types,
+                &initializer_literal_types,
+            ) {
+                return expected;
+            }
+        }
         let actual_display_type = common::widen_argument_type_for_display(self.ctx.types, actual);
         if !common::is_primitive_type(self.ctx.types, actual_display_type) {
             return expected;
@@ -646,6 +793,7 @@ impl<'a> CheckerState<'a> {
 
                 self.finalize_call_return_like_success(
                     callee_expr,
+                    callee_type,
                     arg_types,
                     return_type,
                     is_optional_chain,
@@ -787,6 +935,7 @@ impl<'a> CheckerState<'a> {
                 {
                     self.finalize_call_return_like_success(
                         callee_expr,
+                        callee_type,
                         arg_types,
                         return_type,
                         is_optional_chain,
@@ -824,9 +973,23 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ERROR;
                 }
-                let arg_idx = self
-                    .map_expanded_arg_index_to_original(args, index)
-                    .map(|arg_idx| self.ctx.arena.skip_parenthesized(arg_idx));
+                let arg_idx = self.map_expanded_arg_index_to_original(args, index);
+                let arg_idx = arg_idx.map(|i| self.ctx.arena.skip_parenthesized(i));
+                if self
+                    .this_argument_satisfies_polymorphic_this_rest_target(arg_idx, actual, expected)
+                {
+                    return fallback_return;
+                }
+                if expected == TypeId::NEVER
+                    && let Some(return_type) =
+                        self.correlated_union_call_recovery_return(callee_type, index, actual)
+                {
+                    return if fallback_return != TypeId::ERROR {
+                        fallback_return
+                    } else {
+                        return_type
+                    };
+                }
                 let mismatch_is_spread_arg = arg_idx.is_some_and(|arg_idx| {
                     self.ctx
                         .arena
@@ -923,6 +1086,25 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|arg_idx| self.argument_supports_literal_elaboration(arg_idx));
                 if let Some(arg_idx) = arg_idx {
                     self.suppress_later_call_excess_property_diagnostics(args, arg_idx);
+                    let arg_is_object_literal = self.ctx.arena.get(arg_idx).is_some_and(|node| {
+                        node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    });
+                    let evaluated_expected = self.evaluate_type_with_env(expected);
+                    if arg_is_object_literal
+                        && (common::type_is_conditional_type_result_with_unresolved_inference(
+                            self.ctx.types,
+                            expected,
+                        ) || common::type_is_conditional_type_result_with_unresolved_inference(
+                            self.ctx.types,
+                            evaluated_expected,
+                        ))
+                    {
+                        return if fallback_return != TypeId::ERROR {
+                            fallback_return
+                        } else {
+                            TypeId::ERROR
+                        };
+                    }
                     // When a callback has a block body, TSC reports TS2345 at the
                     // argument level rather than elaborating with an inner TS2322
                     // on return statements. Compute this BEFORE the elaboration
@@ -1033,7 +1215,31 @@ impl<'a> CheckerState<'a> {
                         index,
                         actual,
                     );
-                    if !suppress_weak && !elaborated {
+                    let suppress_cascading_constraint_mismatch = self
+                        .callable_mismatch_cascades_from_constraint_diagnostic(
+                            reported_actual,
+                            reported_expected,
+                        );
+                    let resolved_reported_actual = self.resolve_lazy_type(reported_actual);
+                    let evaluated_reported_expected =
+                        self.evaluate_type_with_env(reported_expected);
+                    let suppress_correlated_index_access_never_mismatch = (reported_expected
+                        == TypeId::NEVER
+                        || evaluated_reported_expected == TypeId::NEVER)
+                        && common::index_access_parts(self.ctx.types, reported_actual)
+                            .or_else(|| {
+                                common::index_access_parts(self.ctx.types, resolved_reported_actual)
+                            })
+                            .is_some_and(|(_, index)| {
+                                common::contains_type_parameters(self.ctx.types, index)
+                                    || common::is_type_parameter_like(self.ctx.types, index)
+                                    || common::type_param_info(self.ctx.types, index).is_some()
+                            });
+                    if !suppress_weak
+                        && !elaborated
+                        && !suppress_cascading_constraint_mismatch
+                        && !suppress_correlated_index_access_never_mismatch
+                    {
                         let spread_rest_tuple_display = (!aggregate_rest_mismatch)
                             .then(|| {
                                 self.spread_rest_tuple_diagnostic_types(arg_idx, reported_expected)
@@ -1332,6 +1538,13 @@ impl<'a> CheckerState<'a> {
         if common::contains_this_type(self.ctx.types, expected) {
             return false;
         }
+        // Bare __infer_N expected + concrete actual: inference is done, mismatch is definitive.
+        if common::is_bare_infer_placeholder(self.ctx.types, expected)
+            && !assign_query::contains_infer_types(self.ctx.types, actual)
+            && actual != expected
+        {
+            return false;
+        }
         // When both types are Applications of the same base (e.g., F<CP> vs F<unknown>),
         // the mismatch comes from variance checking, not from contextual typing.
         // Don't defer — the variance rejection is definitive. This matches tsc which
@@ -1418,14 +1631,8 @@ impl<'a> CheckerState<'a> {
             if !refined_still_has_holes {
                 return false;
             }
-            // When neither callable has its own generic signatures, check if holes are
-            // only in the expected type (not the actual). This covers cases like
-            // `pipe(() => true, ...)` where the expected `(...args: A) => B` has type
-            // params A and B from pipe's outer inference context, while the actual
-            // `() => boolean` is fully concrete. Deferring is correct because the outer
-            // inference will resolve A and B. Contrast with `(x: T) => void` passed where
-            // T is from an *outer* function scope — in that case T appears in the actual,
-            // so we don't defer (the holes are structural, not inference-in-progress).
+            // Defer only when holes are in expected (outer inference will resolve them),
+            // not when holes are in actual (those are permanent outer-scope type params).
             if !actual_has_generic_signatures && !expected_has_generic_signatures {
                 let actual_has_holes =
                     assign_query::contains_infer_types(self.ctx.types, refined_actual)
@@ -1452,12 +1659,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        // Defer callable mismatches only when the actual or expected has its own generic
-        // signatures (e.g., `<T>(x: T) => T`), which indicates the mismatch may be resolved
-        // by higher-order generic inference. Don't defer just because the callable references
-        // type parameters from an enclosing scope (e.g., `(x: T) => void` where T is from
-        // the outer function). Those type parameters are permanent — deferral won't resolve
-        // them, and suppressing the error causes false negatives (missing TS2345).
+        // Defer callable mismatches only when a callable has its own generic signatures
+        // (higher-order inference may still resolve them), not for outer-scope type params.
         if callable_mismatch && (actual_has_generic_signatures || expected_has_generic_signatures) {
             return true;
         }
@@ -1523,7 +1726,7 @@ impl<'a> CheckerState<'a> {
             let app = db.type_application(app_id);
             let def_id = lazy_def_id(db, app.base)?;
             matches!(
-                tsz_solver::TypeResolver::get_def_kind(&self.ctx, def_id),
+                TypeResolver::get_def_kind(&self.ctx, def_id),
                 Some(tsz_solver::def::DefKind::Class)
             )
             .then_some(def_id)
@@ -1622,37 +1825,34 @@ impl<'a> CheckerState<'a> {
         self.ctx.rebuild_emitted_diagnostics_from_current();
     }
 
-    fn is_callee_function_expression(&self, callee_expr: NodeIndex) -> bool {
-        self.is_callback_like_argument(callee_expr)
-    }
-
     pub(crate) fn build_expanded_args_for_error(&mut self, args: &[NodeIndex]) -> Vec<NodeIndex> {
         let mut expanded = Vec::with_capacity(args.len());
         for &arg_idx in args {
             if let Some(n) = self.ctx.arena.get(arg_idx)
                 && n.kind == syntax_kind_ext::SPREAD_ELEMENT
-                && let Some(spread_data) = self.ctx.arena.get_spread(n)
+                && let Some(spread_expression) = self
+                    .ctx
+                    .arena
+                    .get_spread(n)
+                    .map(|spread| spread.expression)
+                    .or_else(|| self.ctx.arena.get_children(arg_idx).first().copied())
             {
-                let spread_type = self.get_type_of_node(spread_data.expression);
+                let spread_type = self.get_type_of_node(spread_expression);
                 let spread_type = self.resolve_type_for_property_access(spread_type);
                 let spread_type = self.resolve_lazy_type(spread_type);
                 if let Some(elems) =
                     crate::query_boundaries::common::tuple_elements(self.ctx.types, spread_type)
                 {
-                    for _ in &elems {
-                        expanded.push(arg_idx);
-                    }
+                    expanded.extend(std::iter::repeat_n(arg_idx, elems.len()));
                     continue;
                 }
                 // Array literal spreads have known element count — expand them
-                let inner_idx = self.ctx.arena.skip_parenthesized(spread_data.expression);
+                let inner_idx = self.ctx.arena.skip_parenthesized(spread_expression);
                 if let Some(expr_node) = self.ctx.arena.get(inner_idx)
                     && expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                     && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
                 {
-                    for _ in &literal.elements.nodes {
-                        expanded.push(arg_idx);
-                    }
+                    expanded.extend(std::iter::repeat_n(arg_idx, literal.elements.nodes.len()));
                     continue;
                 }
             }
@@ -1739,29 +1939,5 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    /// Check if a type is an intersection containing an Application of a conditional
-    /// type alias (like Extract, Exclude, `NonNullable`). These types arise from type
-    /// predicate narrowing and should not be treated as constructor types.
-    fn is_intersection_with_conditional_application(&self, type_id: TypeId) -> bool {
-        let Some(members) = common::intersection_members(self.ctx.types, type_id) else {
-            return false;
-        };
-
-        members.iter().any(|&member| {
-            let Some(app_id) = common::application_id(self.ctx.types, member) else {
-                return false;
-            };
-            let app = self.ctx.types.type_application(app_id);
-            let Some(def_id) = common::lazy_def_id(self.ctx.types, app.base) else {
-                return false;
-            };
-
-            self.ctx
-                .def_to_symbol_id(def_id)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS))
-        })
     }
 }

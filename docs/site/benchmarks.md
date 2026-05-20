@@ -7,14 +7,24 @@ permalink: /benchmarks/index.html
 
 # Benchmarks
 
-## Project Benchmarks
+`tsz` has focused on single-file performance so far. Work is underway to make it fast for full projects too.
 
-Comparing type-checking on existing TypeScript projects, with emphasis on projects that use lots of advanced type-system features.
+## Summary
+
+{{ benchmark_environment | safe }}
+
+{{ benchmark_mean_chart | safe }}
+
+<p class="benchmark-data-link"><a href="/benchmark-data/latest.json">View the raw benchmark artifact</a></p>
 
 <div class="bench-legend">
   <span class="bench-legend-item"><span class="bench-legend-swatch tsz"></span> tsz (Rust compiler)</span>
   <span class="bench-legend-item"><span class="bench-legend-swatch tsgo"></span> tsgo (Go compiler)</span>
 </div>
+
+## Full Project Type Checking
+
+Full-project rows use real repositories and generated app fixtures. If a project has a timing pair in the latest artifact, it is shown here even when compatibility tracking has more work left.
 
 {{ benchmark_charts | safe }}
 

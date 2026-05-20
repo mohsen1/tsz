@@ -16,7 +16,7 @@ use tsz_binder::BinderState;
 use tsz_checker::CheckerState;
 use tsz_checker::context::CheckerOptions;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn diagnostic_messages(source: &str) -> Vec<(u32, String)> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -41,6 +41,31 @@ fn diagnostic_messages(source: &str) -> Vec<(u32, String)> {
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+#[test]
+fn constrained_interface_type_parameter_property_access_no_ts2339() {
+    let diagnostics = diagnostic_messages(
+        r#"
+interface TreeNode2<T> {
+  value: T;
+  children: TreeNode2<T>[];
+}
+
+function traverse<T extends TreeNode2<any>>(node: T): T['value'][] {
+  const result: T['value'][] = [node.value];
+  return result;
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "Expected constrained interface property access to avoid TS2339, got: {diagnostics:#?}"
+    );
 }
 
 #[test]

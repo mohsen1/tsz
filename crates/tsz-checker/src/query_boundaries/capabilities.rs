@@ -47,6 +47,9 @@ pub enum FeatureGate {
 /// The kind of global name that was not found, determining which diagnostic to emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MissingGlobalKind {
+    /// A known environment global that `tsc` still reports as plain TS2304
+    /// when its declaring lib is absent.
+    PlainGlobalValue,
     /// Core global type (Array, String, etc.) → TS2318
     CoreGlobalType,
     /// Feature-specific global type (Awaited, Disposable, etc.) → TS2318
@@ -192,6 +195,12 @@ impl EnvironmentCapabilities {
     /// when name X is not found?" — replaces the scattered classifier chain in
     /// `report_cannot_find_name_internal`.
     pub fn classify_missing_global(&self, name: &str) -> Option<MissingGlobalKind> {
+        // Some web-platform globals share names with Node built-in modules, but
+        // tsc still reports a missing bare value as ordinary TS2304 when the
+        // declaring DOM/WebWorker lib is not loaded.
+        if is_known_plain_missing_global_value(name) {
+            return Some(MissingGlobalKind::PlainGlobalValue);
+        }
         // Node.js globals
         if is_known_node_global(name) {
             return Some(MissingGlobalKind::NodeGlobal);
@@ -257,75 +266,17 @@ impl EnvironmentCapabilities {
 // Global name classifiers (moved from name_resolution.rs to centralize)
 // =============================================================================
 
-/// Check if a name is a known Node.js global or built-in module name
-/// that requires @types/node (TS2580/TS2591).
+/// Check if a name is a known Node.js runtime global that requires
+/// `@types/node` (TS2580/TS2591).
 ///
-/// tsc emits the Node missing-global family for:
-/// 1. Node.js runtime globals: `require`, `process`, `Buffer`, etc.
-/// 2. Node.js built-in module names used as identifiers (e.g. from
-///    `import fs = require("fs")`): `fs`, `url`, `events`, etc.
-/// 3. `node:`-prefixed module specifiers used as names.
+/// Bare built-in module names like `fs`, `url`, or `crypto` are not runtime
+/// globals in tsc. They stay plain TS2304 when used as identifiers; module
+/// specifier diagnostics use [`is_known_node_module`] instead.
 pub(crate) fn is_known_node_global(name: &str) -> bool {
-    // Node.js runtime globals
-    if matches!(
+    matches!(
         name,
         "require" | "exports" | "module" | "process" | "Buffer" | "__filename" | "__dirname"
-    ) {
-        return true;
-    }
-    // Node.js built-in module names (commonly used as identifiers via
-    // `import X = require("X")` patterns).
-    // NOTE: "console" is intentionally excluded — tsc classifies standalone
-    // "console" as a DOM global (TS2584), not a Node global (TS2591).
-    // NOTE: "assert" is intentionally excluded — tsc classifies standalone
-    // "assert" as TS2304 (Cannot find name), not TS2591.  While "assert" is
-    // a Node.js built-in module, it is NOT a global variable and tsc never
-    // suggests @types/node installation for it.
-    if matches!(
-        name,
-        "buffer"
-            | "child_process"
-            | "cluster"
-            | "constants"
-            | "crypto"
-            | "dgram"
-            | "dns"
-            | "domain"
-            | "events"
-            | "fs"
-            | "http"
-            | "http2"
-            | "https"
-            | "inspector"
-            | "module"
-            | "net"
-            | "os"
-            | "path"
-            | "perf_hooks"
-            | "punycode"
-            | "querystring"
-            | "readline"
-            | "repl"
-            | "stream"
-            | "string_decoder"
-            | "sys"
-            | "timers"
-            | "tls"
-            | "tty"
-            | "url"
-            | "util"
-            | "v8"
-            | "vm"
-            | "worker_threads"
-            | "zlib"
-    ) {
-        return true;
-    }
-    // node:-prefixed module specifiers (e.g. "node:path")
-    if name.starts_with("node:") {
-        return true;
-    }
-    false
+    )
 }
 
 /// Check if a module specifier is a known Node.js built-in module (TS2591).
@@ -476,6 +427,12 @@ pub(crate) fn is_known_dom_global(name: &str) -> bool {
     )
 }
 
+/// Check if a known environment value should be reported as plain TS2304 when
+/// absent, rather than as a DOM-lib or Node-types suggestion.
+pub(crate) fn is_known_plain_missing_global_value(name: &str) -> bool {
+    matches!(name, "crypto")
+}
+
 /// Check if a name is a known jQuery global that requires @types/jquery (TS2581/TS2592).
 pub(crate) fn is_known_jquery_global(name: &str) -> bool {
     matches!(name, "$" | "jQuery")
@@ -602,6 +559,10 @@ mod tests {
         assert_eq!(
             caps.classify_missing_global("document"),
             Some(MissingGlobalKind::DomGlobal)
+        );
+        assert_eq!(
+            caps.classify_missing_global("crypto"),
+            Some(MissingGlobalKind::PlainGlobalValue)
         );
         assert_eq!(
             caps.classify_missing_global("$"),

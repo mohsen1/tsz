@@ -1,30 +1,14 @@
 use super::*;
-use crate::CheckerState;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn has_code(diags: &[crate::diagnostics::Diagnostic], code: u32) -> bool {
     diags.iter().any(|d| d.code == code)
 }
 
 fn check_source_with_default_libs(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let source_file = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), source_file);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-    checker.check_source_file(source_file);
-    checker.ctx.diagnostics.clone()
+    crate::test_utils::check_source(source, "test.ts", crate::context::CheckerOptions::default())
 }
 
 #[test]

@@ -172,6 +172,59 @@ fn write_char_emits_single_character() {
 }
 
 #[test]
+fn delimiter_helpers_emit_tokens_and_track_balanced_pairs() {
+    let mut writer = SourceWriter::new();
+    writer.write_open_delimiter(DelimiterKind::Paren);
+    writer.write_open_delimiter(DelimiterKind::Bracket);
+    writer.write("x");
+    writer.write_close_delimiter(DelimiterKind::Bracket);
+    writer.write_close_delimiter(DelimiterKind::Paren);
+
+    assert_eq!(writer.get_output(), "([x])");
+    assert_eq!(writer.current_column(), 5);
+    assert!(writer.delimiters_balanced());
+    assert_eq!(writer.unclosed_delimiter_count(), 0);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn delimiter_helpers_report_unclosed_pairs() {
+    let mut writer = SourceWriter::new();
+    writer.write_open_delimiter(DelimiterKind::Paren);
+
+    assert_eq!(writer.get_output(), "(");
+    assert!(!writer.delimiters_balanced());
+    assert_eq!(writer.unclosed_delimiter_count(), 1);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "unbalanced delimiter close")]
+fn delimiter_helpers_panic_on_unopened_close() {
+    let mut writer = SourceWriter::new();
+    writer.write_close_delimiter(DelimiterKind::Paren);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "delimiter mismatch")]
+fn delimiter_helpers_panic_on_mismatched_close() {
+    let mut writer = SourceWriter::new();
+    writer.write_open_delimiter(DelimiterKind::Paren);
+    writer.write_close_delimiter(DelimiterKind::Bracket);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "structured delimiter helpers left 1 unclosed delimiter(s)")]
+fn take_output_panics_on_unclosed_delimiter() {
+    let mut writer = SourceWriter::new();
+    writer.write_open_delimiter(DelimiterKind::Paren);
+
+    let _ = writer.take_output();
+}
+
+#[test]
 fn write_char_handles_newline() {
     let mut writer = SourceWriter::new();
     writer.write("ab");
@@ -408,6 +461,15 @@ fn take_output_yields_owned_string() {
     writer.write("abc");
     let s = writer.take_output();
     assert_eq!(s, "abc");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "structured delimiter helpers left 1 unclosed delimiter")]
+fn take_output_asserts_structured_delimiters_are_balanced() {
+    let mut writer = SourceWriter::new();
+    writer.write_open_delimiter(DelimiterKind::Paren);
+    let _ = writer.take_output();
 }
 
 #[test]

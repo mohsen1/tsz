@@ -220,6 +220,14 @@ impl<'a> CheckerState<'a> {
         }
 
         match self.ctx.capabilities.diagnose_missing_name(name) {
+            Some(CapabilityDiagnostic::MissingPlainGlobalValue { .. }) => {
+                self.report_not_found_at_boundary(
+                    name,
+                    idx,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
+                return TypeId::ERROR;
+            }
             Some(CapabilityDiagnostic::MissingDomGlobal { .. }) => {
                 // Route through boundary for TS2304/TS2552 with suggestion collection
                 self.report_not_found_at_boundary(
@@ -288,9 +296,15 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             }
-            // Route through wrong-meaning boundary: primitive keyword is type-only
-            use crate::query_boundaries::name_resolution::NameLookupKind;
-            self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            self.error_at_node(
+                idx,
+                &format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                    &[name],
+                ),
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+            );
             return TypeId::ERROR;
         }
 
@@ -388,9 +402,15 @@ impl<'a> CheckerState<'a> {
                 | "object"
                 | "bigint"
         ) {
-            // Route through wrong-meaning boundary: primitive keyword is type-only
-            use crate::query_boundaries::name_resolution::NameLookupKind;
-            self.report_wrong_meaning_diagnostic(name, idx, NameLookupKind::Type);
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            self.error_at_node(
+                idx,
+                &format_message(
+                    diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                    &[name],
+                ),
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+            );
             return TypeId::ERROR;
         }
         // Suppress in single-file mode to prevent cascading false positives
@@ -468,7 +488,7 @@ impl<'a> CheckerState<'a> {
         //    In this case, the symbol retains `is_umd_export = true` but gains
         //    VARIABLE flags from the global augmentation.
         let is_non_umd_value = |sym: &tsz_binder::Symbol| -> bool {
-            let has_real_value = (sym.flags & real_value_flags) != 0;
+            let has_real_value = sym.has_any_flags(real_value_flags);
             if !has_real_value {
                 return false;
             }
@@ -902,6 +922,10 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         name: &str,
     ) -> Option<String> {
+        if self.ctx.binder.file_import_sources.is_empty() {
+            return None;
+        }
+
         let mut current = idx;
         let mut guard = 0u32;
         while let Some(ext) = self.ctx.arena.get_extended(current) {

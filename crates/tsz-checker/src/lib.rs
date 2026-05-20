@@ -25,6 +25,7 @@ pub mod error_reporter;
 pub mod expr;
 pub mod module_resolution;
 mod query_boundaries;
+pub mod recovery;
 pub mod statements;
 pub mod triple_slash_validator;
 
@@ -73,8 +74,8 @@ pub use state_domain::{state, state_checking, type_environment as state_type_env
 pub use symbols_domain::{scope_finder, symbol_resolver};
 
 pub use types_domain::{
-    class_type, computation, function_type, interface_type, literal_type, object_type,
-    type_checking, type_literal_checker, type_node,
+    class_type, computation, function_type, interface_type, object_type, type_checking,
+    type_literal_checker, type_node,
 };
 
 pub mod diagnostics {
@@ -135,11 +136,20 @@ mod enum_recursion_tests;
 #[path = "../tests/environment_capabilities_tests.rs"]
 mod environment_capabilities_tests;
 #[cfg(test)]
+#[path = "tests/function_type_return_node_tests.rs"]
+mod function_type_return_node_tests;
+#[cfg(test)]
 #[path = "../tests/generator_union_return_type_tests.rs"]
 mod generator_union_return_type_tests;
 #[cfg(test)]
+#[path = "tests/generic_default_application_arg_preservation_tests.rs"]
+mod generic_default_application_arg_preservation_tests;
+#[cfg(test)]
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
+#[cfg(test)]
+#[path = "../tests/imported_generator_iterable_tests.rs"]
+mod imported_generator_iterable_tests;
 #[cfg(test)]
 #[path = "tests/index_sig_param_intersection_validity_tests.rs"]
 mod index_sig_param_intersection_validity_tests;
@@ -165,6 +175,9 @@ mod jsdoc_this_arrow_tests;
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
+#[path = "tests/lib_abstract_member_ts2515_tests.rs"]
+mod lib_abstract_member_ts2515_tests;
+#[cfg(test)]
 #[path = "../tests/literal_application_alias_display_tests.rs"]
 mod literal_application_alias_display_tests;
 #[cfg(test)]
@@ -185,6 +198,9 @@ mod nuia_write_index_signature_emits_ts2322_tests;
 #[cfg(test)]
 #[path = "../tests/optional_param_display_tests.rs"]
 mod optional_param_display_tests;
+#[cfg(test)]
+#[path = "../tests/optional_property_subtype_compatibility_tests.rs"]
+mod optional_property_subtype_compatibility_tests;
 #[cfg(test)]
 #[path = "../tests/optional_property_target_undefined_display_tests.rs"]
 mod optional_property_target_undefined_display_tests;
@@ -258,6 +274,12 @@ mod ts2323_tests;
 #[path = "../tests/ts2347_tests.rs"]
 mod ts2347_tests;
 #[cfg(test)]
+#[path = "../tests/ts2352_disjoint_literal_property_tests.rs"]
+mod ts2352_disjoint_literal_property_tests;
+#[cfg(test)]
+#[path = "../tests/ts2352_intersection_assertion_tests.rs"]
+mod ts2352_intersection_assertion_tests;
+#[cfg(test)]
 #[path = "../tests/ts2353_tests.rs"]
 mod ts2353_tests;
 #[cfg(test)]
@@ -327,6 +349,9 @@ mod ts7006_broad_jsdoc_type_cast;
 #[path = "../tests/ts7006_iife_arg_implicit_any.rs"]
 mod ts7006_iife_arg_implicit_any;
 #[cfg(test)]
+#[path = "../tests/ts7030_undefined_union_return_tests.rs"]
+mod ts7030_undefined_union_return_tests;
+#[cfg(test)]
 #[path = "../tests/ts7036_tests.rs"]
 mod ts7036_tests;
 #[cfg(test)]
@@ -351,7 +376,6 @@ mod value_usage_tests;
 #[path = "../tests/yield_star_return_type_tests.rs"]
 mod yield_star_return_type_tests;
 // Tests kept in root test harness where shared fixtures live.
-#[cfg(test)]
 #[path = "tests/application_arg_concrete_index_access_display_tests.rs"]
 mod application_arg_concrete_index_access_display_tests;
 #[cfg(test)]
@@ -370,11 +394,26 @@ mod array_isarray_mutual_subtype_narrowing_tests;
 #[path = "tests/assertion_type_predicate_diagnostics_tests.rs"]
 mod assertion_type_predicate_diagnostics_tests;
 #[cfg(test)]
+#[path = "../tests/bigint_target_ts2737_tests.rs"]
+mod bigint_target_ts2737_tests;
+#[cfg(test)]
+#[path = "tests/builtin_iterator_implements_tests.rs"]
+mod builtin_iterator_implements_tests;
+#[cfg(test)]
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
+#[path = "tests/call_spread_constructor_parameters_tests.rs"]
+mod call_spread_constructor_parameters_tests;
+#[cfg(test)]
+#[path = "tests/callable_interface_assignment_tests.rs"]
+mod callable_interface_assignment_tests;
+#[cfg(test)]
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
+#[cfg(test)]
+#[path = "tests/class_feature_target_gates_tests.rs"]
+mod class_feature_target_gates_tests;
 #[cfg(test)]
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
@@ -403,17 +442,32 @@ mod contextual_typing_tests;
 #[path = "../tests/cross_file_class_merge_tests.rs"]
 mod cross_file_class_merge_tests;
 #[cfg(test)]
+#[path = "../tests/cross_file_type_params_cache_tests.rs"]
+mod cross_file_type_params_cache_tests;
+#[cfg(test)]
+#[path = "tests/destructured_discriminant_source_narrowing_tests.rs"]
+mod destructured_discriminant_source_narrowing_tests;
+#[cfg(test)]
+#[path = "tests/direct_generic_return_tests.rs"]
+mod direct_generic_return_tests;
+#[cfg(test)]
 #[path = "tests/dispatch_tests.rs"]
 mod dispatch_tests;
 #[cfg(test)]
 #[path = "../tests/dynamic_import_ts2307_per_callsite_tests.rs"]
 mod dynamic_import_ts2307_per_callsite_tests;
 #[cfg(test)]
+#[path = "../tests/enum_indexed_access_tests.rs"]
+mod enum_indexed_access_tests;
+#[cfg(test)]
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]
 #[path = "tests/excess_prop_object_union_display_tests.rs"]
 mod excess_prop_object_union_display_tests;
+#[cfg(test)]
+#[path = "../tests/file_session_switch_to_file_tests.rs"]
+mod file_session_switch_to_file_tests;
 #[cfg(test)]
 #[path = "../tests/flow_boundary_contract_tests.rs"]
 mod flow_boundary_contract_tests;
@@ -424,14 +478,32 @@ mod for_in_narrowing_tests;
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]
+#[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]
+mod generic_class_constructor_literal_preservation_tests;
+#[cfg(test)]
+#[path = "tests/generic_class_self_ref_method_param_tests.rs"]
+mod generic_class_self_ref_method_param_tests;
+#[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
+#[cfg(test)]
+#[path = "tests/generic_rest_satisfies_anchor_tests.rs"]
+mod generic_rest_satisfies_anchor_tests;
+#[cfg(test)]
+#[path = "tests/generic_spread_iterability_tests.rs"]
+mod generic_spread_iterability_tests;
 #[cfg(test)]
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
+#[cfg(test)]
+#[path = "../tests/interface_extends_array_json_tests.rs"]
+mod interface_extends_array_json_tests;
+#[cfg(test)]
+#[path = "tests/intersection_callable_constraint_ts2344_tests.rs"]
+mod intersection_callable_constraint_ts2344_tests;
 #[cfg(test)]
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;
@@ -520,26 +592,53 @@ mod never_initializer_falls_through_tests;
 #[path = "../tests/never_returning_narrowing_tests.rs"]
 mod never_returning_narrowing_tests;
 #[cfg(test)]
+#[path = "../tests/new_expression_source_display_tests.rs"]
+mod new_expression_source_display_tests;
+#[cfg(test)]
 #[path = "../tests/new_typeof_property_tests.rs"]
 mod new_typeof_property_tests;
+#[cfg(test)]
+#[path = "tests/nonunique_symbol_property_access_tests.rs"]
+mod nonunique_symbol_property_access_tests;
+#[cfg(test)]
+#[path = "tests/object_shorthand_literal_preservation_tests.rs"]
+mod object_shorthand_literal_preservation_tests;
 #[cfg(test)]
 #[path = "tests/object_spread_optional_merge_tests.rs"]
 mod object_spread_optional_merge_tests;
 #[cfg(test)]
+#[path = "tests/optional_key_extraction_tests.rs"]
+mod optional_key_extraction_tests;
+#[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
+#[cfg(test)]
+#[path = "tests/partial_pick_indexed_access_write_tests.rs"]
+mod partial_pick_indexed_access_write_tests;
 #[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
+#[path = "tests/promise_like_infer_tests.rs"]
+mod promise_like_infer_tests;
+#[cfg(test)]
 #[path = "tests/property_alias_display_tests.rs"]
 mod property_alias_display_tests;
+#[cfg(test)]
+#[path = "../tests/recursive_alias_application_target_display_tests.rs"]
+mod recursive_alias_application_target_display_tests;
+#[cfg(test)]
+#[path = "tests/recursive_path_default_type_param_tests.rs"]
+mod recursive_path_default_type_param_tests;
 #[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]
 #[path = "../tests/reverse_mapped_inference_tests.rs"]
 mod reverse_mapped_inference_tests;
+#[cfg(test)]
+#[path = "tests/split_accessor_variance_tests.rs"]
+mod split_accessor_variance_tests;
 #[cfg(test)]
 #[path = "tests/strict_callback_param_method_tests.rs"]
 mod strict_callback_param_method_tests;
@@ -556,6 +655,9 @@ mod symbol_index_signature_tests;
 #[path = "tests/synthetic_unique_atom_union_display_tests.rs"]
 mod synthetic_unique_atom_union_display_tests;
 #[cfg(test)]
+#[path = "tests/this_context_self_type_tests.rs"]
+mod this_context_self_type_tests;
+#[cfg(test)]
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
 #[cfg(test)]
@@ -564,6 +666,9 @@ mod ts1170_computed_property_syntactic_form_tests;
 #[cfg(test)]
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;
+#[cfg(test)]
+#[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
+mod ts2322_private_field_narrowing_write_tests;
 #[cfg(test)]
 #[path = "tests/ts2339_js_this_function_name_display_tests.rs"]
 mod ts2339_js_this_function_name_display_tests;
@@ -609,6 +714,7 @@ pub use flow_analyzer::{
     merge_assignment_states,
 };
 pub use flow_graph_builder::{FlowGraph, FlowGraphBuilder};
+pub use recovery::RecoveryReason;
 pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 pub use statements::{StatementCheckCallbacks, StatementChecker};
 pub use tsz_solver::Visibility;
@@ -635,7 +741,7 @@ pub fn run_js_grammar_pass(
     if statements.is_empty() {
         return Vec::new();
     }
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
     checker.check_js_grammar_statements(&statements);
     checker.ctx.diagnostics
@@ -667,7 +773,7 @@ pub fn run_isolated_declarations_pass(
     if statements.is_empty() {
         return Vec::new();
     }
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
     checker.check_isolated_declarations(&statements);
     checker.check_isolated_decl_class_expressions(&statements);

@@ -52,56 +52,33 @@ impl<'a> CheckerState<'a> {
         let props_for_access = self.normalize_jsx_required_props_target(props_type);
 
         let has_explicit_prop_mismatch = provided_attrs.iter().any(|(name, actual_type)| {
-            use crate::query_boundaries::common::PropertyAccessResult;
-
             if matches!(*actual_type, TypeId::ANY | TypeId::ERROR) {
                 return false;
             }
-            let expected_type = match self.resolve_property_access_with_env(props_for_access, name)
-            {
-                PropertyAccessResult::Success { type_id, .. }
-                | PropertyAccessResult::PossiblyNullOrUndefined {
-                    property_type: Some(type_id),
-                    ..
-                } => Some(type_id),
-                _ => crate::query_boundaries::common::object_shape_for_type(
-                    self.ctx.types,
-                    props_for_access,
-                )
-                .and_then(|shape| {
-                    shape.properties.iter().find_map(|prop| {
-                        (self.ctx.types.resolve_atom(prop.name) == name.as_str())
-                            .then_some(prop.type_id)
-                    })
-                }),
-            };
-            let expected_type = expected_type.or_else(|| {
-                self.jsx_concrete_prop_expected_type(props_for_access, name, &mut Vec::new())
-            });
+            let expected_type = self
+                .jsx_expected_attribute_write_type(props_for_access, name)
+                .or_else(|| {
+                    self.jsx_concrete_prop_expected_type(props_for_access, name, &mut Vec::new())
+                });
             let Some(expected_type) = expected_type else {
                 return false;
             };
-            let expected_type =
-                crate::query_boundaries::common::remove_undefined(self.ctx.types, expected_type);
             !self.is_assignable_to(*actual_type, expected_type)
         });
 
-        let target_display = self.format_type(props_type);
-        let has_displayed_string_prop_mismatch =
-            provided_attrs.iter().any(|(name, actual_type)| {
-                *actual_type == TypeId::NUMBER
-                    && target_display.contains(&format!("{name}: string"))
-            });
+        let has_alias_string_prop_mismatch = provided_attrs.iter().any(|(name, actual_type)| {
+            *actual_type == TypeId::NUMBER && self.jsx_alias_declares_string_prop(props_type, name)
+        });
 
         if has_excess_property_error
             && !has_explicit_prop_mismatch
-            && !has_displayed_string_prop_mismatch
+            && !has_alias_string_prop_mismatch
         {
             return false;
         }
 
         if !has_explicit_prop_mismatch
-            && !has_displayed_string_prop_mismatch
+            && !has_alias_string_prop_mismatch
             && self.is_assignable_to(attrs_type, props_type)
         {
             return false;

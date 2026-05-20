@@ -11,8 +11,9 @@
 use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::diagnostic_code_messages;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -32,12 +33,7 @@ fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
 
     checker.check_source_file(root);
 
-    checker
-        .ctx
-        .diagnostics
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    diagnostic_code_messages(checker.ctx.diagnostics)
 }
 
 #[test]
@@ -246,5 +242,26 @@ type Bar<T extends Set<unknown[]>> = T;
     assert!(
         diagnostics.iter().all(|(code, _)| *code != 2344),
         "Did not expect TS2344 for Set<A> in the true branch of a matching conditional. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_alias_filtering_to_string_satisfies_string_constraint() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface MyIteratorResult<T, TReturn> { value: T | TReturn; done: boolean }
+
+type Box<T extends string> = T;
+type Select<U, M> = U extends M ? U : never;
+type NextPath<OP> = Select<OP, string>;
+type ExecPath<A> = NextPath<MyIteratorResult<string, A>>;
+
+type Use<A> = Box<ExecPath<A>>;
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2344),
+        "Conditional filters like Select<..., string> should satisfy string constraints. Got: {diagnostics:?}"
     );
 }

@@ -2,7 +2,11 @@ use super::*;
 use crate::resolver::ScopeCache;
 use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
-use tsz_parser::ParserState;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 // -----------------------------------------------------------------------
 // Original tests (preserved)
@@ -11,8 +15,7 @@ use tsz_parser::ParserState;
 #[test]
 fn test_rename_variable() {
     let source = "let oldName = 1; const b = oldName + 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -46,8 +49,7 @@ fn test_rename_variable() {
 #[test]
 fn test_rename_uses_scope_cache() {
     let source = "let value = 1;\nvalue;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -77,8 +79,7 @@ fn test_rename_uses_scope_cache() {
 #[test]
 fn test_rename_invalid_keyword() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -94,8 +95,7 @@ fn test_rename_invalid_keyword() {
 #[test]
 fn test_rename_invalid_chars() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -111,8 +111,7 @@ fn test_rename_invalid_chars() {
 #[test]
 fn test_rename_function() {
     let source = "function foo() {}\nfoo();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -137,8 +136,7 @@ fn test_rename_function() {
 #[test]
 fn test_rename_private_identifier() {
     let source = "class Foo {\n  #bar = 1;\n  method() {\n    this.#bar;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -166,8 +164,7 @@ fn test_rename_private_identifier() {
 #[test]
 fn test_rename_private_identifier_with_hash() {
     let source = "class Foo {\n  #bar = 1;\n  method() {\n    this.#bar;\n  }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
 
     let mut binder = BinderState::new();
@@ -194,8 +191,7 @@ fn test_rename_private_identifier_with_hash() {
 #[test]
 fn test_prepare_rename_invalid_position() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -214,8 +210,7 @@ fn test_prepare_rename_invalid_position() {
 #[test]
 fn test_rename_rejects_private_name_for_identifier() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -234,8 +229,7 @@ fn test_rename_rejects_private_name_for_identifier() {
 #[test]
 fn test_rename_to_contextual_keyword() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -271,8 +265,7 @@ fn test_rename_to_contextual_keyword() {
 #[test]
 fn test_prepare_rename_info_returns_display_name() {
     let source = "let myVar = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -292,8 +285,7 @@ fn test_prepare_rename_info_returns_display_name() {
 #[test]
 fn test_prepare_rename_info_function_kind() {
     let source = "function hello() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -316,8 +308,7 @@ fn test_prepare_rename_info_function_kind() {
 #[test]
 fn test_prepare_rename_info_class_kind() {
     let source = "class MyClass {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -340,8 +331,7 @@ fn test_prepare_rename_info_class_kind() {
 #[test]
 fn test_prepare_rename_info_rejects_non_identifier() {
     let source = "let x = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -361,8 +351,7 @@ fn test_prepare_rename_info_rejects_non_identifier() {
 #[test]
 fn test_prepare_rename_info_rejects_builtin_undefined() {
     let source = "const x = undefined;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -381,8 +370,7 @@ fn test_prepare_rename_info_rejects_builtin_undefined() {
 #[test]
 fn test_prepare_rename_info_rejects_node_modules() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -408,8 +396,7 @@ fn test_prepare_rename_info_rejects_node_modules() {
 #[test]
 fn test_rename_rejects_undefined_builtin() {
     let source = "const x = undefined;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -427,8 +414,7 @@ fn test_rename_rejects_undefined_builtin() {
 #[test]
 fn test_rename_empty_new_name_rejected() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -443,8 +429,7 @@ fn test_rename_empty_new_name_rejected() {
 #[test]
 fn test_rename_shorthand_property_produces_prefix() {
     let source = "const x = 1;\nconst obj = { x };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -487,8 +472,7 @@ fn test_rename_shorthand_property_produces_prefix() {
 #[test]
 fn test_rename_destructuring_produces_prefix() {
     let source = "const obj = { a: 1 };\nconst { a } = obj;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -512,8 +496,7 @@ fn test_rename_destructuring_produces_prefix() {
 #[test]
 fn test_rename_import_specifier_produces_prefix() {
     let source = "import { foo } from \"./mod\";";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -546,8 +529,7 @@ fn test_rename_import_specifier_produces_prefix() {
 #[test]
 fn test_rename_parameter_across_body() {
     let source = "function demo(x: number) {\n  return x + 1;\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -572,8 +554,7 @@ fn test_rename_parameter_across_body() {
 #[test]
 fn test_rename_interface_name() {
     let source = "interface Foo { x: number; }\nconst a: Foo = { x: 1 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -598,8 +579,7 @@ fn test_rename_interface_name() {
 #[test]
 fn test_rename_type_alias() {
     let source = "type ID = string;\nconst x: ID = \"hello\";";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -624,8 +604,7 @@ fn test_rename_type_alias() {
 #[test]
 fn test_rename_enum_name() {
     let source = "enum Color { Red, Green }\nconst c: Color = Color.Red;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -686,8 +665,7 @@ fn test_rename_text_edit_prefix_suffix_serialization() {
 #[test]
 fn test_rename_rejects_strict_mode_reserved_word() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -705,8 +683,7 @@ fn test_rename_rejects_strict_mode_reserved_word() {
 #[test]
 fn test_prepare_rename_info_kind_modifiers() {
     let source = "let localVar = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -730,8 +707,7 @@ fn test_prepare_rename_info_kind_modifiers() {
 #[test]
 fn test_rename_function_name() {
     let source = "function greet() {}\ngreet();\ngreet();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -751,8 +727,7 @@ fn test_rename_function_name() {
 #[test]
 fn test_rename_class_name() {
     let source = "class Foo {}\nlet f = new Foo();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -769,8 +744,7 @@ fn test_rename_class_name() {
 #[test]
 fn test_rename_interface_name_edge() {
     let source = "interface IFoo { x: number; }\nlet a: IFoo;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -787,8 +761,7 @@ fn test_rename_interface_name_edge() {
 #[test]
 fn test_rename_parameter() {
     let source = "function foo(param: number) { return param + 1; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -808,8 +781,7 @@ fn test_rename_parameter() {
 #[test]
 fn test_rename_at_whitespace_returns_error() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -829,8 +801,7 @@ fn test_rename_at_whitespace_returns_error() {
 #[test]
 fn test_rename_enum_name_edge() {
     let source = "enum Direction { Up, Down }\nlet d: Direction = Direction.Up;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -847,8 +818,7 @@ fn test_rename_enum_name_edge() {
 #[test]
 fn test_prepare_rename_on_keyword_returns_none() {
     let source = "function foo() {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, _root);
@@ -867,8 +837,7 @@ fn test_prepare_rename_on_keyword_returns_none() {
 #[test]
 fn test_rename_type_alias_edge() {
     let source = "type MyType = string;\nlet x: MyType;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -888,8 +857,7 @@ fn test_rename_type_alias_edge() {
 #[test]
 fn test_rename_in_destructuring() {
     let source = "const obj = { name: 'test' };\nconst { name } = obj;\nconsole.log(name);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -910,8 +878,7 @@ fn test_rename_in_destructuring() {
 #[test]
 fn test_rename_preserves_non_target_identifiers() {
     let source = "const foo = 1;\nconst bar = 2;\nfoo + bar;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -931,8 +898,7 @@ fn test_rename_preserves_non_target_identifiers() {
 #[test]
 fn test_rename_at_end_of_identifier() {
     let source = "const myVar = 1;\nmyVar;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -952,8 +918,7 @@ fn test_rename_at_end_of_identifier() {
 #[test]
 fn test_rename_empty_new_name() {
     let source = "const x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -969,8 +934,7 @@ fn test_rename_empty_new_name() {
 #[test]
 fn test_rename_multiple_occurrences_same_line() {
     let source = "const x = 1; const y = x + x;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -991,8 +955,7 @@ fn test_rename_multiple_occurrences_same_line() {
 #[test]
 fn test_prepare_rename_on_string_literal() {
     let source = "const s = \"hello\";";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let _root = parser.parse_source_file();
+    let (parser, _root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, _root);
@@ -1010,8 +973,7 @@ fn test_prepare_rename_on_string_literal() {
 #[test]
 fn test_rename_class_method() {
     let source = "class Foo {\n  bar() {}\n}\nconst f = new Foo();\nf.bar();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1026,6 +988,33 @@ fn test_rename_class_method() {
     );
 }
 
+#[test]
+fn test_rename_class_method_includes_instance_access() {
+    let source = "class Foo {\n  bar() {}\n}\nconst f = new Foo();\nf.bar();";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = RenameProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let edit = provider
+        .provide_rename_edits(root, Position::new(1, 2), "baz".to_string())
+        .expect("Should rename method");
+    let edits = &edit.changes["test.ts"];
+    assert_eq!(
+        edits.len(),
+        2,
+        "Should rename declaration and instance access exactly once, got {edits:?}"
+    );
+    assert!(
+        edits
+            .iter()
+            .any(|edit| edit.range.start.line == 4 && edit.range.start.character == 2),
+        "Should rename f.bar() usage, got {edits:?}"
+    );
+}
+
 // =========================================================================
 // Additional edge-case tests
 // =========================================================================
@@ -1033,8 +1022,7 @@ fn test_rename_class_method() {
 #[test]
 fn test_rename_namespace_name() {
     let source = "namespace MyNS {\n  export const val = 1;\n}\nMyNS.val;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1057,8 +1045,7 @@ fn test_rename_namespace_name() {
 #[test]
 fn test_rename_arrow_function_param() {
     let source = "const fn = (x: number) => x * 2;\nfn(3);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1082,8 +1069,7 @@ fn test_rename_arrow_function_param() {
 #[test]
 fn test_prepare_rename_number_literal_returns_none() {
     let source = "const x = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1098,8 +1084,7 @@ fn test_prepare_rename_number_literal_returns_none() {
 #[test]
 fn test_rename_for_loop_variable() {
     let source = "for (let i = 0; i < 10; i++) {\n  console.log(i);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1123,8 +1108,7 @@ fn test_rename_for_loop_variable() {
 #[test]
 fn test_rename_catch_clause_variable() {
     let source = "try {\n  throw 1;\n} catch (err) {\n  console.log(err);\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1148,8 +1132,7 @@ fn test_rename_catch_clause_variable() {
 #[test]
 fn test_prepare_rename_empty_file_returns_none() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1167,8 +1150,7 @@ fn test_prepare_rename_empty_file_returns_none() {
 fn test_rename_class_name_with_constructor_usage() {
     let source =
         "class Animal {\n  constructor(public name: string) {}\n}\nconst a = new Animal('dog');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1189,8 +1171,7 @@ fn test_rename_class_name_with_constructor_usage() {
 fn test_rename_type_alias_with_multiple_usages() {
     let source =
         "type Callback = () => void;\nconst a: Callback = () => {};\nconst b: Callback = () => {};";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1213,8 +1194,7 @@ fn test_rename_type_alias_with_multiple_usages() {
 #[test]
 fn test_rename_const_in_nested_block() {
     let source = "function outer() {\n  if (true) {\n    const inner = 1;\n    inner;\n  }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1235,8 +1215,7 @@ fn test_rename_const_in_nested_block() {
 #[test]
 fn test_rename_enum_member() {
     let source = "enum Color { Red, Green, Blue }\nconst c = Color.Red;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1265,8 +1244,7 @@ fn test_rename_enum_member() {
 #[test]
 fn test_rename_let_variable_multiple_lines() {
     let source = "let counter = 0;\ncounter++;\ncounter += 5;\nconsole.log(counter);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1290,8 +1268,7 @@ fn test_rename_let_variable_multiple_lines() {
 #[test]
 fn test_rename_rejects_reserved_word_return() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1309,8 +1286,7 @@ fn test_rename_rejects_reserved_word_return() {
 #[test]
 fn test_rename_rejects_reserved_word_if() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1325,8 +1301,7 @@ fn test_rename_rejects_reserved_word_if() {
 #[test]
 fn test_rename_default_export_function() {
     let source = "export default function handler() {}\nhandler();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1347,8 +1322,7 @@ fn test_rename_default_export_function() {
 #[test]
 fn test_rename_variable_with_underscore_prefix() {
     let source = "const _private = 1;\n_private;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1368,8 +1342,7 @@ fn test_rename_variable_with_underscore_prefix() {
 #[test]
 fn test_rename_variable_with_dollar_sign() {
     let source = "const $el = 1;\n$el;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1389,8 +1362,7 @@ fn test_rename_variable_with_dollar_sign() {
 #[test]
 fn test_rename_single_char_variable() {
     let source = "const x = 1;\nx;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1410,8 +1382,7 @@ fn test_rename_single_char_variable() {
 #[test]
 fn test_prepare_rename_on_comment_returns_none() {
     let source = "// myComment\nconst x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1429,8 +1400,7 @@ fn test_prepare_rename_on_comment_returns_none() {
 #[test]
 fn test_rename_generic_type_parameter() {
     let source = "function identity<T>(x: T): T { return x; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1457,8 +1427,7 @@ fn test_rename_generic_type_parameter() {
 #[test]
 fn test_rename_variable_in_ternary() {
     let source = "const flag = true;\nconst result = flag ? 'yes' : 'no';";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1481,8 +1450,7 @@ fn test_rename_variable_in_ternary() {
 #[test]
 fn test_rename_in_template_literal() {
     let source = "let user = 'World';\nconst msg = `Hello ${user}!`;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1502,8 +1470,7 @@ fn test_rename_in_template_literal() {
 #[test]
 fn test_rename_in_optional_chaining() {
     let source = "let obj = { a: 1 };\nconst val = obj?.a;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1523,8 +1490,7 @@ fn test_rename_in_optional_chaining() {
 #[test]
 fn test_rename_in_object_shorthand() {
     let source = "let name = 'test';\nconst obj = { name };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1538,8 +1504,7 @@ fn test_rename_in_object_shorthand() {
 #[test]
 fn test_rename_in_array_pattern() {
     let source = "let [first, second] = [1, 2];\nconst x = first + second;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1556,8 +1521,7 @@ fn test_rename_in_array_pattern() {
 #[test]
 fn test_rename_class_property() {
     let source = "class Foo {\n  bar = 1;\n  method() { return this.bar; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1572,8 +1536,7 @@ fn test_rename_class_property() {
 #[test]
 fn test_rename_at_end_of_file() {
     let source = "const x = 1;\nx";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1590,8 +1553,7 @@ fn test_rename_at_end_of_file() {
 #[test]
 fn test_rename_generator_function() {
     let source = "function* gen() { yield 1; }\ngen();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1608,8 +1570,7 @@ fn test_rename_generator_function() {
 #[test]
 fn test_rename_in_for_of() {
     let source = "const arr = [1, 2];\nfor (const item of arr) { console.log(item); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1626,8 +1587,7 @@ fn test_rename_in_for_of() {
 #[test]
 fn test_rename_namespace() {
     let source = "namespace MyNS {\n  export const x = 1;\n}\nMyNS.x;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1647,8 +1607,7 @@ fn test_rename_namespace() {
 #[test]
 fn test_rename_type_alias_in_function_params() {
     let source = "type ID = string;\nlet x: ID;\nfunction f(a: ID): ID { return a; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1672,8 +1631,7 @@ fn test_rename_type_alias_in_function_params() {
 #[test]
 fn test_rename_rejects_reserved_word_while() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1686,8 +1644,7 @@ fn test_rename_rejects_reserved_word_while() {
 #[test]
 fn test_rename_rejects_reserved_word_for() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1700,8 +1657,7 @@ fn test_rename_rejects_reserved_word_for() {
 #[test]
 fn test_rename_rejects_reserved_word_const() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1714,8 +1670,7 @@ fn test_rename_rejects_reserved_word_const() {
 #[test]
 fn test_rename_allows_contextual_keyword_as_name() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1730,8 +1685,7 @@ fn test_rename_allows_contextual_keyword_as_name() {
 #[test]
 fn test_rename_variable_used_in_if_condition() {
     let source = "let flag = true;\nif (flag) { console.log('yes'); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1754,8 +1708,7 @@ fn test_rename_variable_used_in_if_condition() {
 #[test]
 fn test_rename_variable_used_in_while_loop() {
     let source = "let count = 0;\nwhile (count < 10) { count++; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1776,8 +1729,7 @@ fn test_rename_variable_used_in_while_loop() {
 fn test_rename_function_with_multiple_calls() {
     let source =
         "function add(a: number, b: number) { return a + b; }\nadd(1, 2);\nadd(3, 4);\nadd(5, 6);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1797,8 +1749,7 @@ fn test_rename_function_with_multiple_calls() {
 #[test]
 fn test_rename_const_with_type_annotation() {
     let source = "const greeting: string = 'hello';\nconsole.log(greeting);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1818,8 +1769,7 @@ fn test_rename_const_with_type_annotation() {
 #[test]
 fn test_prepare_rename_on_operator_returns_none() {
     let source = "let x = 1 + 2;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1833,8 +1783,7 @@ fn test_prepare_rename_on_operator_returns_none() {
 #[test]
 fn test_rename_var_in_switch_case() {
     let source = "let val = 1;\nswitch (val) { case 1: break; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1851,8 +1800,7 @@ fn test_rename_var_in_switch_case() {
 #[test]
 fn test_rename_var_in_return_statement() {
     let source = "function f() { let result = 42; return result; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1869,8 +1817,7 @@ fn test_rename_var_in_return_statement() {
 #[test]
 fn test_rename_class_with_extends() {
     let source = "class Base {}\nclass Child extends Base {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1887,8 +1834,7 @@ fn test_rename_class_with_extends() {
 #[test]
 fn test_rename_interface_with_extends() {
     let source = "interface A { x: number; }\ninterface B extends A { y: string; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1908,8 +1854,7 @@ fn test_rename_interface_with_extends() {
 #[test]
 fn test_rename_variable_shadowed_in_inner_scope() {
     let source = "let x = 1;\n{ let x = 2; x; }\nx;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1930,8 +1875,7 @@ fn test_rename_variable_shadowed_in_inner_scope() {
 #[test]
 fn test_rename_async_arrow_function_param() {
     let source = "const fn = async (data: string) => { return data; };\nfn('test');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1951,8 +1895,7 @@ fn test_rename_async_arrow_function_param() {
 #[test]
 fn test_rename_rejects_reserved_word_break() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1969,8 +1912,7 @@ fn test_rename_rejects_reserved_word_break() {
 #[test]
 fn test_rename_rejects_reserved_word_new() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1983,8 +1925,7 @@ fn test_rename_rejects_reserved_word_new() {
 #[test]
 fn test_rename_rejects_reserved_word_delete() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -1997,8 +1938,7 @@ fn test_rename_rejects_reserved_word_delete() {
 #[test]
 fn test_rename_rejects_reserved_word_typeof() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2011,8 +1951,7 @@ fn test_rename_rejects_reserved_word_typeof() {
 #[test]
 fn test_rename_rejects_reserved_word_void() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2025,8 +1964,7 @@ fn test_rename_rejects_reserved_word_void() {
 #[test]
 fn test_rename_allows_contextual_keyword_readonly() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2042,8 +1980,7 @@ fn test_rename_allows_contextual_keyword_readonly() {
 #[test]
 fn test_rename_allows_contextual_keyword_declare() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2059,8 +1996,7 @@ fn test_rename_allows_contextual_keyword_declare() {
 #[test]
 fn test_rename_to_underscore_name() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2076,8 +2012,7 @@ fn test_rename_to_underscore_name() {
 #[test]
 fn test_rename_to_dollar_name() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2093,8 +2028,7 @@ fn test_rename_to_dollar_name() {
 #[test]
 fn test_rename_rejects_whitespace_name() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2110,8 +2044,7 @@ fn test_rename_rejects_whitespace_name() {
 #[test]
 fn test_prepare_rename_on_semicolon_returns_none() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2125,8 +2058,7 @@ fn test_prepare_rename_on_semicolon_returns_none() {
 #[test]
 fn test_rename_variable_in_arrow_body() {
     let source = "const val = 10;\nconst f = () => val + 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2152,8 +2084,7 @@ fn test_rename_variable_in_arrow_body() {
 #[test]
 fn test_rename_variable_in_computed_property() {
     let source = "const key = 'name';\nconst obj = { [key]: 1 };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2176,8 +2107,7 @@ fn test_rename_variable_in_computed_property() {
 #[test]
 fn test_rename_function_used_as_callback() {
     let source = "function handler() {}\nsetTimeout(handler, 100);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2200,8 +2130,7 @@ fn test_rename_function_used_as_callback() {
 #[test]
 fn test_rename_rejects_reserved_word_switch() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2214,8 +2143,7 @@ fn test_rename_rejects_reserved_word_switch() {
 #[test]
 fn test_rename_rejects_reserved_word_try() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2228,8 +2156,7 @@ fn test_rename_rejects_reserved_word_try() {
 #[test]
 fn test_rename_variable_used_in_binary_expression() {
     let source = "let total = 0;\ntotal = total + 5;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
@@ -2255,8 +2182,7 @@ fn test_rename_variable_used_in_binary_expression() {
 #[test]
 fn test_prepare_rename_enum_member_full_display_name() {
     let source = "enum e {\n    firstMember,\n    secondMember,\n    thirdMember\n}\nvar enumMember = e.thirdMember;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);

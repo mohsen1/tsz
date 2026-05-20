@@ -3,7 +3,8 @@ use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::parser::node_view::NodeAccess;
 use crate::parser::syntax_kind_ext;
-use crate::parser::test_fixture::parse_source;
+use crate::parser::test_fixture::{parse_source, parse_source_with_language_version};
+use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::position::LineMap;
 
@@ -38,7 +39,12 @@ fn parse_statement_recovery_on_malformed_top_level_diagnostics() {
 }
 
 #[test]
-fn top_level_modifier_before_break_recovers_as_empty_statement() {
+fn top_level_modifier_before_break_recovers_as_break_statement() {
+    // tsc's recovery for `public break;` at the top level: strip the
+    // out-of-context modifier, parse `break;` as a normal break statement
+    // (so JS emit produces `break;` rather than `;`), and emit only TS1128
+    // at the modifier position. The checker does not complain about the
+    // orphan break in this error-recovery context.
     let (parser, root) = parse_source("public break;");
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
@@ -54,8 +60,8 @@ fn top_level_modifier_before_break_recovers_as_empty_statement() {
     let statement_node = arena.get(statement).expect("statement");
     assert_eq!(
         statement_node.kind,
-        syntax_kind_ext::EMPTY_STATEMENT,
-        "top-level `public break;` should not leave a break statement for checker diagnostics"
+        syntax_kind_ext::BREAK_STATEMENT,
+        "top-level `public break;` should keep `break;` after stripping the modifier so JS emit matches tsc"
     );
 }
 
@@ -623,42 +629,177 @@ fn parse_definite_assignment_marker_return_type_reports_statement_recovery() {
     let source = "export async function arrayFromAsync<T>(asyncIterable!: AsyncIterable<T>): Promise<T[]> {\n    const out = [];\n    for await (const v of asyncIterable) {\n        out.push(await v);\n    }\n    return out;\n}";
     let (parser, _root) = parse_source(source);
     let diags = parser.get_diagnostics();
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    let has_diag = |code, start, message: &str| {
+        diags
+            .iter()
+            .any(|d| d.code == code && d.start == start && d.message == message)
+    };
+    let expect_diag = |code, start, message: &str| {
+        assert!(
+            has_diag(code, start, message),
+            "expected {code} at byte {start} with {message:?}, got {diags:?}"
+        );
+    };
+
+    let bang_pos = source.find('!').expect("source contains '!'") as u32;
+    let colon_pos = source.find("!:").expect("source contains '!:") as u32 + 1;
+    let return_type_close = source
+        .find("): Promise")
+        .expect("source contains return type close paren") as u32;
+    let return_type_colon = source
+        .find(": Promise")
+        .expect("source contains return type colon") as u32;
+    let close_bracket = source
+        .find("[]")
+        .expect("source contains empty element access") as u32
+        + 1;
+    let const_out = source.find("out =").expect("source contains const binding") as u32;
+    let const_semicolon = source.find("[];").expect("source contains const semicolon") as u32 + 2;
+    let for_await = source.find("await (").expect("source contains for-await") as u32;
+    let for_open_paren_tail = source.find("(const").expect("source contains for header") as u32 + 1;
+    let for_binding = source.find(" v of").expect("source contains for binding") as u32 + 1;
+    let for_of = source.find(" of ").expect("source contains of keyword") as u32 + 1;
+    let for_expression = source
+        .find("asyncIterable) {")
+        .expect("source contains for expression") as u32;
+    let for_close_paren = for_expression + "asyncIterable".len() as u32;
+    let for_open_brace = source
+        .find(") {\n        out.push")
+        .expect("source contains for body brace") as u32
+        + 2;
+    let member_dot = source.find(".push").expect("source contains member access") as u32;
+    let call_semicolon = source
+        .find("await v);")
+        .expect("source contains call semicolon") as u32
+        + "await v)".len() as u32;
+    let final_close_brace = source
+        .rfind('}')
+        .expect("source contains final close brace") as u32;
 
     for expected in [
-        diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
-        diagnostic_codes::EXPRESSION_EXPECTED,
-        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-        diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
-        diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+        (diagnostic_codes::EXPECTED, bang_pos, "',' expected."),
+        (
+            diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            colon_pos,
+            "Parameter declaration expected.",
+        ),
+        (
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            return_type_close,
+            "Expression expected.",
+        ),
+        (
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            return_type_colon,
+            "Declaration or statement expected.",
+        ),
+        (
+            diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+            close_bracket,
+            "An element access expression should take an argument.",
+        ),
+        (diagnostic_codes::EXPECTED, const_out, "':' expected."),
+        (diagnostic_codes::EXPECTED, const_semicolon, "',' expected."),
+        (diagnostic_codes::EXPECTED, for_await, "':' expected."),
+        (
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            for_open_paren_tail,
+            "Expression expected.",
+        ),
+        (diagnostic_codes::EXPECTED, for_binding, "':' expected."),
+        (diagnostic_codes::EXPECTED, for_of, "',' expected."),
+        (diagnostic_codes::EXPECTED, for_expression, "',' expected."),
+        (diagnostic_codes::EXPECTED, for_close_paren, "',' expected."),
+        (
+            diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+            for_open_brace,
+            "Property assignment expected.",
+        ),
+        (diagnostic_codes::EXPECTED, member_dot, "',' expected."),
+        (diagnostic_codes::EXPECTED, call_semicolon, "',' expected."),
+        (
+            diagnostic_codes::EXPRESSION_EXPECTED,
+            final_close_brace,
+            "Expression expected.",
+        ),
     ] {
-        assert!(
-            codes.contains(&expected),
-            "expected diagnostic code {expected}, got {diags:?}"
-        );
+        expect_diag(expected.0, expected.1, expected.2);
     }
+}
+
+#[test]
+fn definite_assignment_recovery_does_not_leak_const_binding_name_state() {
+    let source = "export async function f<T>(x!: AsyncIterable<T>): Promise<T[]> {\n    const { a } = source;\n    later;\n}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let later_pos = source.find("later").expect("source contains later") as u32;
+
+    assert!(
+        !diags.iter().any(|d| {
+            d.code == diagnostic_codes::EXPECTED
+                && d.start == later_pos
+                && d.message == "':' expected."
+        }),
+        "const binding-pattern recovery should not report a leaked colon at `later`; got {diags:?}"
+    );
+}
+
+#[test]
+fn definite_assignment_recovery_reports_for_expression_comma_once_before_close_paren() {
+    let source = "export async function f<T>(x!: AsyncIterable<T>): Promise<T[]> {\n    for await (const v of foo + bar) {\n    }\n}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let foo_pos = source.find("foo").expect("source contains foo") as u32;
+    let bar_pos = source.find("bar").expect("source contains bar") as u32;
+    let close_paren = source
+        .find(") {\n")
+        .expect("source contains for close paren") as u32;
+    let comma_expected_at = |start| {
+        diags.iter().any(|d| {
+            d.code == diagnostic_codes::EXPECTED && d.start == start && d.message == "',' expected."
+        })
+    };
+
+    assert!(
+        comma_expected_at(foo_pos),
+        "expected one expression-start comma diagnostic at `foo`; got {diags:?}"
+    );
+    assert!(
+        !comma_expected_at(bar_pos),
+        "for-expression recovery should not repeat the comma diagnostic at `bar`; got {diags:?}"
+    );
+    assert!(
+        comma_expected_at(close_paren),
+        "expected the separate close-paren comma diagnostic to remain; got {diags:?}"
+    );
 }
 
 #[test]
 fn astral_identifier_debris_uses_scanner_shaped_recovery() {
     let source = r#"declare var \u{102A7}: string;
 export var _\u{102A7} = new Foo().\u{102A7};"#;
-    let (parser, _root) = parse_source(source);
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
     let diags = parser.get_diagnostics();
     let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
 
     for expected in [
         diagnostic_codes::INVALID_CHARACTER,
+        diagnostic_codes::EXPECTED,
         diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
         diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
-        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I,
     ] {
         assert!(
             codes.contains(&expected),
             "expected diagnostic code {expected}, got {diags:?}"
         );
     }
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED_THIS_FOLLOWS_A_BLOCK_OF_STATEMENTS_SO_IF_YOU_I
+        ),
+        "escaped astral declaration-tail recovery should not leak into TS2809 statement recovery, got {diags:?}"
+    );
     assert!(
         !codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
         "invalid astral debris should prefer scanner-shaped recovery over TS1003, got {diags:?}"
@@ -1422,6 +1563,29 @@ fn modifier_led_nested_class_member_recovery_prefers_ts1068_and_ts1128() {
 }
 
 #[test]
+fn nested_class_recovery_does_not_treat_comment_close_brace_as_class_close() {
+    let source = "class C {\n  // }\n  class D {}\n}\n";
+    let comment_brace = source.find("// }").expect("comment brace") as u32 + 3;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    assert!(
+        !diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED
+                && diag.start == comment_brace
+        }),
+        "class-member recovery should only anchor TS1128 to real close-brace tokens, got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        }),
+        "nested class declaration should still use class-member recovery, got {diags:?}"
+    );
+}
+
+#[test]
 fn modifier_led_try_block_in_class_body_prefers_ts1068() {
     let (parser, _root) = parse_source("class C {\n  public try {\n  }\n}");
     let diags = parser.get_diagnostics();
@@ -1649,6 +1813,74 @@ fn test_await_label_in_static_block_emits_ts1109() {
     );
 }
 
+/// `break <reserved-word>` in a context where the reserved word cannot be used
+/// as a label must emit TS1003 (Identifier expected) AND continue parsing the
+/// reserved word as an expression — for `await` in a static block this yields
+/// TS1109 (Expression expected) at the missing operand. tsc emits both; tsz
+/// previously consumed `await` as a (mis-named) label and missed the TS1109.
+#[test]
+fn test_break_reserved_word_in_static_block_emits_ts1003_and_ts1109() {
+    let source = r#"class C {
+    static {
+        break await;
+    }
+}"#;
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "Expected TS1003 for `break await` reserved-label in static block, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected TS1109 for the await expression missing operand, got: {codes:?}"
+    );
+}
+
+/// Same structural rule for `continue <reserved-word>` — exercises the
+/// parallel branch in `parse_continue_statement`.
+#[test]
+fn test_continue_reserved_word_in_static_block_emits_ts1003_and_ts1109() {
+    let source = r#"class C {
+    static {
+        foo: while (true) {
+            continue await;
+        }
+    }
+}"#;
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "Expected TS1003 for `continue await` reserved-label in static block, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected TS1109 for the await expression missing operand, got: {codes:?}"
+    );
+}
+
+/// Negative: a normal identifier label after `break` must still be accepted
+/// without emitting any of these diagnostics.
+#[test]
+fn test_break_named_label_still_parses_cleanly() {
+    let source = r#"function f() {
+    outer: for (let i = 0; i < 10; i++) {
+        break outer;
+    }
+}"#;
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::IDENTIFIER_EXPECTED),
+        "Did not expect TS1003 for `break <named-label>`, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Did not expect TS1109 for `break <named-label>`, got: {codes:?}"
+    );
+}
+
 /// `declare class C extends await {}` in a `.d.ts` file is valid: `await` is
 /// allowed as an identifier in declaration files. Match tsc by suppressing
 /// the parser-level TS1109 emission in `parse_heritage_left_hand_expression_base`.
@@ -1805,5 +2037,46 @@ fn static_block_await_arrow_candidates_recover_as_await_expressions() {
             diag.code == diagnostic_codes::EXPRESSION_EXPECTED && diag.start == bare_arrow_pos
         }),
         "expected TS1109 at `=>` after bare `await`, got {diags:?}"
+    );
+}
+
+#[test]
+fn comma_between_consecutive_function_overloads_recovers_at_statement_boundary() {
+    let source = r#"
+function f1(), function f1();
+function f2(), function f2() {}
+function f3() {}, function f3();
+
+class C {
+    m1(), m1();
+    m2(), m2() {}
+    m3() {}, m3();
+}
+"#;
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::OR_EXPECTED,
+            diagnostic_codes::OR_EXPECTED,
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            diagnostic_codes::OR_EXPECTED,
+            diagnostic_codes::OR_EXPECTED,
+            diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+        ],
+        "expected comma recovery to match overloadConsecutiveness syntax diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPECTED),
+        "comma recovery should not parse following overloads as malformed function expressions: {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "comma after a function body should recover as a statement-list separator, not an expression: {:?}",
+        parser.get_diagnostics()
     );
 }

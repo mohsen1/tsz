@@ -1,5 +1,3 @@
-//! Argument checking, parameter analysis, and inference helpers for `CallEvaluator`.
-//!
 //! This module contains the argument-matching utilities used during function call
 //! resolution and generic inference:
 //! - Parameter/argument type checking (`check_argument_types`)
@@ -9,7 +7,7 @@
 //! - Contextual sensitivity analysis (`is_contextually_sensitive`)
 
 use super::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::operations::iterators::get_iterator_info;
+use crate::operations::iterators::{get_iterator_info, target_has_non_iterable_property_shape};
 use crate::types::{
     IntrinsicKind, LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
 };
@@ -96,6 +94,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     fn is_iterable_like_call_target(&self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
+            return false;
+        }
+        if self.array_application_element_type(type_id).is_some() {
             return false;
         }
         match self.interner.lookup(type_id) {
@@ -432,7 +433,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.interner.as_type_database(),
                     constraint,
                 )
-                && !self.checker.is_assignable_to(*arg_type, constraint)
+                && !self.arg_satisfies_type_parameter_constraint(*arg_type, constraint)
                 && !self.is_function_union_compat(*arg_type, constraint)
             {
                 // Use the type parameter itself (e.g., `T`) in the error message,
@@ -595,10 +596,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             }
 
-            let use_bivariant_callbacks = (allow_bivariant_callbacks
-                || self.force_bivariant_callbacks)
-                && crate::type_queries::is_callable_type(self.interner, expanded_arg_type)
-                && crate::type_queries::is_callable_type(self.interner, effective_param_type);
+            // Bivariance only applies when the parameter was declared as a method shorthand;
+            // function-type literals are contravariant under --strictFunctionTypes.
+            let callback_bivariance_enabled =
+                allow_bivariant_callbacks || self.force_bivariant_callbacks;
+            let param_signature_is_method = crate::type_queries::callable_first_sig_is_method(
+                self.interner,
+                effective_param_type,
+            );
+            let arg_is_callable =
+                crate::type_queries::is_callable_type(self.interner, expanded_arg_type);
+            let param_is_callable =
+                crate::type_queries::is_callable_type(self.interner, effective_param_type);
+            let use_bivariant_callbacks = callback_bivariance_enabled
+                && param_signature_is_method
+                && arg_is_callable
+                && param_is_callable;
+            trace!(
+                arg_index = i,
+                arg_type_id = %expanded_arg_type.0,
+                param_type_id = %effective_param_type.0,
+                allow_bivariant_callbacks,
+                force_bivariant_callbacks = self.force_bivariant_callbacks,
+                param_signature_is_method,
+                arg_is_callable,
+                param_is_callable,
+                use_bivariant_callbacks,
+                "selected callback variance mode for call argument"
+            );
             if self.callback_requires_more_fixed_params_than_generic_rest_allows(
                 expanded_arg_type,
                 effective_param_type,
@@ -661,6 +686,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .is_assignable_to(expanded_arg_type, effective_param_type)
             };
             let assignable = assignable
+                || if crate::contains_this_type(self.interner, effective_param_type) {
+                    self.checker
+                        .type_resolver()
+                        .and_then(|resolver| resolver.resolve_this_type(self.interner))
+                        .is_some_and(|concrete_this| {
+                            let substituted =
+                                crate::instantiation::instantiate::substitute_this_type(
+                                    self.interner,
+                                    effective_param_type,
+                                    concrete_this,
+                                );
+                            self.checker
+                                .is_assignable_to(expanded_arg_type, substituted)
+                        })
+                } else {
+                    false
+                };
+            let assignable = assignable
                 || self.callable_satisfies_top_rest_any_constraint(
                     expanded_arg_type,
                     effective_param_type,
@@ -670,7 +713,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     && self
                         .extract_iterable_yield_type(effective_param_type)
                         .is_some_and(|yield_type| {
-                            self.checker.is_assignable_to(TypeId::STRING, yield_type)
+                            !target_has_non_iterable_property_shape(
+                                self.interner,
+                                effective_param_type,
+                                |t| self.checker.evaluate_type(t),
+                            ) && self.checker.is_assignable_to(TypeId::STRING, yield_type)
                         }));
             if !assignable {
                 return Some(CallResult::ArgumentTypeMismatch {
@@ -712,6 +759,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let rest_args = &arg_types[rest_start..];
+        if rest_args
+            .iter()
+            .any(|&arg| self.generic_spread_argument_marker_inner(arg).is_some())
+        {
+            return None;
+        }
         let mut aggregate_offset = 0usize;
         let mut aggregate_expected = rest_type;
         let expansion = self.expand_tuple_rest(rest_type);
@@ -808,6 +861,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if type_id.is_intrinsic() {
             return false;
         }
+        if self.array_application_element_type(type_id).is_some() {
+            return false;
+        }
         match self.interner.lookup(type_id) {
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 self.rest_type_needs_aggregate_argument_check(inner)
@@ -830,7 +886,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .any(|element| !element.rest)
             }
             Some(
-                TypeData::Application(_)
+                TypeData::TypeParameter(_)
+                | TypeData::Application(_)
                 | TypeData::Conditional(_)
                 | TypeData::Intersection(_)
                 | TypeData::Lazy(_)
@@ -886,6 +943,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         let name = elem.name?;
         (self.interner.resolve_atom(name) == SPREAD_ARGUMENT_MARKER_NAME).then_some(elem.type_id)
+    }
+
+    fn generic_spread_argument_marker_inner(&self, type_id: TypeId) -> Option<TypeId> {
+        let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+        let [elem] = &*self.interner.tuple_list(elems_id) else {
+            return None;
+        };
+        (elem.rest
+            && elem.name.is_none()
+            && matches!(
+                self.interner.lookup(elem.type_id),
+                Some(TypeData::TypeParameter(_))
+            ))
+        .then_some(elem.type_id)
     }
 
     fn normalize_spread_actual_type(&mut self, type_id: TypeId) -> TypeId {
@@ -986,7 +1059,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         match self.interner.lookup(rest_param_type) {
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
-                let (rest_min, rest_max) = self.tuple_length_bounds(&elements);
+                let evaluated = self.evaluate_tuple_rest_elements(&elements);
+                let elements_ref: &[TupleElement] = evaluated.as_deref().unwrap_or(&elements);
+                let (rest_min, rest_max) = self.tuple_length_bounds(elements_ref);
                 let min = required + rest_min;
                 let max = rest_max.map(|max| required + max);
                 (min, max)
@@ -1072,6 +1147,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Evaluate Application/Mapped types (e.g., TupleMapper<[string, number]>) to
         // their concrete Array/Tuple form so rest parameter spreading works correctly.
         let rest_param_type = self.evaluate_rest_param_type(rest_param_type);
+        if let Some(elem) = self.array_application_element_type(rest_param_type) {
+            return Some(elem);
+        }
         trace!(
             rest_param_type_id = %rest_param_type.0,
             rest_param_type_key = ?self.interner.lookup(rest_param_type),
@@ -1088,7 +1166,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
-                self.tuple_rest_element_type(&elements, offset, rest_arg_count)
+                let evaluated = self.evaluate_tuple_rest_elements(&elements);
+                let elements_ref: &[TupleElement] = evaluated.as_deref().unwrap_or(&elements);
+                self.tuple_rest_element_type(elements_ref, offset, rest_arg_count)
             }
             Some(TypeData::Union(members)) => {
                 let mut member_types = Vec::new();
@@ -1099,8 +1179,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         Some(TypeData::Array(elem)) => member_types.push(elem),
                         Some(TypeData::Tuple(elements)) => {
                             let elements = self.interner.tuple_list(elements);
+                            let evaluated = self.evaluate_tuple_rest_elements(&elements);
+                            let elements_ref: &[TupleElement] =
+                                evaluated.as_deref().unwrap_or(&elements);
                             if let Some(ty) =
-                                self.tuple_rest_element_type(&elements, offset, rest_arg_count)
+                                self.tuple_rest_element_type(elements_ref, offset, rest_arg_count)
                             {
                                 member_types.push(ty);
                             }
@@ -1138,6 +1221,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 Some(rest_param_type)
             }
         }
+    }
+
+    fn array_application_element_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) else {
+            return None;
+        };
+        let app = self.interner.type_application(app_id);
+        let array_base = crate::relations::subtype::TypeResolver::get_array_base_type(
+            self.interner.as_type_resolver(),
+        )?;
+        (app.base == array_base && app.args.len() == 1).then_some(app.args[0])
     }
 
     fn tuple_length_bounds(&self, elements: &[TupleElement]) -> (usize, Option<usize>) {
@@ -1264,6 +1358,55 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     /// Maximum iterations for type unwrapping loops to prevent infinite loops.
     const MAX_UNWRAP_ITERATIONS: usize = 1000;
+
+    /// Evaluate rest element types within a tuple, replacing Application/Conditional/Lazy
+    /// rest elements with their concrete evaluated forms.
+    ///
+    /// When a rest parameter has the form `...args: [label: K, ...Args<E, K>]` and `K` has
+    /// been instantiated, the spread element `Args<E, K>` (an Application) may evaluate to
+    /// a concrete tuple like `[data: T]`. Returning the evaluated form lets both arity
+    /// bounds (`tuple_length_bounds`) and element-type extraction (`tuple_rest_element_type`)
+    /// see the real structure instead of an opaque Application.
+    ///
+    /// Returns `Some(new_vec)` only when at least one rest element changed; otherwise
+    /// returns `None` so callers can skip allocation.
+    fn evaluate_tuple_rest_elements(
+        &mut self,
+        elements: &[TupleElement],
+    ) -> Option<Vec<TupleElement>> {
+        let mut output: Option<Vec<TupleElement>> = None;
+        for (i, elem) in elements.iter().enumerate() {
+            let new_id = if elem.rest
+                && !elem.type_id.is_intrinsic()
+                && matches!(
+                    self.interner.lookup(elem.type_id),
+                    Some(TypeData::Application(_) | TypeData::Conditional(_) | TypeData::Lazy(_))
+                ) {
+                let evaled = self.checker.evaluate_type(elem.type_id);
+                (evaled != elem.type_id).then_some(evaled)
+            } else {
+                None
+            };
+
+            match (new_id, output.as_mut()) {
+                (Some(tid), Some(out)) => out.push(TupleElement {
+                    type_id: tid,
+                    ..*elem
+                }),
+                (None, Some(out)) => out.push(*elem),
+                (Some(tid), None) => {
+                    let mut out = elements[..i].to_vec();
+                    out.push(TupleElement {
+                        type_id: tid,
+                        ..*elem
+                    });
+                    output = Some(out);
+                }
+                (None, None) => {}
+            }
+        }
+        output
+    }
 
     /// Evaluate a rest parameter type to resolve Application/Mapped types to their
     /// concrete Array/Tuple form. This is needed because after generic instantiation,

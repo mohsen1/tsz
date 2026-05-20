@@ -130,3 +130,57 @@ fn js_function_overload_reports_ts8017_at_semicolon() {
         "unexpected diagnostic length: {ts8017:#?}"
     );
 }
+
+#[test]
+fn js_namespace_declaration_uses_parser_namespace_flag_for_ts8006_text() {
+    let source = "/* module */ namespace N {}";
+
+    let diagnostics = check_source(
+        source,
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts8006: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 8006)
+        .collect();
+
+    assert_eq!(ts8006.len(), 1, "unexpected diagnostics: {diagnostics:#?}");
+    assert!(
+        ts8006[0].message_text.contains("'namespace' declarations"),
+        "expected TS8006 to identify a namespace declaration from parser flags. Actual diagnostics: {ts8006:#?}"
+    );
+}
+
+#[test]
+fn js_module_declaration_ignores_namespace_word_in_comment_for_ts8006_text() {
+    let source = "/* namespace */ module M {}";
+
+    let diagnostics = check_source(
+        source,
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts8006: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 8006)
+        .collect();
+
+    assert_eq!(ts8006.len(), 1, "unexpected diagnostics: {diagnostics:#?}");
+    assert!(
+        ts8006[0].message_text.contains("'module' declarations"),
+        "expected TS8006 to identify a module declaration from parser flags. Actual diagnostics: {ts8006:#?}"
+    );
+}

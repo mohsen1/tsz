@@ -10,12 +10,13 @@
 //! This module implements the solver-first architecture principle: pure type logic
 //! belongs in the solver, while the checker handles AST traversal and symbol resolution.
 
+use crate::construction::TypeDatabase;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{TypeData, TypeId};
-use crate::{TypeDatabase, TypeSubstitution, instantiate_type};
 use std::cell::RefCell;
 
 /// Result of application type evaluation.
@@ -54,6 +55,25 @@ pub struct ApplicationEvaluator<'a, R: TypeResolver> {
     cache: RefCell<rustc_hash::FxHashMap<TypeId, TypeId>>,
 }
 
+/// Operation-local memo table statistics for [`ApplicationEvaluator`].
+///
+/// Owner: one application-evaluation request family. The cache is dropped with
+/// the evaluator and is never shared across resolver or compiler-option modes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ApplicationEvaluatorCacheStatistics {
+    /// Entries in the application evaluation memo keyed by input `TypeId`.
+    pub application_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl ApplicationEvaluatorCacheStatistics {
+    /// Estimated heap bytes owned by the application evaluator memo table.
+    #[must_use]
+    pub const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
+}
+
 impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
     /// Create a new application evaluator.
     pub fn new(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
@@ -71,6 +91,18 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
     /// Call this when contextual type changes to ensure fresh evaluation.
     pub fn clear_cache(&self) {
         self.cache.borrow_mut().clear();
+    }
+
+    /// Return entry and size accounting for this evaluator's operation-local cache.
+    #[must_use]
+    pub fn cache_statistics(&self) -> ApplicationEvaluatorCacheStatistics {
+        let application_entries = self.cache.borrow().len();
+        let estimated_size_bytes =
+            application_entries.saturating_mul(std::mem::size_of::<(TypeId, TypeId)>());
+        ApplicationEvaluatorCacheStatistics {
+            application_entries,
+            estimated_size_bytes,
+        }
     }
 
     /// Evaluate an Application type by resolving the base symbol and instantiating.
@@ -190,7 +222,11 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &args);
         let mut instantiated = instantiate_type(self.interner, body_type, &substitution);
         if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::substitute_this_type(self.interner, instantiated, type_id);
+            instantiated = crate::instantiation::instantiate::substitute_this_type(
+                self.interner,
+                instantiated,
+                type_id,
+            );
         }
 
         // Recursively evaluate for nested applications

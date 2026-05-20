@@ -253,7 +253,8 @@ impl Server {
         let base_name = required_name.strip_suffix('_');
         let mut best: Option<(String, &CompletionItem)> = None;
         for item in project_items {
-            if !item.has_action || item.additional_text_edits.is_none() {
+            let has_required_edits = item.has_action && item.additional_text_edits.is_some();
+            if !has_required_edits {
                 continue;
             }
             let matched_label = if item.label == required_name {
@@ -865,7 +866,8 @@ impl Server {
         let mut out = Vec::new();
         let mut seen = BTreeSet::new();
         for item in project_items {
-            if !item.has_action || item.source.is_none() {
+            let has_auto_import_source = item.has_action && item.source.is_some();
+            if !has_auto_import_source {
                 continue;
             }
             let Some(first) = item.label.chars().next() else {

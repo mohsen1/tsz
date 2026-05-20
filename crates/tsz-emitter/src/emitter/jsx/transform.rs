@@ -169,14 +169,14 @@ impl<'a> Printer<'a> {
             }
             self.write("children: ");
             if is_jsxs {
-                self.write("[");
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
+                self.bracketed(|emitter| {
+                    for (i, child) in children.iter().enumerate() {
+                        if i > 0 {
+                            emitter.write(", ");
+                        }
+                        emitter.emit_jsx_child_as_expression(*child);
                     }
-                    self.emit_jsx_child_as_expression(*child);
-                }
-                self.write("]");
+                });
             } else {
                 self.emit_jsx_child_as_expression(children[0]);
             }
@@ -229,14 +229,14 @@ impl<'a> Printer<'a> {
                 }
                 self.write("children: ");
                 if is_jsxs {
-                    self.write("[");
-                    for (i, child) in children.iter().enumerate() {
-                        if i > 0 {
-                            self.write(", ");
+                    self.bracketed(|emitter| {
+                        for (i, child) in children.iter().enumerate() {
+                            if i > 0 {
+                                emitter.write(", ");
+                            }
+                            emitter.emit_jsx_child_as_expression(*child);
                         }
-                        self.emit_jsx_child_as_expression(*child);
-                    }
-                    self.write("]");
+                    });
                 } else {
                     self.emit_jsx_child_as_expression(children[0]);
                 }
@@ -314,14 +314,14 @@ impl<'a> Printer<'a> {
             }
             self.write("{ children: ");
             if is_jsxs {
-                self.write("[");
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
+                self.bracketed(|emitter| {
+                    for (i, child) in children.iter().enumerate() {
+                        if i > 0 {
+                            emitter.write(", ");
+                        }
+                        emitter.emit_jsx_child_as_expression(*child);
                     }
-                    self.emit_jsx_child_as_expression(*child);
-                }
-                self.write("]");
+                });
             } else {
                 self.emit_jsx_child_as_expression(children[0]);
             }
@@ -396,9 +396,10 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.write("{...");
-        self.emit(spread.expression);
-        self.write("}");
+        self.braced(|emitter| {
+            emitter.write("...");
+            emitter.emit(spread.expression);
+        });
     }
 
     pub(in super::super) fn emit_jsx_expression(&mut self, node: &Node) {
@@ -408,7 +409,7 @@ impl<'a> Printer<'a> {
 
         let closing_brace_pos = self.find_jsx_expression_closing_brace(node);
 
-        self.write("{");
+        self.open_brace();
         if expr.dot_dot_dot_token {
             self.write("...");
         }
@@ -418,13 +419,17 @@ impl<'a> Printer<'a> {
             // Emit all comments inside the brace pair so they don't drift into the
             // parent JSX element as trailing comments.
             self.increase_indent();
-            let (has_comment, last_comment_end, last_comment_has_newline) =
+            let (mut has_comment, mut last_comment_end, mut last_comment_has_newline) =
                 self.emit_comments_in_range(node.pos + 1, closing_brace_pos, false, true);
+            if !has_comment {
+                (has_comment, last_comment_end, last_comment_has_newline) = self
+                    .emit_comments_in_range_untracked(node.pos + 1, closing_brace_pos, false, true);
+            }
             if has_comment && last_comment_has_newline {
                 // When the last comment had a trailing newline, the writer is at
                 // line-start and will use ensure_indent() for the closing `}`.
                 // Write `}` before decreasing indent so it aligns with the `{`.
-                self.write("}");
+                self.close_brace();
                 self.decrease_indent();
                 return;
             }
@@ -442,15 +447,28 @@ impl<'a> Printer<'a> {
             // Emit comments between `{` and the expression, such as `{
             // /* comment */ expr }` in JSX context.
             self.increase_indent();
-            self.emit_comments_in_range(node.pos + 1, expr_node.pos, false, true);
+            let (has_leading_comment, _, _) =
+                self.emit_comments_in_range(node.pos + 1, expr_node.pos, false, true);
+            if !has_leading_comment {
+                self.emit_comments_in_range_untracked(node.pos + 1, expr_node.pos, false, true);
+            }
             self.emit(expr.expression);
 
             // Emit comments between the expression and the closing brace.
             let expr_token_end = self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
-            self.emit_comments_in_range(expr_token_end, closing_brace_pos, true, false);
+            let (has_trailing_comment, _, _) =
+                self.emit_comments_in_range(expr_token_end, closing_brace_pos, true, false);
+            if !has_trailing_comment {
+                self.emit_comments_in_range_untracked(
+                    expr_token_end,
+                    closing_brace_pos,
+                    true,
+                    false,
+                );
+            }
             self.decrease_indent();
         }
-        self.write("}");
+        self.close_brace();
     }
 
     fn find_jsx_expression_closing_brace(&self, node: &Node) -> u32 {
@@ -613,6 +631,30 @@ impl<'a> Printer<'a> {
     // JSX Auto Import Injection
     // =========================================================================
 
+    pub(in super::super) const fn effective_jsx_emit(&self) -> JsxEmit {
+        if matches!(
+            self.ctx.options.jsx,
+            JsxEmit::Preserve | JsxEmit::ReactNative
+        ) {
+            return self.ctx.options.jsx;
+        }
+        match self.jsx_pragmas.runtime {
+            Some(crate::jsx_pragmas::JsxRuntimePragma::Classic) => JsxEmit::React,
+            Some(crate::jsx_pragmas::JsxRuntimePragma::Automatic) => {
+                if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
+                    JsxEmit::ReactJsxDev
+                } else {
+                    JsxEmit::ReactJsx
+                }
+            }
+            _ => self.ctx.options.jsx,
+        }
+    }
+
+    pub(in crate::emitter) fn jsx_pragma_text(&self) -> Option<&'a str> {
+        self.source_text_for_map()
+    }
+
     /// Get the CJS variable name for the JSX runtime module import.
     /// e.g., "react/jsx-runtime" -> "`jsx_runtime_1`", "react/jsx-dev-runtime" -> "`jsx_dev_runtime_1`"
     ///
@@ -624,7 +666,7 @@ impl<'a> Printer<'a> {
             return var_name.clone();
         }
 
-        let suffix = match self.ctx.options.jsx {
+        let suffix = match self.effective_jsx_emit() {
             JsxEmit::ReactJsxDev => "jsx-dev-runtime",
             _ => "jsx-runtime",
         };
@@ -665,22 +707,20 @@ impl<'a> Printer<'a> {
     /// Extract `@jsxImportSource <package>` pragma from the file's leading comments.
     /// Returns the package name (e.g. `"preact"`) or `None` if no pragma found.
     pub(in super::super) fn extract_jsx_import_source_pragma(&self) -> Option<String> {
-        let text = self.source_text?;
+        let text = self.jsx_pragma_text()?;
         extract_jsx_import_source(text)
     }
 
     /// Extract `@jsx <factory>` pragma (classic JSX) from the file's leading
     /// comments. Issue #4010.
     pub(in super::super) fn extract_jsx_factory_pragma(&self) -> Option<String> {
-        let text = self.source_text?;
-        super::extract_jsx_factory(text)
+        self.jsx_pragmas.factory.clone()
     }
 
     /// Extract `@jsxFrag <factory>` pragma (classic JSX) from the file's
     /// leading comments. Issue #4010.
     pub(in super::super) fn extract_jsx_fragment_factory_pragma(&self) -> Option<String> {
-        let text = self.source_text?;
-        super::extract_jsx_fragment_factory(text)
+        self.jsx_pragmas.fragment_factory.clone()
     }
 
     /// Check if the file needs JSX runtime auto-imports and return the import text.
@@ -690,7 +730,7 @@ impl<'a> Printer<'a> {
         let is_cjs = self.ctx.is_effectively_commonjs();
         // Per-file @jsxImportSource pragma overrides the global option
         let pragma_source = self.extract_jsx_import_source_pragma();
-        match self.ctx.options.jsx {
+        match self.effective_jsx_emit() {
             JsxEmit::ReactJsx => {
                 let source = pragma_source
                     .as_deref()

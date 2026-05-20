@@ -11,6 +11,21 @@ use tsz_common::file_extensions::is_ts_declaration_file_name;
 
 use super::enums::{ScriptKind, ScriptTarget};
 
+/// Convert a byte length to the `u32` width required by the WASM
+/// position API, saturating at `u32::MAX` instead of wrapping.
+///
+/// Source files larger than `u32::MAX` are not realistically supported
+/// — the parser uses `u32` offsets throughout — but the previous
+/// `text.len() as u32` cast silently wrapped, breaking the
+/// `end >= pos` invariant and redirecting consumers' substring lookups
+/// to wrong byte ranges. Saturating returns the largest representable
+/// value, which preserves the invariant and signals "at least
+/// `u32::MAX` bytes" without producing a wrapped (smaller) end. See
+/// issue #4778.
+fn byte_len_to_u32_saturating(len: usize) -> u32 {
+    u32::try_from(len).unwrap_or(u32::MAX)
+}
+
 /// TypeScript `SourceFile` - represents a parsed source file
 ///
 /// Provides access to:
@@ -100,7 +115,7 @@ impl TsSourceFile {
     /// Get the end position (length of text)
     #[wasm_bindgen(getter)]
     pub fn end(&self) -> u32 {
-        self.text.len() as u32
+        byte_len_to_u32_saturating(self.text.len())
     }
 
     /// Get the start position (always 0)
@@ -272,4 +287,40 @@ pub fn create_ts_source_file(
     let mut sf = TsSourceFile::new(file_name, source_text);
     sf.language_version = language_version;
     sf
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression for issue #4778: previously `end()` was
+    // `self.text.len() as u32`, which silently wraps for sources larger
+    // than `u32::MAX`. After the fix the conversion saturates at
+    // `u32::MAX`, preserving the `end >= pos` invariant.
+    #[test]
+    fn byte_len_to_u32_saturating_returns_zero_for_empty() {
+        assert_eq!(byte_len_to_u32_saturating(0), 0);
+    }
+
+    #[test]
+    fn byte_len_to_u32_saturating_round_trips_normal_sizes() {
+        assert_eq!(byte_len_to_u32_saturating(42), 42);
+        assert_eq!(byte_len_to_u32_saturating(1_000_000), 1_000_000);
+    }
+
+    #[test]
+    fn byte_len_to_u32_saturating_passes_through_u32_max() {
+        assert_eq!(byte_len_to_u32_saturating(u32::MAX as usize), u32::MAX);
+    }
+
+    #[test]
+    fn byte_len_to_u32_saturating_does_not_wrap_above_u32_max() {
+        // The pre-fix `as u32` cast would wrap to 0 here. Saturating
+        // returns u32::MAX, preserving the end >= pos invariant.
+        let one_past = (u32::MAX as usize)
+            .checked_add(1)
+            .expect("u32::MAX + 1 must be representable in usize on 64-bit targets");
+        assert_eq!(byte_len_to_u32_saturating(one_past), u32::MAX);
+        assert_eq!(byte_len_to_u32_saturating(usize::MAX), u32::MAX);
+    }
 }

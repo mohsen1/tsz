@@ -192,6 +192,14 @@ function snapshotWeightFile() {
     return path.join(__dirname, "fourslash-snapshot.json");
 }
 
+// When a test timed out at its CI cap (TSZ_CI_FOURSLASH_TIMEOUT_MS,
+// typically 60s), the recorded `elapsed` is truncated to the cap.
+// The real cost is at least the cap and probably more — without this
+// adjustment the LPT balancer underestimates these tests and may
+// schedule two timeouts in adjacent shards. Bias by 1.5x cap to keep
+// scheduling pessimistic without overweighting recoverable slowness.
+const TIMEOUT_WEIGHT_BIAS_MS = 60_000 * 1.5;
+
 function loadHistoricalWeights() {
     const weightFile = snapshotWeightFile();
     if (!fs.existsSync(weightFile)) return new Map();
@@ -202,9 +210,16 @@ function loadHistoricalWeights() {
         for (const result of parsed.results || []) {
             if (!result || typeof result.file !== "string") continue;
             const elapsed = Number(result.elapsed || 0);
-            if (Number.isFinite(elapsed) && elapsed > 0) {
-                weights.set(result.file.replace(/\\/g, "/"), elapsed);
-            }
+            if (!Number.isFinite(elapsed) || elapsed <= 0) continue;
+
+            // Tests that timed out report `elapsed` at-or-near the cap, but
+            // their true cost is unbounded. Bias to TIMEOUT_WEIGHT_BIAS_MS
+            // so the LPT balancer doesn't schedule two timeouts adjacently.
+            const isTimeout = result.timedOut === true || result.status === "timeout";
+            const weight = isTimeout
+                ? Math.max(elapsed, TIMEOUT_WEIGHT_BIAS_MS)
+                : elapsed;
+            weights.set(result.file.replace(/\\/g, "/"), weight);
         }
         return weights;
     } catch (err) {
@@ -213,19 +228,31 @@ function loadHistoricalWeights() {
     }
 }
 
+// Median of known weights — used as the default for tests not in the
+// snapshot (e.g. newly added tests). Hardcoded fallback was 100ms,
+// but median fourslash test is ~422ms (snapshot 2026-05-12), so 100ms
+// systematically under-weights new tests and clusters them onto early
+// shards in the LPT pass.
+function defaultUnknownWeight(weights) {
+    if (weights.size === 0) return 100;
+    const sorted = [...weights.values()].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
+}
+
 function weightedShardTests(testFiles, shardId, shardTotal) {
     const weights = loadHistoricalWeights();
     if (weights.size === 0) {
         return testFiles.filter(file => stableShardForPath(file, shardTotal) === shardId);
     }
 
+    const unknownWeight = defaultUnknownWeight(weights);
     const shards = Array.from({ length: shardTotal }, () => ({ totalWeight: 0, tests: [] }));
     const weightedTests = testFiles.map(file => {
         const relPath = file.replace(/\\/g, "/");
         return {
             file,
             relPath,
-            weight: weights.get(relPath) || 100,
+            weight: weights.get(relPath) || unknownWeight,
         };
     });
 
@@ -484,64 +511,8 @@ function patchTestState(FourSlash, TszAdapter) {
 function patchSessionClient(SessionClient, ts) {
     const proto = SessionClient.prototype;
 
-    // Create a wrapper host that fixes getDefaultLibFileName for the native LS.
-    // The TszClientHost inherits from LanguageServiceAdapterHost and returns
-    // Harness.Compiler.defaultLibFileName, which is undefined in our setup.
-    // We wrap the host to provide a valid lib path via ts.getDefaultLibFilePath().
-    const createNativeHost = (host) => {
-        const wrapper = Object.create(host);
-        wrapper.getDefaultLibFileName = (options) => {
-            return ts.getDefaultLibFilePath(options || host.getCompilationSettings?.() || {});
-        };
-        // Ensure readFile can serve lib files from built/local
-        const origReadFile = host.readFile?.bind(host);
-        const origFileExists = host.fileExists?.bind(host);
-        const origGetScriptSnapshot = host.getScriptSnapshot?.bind(host);
-        const fs = require("fs");
-        const path = require("path");
-        const builtLocal = path.join(process.cwd(), "built/local");
-
-        wrapper.readFile = (fileName) => {
-            const result = origReadFile?.(fileName);
-            if (result != null) return result;
-            // Try to serve lib files from built/local
-            const baseName = path.basename(fileName);
-            if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
-                const libPath = path.join(builtLocal, baseName);
-                try { return fs.readFileSync(libPath, "utf-8"); } catch { return undefined; }
-            }
-            return undefined;
-        };
-        wrapper.fileExists = (fileName) => {
-            if (origFileExists?.(fileName)) return true;
-            const baseName = path.basename(fileName);
-            if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
-                const libPath = path.join(builtLocal, baseName);
-                return fs.existsSync(libPath);
-            }
-            return false;
-        };
-        wrapper.getScriptSnapshot = (fileName) => {
-            const result = origGetScriptSnapshot?.(fileName);
-            if (result) return result;
-            // Serve lib files
-            const content = wrapper.readFile(fileName);
-            if (content != null) return ts.ScriptSnapshot.fromString(content);
-            return undefined;
-        };
-        // getScriptFileNames: include lib files if asked
-        const origGetScriptFileNames = host.getScriptFileNames?.bind(host);
-        wrapper.getScriptFileNames = () => {
-            return origGetScriptFileNames?.() || [];
-        };
-        return wrapper;
-    };
-
     // Native LS fallback disabled: tsz-server must answer LSP requests on its own.
-    // Historical runner.cjs code called withNativeFallback to substitute results from
-    // a real TypeScript language service when tsz's output was empty or less focused,
-    // which made fourslash pass-rate overstate parity. Keep the signatures so call
-    // sites compile, but always return undefined so no substitution happens.
+    // Stub signatures are kept so call sites need no changes.
     const getNativeLanguageService = (_client) => null;
 
     const withNativeFallback = (_client, _op) => undefined;
@@ -1133,7 +1104,57 @@ function patchSessionClient(SessionClient, ts) {
                 const nativeResult = getNative();
                 if (nativeResult && nativeResult.length > 0) {
                     const tszHasImportFix = tszResult.some(f => f.fixName === "import");
-                    if (hasAutoImportExclusionPreferences() && tszHasImportFix) {
+                    const importSpecifiersFromFixes = (fixes) => {
+                        const specs = new Set();
+                        for (const fix of fixes || []) {
+                            if (fix?.fixName !== "import") continue;
+                            for (const change of fix.changes || []) {
+                                for (const textChange of change.textChanges || []) {
+                                    const text = String(textChange.newText || "");
+                                    const match = text.match(/\bfrom\s+["']([^"']+)["']/) ||
+                                        text.match(/\brequire\(["']([^"']+)["']\)/);
+                                    if (match) specs.add(match[1]);
+                                }
+                            }
+                        }
+                        return specs;
+                    };
+                    const programUsesSpecifier = (specifier) => {
+                        try {
+                            const program = this.getProgram?.();
+                            return !!program?.getSourceFiles?.().some(sf => {
+                                const text = String(sf.text || "");
+                                return text.includes(`from "${specifier}"`) ||
+                                    text.includes(`from '${specifier}'`) ||
+                                    text.includes(`import "${specifier}"`) ||
+                                    text.includes(`import '${specifier}'`) ||
+                                    text.includes(`require("${specifier}")`) ||
+                                    text.includes(`require('${specifier}')`);
+                            });
+                        } catch {
+                            return false;
+                        }
+                    };
+                    const tszImportSpecs = importSpecifiersFromFixes(tszResult);
+                    const nativeImportSpecs = importSpecifiersFromFixes(nativeResult);
+                    const tszMatchesExistingSpecifier = [...tszImportSpecs].some(spec =>
+                        programUsesSpecifier(spec) && !nativeImportSpecs.has(spec)
+                    );
+                    const isBarePackageSpecifier = (spec) => {
+                        if (!spec || spec.startsWith(".")) return false;
+                        const parts = spec.split("/");
+                        return spec.startsWith("@") ? parts.length === 2 : parts.length === 1;
+                    };
+                    const tszMatchesNestedManifestName = [...tszImportSpecs].some(spec =>
+                        !spec.startsWith(".") &&
+                        spec.includes("/") &&
+                        !nativeImportSpecs.has(spec) &&
+                        [...nativeImportSpecs].some(nativeSpec =>
+                            isBarePackageSpecifier(nativeSpec) &&
+                            spec.endsWith(`/${nativeSpec}`)
+                        )
+                    );
+                    if ((hasAutoImportExclusionPreferences() || tszMatchesExistingSpecifier || tszMatchesNestedManifestName) && tszHasImportFix) {
                         finalResult = tszResult;
                     } else {
                         finalResult = nativeResult;
@@ -1615,7 +1636,7 @@ function patchSessionClient(SessionClient, ts) {
             preferences,
         });
         const response = this.processResponse(request);
-        return response.body || [];
+        return this.convertChanges(response.body || [], args.fileName);
     };
 
     proto.getEditsForFileRename = function(oldFilePath, newFilePath, formatOptions, preferences) {

@@ -5,68 +5,24 @@
 //! trigger TS1362 ("cannot be used as a value because it was exported using
 //! 'export type'").
 
-use std::sync::Arc;
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::module_resolution::build_module_resolution_maps;
-use tsz_checker::state::CheckerState;
 use tsz_common::common::ModuleKind;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn compile_module_files(files: &[(&str, &str)], entry_idx: usize) -> Vec<(u32, String)> {
-    let mut arenas = Vec::with_capacity(files.len());
-    let mut binders = Vec::with_capacity(files.len());
-    let mut roots = Vec::with_capacity(files.len());
-    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
-
-    for (name, source) in files {
-        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-        arenas.push(Arc::new(parser.get_arena().clone()));
-        binders.push(Arc::new(binder));
-        roots.push(root);
-    }
-
-    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
-
-    let all_arenas = Arc::new(arenas);
-    let all_binders = Arc::new(binders);
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        module: ModuleKind::CommonJS,
-        strict: true,
-        ..CheckerOptions::default()
-    };
-
-    let mut checker = CheckerState::new(
-        all_arenas[entry_idx].as_ref(),
-        all_binders[entry_idx].as_ref(),
-        &types,
-        file_names[entry_idx].clone(),
-        options,
-    );
-
-    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-    checker.ctx.set_all_binders(Arc::clone(&all_binders));
-    checker.ctx.set_current_file_idx(entry_idx);
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker
-        .ctx
-        .set_resolved_module_paths(Arc::new(resolved_module_paths));
-    checker.ctx.set_resolved_modules(resolved_modules);
-
-    checker.check_source_file(roots[entry_idx]);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code != 2318)
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    let entry_file = files[entry_idx].0;
+    tsz_checker::test_utils::check_multi_file(
+        files,
+        entry_file,
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .filter(|d| d.code != 2318)
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 /// Reproduces typeAndNamespaceExportMerge.ts:
@@ -209,5 +165,69 @@ B.zzz;
     assert!(
         ts1362.is_empty(),
         "Should not emit TS1362 when namespace import merged with interface is re-exported. Got: {ts1362:?}. All: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn imported_interface_const_merge_uses_value_side_for_property_access() {
+    let node = r#"
+import { IdentifierNode } from "./identifier.js";
+
+export interface ColumnNode {
+  readonly kind: 'ColumnNode';
+  readonly column: IdentifierNode;
+}
+
+type ColumnNodeFactory = Readonly<{
+  create(column: string): Readonly<ColumnNode>;
+}>;
+
+export const ColumnNode: ColumnNodeFactory = {
+  create(column) {
+    return {
+      kind: 'ColumnNode',
+      column: IdentifierNode.create(column),
+    };
+  },
+};
+"#;
+    let identifier = r#"
+export interface IdentifierNode {
+  readonly kind: 'IdentifierNode';
+  readonly name: string;
+}
+
+type IdentifierNodeFactory = Readonly<{
+  create(name: string): Readonly<IdentifierNode>;
+}>;
+
+export const IdentifierNode: IdentifierNodeFactory = {
+  create(column) {
+    return { kind: 'IdentifierNode', name: column };
+  },
+};
+"#;
+    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_libs(
+        &[("./node.ts", node), ("./identifier.ts", identifier)],
+        "./node.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|d| d.code != 2318)
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+    let ts2339 = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2339)
+        .collect::<Vec<_>>();
+    assert!(
+        ts2339.is_empty(),
+        "Imported interface+const merge should use the const value side in expression context. Got: {ts2339:?}. All: {diagnostics:?}"
     );
 }

@@ -11,6 +11,7 @@ use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tracing::trace;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
@@ -21,7 +22,7 @@ pub(crate) use super::contextual::{
 };
 
 fn should_preserve_contextual_application_shape(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     ty: TypeId,
 ) -> bool {
     if crate::query_boundaries::common::application_info(db, ty).is_some() {
@@ -115,6 +116,85 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn lib_constructor_return_type_for_type_shadow(
+        &mut self,
+        callee_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        let callee_name = self.ctx.arena.get_identifier_text(callee_expr)?;
+        let value_sym_id = self.find_value_symbol_in_libs(callee_name)?;
+        let type_sym_id = self.type_only_non_lib_constructor_shadow(callee_expr, callee_name)?;
+        let resolved = self
+            .resolve_lib_type_by_name(callee_name)
+            .filter(|&ty| !matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN));
+        trace!(
+            callee_name,
+            type_sym_id = type_sym_id.0,
+            value_sym_id = value_sym_id.0,
+            resolved = ?resolved,
+            "lib_constructor_return_type_for_type_shadow"
+        );
+        resolved
+    }
+
+    fn lib_constructor_type_for_type_shadow(&mut self, callee_expr: NodeIndex) -> Option<TypeId> {
+        let callee_name = self.ctx.arena.get_identifier_text(callee_expr)?;
+        let value_sym_id = self.find_value_symbol_in_libs(callee_name)?;
+        let type_sym_id = self.type_only_non_lib_constructor_shadow(callee_expr, callee_name)?;
+        let constructor_name = format!("{callee_name}Constructor");
+        let constructor_type = self
+            .resolve_lib_type_by_name(&constructor_name)
+            .or_else(|| Some(self.get_type_of_symbol(value_sym_id)))?;
+        trace!(
+            callee_name,
+            type_sym_id = type_sym_id.0,
+            constructor_type = constructor_type.0,
+            constructable = crate::query_boundaries::common::has_construct_signatures(
+                self.ctx.types,
+                constructor_type
+            ),
+            "lib_constructor_type_for_type_shadow"
+        );
+        crate::query_boundaries::common::has_construct_signatures(self.ctx.types, constructor_type)
+            .then_some(constructor_type)
+    }
+
+    fn type_only_non_lib_constructor_shadow(
+        &mut self,
+        callee_expr: NodeIndex,
+        callee_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let crate::symbol_resolver::TypeSymbolResolution::Type(type_sym_id) =
+            self.resolve_identifier_symbol_in_type_position(callee_expr)
+        else {
+            trace!(
+                callee_name,
+                "lib constructor shadow: no type-position shadow"
+            );
+            return None;
+        };
+        if self.ctx.symbol_is_from_actual_or_cloned_lib(type_sym_id) {
+            trace!(
+                callee_name,
+                type_sym_id = type_sym_id.0,
+                "lib constructor shadow: type symbol is lib"
+            );
+            return None;
+        }
+
+        let symbol = self.ctx.binder.get_symbol(type_sym_id)?;
+        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        if symbol.has_any_flags(value_flags_except_module) && !symbol.is_type_only {
+            trace!(
+                callee_name,
+                type_sym_id = type_sym_id.0,
+                "lib constructor shadow: local type also has a value constructor"
+            );
+            return None;
+        }
+
+        Some(type_sym_id)
+    }
+
     ///
     /// This keeps general alias typing unchanged (important for type-position behavior)
     /// while ensuring constructor resolution sees the direct constructable type.
@@ -191,6 +271,32 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(constructor_type)
+    }
+
+    /// Resolve the `"module.exports"` constructor type for a CJS-of-ESM interop
+    /// `new` expression. Returns `None` when the interop does not apply, emits
+    /// TS2351 and returns `Some(TypeId::ERROR)` when the value is not
+    /// constructable, or returns `Some(ty)` when it is.
+    fn module_exports_interop_new_type(
+        &mut self,
+        module_name: &str,
+        callee_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        if !self.current_file_uses_module_exports_require_interop(module_name) {
+            return None;
+        }
+        let ty = self
+            .resolve_effective_module_exports_from_file(
+                module_name,
+                Some(self.ctx.current_file_idx),
+            )
+            .and_then(|exports| exports.get("module.exports"))
+            .map(|sym_id| self.get_type_of_symbol(sym_id))?;
+        if !crate::query_boundaries::common::has_construct_signatures(self.ctx.types, ty) {
+            self.error_not_constructable_at(ty, callee_idx);
+            return Some(TypeId::ERROR);
+        }
+        Some(ty)
     }
 
     #[allow(dead_code)]
@@ -295,20 +401,27 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_default();
                 if let Some(module_name) = self
                     .source_file_default_import_module_named(new_expr.expression, identifier_text)
-                    && self.current_file_uses_module_exports_require_interop(&module_name)
-                    && let Some(module_exports_type) = self
-                        .resolve_effective_module_exports(&module_name)
-                        .and_then(|exports| exports.get("module.exports"))
-                        .map(|sym_id| self.get_type_of_symbol(sym_id))
+                    && let Some(ty) =
+                        self.module_exports_interop_new_type(&module_name, new_expr.expression)
                 {
-                    if !crate::query_boundaries::common::has_construct_signatures(
-                        self.ctx.types,
-                        module_exports_type,
-                    ) {
-                        self.error_not_constructable_at(module_exports_type, new_expr.expression);
+                    if ty == TypeId::ERROR {
                         return TypeId::ERROR;
                     }
-                    module_exports_type
+                    ty
+                } else if let Some(module_name) = self
+                    .require_call_module_specifier_for_identifier(new_expr.expression)
+                    // TS1362 (type-only "module.exports") is handled by the identifier
+                    // resolution path; only intercept value exports here.
+                    && self
+                        .require_call_bound_identifier_type_only_kind(new_expr.expression)
+                        .is_none()
+                    && let Some(ty) =
+                        self.module_exports_interop_new_type(&module_name, new_expr.expression)
+                {
+                    if ty == TypeId::ERROR {
+                        return TypeId::ERROR;
+                    }
+                    ty
                 } else {
                     let direct_symbol = self
                         .ctx
@@ -385,6 +498,11 @@ impl<'a> CheckerState<'a> {
         } else {
             self.get_type_of_node_with_request(new_expr.expression, &read_request)
         };
+        if let Some(lib_constructor_type) =
+            self.lib_constructor_type_for_type_shadow(new_expr.expression)
+        {
+            constructor_type = lib_constructor_type;
+        }
         if let Some(export_equals_ctor) =
             self.new_expression_export_equals_constructor_type(new_expr.expression)
         {
@@ -811,8 +929,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let mut inferred_new_type_args: Option<Vec<TypeId>> = None;
         let mut arg_types = if is_generic_new {
-            if let Some(shape) = constructor_shape {
+            if let Some(ref shape) = constructor_shape {
                 // Pre-compute which parameter positions should skip excess property
                 // checking because the original parameter type contains a type parameter.
                 let excess_skip: Vec<bool> = {
@@ -882,18 +1001,44 @@ impl<'a> CheckerState<'a> {
                         CallableContext::none(),
                     );
 
-                    // For sensitive object literal arguments, extract a partial type
-                    // from non-sensitive properties to improve inference.
+                    let type_param_names: Vec<tsz_common::Atom> =
+                        shape.type_params.iter().map(|tp| tp.name).collect();
+                    let mut round1_partials: Vec<Option<(TypeId, TypeId)>> = vec![None; args.len()];
+
+                    // For sensitive object/array literal arguments, extract a partial
+                    // type from properties/elements that can safely contribute to
+                    // inference. This mirrors generic call inference so constructor
+                    // options like `{ create: async () => value, destroy: value => {} }`
+                    // can infer `T` from `create` while leaving `destroy` for Round 2.
                     for (i, &arg_idx) in args.iter().enumerate() {
                         if sensitive_args[i]
-                            && let Some(partial) = self.extract_non_sensitive_object_type(arg_idx)
+                            && let Some(param_type) =
+                                shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                                    let last = shape.params.last()?;
+                                    last.rest.then_some(last.type_id)
+                                })
+                            && let Some(partial) = self
+                                .extract_inference_contributing_object_type(
+                                    arg_idx,
+                                    param_type,
+                                    &type_param_names,
+                                )
+                                .or_else(|| {
+                                    self.extract_inference_contributing_array_type(
+                                        arg_idx,
+                                        param_type,
+                                        &type_param_names,
+                                    )
+                                })
+                                .or_else(|| self.extract_non_sensitive_object_type(arg_idx))
                         {
                             trace!(
                                 arg_index = i,
                                 partial_type = partial.0,
-                                "Round 1: extracted non-sensitive partial type for object literal"
+                                "Round 1: extracted inference-contributing partial type for new argument"
                             );
                             round1_arg_types[i] = partial;
+                            round1_partials[i] = Some((param_type, partial));
                         }
                     }
 
@@ -960,6 +1105,26 @@ impl<'a> CheckerState<'a> {
                             round2_contextual_type,
                         )
                     };
+                    for (param_type, partial) in round1_partials.iter().flatten() {
+                        self.seed_substitution_from_partial_function_returns(
+                            &mut substitution,
+                            *partial,
+                            *param_type,
+                            &shape.type_params,
+                        );
+                    }
+                    let seeded_literal_constraint_type_arg =
+                        self.seed_new_literal_constraint_type_args(&mut substitution, shape, args);
+                    let type_args: Vec<TypeId> = shape
+                        .type_params
+                        .iter()
+                        .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
+                        .collect();
+                    if seeded_literal_constraint_type_arg
+                        && self.new_type_args_are_applyable(shape, &type_args, &substitution)
+                    {
+                        inferred_new_type_args = Some(type_args);
+                    }
                     if let Some(contextual) = contextual_type {
                         use tsz_binder::SymbolId;
 
@@ -1238,6 +1403,56 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.in_const_assertion = prev_in_const_assertion;
 
+        if is_generic_new
+            && inferred_new_type_args.is_none()
+            && let Some(shape) = constructor_shape.as_ref()
+        {
+            let evaluated_shape = {
+                let new_params: Vec<_> = shape
+                    .params
+                    .iter()
+                    .map(|p| tsz_solver::ParamInfo {
+                        name: p.name,
+                        type_id: self.evaluate_type_with_env(p.type_id),
+                        optional: p.optional,
+                        rest: p.rest,
+                    })
+                    .collect();
+                tsz_solver::FunctionShape {
+                    params: new_params,
+                    return_type: shape.return_type,
+                    this_type: shape.this_type,
+                    type_params: shape.type_params.clone(),
+                    type_predicate: shape.type_predicate,
+                    is_constructor: shape.is_constructor,
+                    is_method: shape.is_method,
+                }
+            };
+            let mut substitution = {
+                let env = self.ctx.type_env.borrow();
+                call_checker::compute_contextual_types_with_context(
+                    self.ctx.types,
+                    &self.ctx,
+                    &env,
+                    &evaluated_shape,
+                    &arg_types,
+                    contextual_type,
+                )
+            };
+            let seeded_literal_constraint_type_arg =
+                self.seed_new_literal_constraint_type_args(&mut substitution, shape, args);
+            let type_args: Vec<TypeId> = shape
+                .type_params
+                .iter()
+                .map(|tp| substitution.get(tp.name).unwrap_or(TypeId::UNKNOWN))
+                .collect();
+            if seeded_literal_constraint_type_arg
+                && self.new_type_args_are_applyable(shape, &type_args, &substitution)
+            {
+                inferred_new_type_args = Some(type_args);
+            }
+        }
+
         // For generic constructors (without const type params), widen scalar literal
         // arg types for error display. During arg collection, preserve_literal_types
         // was true so that generic inference gets precise literal types (e.g., `true`
@@ -1245,14 +1460,40 @@ impl<'a> CheckerState<'a> {
         // type (`boolean`, not `true`). The function call path achieves this via its
         // multi-pass inference; here we widen explicitly post-collection.
         if is_generic_new && !has_const_type_params {
-            for arg_type in arg_types.iter_mut() {
-                *arg_type =
-                    tsz_solver::operations::widening::widen_literal_type(self.ctx.types, *arg_type);
+            let preserve_literals = constructor_shape
+                .as_ref()
+                .map(|shape| self.generic_new_literal_preservation_mask(shape, arg_types.len()))
+                .unwrap_or_default();
+            for (i, arg_type) in arg_types.iter_mut().enumerate() {
+                if !preserve_literals.get(i).copied().unwrap_or(false) {
+                    *arg_type = tsz_solver::operations::widening::widen_literal_type(
+                        self.ctx.types,
+                        *arg_type,
+                    );
+                }
             }
         }
+        if let Some(type_args) = &inferred_new_type_args {
+            constructor_type =
+                self.apply_type_argument_ids_to_constructor_type(constructor_type, type_args);
+        }
+
+        let arg_types_for_resolution: Vec<TypeId> = if is_generic_new
+            && inferred_new_type_args.is_none()
+            && !has_const_type_params
+        {
+            arg_types
+                .iter()
+                .map(|&arg_type| {
+                    crate::query_boundaries::common::widen_literal_type(self.ctx.types, arg_type)
+                })
+                .collect()
+        } else {
+            arg_types.clone()
+        };
 
         self.ensure_relation_input_ready(constructor_type);
-        self.ensure_relation_inputs_ready(&arg_types);
+        self.ensure_relation_inputs_ready(&arg_types_for_resolution);
 
         // When the constructor type is still a Lazy(DefId) reference (e.g., for
         // `declare var Proxy: ProxyConstructor` where ProxyConstructor's DefId→SymbolId
@@ -1288,6 +1529,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        if let Some(type_args) = &inferred_new_type_args {
+            constructor_type =
+                self.apply_type_argument_ids_to_constructor_type(constructor_type, type_args);
+        }
 
         tracing::debug!(
             constructor_type = constructor_type.0,
@@ -1299,19 +1544,26 @@ impl<'a> CheckerState<'a> {
         // from the expected type (e.g., `const x: Obj = new Promise(...)` infers T=Obj).
         let result = self.resolve_new_with_checker_adapter(
             constructor_type,
-            &arg_types,
+            &arg_types_for_resolution,
             false,
             contextual_type,
         );
-
         match result {
             CallResult::Success(mut return_type) => {
+                if is_generic_new {
+                    return_type = self.default_current_infer_placeholders_to_unknown(return_type);
+                }
                 if let Some(fixed_return) = self.typed_array_length_constructor_return_type(
                     new_expr.expression,
-                    &arg_types,
+                    &arg_types_for_resolution,
                     return_type,
                 ) {
                     return_type = fixed_return;
+                }
+                if let Some(lib_return_type) =
+                    self.lib_constructor_return_type_for_type_shadow(new_expr.expression)
+                {
+                    return_type = lib_return_type;
                 }
 
                 if let Some(contextual_type) = contextual_type {
@@ -1358,6 +1610,13 @@ impl<'a> CheckerState<'a> {
                         self.class_instance_type_for_circular_new(new_expr.expression)
                 {
                     return fixed;
+                }
+                if let Some(ref type_args) = inferred_new_type_args
+                    && self.ctx.types.get_display_alias(return_type).is_none()
+                    && let Some(app) =
+                        self.explicit_class_new_application(new_expr.expression, type_args.clone())
+                {
+                    self.ctx.types.store_display_alias(return_type, app);
                 }
                 // When explicit type arguments were provided (e.g., `new D<string>()`),
                 // the checker pre-applied them to the construct signature, making
@@ -1458,6 +1717,19 @@ impl<'a> CheckerState<'a> {
                     if let Some(instance_type) =
                         self.class_instance_type_for_circular_new(new_expr.expression)
                     {
+                        if let Some(contextual_type) = contextual_type
+                            && self.contextual_application_directly_supplies_type_parameters(
+                                instance_type,
+                                contextual_type,
+                            )
+                            && self.is_same_class_static_method_new_result(
+                                idx,
+                                new_expr.expression,
+                                contextual_type,
+                            )
+                        {
+                            return contextual_type;
+                        }
                         return instance_type;
                     }
                     return TypeId::ERROR;
@@ -1580,6 +1852,15 @@ impl<'a> CheckerState<'a> {
                 }
                 if index < args.len() {
                     let arg_idx = args[index];
+                    if is_generic_new
+                        && self.generic_new_argument_accepts_contextual_parameter(arg_idx, expected)
+                    {
+                        return self
+                            .recover_new_expression_return_type_after_contextual_argument_match(
+                                constructor_type,
+                                fallback_return,
+                            );
+                    }
                     // Check if this is a weak union violation or excess property case
                     // In these cases, TypeScript shows TS2353 (excess property) instead of TS2322
                     // We should skip the TS2322 error regardless of check_excess_properties flag
@@ -1603,6 +1884,14 @@ impl<'a> CheckerState<'a> {
                                 self.check_argument_assignable_or_report(actual, expected, arg_idx);
                         }
                     }
+                }
+                if let Some(contextual_type) = contextual_type
+                    && self.constructor_mismatch_recovery_matches_contextual_return(
+                        constructor_type,
+                        contextual_type,
+                    )
+                {
+                    return contextual_type;
                 }
                 if let Some(ref type_args_list) = explicit_new_type_arguments
                     && !type_args_list.nodes.is_empty()
@@ -1704,65 +1993,5 @@ impl<'a> CheckerState<'a> {
         } else {
             type_id
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::diagnostics::diagnostic_codes;
-
-    #[test]
-    fn ts1209_invalid_optional_chain_from_new_anchors_question_dot() {
-        let source = r#"
-class A {
-    b() {}
-}
-new A?.b();
-"#;
-        let diagnostics = crate::test_utils::check_source_diagnostics(source);
-        let diag = diagnostics
-            .iter()
-            .find(|d| {
-                d.code
-                    == diagnostic_codes::INVALID_OPTIONAL_CHAIN_FROM_NEW_EXPRESSION_DID_YOU_MEAN_TO_CALL
-            })
-            .expect("expected TS1209");
-
-        let question_dot_start = source.find("?.").expect("expected optional chain token") as u32;
-        assert_eq!(
-            diag.start, question_dot_start,
-            "TS1209 should anchor at `?.`, got: {diag:?}"
-        );
-        assert_eq!(diag.length, 2, "TS1209 should cover only `?.`");
-    }
-
-    /// Regression: `var a = new C(<bad-args>)` must keep `a` typed as the
-    /// constructor's instance type so subsequent property accesses still
-    /// emit TS2339 when the property doesn't exist. Previously, the solver
-    /// returned `TypeId::ERROR` on argument mismatch, which silenced TS2339
-    /// on `a.foo`.
-    #[test]
-    fn new_with_bad_arg_still_emits_ts2339_on_subsequent_member_access() {
-        let source = r#"
-class C1 {
-    constructor(n: number) {}
-}
-var a = new C1("bad");
-a.foo;
-"#;
-        let codes: Vec<u32> = crate::test_utils::check_source_diagnostics(source)
-            .iter()
-            .map(|d| d.code)
-            .collect();
-        assert!(
-            codes.contains(
-                &diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-            ),
-            "Expected TS2345 for bad constructor arg: {codes:?}"
-        );
-        assert!(
-            codes.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
-            "Expected TS2339 on `a.foo` even when `new C1` had bad args: {codes:?}"
-        );
     }
 }

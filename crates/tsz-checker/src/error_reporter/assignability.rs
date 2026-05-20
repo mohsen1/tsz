@@ -4,6 +4,7 @@ use crate::diagnostics::{
     DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
     format_message,
 };
+use crate::error_reporter::assignability_literal_display::display_has_boolean_member_literal_assignability;
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
 };
@@ -153,96 +154,6 @@ impl<'a> CheckerState<'a> {
             || self.is_assignable_to(target_prop.write_type, source_prop.write_type);
 
         read_ok && write_ok
-    }
-
-    fn direct_type_param_alias_application_pair_display(
-        &self,
-        source: TypeId,
-        target: TypeId,
-    ) -> Option<(String, String)> {
-        let (source_base, source_args) = self.application_info_or_display_alias(source)?;
-        let (target_base, target_args) = self.application_info_or_display_alias(target)?;
-        if source_base != target_base || source_args.len() != target_args.len() {
-            return None;
-        }
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source_base)?;
-        let def = self.ctx.definition_store.get(def_id)?;
-        if def.kind != tsz_solver::def::DefKind::TypeAlias {
-            return None;
-        }
-        let param = crate::query_boundaries::common::type_param_info(self.ctx.types, def.body?)?;
-        let arg_idx = def
-            .type_params
-            .iter()
-            .position(|type_param| type_param.name == param.name)?;
-        let source_arg = *source_args.get(arg_idx)?;
-        let target_arg = *target_args.get(arg_idx)?;
-        Some((
-            self.canonicalize_assignment_numeric_literal_union_display(
-                self.format_type_diagnostic(source_arg),
-            ),
-            self.canonicalize_assignment_numeric_literal_union_display(
-                self.format_type_diagnostic(target_arg),
-            ),
-        ))
-    }
-
-    fn callback_initializer_for_assignability_anchor(
-        &self,
-        anchor_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let callback_argument_in_call_like = |expr_idx: NodeIndex| {
-            let expr_node = self.ctx.arena.get(expr_idx)?;
-            let args = if matches!(
-                expr_node.kind,
-                syntax_kind_ext::CALL_EXPRESSION | syntax_kind_ext::NEW_EXPRESSION
-            ) {
-                self.ctx
-                    .arena
-                    .get_call_expr(expr_node)?
-                    .arguments
-                    .as_ref()?
-            } else {
-                return None;
-            };
-            args.nodes.iter().find_map(|&arg_idx| {
-                let arg_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
-                let arg_node = self.ctx.arena.get(arg_idx)?;
-                (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                    .then_some(arg_idx)
-            })
-        };
-
-        let mut current = anchor_idx;
-        for _ in 0..8 {
-            let anchor_node = self.ctx.arena.get(current)?;
-            if anchor_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || anchor_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            {
-                return Some(current);
-            }
-            if anchor_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                let property = self.ctx.arena.get_property_assignment(anchor_node)?;
-                let initializer = self
-                    .ctx
-                    .arena
-                    .skip_parenthesized_and_assertions(property.initializer);
-                let initializer_node = self.ctx.arena.get(initializer)?;
-                return (initializer_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || initializer_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                    .then_some(initializer)
-                    .or_else(|| callback_argument_in_call_like(initializer));
-            }
-
-            let parent = self.ctx.arena.get_extended(current)?.parent;
-            if parent.is_none() {
-                return None;
-            }
-            current = parent;
-        }
-
-        None
     }
 
     fn should_suppress_outer_callback_return_assignability(
@@ -805,16 +716,6 @@ impl<'a> CheckerState<'a> {
         let analysis = self.analyze_assignability_failure(source, target);
         let reason = analysis.failure_reason;
 
-        // Trace what's happening with contextualTyping33
-        if self.ctx.file_name.contains("contextualTyping33") {
-            let _src_str = self.format_type_diagnostic(source);
-            let _tgt_str = self.format_type_diagnostic(target);
-            tracing::trace!(
-                source = %_src_str, target = %_tgt_str, ?reason,
-                "diagnose_assignment"
-            );
-        }
-
         if tracing::enabled!(Level::TRACE) {
             let source_type = self.format_type_diagnostic(source);
             let target_type = self.format_type_diagnostic(target);
@@ -892,8 +793,15 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
-                let diag =
+                let mut diag =
                     self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
+                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
+                    diag.message_text = self
+                        .rewrite_declared_generic_alias_source_in_ts2322_message(
+                            anchor_idx,
+                            diag.message_text,
+                        );
+                }
                 self.ctx.push_diagnostic(diag);
             }
             None => {
@@ -913,20 +821,24 @@ impl<'a> CheckerState<'a> {
                     // `type NumberToNumber = NumberTo<number>` source. The unfold
                     // is scoped to the missing-properties source only — TS2322
                     // target context and TS2339 receiver keep the alias name.
-                    let src_str = if let Some(unfolded) =
-                        self.ts2739_alias_of_application_source_display(source)
+                    let src_str = if let Some(display) =
+                        self.ts2739_alias_of_application_source_display_text(source)
                     {
-                        self.format_type_diagnostic(unfolded)
+                        display
                     } else {
                         self.format_type_for_diagnostic_role(
                             source,
                             DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
                         )
                     };
-                    let tgt_str = self.format_type_for_diagnostic_role(
-                        target,
-                        DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
-                    );
+                    let tgt_str = self
+                        .checked_js_global_element_access_fallback_target_display(anchor_idx)
+                        .unwrap_or_else(|| {
+                            self.format_type_for_diagnostic_role(
+                                target,
+                                DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
+                            )
+                        });
                     let (message, code) = if missing_props.len() == 1 {
                         let prop_name = self
                             .ctx
@@ -1065,7 +977,9 @@ impl<'a> CheckerState<'a> {
             self.rewrite_target_display_for_non_literal_assignability(target, target_str);
 
         source_str = self.apply_ts2739_nonliteral(source, source_str);
-        if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+        if target_str.trim() != "{}"
+            && let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str)
+        {
             target_str = self.format_type_diagnostic(unfolded);
         }
 
@@ -1086,10 +1000,7 @@ impl<'a> CheckerState<'a> {
             target_str = authoritative;
         }
 
-        // For non-generic type aliases whose evaluated form has a display_alias
-        // (i.e., the alias wraps a generic Application like `type Foo = Id<{...}>`),
-        // tsc shows the Application form in TS2322 messages. Replace the alias name
-        // with the display_alias-based formatter output.
+        // Non-generic aliases that wrap applications display the application.
         let rewrite_application_alias =
             |state: &Self, ty: TypeId, display: &str| -> Option<String> {
                 if display.contains('<') || display.contains('{') || display.contains('|') {
@@ -1102,10 +1013,7 @@ impl<'a> CheckerState<'a> {
                 {
                     return None; // Keep concrete literal displays instead of repainting alias provenance.
                 }
-                // Only for types whose display_alias is an Application (were
-                // produced by Application eval). JSDoc typedef aliases store
-                // Lazy display aliases for exact-optional diagnostics and must
-                // not trigger this TS2322 application rewrite.
+                // JSDoc typedef lazy aliases must not trigger this rewrite.
                 let alias = state.ctx.types.get_display_alias(ty)?;
                 crate::query_boundaries::common::application_info(state.ctx.types, alias)?;
                 let mut formatter = state
@@ -1125,13 +1033,13 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.evaluated_literal_alias_source_display(target) {
             target_str = display;
         }
-        source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
-        target_str = self.canonicalize_assignment_numeric_literal_union_display(target_str);
-        if let Some(widened) = self.rewrite_standalone_literal_source_for_keyof_display(
-            &source_str,
-            &target_str,
-            target,
-        ) {
+        source_str =
+            self.canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+        target_str =
+            self.canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
+        if let Some(widened) =
+            self.rewrite_standalone_literal_source_for_keyof_display(source, target)
+        {
             source_str = widened;
         }
         let (source_str, mut target_str) =
@@ -1154,154 +1062,51 @@ impl<'a> CheckerState<'a> {
         {
             target_str = display;
         }
+        source_str =
+            self.canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+        target_str =
+            self.canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         (source_str, target_str)
-    }
-
-    fn contextual_callable_application_target_display(
-        &mut self,
-        target: TypeId,
-        source: TypeId,
-        target_display: &str,
-    ) -> Option<String> {
-        // Reverse-mapped contextual targets can re-expand the pair display back
-        // to `Selector<S, T["editable"]>` even after assignability has an
-        // evaluated `Selector<any, {}>` application. Repaint only those indexed
-        // access displays, preserving ordinary explicit `Selector<any, ...>`
-        // annotations.
-        if !(target_display.contains('[') && target_display.contains(']')) {
-            return None;
-        }
-
-        let evaluated_target = self.evaluate_type_for_assignability(target);
-        let db = self.ctx.types;
-        let display_target =
-            if crate::query_boundaries::common::type_application(db, target).is_some() {
-                target
-            } else {
-                self.ctx.types.get_display_alias(target)?
-            };
-        let app_target =
-            if crate::query_boundaries::common::type_application(db, evaluated_target).is_some() {
-                evaluated_target
-            } else {
-                display_target
-            };
-        let app = crate::query_boundaries::common::type_application(db, app_target)?;
-        let target_shape =
-            crate::query_boundaries::common::function_shape_for_type(db, display_target)
-                .or_else(|| crate::query_boundaries::common::function_shape_for_type(db, target))
-                .or_else(|| {
-                    crate::query_boundaries::common::function_shape_for_type(db, evaluated_target)
-                })?;
-        let source_shape = crate::query_boundaries::common::function_shape_for_type(db, source)?;
-        if source_shape.params.len() <= target_shape.params.len() {
-            return None;
-        }
-
-        let mut changed = false;
-        let mut display_args = Vec::with_capacity(app.args.len());
-        for &arg in &app.args {
-            let replacement = target_shape
-                .params
-                .iter()
-                .zip(source_shape.params.iter())
-                .find_map(|(target_param, source_param)| {
-                    (target_param.type_id == arg
-                        || crate::query_boundaries::common::contains_type_by_id(
-                            db,
-                            target_param.type_id,
-                            arg,
-                        ))
-                    .then(|| {
-                        let source_param = crate::query_boundaries::common::widen_type_for_display(
-                            db,
-                            source_param.type_id,
-                        );
-                        if source_param == TypeId::ANY {
-                            TypeId::UNKNOWN
-                        } else {
-                            source_param
-                        }
-                    })
-                })
-                .or_else(|| {
-                    (target_shape.return_type == arg
-                        || crate::query_boundaries::common::contains_type_by_id(
-                            db,
-                            target_shape.return_type,
-                            arg,
-                        ))
-                    .then(|| {
-                        crate::query_boundaries::common::widen_type_for_display(
-                            db,
-                            source_shape.return_type,
-                        )
-                    })
-                })
-                .or_else(|| {
-                    crate::query_boundaries::common::contains_type_parameters(db, arg)
-                        .then_some(TypeId::UNKNOWN)
-                });
-
-            let display_arg = replacement.unwrap_or(arg);
-            changed |= display_arg != arg;
-            display_args.push(display_arg);
-        }
-
-        if !changed {
-            return None;
-        }
-
-        let display_app = self.ctx.types.factory().application(app.base, display_args);
-        Some(self.format_type_for_assignability_message(display_app))
     }
 
     pub(in crate::error_reporter) fn rewrite_standalone_literal_source_for_keyof_display(
         &mut self,
-        source_display: &str,
-        target_display: &str,
+        source: TypeId,
         target: TypeId,
     ) -> Option<String> {
-        let evaluated_target = self.evaluate_type_for_assignability(target);
-        let target_alias_origin = self
-            .ctx
-            .types
-            .get_display_alias(target)
-            .or_else(|| self.ctx.types.get_display_alias(evaluated_target));
-        let target_is_generic_keyof =
-            crate::query_boundaries::common::contains_type_parameters(self.ctx.types, target)
-                || crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    evaluated_target,
-                )
-                || target_alias_origin
-                    .and_then(|alias| {
-                        crate::query_boundaries::common::keyof_inner_type(self.ctx.types, alias)
-                    })
-                    .is_some_and(|operand| {
-                        crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            operand,
-                        ) || crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            self.evaluate_type_for_assignability(operand),
-                        )
-                    });
-        if !target_display.starts_with("keyof ") || !target_is_generic_keyof {
+        if !self.target_is_generic_keyof_display(target) {
             return None;
         }
 
-        if source_display == "true" || source_display == "false" {
-            return Some("boolean".to_string());
+        crate::query_boundaries::common::literal_value(self.ctx.types, source)?;
+        match crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, source) {
+            TypeId::BOOLEAN => Some("boolean".to_string()),
+            TypeId::STRING => Some("string".to_string()),
+            TypeId::NUMBER => Some("number".to_string()),
+            _ => None,
         }
-        if source_display.starts_with('"') && source_display.ends_with('"') {
-            return Some("string".to_string());
-        }
-        if source_display.parse::<f64>().is_ok() {
-            return Some("number".to_string());
-        }
+    }
 
-        None
+    fn target_is_generic_keyof_display(&mut self, target: TypeId) -> bool {
+        if let Some(alias) = self.ctx.types.get_display_alias(target)
+            && self.type_is_generic_keyof(alias)
+        {
+            return true;
+        }
+        false
+    }
+
+    fn type_is_generic_keyof(&mut self, type_id: TypeId) -> bool {
+        let Some(operand) =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        crate::query_boundaries::common::contains_type_parameters(self.ctx.types, operand)
+            || crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                self.evaluate_type_for_assignability(operand),
+            )
     }
 
     pub(super) fn format_top_level_assignability_message_types_at(
@@ -1318,6 +1123,7 @@ impl<'a> CheckerState<'a> {
             source_str = self.format_assignability_type_for_message(widened, target);
         }
         let mut source_from_annotation = false;
+        let mut source_from_array_literal_tuple = false;
         if let Some(expr_idx) = self
             .direct_diagnostic_source_expression(anchor_idx)
             .or_else(|| self.assignment_source_expression(anchor_idx))
@@ -1325,6 +1131,11 @@ impl<'a> CheckerState<'a> {
                 self.declared_type_annotation_text_for_expression(expr_idx)
             && annotation_text.contains('&')
             && !annotation_text.trim_start().starts_with("keyof ")
+            && self.should_prefer_declared_source_annotation_display(
+                expr_idx,
+                source,
+                &annotation_text,
+            )
         {
             source_str = self
                 .declared_intersection_annotation_display_for_expression(expr_idx)
@@ -1357,10 +1168,43 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.assignment_source_expression(anchor_idx));
         if !source_from_annotation
             && let Some(expr_idx) = expr_idx
+            && let Some(display) = self.direct_type_query_primitive_source_display(expr_idx, source)
+        {
+            source_str = display;
+            source_from_annotation = true;
+        }
+        if !source_from_annotation
+            && let Some(expr_idx) = expr_idx
+            && let Some(display) =
+                self.declared_numeric_literal_union_alias_source_display(expr_idx, source)
+        {
+            source_str = display;
+            source_from_annotation = true;
+        }
+        if !source_from_annotation
+            && let Some(expr_idx) = expr_idx
+            && !self.declared_identifier_has_literal_only_alias_source(expr_idx)
+            && let Some(display) = self.declared_identifier_source_display(expr_idx, target, source)
+            && self.declared_identifier_candidate_preserves_source_surface(&source_str, &display)
+        {
+            source_str = display;
+            source_from_annotation = true;
+        }
+        if !source_from_annotation
+            && self.target_is_normalized_object_literal_union(target)
+            && let Some(expr_idx) = expr_idx
+            && let Some(object_display) =
+                self.object_literal_source_type_display(expr_idx, Some(target))
+        {
+            source_str = object_display;
+        }
+        if !source_from_annotation
+            && let Some(expr_idx) = expr_idx
             && let Some(tuple_display) =
                 self.array_literal_tuple_source_type_display(expr_idx, source, target)
         {
             source_str = tuple_display;
+            source_from_array_literal_tuple = true;
         }
         if self
             .array_literal_element_source_widening_required_for_display(anchor_idx, source, target)
@@ -1376,11 +1220,25 @@ impl<'a> CheckerState<'a> {
             target,
             DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
         );
+        if !source_from_annotation
+            && let Some(display) = self.declared_generic_alias_source_display_for_target_display(
+                anchor_idx,
+                &source_str,
+                &target_str,
+            )
+        {
+            source_str = display;
+            source_from_annotation = true;
+        }
         let (source_str, mut target_str) =
             self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
         let mut source_str = source_str;
-        source_str = self.apply_ts2739_nonliteral(source, source_str);
-        if let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str) {
+        if !source_from_annotation && !source_from_array_literal_tuple {
+            source_str = self.apply_ts2739_nonliteral(source, source_str);
+        }
+        if target_str.trim() != "{}"
+            && let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str)
+        {
             target_str = self.format_type_diagnostic(unfolded);
         }
         if let Some(display) = self.static_schema_array_structural_display(source, target) {
@@ -1394,6 +1252,12 @@ impl<'a> CheckerState<'a> {
         {
             target_str = display;
         }
+        if !source_from_annotation {
+            source_str = self
+                .canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
+        }
+        target_str =
+            self.canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         (source_str, target_str)
     }
 
@@ -1408,6 +1272,20 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|shape| shape.is_constructor)
                 || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, target)
                     .is_some_and(|shape| !shape.construct_signatures.is_empty());
+        let evaluated_source = self.evaluate_type_for_assignability(source);
+        let source_has_display_props = self.ctx.types.get_display_properties(source).is_some()
+            || self
+                .ctx
+                .types
+                .get_display_properties(evaluated_source)
+                .is_some();
+
+        if source_has_display_props
+            && self.target_is_normalized_object_literal_union(target)
+            && display_has_boolean_member_literal_assignability(&source_display)
+        {
+            return source_display;
+        }
 
         if self.is_literal_sensitive_assignment_target(target)
             || self.target_preserves_literal_surface(target)
@@ -1435,13 +1313,6 @@ impl<'a> CheckerState<'a> {
         // from outer types like `{ a: inner_fresh }` where the outer is not fresh but inner
         // properties contain fresh types — their outer canonical properties are object types
         // (not literals), so they correctly fall through to the widening path.
-        let evaluated_source = self.evaluate_type_for_assignability(source);
-        let source_has_display_props = self.ctx.types.get_display_properties(source).is_some()
-            || self
-                .ctx
-                .types
-                .get_display_properties(evaluated_source)
-                .is_some();
         let source_is_array =
             crate::query_boundaries::common::array_element_type(self.ctx.types, source).is_some()
                 || crate::query_boundaries::common::array_element_type(
@@ -1530,7 +1401,10 @@ impl<'a> CheckerState<'a> {
     /// Application types carry their type arguments from annotations — the literals in those
     /// args represent declared types, not fresh expression values, and must never be text-widened
     /// in `rewrite_{source,target}_display_for_non_literal_*` calls.
-    fn type_displays_as_application(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+    fn type_displays_as_application(
+        db: &dyn tsz_solver::construction::TypeDatabase,
+        ty: TypeId,
+    ) -> bool {
         // Direct Application: Application(Lazy(Foo), [args])
         if crate::query_boundaries::common::is_generic_application(db, ty) {
             return true;
@@ -1774,31 +1648,34 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            if self.is_nested_same_wrapper_assignment_display_provenance(source, target, anchor_idx)
+            {
+                return;
+            }
+
             if let Some(missing_props) =
                 self.missing_required_properties_from_index_signature_source(source, target)
             {
-                // For TS2739 (and the TS2741 single-missing variant), when
-                // the source is a non-generic type alias whose body is a
-                // generic Application (`type B = A<X1, X2, ...>`), tsc
-                // unfolds one level to display the application form
-                // `A<X1, X2, ...>` rather than the wrapper alias name `B`.
-                // See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
-                // line 91. Falls through to the normal source role formatter
-                // when no unfold candidate exists.
-                let src_str = if let Some(unfolded) =
-                    self.ts2739_alias_of_application_source_display(source)
+                // TS2739/TS2741 unfold `type B = A<X>` sources to `A<X>`;
+                // otherwise fall through to normal source-role formatting.
+                let src_str = if let Some(display) =
+                    self.ts2739_alias_of_application_source_display_text(source)
                 {
-                    self.format_type_diagnostic(unfolded)
+                    display
                 } else {
                     self.format_type_for_diagnostic_role(
                         source,
                         DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
                     )
                 };
-                let tgt_str = self.format_type_for_diagnostic_role(
-                    target,
-                    DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
-                );
+                let tgt_str = self
+                    .checked_js_global_element_access_fallback_target_display(anchor_idx)
+                    .unwrap_or_else(|| {
+                        self.format_type_for_diagnostic_role(
+                            target,
+                            DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
+                        )
+                    });
                 let (message, code) = if missing_props.len() == 1 {
                     let prop_name = self
                         .ctx
@@ -1892,11 +1769,56 @@ impl<'a> CheckerState<'a> {
                 self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
             let mut src_str = src_str;
             let mut tgt_str = tgt_str;
-            if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-                src_str = self.format_type_diagnostic(unfolded);
+            let source_is_direct_type_query_primitive = self
+                .direct_diagnostic_source_expression(anchor_idx)
+                .or_else(|| self.assignment_source_expression(anchor_idx))
+                .and_then(|expr_idx| {
+                    self.direct_type_query_primitive_source_display(expr_idx, source)
+                })
+                .is_some_and(|display| {
+                    if display != src_str {
+                        src_str = display;
+                    }
+                    true
+                });
+            let source_expr_idx = self
+                .assignment_source_expression(anchor_idx)
+                .or_else(|| self.direct_diagnostic_source_expression(anchor_idx));
+            if !source_is_direct_type_query_primitive
+                && let Some(expr_idx) = source_expr_idx
+                && !self.declared_identifier_has_literal_only_alias_source(expr_idx)
+                && let Some(display) =
+                    self.declared_identifier_source_display(expr_idx, target, source)
+                && self.declared_identifier_candidate_preserves_source_surface(&src_str, &display)
+            {
+                src_str = display;
             }
-            if let Some(unfolded) = self.ts2739_alias_target_display(target, &tgt_str) {
+            if self.ctx.compiler_options.exact_optional_property_types
+                && let Some(expr_idx) = source_expr_idx
+                && let Some(annotation_text) =
+                    self.declared_type_annotation_text_for_expression(expr_idx)
+                && annotation_text.contains("?:")
+                && annotation_text.contains("=>")
+            {
+                let display = self.format_declared_annotation_for_diagnostic(&annotation_text);
+                if display != tgt_str {
+                    src_str = display;
+                }
+            }
+            if !source_is_direct_type_query_primitive
+                && let Some(display) = self.nonmissing_ts2739_alias_source_display_text(source)
+            {
+                src_str = display;
+            }
+            if tgt_str.trim() != "{}"
+                && let Some(unfolded) = self.ts2739_alias_target_display(target, &tgt_str)
+            {
                 tgt_str = self.format_type_diagnostic(unfolded);
+            }
+            if let Some(display) = self.declared_generic_alias_source_display_for_target_display(
+                anchor_idx, &src_str, &tgt_str,
+            ) {
+                src_str = display;
             }
             if let Some(display) = self.static_schema_array_structural_display(source, target) {
                 src_str = display;
@@ -1913,6 +1835,22 @@ impl<'a> CheckerState<'a> {
             if let Some(display) = self.type_query_static_array_structural_display(&src_str) {
                 src_str = display;
             }
+            let source_from_annotation = self
+                .direct_diagnostic_source_expression(anchor_idx)
+                .or_else(|| self.assignment_source_expression(anchor_idx))
+                .and_then(|expr_idx| {
+                    self.declared_numeric_literal_union_alias_source_display(expr_idx, source)
+                })
+                .map(|display| {
+                    src_str = display;
+                })
+                .is_some();
+            if !source_from_annotation {
+                src_str = self
+                    .canonicalize_assignment_numeric_literal_union_display(source, target, src_str);
+            }
+            tgt_str =
+                self.canonicalize_assignment_numeric_literal_union_display(target, source, tgt_str);
             // TS2719: when both types display identically but are different,
             // emit "Two different types with this name exist" instead of TS2322.
             let authoritative_src = self.authoritative_assignability_def_name(source);
@@ -1922,25 +1860,22 @@ impl<'a> CheckerState<'a> {
                 .zip(authoritative_tgt.as_ref())
                 .is_some_and(|(src, tgt)| src != tgt);
 
-            // The authoritative-name fallback below replaces a structural display
-            // (like `{ ... }`) with the type's nominal name (e.g. `Foo`).  When the
-            // display is already a concrete literal value — `4`, `"hello"`,
-            // `true` — that lookup wrongly repaints the source as an unrelated
-            // boxed/wrapper interface (TypeId-keyed `find_def_for_type` can hand
-            // back `Boolean`/`Number` for primitive sources).  Keep the literal.
+            // Do not repaint literal displays as boxed/wrapper interfaces via
+            // authoritative-name fallback.
             let display_is_literal_value = display_is_literal_value;
 
-            // TS2719 is reserved for two NOMINAL types that share a name but are
-            // structurally distinct (typically merged-declaration ambiguity).
-            // Literal-value displays — `"foo"`, `42`, `true`, etc. — never carry
-            // a nominal identity, so identical literal-value displays must mean
-            // identical types. Emitting TS2719 with `Type '"name"' is not
-            // assignable to type '"name"'` is misleading. Fall through to TS2322.
+            // Literal-value display pairs are not distinct nominal types; use
+            // the regular TS2322 path instead of TS2719.
             let pair_is_literal_value =
                 display_is_literal_value(&src_str) && display_is_literal_value(&tgt_str);
+            let exact_optional_structural_pair =
+                self.ctx.compiler_options.exact_optional_property_types
+                    && src_str.contains("?:")
+                    && tgt_str.contains("?:");
             let (message, code) = if src_str == tgt_str
                 && !authoritative_names_differ
                 && !pair_is_literal_value
+                && !exact_optional_structural_pair
             {
                 (
                     format_message(
@@ -1961,6 +1896,7 @@ impl<'a> CheckerState<'a> {
                     || src_str.starts_with("import(")
                     || src_str.starts_with('{')
                     || src_str.contains('<')
+                    || source_is_direct_type_query_primitive
                     || preserve_generic_nominal_pair
                     || display_is_literal_value(&src_str)
                 {

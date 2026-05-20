@@ -12,10 +12,14 @@
 use super::NarrowingContext;
 use crate::def::DefId;
 use crate::relations::subtype::SubtypeChecker;
-use crate::type_queries::{InstanceTypeKind, classify_for_instance_type};
+use crate::type_queries::{
+    InstanceTypeKind, classify_for_instance_type,
+    instance_type_from_symbol_has_instance_with_any_fallback,
+};
 use crate::types::TypeId;
 use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
 use crate::visitor::{application_id, intersection_list_id, lazy_def_id, union_list_id};
+use smallvec::SmallVec;
 use tracing::{Level, span, trace};
 
 impl<'a> NarrowingContext<'a> {
@@ -37,18 +41,36 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        // TODO: Check for static [Symbol.hasInstance] method which overrides standard narrowing
-        // TypeScript allows classes to define custom instanceof behavior via:
-        //   static [Symbol.hasInstance](value: any): boolean
-        // This would require evaluating method calls and type predicates, which is
-        // significantly more complex than the standard construct signature approach.
-
         // CRITICAL: Resolve Lazy types for both source and constructor
         // This ensures type aliases are resolved to their actual types
         let resolved_source = self.resolve_type(source_type);
         let resolved_constructor = self.resolve_type(constructor_type);
 
-        // Extract the instance type from the constructor
+        // A non-asserting `[Symbol.hasInstance]` predicate overrides
+        // structural extraction (tsc's `getNarrowedTypeForInstanceofPredicate`).
+        // Routed through the shared helper so the `value is any` → erased
+        // generic construct fallback is applied identically here and in
+        // `instance_type_from_constructor` (used by the checker's flow path).
+        // Structural fallback below still handles unions/intersections of
+        // plain constructors with no predicate.
+        if let Some(instance_type) =
+            instance_type_from_symbol_has_instance_with_any_fallback(self.db, resolved_constructor)
+        {
+            trace!(
+                source_type = source_type.0,
+                instance_type = instance_type.0,
+                "instanceof: using Symbol.hasInstance predicate as instance type"
+            );
+            return self.narrow_with_instance_type_from_constructor(
+                source_type,
+                resolved_source,
+                instance_type,
+                sense,
+            );
+        }
+
+        // Structural fallback: construct signature return / function return /
+        // recurse through type-parameter constraints, readonly, etc.
         let instance_type = match classify_for_instance_type(self.db, resolved_constructor) {
             InstanceTypeKind::Callable(shape_id) => {
                 // For callable types with construct signatures, get the return type of the construct signature
@@ -131,7 +153,26 @@ impl<'a> NarrowingContext<'a> {
             }
         };
 
-        // Now narrow based on the sense (positive or negative)
+        self.narrow_with_instance_type_from_constructor(
+            source_type,
+            resolved_source,
+            instance_type,
+            sense,
+        )
+    }
+
+    /// Apply the instanceof narrowing rule with an already-extracted instance type.
+    ///
+    /// Shared between the `[Symbol.hasInstance]` predicate path and the
+    /// construct-signature classification path so both honor identical
+    /// `any` / `unknown` / union / interface-overlap semantics.
+    fn narrow_with_instance_type_from_constructor(
+        &self,
+        source_type: TypeId,
+        resolved_source: TypeId,
+        instance_type: TypeId,
+        sense: bool,
+    ) -> TypeId {
         if sense {
             // TypeScript narrows `any` via instanceof UNLESS the instance type is
             // the global Function or Object interface (which are too broad to narrow).
@@ -158,7 +199,7 @@ impl<'a> NarrowingContext<'a> {
                 // PERF: Reuse a single SubtypeChecker across all member checks
                 // instead of allocating 4 hash sets per is_subtype_of call.
                 let mut checker = SubtypeChecker::new(self.db.as_type_database());
-                let mut filtered_members: Vec<TypeId> = Vec::new();
+                let mut filtered_members: SmallVec<[TypeId; 4]> = SmallVec::new();
                 for &member in &*members {
                     // Check if member is assignable to instance type
                     checker.reset();
@@ -273,7 +314,11 @@ impl<'a> NarrowingContext<'a> {
                     trace!("Union member {} excluded by instanceof check", member.0);
                 }
 
-                union_or_single(self.db, filtered_members)
+                match filtered_members.len() {
+                    0 => TypeId::NEVER,
+                    1 => filtered_members[0],
+                    _ => self.db.union(filtered_members.into_vec()),
+                }
             } else {
                 // Non-union type: use standard narrowing with intersection fallback
                 let narrowed = self.narrow_to_type(resolved_source, instance_type);
@@ -297,10 +342,11 @@ impl<'a> NarrowingContext<'a> {
         } else {
             // Negative: !(x instanceof Constructor) - exclude the instance type
 
-            // `any` stays `any` on the false branch of instanceof — cannot
-            // exclude a specific type from `any`.
-            if resolved_source == TypeId::ANY {
-                return TypeId::ANY;
+            // `any`/`unknown` stay unchanged on the false branch of instanceof:
+            // the checker cannot represent "unknown but not this class" without
+            // losing tsc-compatible defensive subclass checks.
+            if resolved_source == TypeId::ANY || resolved_source == TypeId::UNKNOWN {
+                return source_type;
             }
 
             // For unions, exclude members that are subtypes of the instance type
@@ -308,7 +354,7 @@ impl<'a> NarrowingContext<'a> {
                 let members = self.db.type_list(members_id);
                 // PERF: Reuse a single SubtypeChecker across all member checks
                 let mut checker = SubtypeChecker::new(self.db.as_type_database());
-                let mut filtered_members: Vec<TypeId> = Vec::new();
+                let mut filtered_members: SmallVec<[TypeId; 4]> = SmallVec::new();
                 for &member in &*members {
                     // Exclude members that are definitely subtypes of the instance type
                     checker.reset();
@@ -317,7 +363,11 @@ impl<'a> NarrowingContext<'a> {
                     }
                 }
 
-                union_or_single(self.db, filtered_members)
+                match filtered_members.len() {
+                    0 => TypeId::NEVER,
+                    1 => filtered_members[0],
+                    _ => self.db.union(filtered_members.into_vec()),
+                }
             } else {
                 // Non-union: use standard exclusion
                 self.narrow_excluding_type(resolved_source, instance_type)
@@ -636,6 +686,13 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
+        // As with `any`, the false branch of `unknown instanceof C` cannot
+        // usefully exclude `C`; keeping `unknown` matches tsc's permissive
+        // handling of later defensive subclass checks.
+        if resolved_source == TypeId::UNKNOWN {
+            return source_type;
+        }
+
         // When the instance type is a union (e.g., from `a instanceof b` where b has
         // type `typeof A | typeof B`), the false branch cannot narrow because we
         // can't determine which specific constructor was tested at runtime.
@@ -653,6 +710,10 @@ impl<'a> NarrowingContext<'a> {
         // values are also Array instances, so `instanceof Array` false branch
         // should exclude ReadonlyArray members too.
         let is_array_target = crate::type_queries::is_array_type(self.db, instance_type);
+
+        if resolved_source == TypeId::OBJECT && !is_object_target && !is_array_target {
+            return source_type;
+        }
 
         if let Some(members) = union_list_id(self.db, resolved_source) {
             let members = self.db.type_list(members);
@@ -674,16 +735,15 @@ impl<'a> NarrowingContext<'a> {
                     if is_array_target && self.is_array_like(member) {
                         return false;
                     }
-                    // For class-to-class comparisons, use nominal identity.
-                    // Unrelated classes always survive the false branch.
+                    // For class-to-class negative narrowing, match tsc's
+                    // practical behavior: exclude only the exact class tested.
+                    // Subclasses may still appear in defensive follow-up checks
+                    // even though they would pass the superclass check at runtime.
                     let member_is_class = self.get_class_def_id(member).is_some();
                     let instance_is_class = self.get_class_def_id(instance_type).is_some();
                     if member_is_class && instance_is_class {
-                        return match self.nominal_instanceof_relation(member, instance_type) {
-                            Some(true) => false, // member IS or EXTENDS instance → excluded
-                            // instance extends member or unrelated → keep in false branch
-                            Some(false) | None => true,
-                        };
+                        return self.get_class_def_id(member)
+                            != self.get_class_def_id(instance_type);
                     }
                     // Instantiations of the instance type always pass instanceof
                     // at runtime (e.g., Set<string> always passes `instanceof Set`),
@@ -716,15 +776,31 @@ impl<'a> NarrowingContext<'a> {
         if is_array_target && self.is_array_like(resolved_source) {
             return TypeId::NEVER;
         }
-        // For class-to-class comparisons, use nominal identity
-        let source_is_class = self.get_class_def_id(resolved_source).is_some();
-        let target_is_class = self.get_class_def_id(instance_type).is_some();
+        // For class-to-class negative narrowing, exclude only the exact tested
+        // class. Do not transitively exclude subclasses; TypeScript keeps those
+        // checks usable in defensive code after a superclass guard exits.
+        let source_class_def = self
+            .get_class_def_id(source_type)
+            .or_else(|| self.get_class_def_id(resolved_source));
+        let source_is_class = source_class_def.is_some();
+        let target_class_def = self.get_class_def_id(instance_type);
+        let target_is_class = target_class_def.is_some();
         if source_is_class && target_is_class {
-            return match self.nominal_instanceof_relation(resolved_source, instance_type) {
-                Some(true) => TypeId::NEVER, // definitely passes instanceof
-                // instance extends source or unrelated → keeps in false branch
-                Some(false) | None => source_type,
+            return if source_class_def == target_class_def {
+                TypeId::NEVER
+            } else {
+                source_type
             };
+        }
+        if resolved_source == resolved_instance {
+            return TypeId::NEVER;
+        }
+        if self.are_object_like(resolved_source)
+            && self.are_object_like(resolved_instance)
+            && !is_object_target
+            && !is_array_target
+        {
+            return source_type;
         }
         // Instantiations of the instance type always pass instanceof
         if self.is_instantiation_of(source_type, instance_type) {

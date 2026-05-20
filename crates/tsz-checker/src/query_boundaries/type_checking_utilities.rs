@@ -1,4 +1,12 @@
-use tsz_solver::{TupleListId, TypeDatabase, TypeId};
+use tsz_solver::construction::TypeDatabase;
+use tsz_solver::{TupleListId, TypeId};
+
+/// Returns `true` when `type_id`'s outer shape performs fresh tuple synthesis
+/// on evaluation. Used to attribute the `tuple_too_large` flag to the alias
+/// whose body owns the synthesis rather than to a transitive referrer.
+pub(crate) fn is_fresh_tuple_synthesis_site(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_fresh_tuple_synthesis_site(db, type_id)
+}
 
 pub(crate) use tsz_solver::type_queries::UnionMembersKind;
 pub(crate) use tsz_solver::type_queries::{

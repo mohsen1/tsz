@@ -8,6 +8,7 @@ use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::TypeSubstitution;
 use tsz_solver::{TypeId, Visibility};
 
 #[derive(Clone)]
@@ -28,7 +29,9 @@ pub(crate) struct ClassInitializationSummary {
     pub(crate) constructor_body: Option<NodeIndex>,
     pub(crate) has_super_call_position_sensitive_members: bool,
     pub(crate) all_instance_field_keys: FxHashSet<PropertyKey>,
-    pub(crate) required_instance_field_keys: FxHashSet<PropertyKey>,
+    /// Fields to check for TS2565 "used before assigned". Includes ES-decorated fields that
+    /// are excluded from TS2564 strict-init tracking in `required_instance_fields`.
+    pub(crate) ts2565_field_keys: FxHashSet<PropertyKey>,
     pub(crate) parameter_property_names: FxHashSet<String>,
     pub(crate) field_initializer_keys: FxHashSet<PropertyKey>,
     pub(crate) constructor_assigned_fields: FxHashSet<PropertyKey>,
@@ -70,6 +73,12 @@ struct ClassOwnMemberSummary {
     instance_members: FxHashMap<String, MemberEntry>,
     /// Unified static member map: name -> entry (replaces 6 separate maps)
     static_members: FxHashMap<String, MemberEntry>,
+    /// Externally-visible overload-method types per instance method name.
+    /// Mirrors `ClassChainSummary::instance_method_overloads`, but in the
+    /// owning class's own type-parameter scope (no substitution applied).
+    instance_method_overloads: FxHashMap<String, TypeId>,
+    /// Externally-visible overload-method types per static method name.
+    static_method_overloads: FxHashMap<String, TypeId>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -84,6 +93,16 @@ pub(crate) struct ClassChainSummary {
     instance_members: FxHashMap<String, MemberEntry>,
     /// Unified static member map: name -> entry (replaces 6 maps + 1 set)
     static_members: FxHashMap<String, MemberEntry>,
+    /// Externally-visible overload-method types per instance method name.
+    /// An entry exists for each method that has multiple `METHOD_DECLARATION`
+    /// nodes at the level of the chain that first declares it. The TypeId
+    /// is a `CallableShape` whose `call_signatures` are the externally
+    /// visible overload signatures (bodyless declarations if any, otherwise
+    /// the single implementation signature). Types are substituted into the
+    /// root class's type-parameter scope by the chain summary.
+    instance_method_overloads: FxHashMap<String, TypeId>,
+    /// Externally-visible overload-method types per static method name.
+    static_method_overloads: FxHashMap<String, TypeId>,
 }
 
 impl ClassChainSummary {
@@ -171,6 +190,22 @@ impl ClassChainSummary {
             .filter(|(_, entry)| entry.is_visible)
             .map(|(name, _)| name)
     }
+
+    /// Externally-visible overload-method type (substituted) for the named
+    /// method on this chain, if it has multiple declarations. Returns `None`
+    /// for non-overloaded methods and for non-method members.
+    pub(crate) fn method_overload_type(
+        &self,
+        target_name: &str,
+        target_is_static: bool,
+    ) -> Option<TypeId> {
+        let map = if target_is_static {
+            &self.static_method_overloads
+        } else {
+            &self.instance_method_overloads
+        };
+        map.get(target_name).copied()
+    }
 }
 
 #[derive(Clone)]
@@ -239,9 +274,104 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let (inst_overloads, stat_overloads) = self.build_class_method_overload_types(class);
+        summary.instance_method_overloads = inst_overloads;
+        summary.static_method_overloads = stat_overloads;
+
         self.record_merged_interface_members_for_chain(class_idx, &mut summary);
         self.collect_js_implicit_member_kinds(class, &mut summary);
         summary
+    }
+
+    /// Build externally-visible overload-method types for a class, keyed by
+    /// method name and partitioned by static-ness. An entry exists only for
+    /// methods with multiple `METHOD_DECLARATION` nodes (overloaded methods).
+    /// The resulting `TypeId` is a `CallableShape` whose `call_signatures`
+    /// are the externally visible overload signatures: bodyless declarations
+    /// if any exist on the class, otherwise the single implementation
+    /// signature. Signatures are built with `is_method = true` for bivariant
+    /// parameter checking.
+    pub(crate) fn build_class_method_overload_types(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> (FxHashMap<String, TypeId>, FxHashMap<String, TypeId>) {
+        use tsz_solver::CallableShape;
+
+        // Single-pass groupby: walk members once and route each declaration
+        // into `singletons` (only one observed) or `groups` (two or more
+        // observed). Non-overloaded classes pay only N hashmap inserts and
+        // never allocate a `Vec` per method name. Each name is interned via
+        // `get_property_name` once.
+        let mut singletons: FxHashMap<(String, bool), (NodeIndex, bool)> = FxHashMap::default();
+        let mut groups: FxHashMap<(String, bool), Vec<(NodeIndex, bool)>> = FxHashMap::default();
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                continue;
+            }
+            let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                continue;
+            };
+            let Some(name) = self.get_property_name(method.name) else {
+                continue;
+            };
+            let is_static = self.has_static_modifier(&method.modifiers);
+            let has_body = method.body.is_some();
+            let key = (name, is_static);
+            if let Some(group) = groups.get_mut(&key) {
+                group.push((member_idx, has_body));
+            } else if let Some(first) = singletons.remove(&key) {
+                groups.insert(key, vec![first, (member_idx, has_body)]);
+            } else {
+                singletons.insert(key, (member_idx, has_body));
+            }
+        }
+
+        if groups.is_empty() {
+            return (FxHashMap::default(), FxHashMap::default());
+        }
+
+        let mut instance_overloads: FxHashMap<String, TypeId> = FxHashMap::default();
+        let mut static_overloads: FxHashMap<String, TypeId> = FxHashMap::default();
+
+        for ((name, is_static), decls) in groups {
+            let has_any_bodyless = decls.iter().any(|&(_, has_body)| !has_body);
+
+            let mut sigs: Vec<tsz_solver::CallSignature> = Vec::new();
+            for &(method_idx, has_body) in &decls {
+                if has_any_bodyless && has_body {
+                    // Implementation signature is internal; the externally
+                    // visible API is the set of bodyless overload sigs.
+                    continue;
+                }
+                let Some(member_node) = self.ctx.arena.get(method_idx) else {
+                    continue;
+                };
+                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                    continue;
+                };
+                let mut sig = self.call_signature_from_method(method, method_idx);
+                sig.is_method = true;
+                sigs.push(sig);
+            }
+            if sigs.is_empty() {
+                continue;
+            }
+            let factory = self.ctx.types.factory();
+            let type_id = factory.callable(CallableShape {
+                call_signatures: sigs,
+                ..CallableShape::default()
+            });
+            if is_static {
+                static_overloads.insert(name, type_id);
+            } else {
+                instance_overloads.insert(name, type_id);
+            }
+        }
+
+        (instance_overloads, static_overloads)
     }
 
     fn summarize_own_class_members(
@@ -368,6 +498,17 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            let needs_strict = self.property_needs_strict_check(member_idx, prop);
+            let has_es_decorator = !self.ctx.compiler_options.experimental_decorators
+                && prop.modifiers.as_ref().is_some_and(|mods| {
+                    mods.nodes.iter().any(|&mod_idx| {
+                        self.ctx
+                            .arena
+                            .get(mod_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                    })
+                });
+
             let info = ClassPropertyInitializationInfo {
                 name_idx: prop.name,
                 key,
@@ -376,11 +517,7 @@ impl<'a> CheckerState<'a> {
                 position,
                 has_no_initializer: prop.initializer.is_none() && !prop.exclamation_token,
                 is_abstract: self.has_abstract_modifier(&prop.modifiers),
-                requires_initialization: self.property_requires_initialization(
-                    member_idx,
-                    prop,
-                    requires_super,
-                ),
+                requires_initialization: needs_strict && !has_es_decorator,
             };
 
             if let Some(ref name) = info.lookup_name {
@@ -392,16 +529,14 @@ impl<'a> CheckerState<'a> {
             }
 
             if info.requires_initialization {
-                if let Some(ref key) = info.key {
-                    summary
-                        .initialization
-                        .required_instance_field_keys
-                        .insert(key.clone());
-                }
                 summary
                     .initialization
                     .required_instance_fields
                     .push(info.clone());
+            }
+
+            if needs_strict && let Some(ref key) = info.key {
+                summary.initialization.ts2565_field_keys.insert(key.clone());
             }
 
             summary
@@ -463,7 +598,7 @@ impl<'a> CheckerState<'a> {
         // members from T are expressed in terms of L's type params.  This prevents
         // false TS2416 when the derived class overrides a property whose base type
         // is only correct after full substitution through the chain.
-        let mut cumulative_substitution = tsz_solver::TypeSubstitution::new();
+        let mut cumulative_substitution = TypeSubstitution::new();
         let mut is_first = true;
 
         while let Some(current_idx) = current {
@@ -503,6 +638,18 @@ impl<'a> CheckerState<'a> {
                 for (name, entry) in own_summary.static_members {
                     summary.static_members.entry(name).or_insert(entry);
                 }
+                for (name, type_id) in own_summary.instance_method_overloads {
+                    summary
+                        .instance_method_overloads
+                        .entry(name)
+                        .or_insert(type_id);
+                }
+                for (name, type_id) in own_summary.static_method_overloads {
+                    summary
+                        .static_method_overloads
+                        .entry(name)
+                        .or_insert(type_id);
+                }
             } else {
                 for (name, mut entry) in own_summary.instance_members {
                     if !cumulative_substitution.is_empty() {
@@ -524,6 +671,36 @@ impl<'a> CheckerState<'a> {
                     }
                     summary.static_members.entry(name).or_insert(entry);
                 }
+                for (name, type_id) in own_summary.instance_method_overloads {
+                    let substituted = if cumulative_substitution.is_empty() {
+                        type_id
+                    } else {
+                        crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            type_id,
+                            &cumulative_substitution,
+                        )
+                    };
+                    summary
+                        .instance_method_overloads
+                        .entry(name)
+                        .or_insert(substituted);
+                }
+                for (name, type_id) in own_summary.static_method_overloads {
+                    let substituted = if cumulative_substitution.is_empty() {
+                        type_id
+                    } else {
+                        crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            type_id,
+                            &cumulative_substitution,
+                        )
+                    };
+                    summary
+                        .static_method_overloads
+                        .entry(name)
+                        .or_insert(substituted);
+                }
             }
 
             // Build the substitution for the next level: map the base class's type
@@ -536,12 +713,12 @@ impl<'a> CheckerState<'a> {
                     self.pop_type_parameters(base_type_param_updates);
 
                     if !base_type_params.is_empty() && !type_arg_ids.is_empty() {
-                        let level_sub = tsz_solver::TypeSubstitution::from_args(
+                        let level_sub = TypeSubstitution::from_args(
                             self.ctx.types,
                             &base_type_params,
                             &type_arg_ids,
                         );
-                        let mut new_cumulative = tsz_solver::TypeSubstitution::new();
+                        let mut new_cumulative = TypeSubstitution::new();
                         for (&param_name, &arg_type) in level_sub.map() {
                             let instantiated = if !cumulative_substitution.is_empty() {
                                 crate::query_boundaries::common::instantiate_type(

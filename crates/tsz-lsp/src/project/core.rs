@@ -17,7 +17,7 @@ use crate::hover::{HoverInfo, HoverProvider};
 use crate::rename::TextEdit;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::rename::WorkspaceEdit;
-use crate::resolver::{ScopeCache, ScopeCacheStats};
+use crate::resolver::{ScopeCache, ScopeCacheStats, scope_cache_estimated_size_bytes};
 use crate::signature_help::{SignatureHelp, SignatureHelpProvider};
 use crate::symbols::symbol_index::SymbolIndex;
 use tsz_binder::BinderState;
@@ -29,7 +29,7 @@ use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeArena, NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 use tsz_solver::def::DefinitionStore;
 
 pub(crate) enum ImportKind {
@@ -82,6 +82,11 @@ pub struct ProjectFile {
     pub(crate) parser: ParserState,
     pub(crate) binder: BinderState,
     pub(crate) line_map: LineMap,
+    /// Cached result of scanning statements for wildcard re-export patterns.
+    ///
+    /// Computed once at parse time and used by auto-import candidate collection
+    /// to avoid re-scanning every file's statements on each request.
+    pub(crate) has_wildcard_reexport: bool,
     /// Shared type interner for cross-file type identity.
     ///
     /// All files in a `Project` share the same `TypeInterner` via `Arc`,
@@ -135,6 +140,78 @@ fn hash_source_content(source: &str) -> u64 {
     let mut hasher = FxHasher::default();
     source.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Scan the top-level statements of a source file and return `true` if any
+/// export declaration looks like a wildcard or default re-export.
+///
+/// Called once per file at parse time; the result is stored in
+/// `ProjectFile::has_wildcard_reexport` so that auto-import candidate
+/// collection can avoid re-scanning every file's AST on each request.
+pub(crate) fn compute_has_wildcard_reexport(arena: &NodeArena, root: NodeIndex) -> bool {
+    let Some(source_file) = arena.get_source_file_at(root) else {
+        return false;
+    };
+
+    source_file.statements.nodes.iter().any(|&stmt_idx| {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+            return arena
+                .get_export_assignment(stmt_node)
+                .is_some_and(|assign| !assign.is_export_equals);
+        }
+        if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+            return false;
+        }
+        let Some(export) = arena.get_export_decl(stmt_node) else {
+            return false;
+        };
+        if export.is_default_export {
+            return true;
+        }
+        if export.module_specifier.is_none() {
+            return false;
+        }
+        if export.export_clause.is_none() {
+            return true;
+        }
+        if arena
+            .get_identifier_text(export.export_clause)
+            .is_some_and(|name| name == "default")
+        {
+            return true;
+        }
+
+        let Some(clause_node) = arena.get(export.export_clause) else {
+            return false;
+        };
+        if clause_node.kind == SyntaxKind::Identifier as u16
+            || clause_node.kind == SyntaxKind::StringLiteral as u16
+        {
+            return true;
+        }
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            return false;
+        }
+        let Some(named) = arena.get_named_imports(clause_node) else {
+            return false;
+        };
+        named.elements.nodes.iter().any(|&spec_idx| {
+            let Some(spec) = arena.get_specifier_at(spec_idx) else {
+                return false;
+            };
+            let export_ident = if spec.name.is_some() {
+                spec.name
+            } else {
+                spec.property_name
+            };
+            arena
+                .get_identifier_text(export_ident)
+                .is_some_and(|name| name == "default")
+        })
+    })
 }
 
 impl ProjectFile {
@@ -204,6 +281,7 @@ impl ProjectFile {
 
         let line_map = LineMap::build(parser.get_source_text());
         let export_signature = ExportSignature::compute(&binder, &file_name);
+        let has_wildcard_reexport = compute_has_wildcard_reexport(arena, root);
 
         Self {
             file_name,
@@ -211,6 +289,7 @@ impl ProjectFile {
             parser,
             binder,
             line_map,
+            has_wildcard_reexport,
             type_interner,
             definition_store: None,
             type_cache: None,
@@ -440,6 +519,9 @@ impl ProjectFile {
         // line_map
         size += std::mem::size_of::<LineMap>();
 
+        // LSP scope cache: per-file retained scope-chain snapshots.
+        size += scope_cache_estimated_size_bytes(&self.scope_cache);
+
         size
     }
 
@@ -468,8 +550,10 @@ impl ProjectFile {
         self.binder.bind_source_file(arena, self.root);
 
         self.line_map = LineMap::build(self.parser.get_source_text());
+        let has_wildcard_reexport = compute_has_wildcard_reexport(arena, self.root);
         self.reset_analysis_state();
         self.export_signature = ExportSignature::compute(&self.binder, &self.file_name);
+        self.has_wildcard_reexport = has_wildcard_reexport;
     }
 
     /// Invalidate all caches for this file.
@@ -657,8 +741,10 @@ impl ProjectFile {
             }
             self.binder.bind_source_file(arena, self.root);
         }
+        let has_wildcard_reexport = compute_has_wildcard_reexport(arena, self.root);
         self.reset_analysis_state();
         self.export_signature = ExportSignature::compute(&self.binder, &self.file_name);
+        self.has_wildcard_reexport = has_wildcard_reexport;
 
         true
     }
@@ -774,7 +860,7 @@ impl ProjectFile {
             ..Default::default()
         };
 
-        let query_cache = tsz_solver::QueryCache::new(&self.type_interner);
+        let query_cache = tsz_solver::construction::QueryCache::new(&self.type_interner);
 
         let mut checker = match (self.type_cache.take(), &self.definition_store) {
             (Some(cache), Some(def_store)) => CheckerState::with_cache_and_shared_def_store(
@@ -1535,6 +1621,11 @@ pub struct Project {
     /// Open files are never evicted under memory pressure. The eviction module
     /// uses this set to skip actively-edited files.
     pub(crate) open_files: FxHashSet<String>,
+    /// File the editor most recently focused (opened, edited, or asked a
+    /// position-bearing request for). Workspace-symbol fuzzy ranking uses
+    /// this to tie-break by file proximity. `None` when the editor has not
+    /// yet announced any focus.
+    pub(crate) focused_file: Option<String>,
 }
 
 /// Assigns stable `u32` file indices to file names.
@@ -1615,13 +1706,6 @@ impl FileIdAllocator {
             Some(name.as_str())
         }
     }
-
-    /// Number of currently tracked files.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.name_to_id.len()
-    }
 }
 
 /// Centralized cache of per-file export signature fingerprints.
@@ -1679,20 +1763,6 @@ impl SkeletonFingerprintCache {
     pub fn snapshot(&self) -> Vec<(u32, u64)> {
         self.entries.iter().map(|(&k, &v)| (k, v)).collect()
     }
-
-    /// Number of files tracked.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Whether the cache is empty.
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
 }
 
 /// Parsed settings from tsconfig.json relevant to LSP operation.
@@ -1746,6 +1816,7 @@ impl Project {
             file_id_allocator: FileIdAllocator::new(),
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
+            focused_file: None,
         }
     }
 
@@ -1770,6 +1841,7 @@ impl Project {
             file_id_allocator: FileIdAllocator::new(),
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
+            focused_file: None,
         }
     }
 
@@ -2428,6 +2500,9 @@ impl Project {
     /// Process a single file rename (internal helper).
     ///
     /// Updates imports in all dependent files that reference the renamed file.
+    /// Handles both relative specifiers (e.g. `./foo`, `../utils/bar`) and
+    /// `paths`-aliased specifiers configured in the importer's nearest
+    /// `tsconfig.json` (e.g. `@app/foo`).
     #[cfg(not(target_arch = "wasm32"))]
     fn process_file_rename(
         &mut self,
@@ -2436,8 +2511,6 @@ impl Project {
         result: &mut WorkspaceEdit,
     ) {
         use crate::rename::file_rename::FileRenameProvider;
-        use crate::utils::calculate_new_relative_path;
-        use std::path::Path;
 
         // Iterate through all files to find those that import the renamed file
         // We can't use dependency_graph.get_dependents() directly because it stores
@@ -2455,33 +2528,21 @@ impl Project {
 
             // For each import, check if it needs updating
             for import_loc in import_locations {
-                // CRITICAL: Check if this import actually points to the renamed file
-                // Without this check, we would rewrite ALL imports in the file
-                let dependent_path_obj = Path::new(dependent_path);
-                if !self.is_import_pointing_to_file(
-                    dependent_path_obj,
+                let Some(new_specifier) = self.compute_renamed_specifier(
+                    dependent_path,
                     &import_loc.current_specifier,
-                    old_path,
-                ) {
-                    // This import doesn't point to the renamed file, skip it
-                    continue;
-                }
-
-                // Calculate the new import path
-                if let Some(new_specifier) = calculate_new_relative_path(
-                    Path::new(dependent_path),
                     old_path,
                     new_path,
-                    &import_loc.current_specifier,
-                ) {
-                    // `import_loc.range` spans the surrounding quotes; use the
-                    // helper so the rewrite replaces only the inner content
-                    // and the original quote style is preserved.
-                    result.add_edit(
-                        dependent_path.clone(),
-                        import_loc.specifier_text_edit(new_specifier),
-                    );
-                }
+                ) else {
+                    continue;
+                };
+                // `import_loc.range` spans the surrounding quotes; use the
+                // helper so the rewrite replaces only the inner content
+                // and the original quote style is preserved.
+                result.add_edit(
+                    dependent_path.clone(),
+                    import_loc.specifier_text_edit(new_specifier),
+                );
             }
         }
 
@@ -2489,6 +2550,47 @@ impl Project {
         // Note: The dependency graph uses raw import specifiers, not resolved paths
         // So we can't directly update it here. The graph will be rebuilt when
         // files are re-parsed/re-checked in the normal workflow.
+    }
+
+    /// Compute the new module specifier when a file is renamed, preserving the
+    /// importer's specifier style (relative path, `paths` alias, ...).
+    ///
+    /// Returns `None` when the import does not point to `old_path`, or when no
+    /// supported rewrite applies (e.g. a bare npm package import unrelated to
+    /// the renamed file).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn compute_renamed_specifier(
+        &self,
+        dependent_path: &str,
+        current_specifier: &str,
+        old_path: &Path,
+        new_path: &Path,
+    ) -> Option<String> {
+        use crate::utils::calculate_new_relative_path;
+
+        let dependent_path_obj = Path::new(dependent_path);
+
+        if is_relative_specifier(current_specifier) {
+            if !self.is_import_pointing_to_file(dependent_path_obj, current_specifier, old_path) {
+                return None;
+            }
+            return calculate_new_relative_path(
+                dependent_path_obj,
+                old_path,
+                new_path,
+                current_specifier,
+            );
+        }
+
+        // Non-relative specifier: try tsconfig `paths` aliases. Only specifiers
+        // that previously resolved to `old_path` through an alias are rewritten;
+        // bare npm package specifiers are left untouched.
+        self.rename_path_alias_specifier(
+            dependent_path,
+            current_specifier,
+            &path_to_slash_string(old_path),
+            &path_to_slash_string(new_path),
+        )
     }
 
     /// Fetch a file by name.
@@ -2651,6 +2753,11 @@ impl Default for Project {
 fn is_ts_js_file(path: &str) -> bool {
     let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
     extensions.iter().any(|ext| path.ends_with(ext))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_relative_specifier(spec: &str) -> bool {
+    spec.starts_with("./") || spec.starts_with("../") || spec == "." || spec == ".."
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -5,15 +5,19 @@ use tsz_binder::BinderState;
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
 use tsz_parser::syntax_kind_ext;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_signature_help_simple() {
     // function add(x: number, y: number): number { return x + y; }
     // add(1, 2|);
     let source = "function add(x: number, y: number): number { return x + y; }\nadd(1, 2);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -48,8 +52,7 @@ fn test_signature_help_simple() {
 #[test]
 fn test_signature_help_no_call() {
     let source = "const x = 42;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -82,8 +85,7 @@ fn test_signature_help_first_arg() {
     // function foo(a: string): void {}
     // foo(|);
     let source = "function foo(a: string): void {}\nfoo();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -117,8 +119,7 @@ fn test_signature_help_incomplete_call_eof() {
     // function add(a: number, b: number): number { return a + b; }
     // add(
     let source = "function add(a: number, b: number): number { return a + b; }\nadd(";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -152,8 +153,7 @@ fn test_signature_help_incomplete_call_eof() {
 #[test]
 fn test_signature_help_incomplete_member_call() {
     let source = "interface Obj { method(a: number, b: string): void; }\ndeclare const obj: Obj;\nobj.method(";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -184,8 +184,7 @@ fn test_signature_help_incomplete_member_call() {
 #[test]
 fn test_signature_help_incomplete_callable_interface_call() {
     let source = "interface C { (): number; }\ndeclare const c: C;\nc(";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -224,8 +223,7 @@ fn test_signature_help_between_arguments() {
     // process(1, |2, 3);
     //          ^ cursor here should be on parameter 1
     let source = "function process(a: any, b: number, c: string): void {}\nprocess(1, 2, 3);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -277,8 +275,7 @@ fn test_signature_help_trailing_comma() {
     // function foo(a: number, b: string): void {}
     // foo(1, |);
     let source = "function foo(a: number, b: string): void {}\nfoo(1, );";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -313,8 +310,7 @@ fn test_signature_help_comment_comma_ignored() {
     // function foo(a: number, b: string): void {}
     // foo(1 /*,*/ |);
     let source = "function foo(a: number, b: string): void {}\nfoo(1 /*,*/ );";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -347,8 +343,7 @@ fn test_signature_help_comment_comma_ignored() {
 #[test]
 fn test_signature_help_overload_selection() {
     let source = "interface Fn {\n  (a: number): void;\n  (a: number, b: string): void;\n}\ndeclare const fn: Fn;\nfn(1);\nfn(1, \"x\");";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -398,8 +393,7 @@ fn test_signature_help_overload_selection() {
 #[test]
 fn test_signature_help_new_overload_selection() {
     let source = "interface Ctor {\n  new (a: number): Foo;\n  new (a: number, b: string): Foo;\n}\nclass Foo {}\ndeclare const Ctor: Ctor;\nnew Ctor(1);\nnew Ctor(1, \"x\");";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -459,8 +453,7 @@ fn test_signature_help_new_overload_selection() {
 #[test]
 fn test_signature_help_includes_jsdoc() {
     let source = "/** Adds two numbers. */\nfunction add(a: number, b: number): number { return a + b; }\nadd(1, 2);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -494,8 +487,7 @@ fn test_signature_help_includes_jsdoc() {
 #[test]
 fn test_signature_help_param_docs() {
     let source = "/**\n * Adds two numbers.\n * @param a First number.\n * @param b Second number.\n */\nfunction add(a: number, b: number): number { return a + b; }\nadd(1, 2);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -533,8 +525,7 @@ fn test_signature_help_param_docs() {
 #[test]
 fn test_signature_help_overload_jsdoc() {
     let source = "/** One arg */\nfunction foo(a: number): void;\n/** Two args */\nfunction foo(a: number, b: string): void;\nfunction foo(a: number, b?: string): void {}\nfoo(1);\nfoo(1, \"x\");";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -576,8 +567,7 @@ fn test_signature_help_overload_jsdoc() {
 #[test]
 fn test_signature_help_jsdoc_proximity() {
     let source = "/** First doc */\n/** Second doc */\nfunction foo(a: number): void {}\nfoo(1);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -609,8 +599,7 @@ fn test_signature_help_jsdoc_proximity() {
 #[test]
 fn test_signature_help_method_overload_jsdoc_this_rest() {
     let source = "class Greeter {\n  /** One arg.\n   * @param this The instance.\n   * @param name The name.\n   */\n  greet(this: Greeter, name: string): void;\n  /** Many args.\n   * @param this The instance.\n   * @param name The name.\n   * @param ...messages Extra messages.\n   */\n  greet(this: Greeter, name: string, ...messages: string[]): void;\n  greet(this: Greeter, name: string, ...messages: string[]) {}\n}\nconst g = new Greeter();\ng.greet(\"hi\");\ng.greet(\"hi\", \"there\");";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -729,8 +718,7 @@ fn test_signature_help_method_overload_jsdoc_this_rest() {
 #[test]
 fn test_signature_help_constructor_overload_jsdoc_rest() {
     let source = "class Widget {\n  /** One arg.\n   * @param name Name.\n   */\n  constructor(name: string);\n  /** Two args.\n   * @param name Name.\n   * @param ...tags Tags.\n   */\n  constructor(name: string, ...tags: string[]);\n  constructor(name: string, ...tags: string[]) {}\n}\nnew Widget(\"x\");\nnew Widget(\"x\", \"y\");";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -793,13 +781,67 @@ fn setup_provider(
     LineMap,
     tsz_parser::NodeIndex,
 ) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
     let line_map = LineMap::build(source);
     (parser, binder, interner, line_map, root)
+}
+
+fn signature_help_at_marker(source_with_marker: &str) -> SignatureHelp {
+    let marker = source_with_marker.find('|').expect("expected marker");
+    let source = source_with_marker.replace('|', "");
+    let (parser, binder, interner, line_map, root) = setup_provider(&source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        &source,
+        "test.ts".to_string(),
+    );
+    let position = line_map.offset_to_position(marker as u32, &source);
+    let mut cache = None;
+    provider
+        .get_signature_help(root, position, &mut cache)
+        .expect("expected signature help at marker")
+}
+
+#[test]
+fn test_signature_help_spread_argument_in_rest_slot() {
+    let help = signature_help_at_marker(
+        "declare function f(a: string, ...rest: number[]): void;\nf(\"x\", ...|);",
+    );
+
+    assert_eq!(
+        help.active_parameter, 1,
+        "spread argument should select the rest parameter slot"
+    );
+}
+
+#[test]
+fn test_signature_help_spread_argument_before_last_fixed_slot() {
+    let help = signature_help_at_marker(
+        "declare function f(a: string, b: number, c: boolean): void;\nf(\"x\", ...|rest, true);",
+    );
+
+    assert_eq!(
+        help.active_parameter, 1,
+        "spread argument should keep its fixed argument tuple index"
+    );
+}
+
+#[test]
+fn test_signature_help_trailing_comma_after_spread_uses_rest_slot() {
+    let help = signature_help_at_marker(
+        "declare function f(a: string, ...rest: number[]): void;\nf(\"x\", ...rest, |);",
+    );
+
+    assert_eq!(
+        help.active_parameter, 1,
+        "empty slot after a spread into rest should stay on the rest parameter"
+    );
 }
 
 #[test]
@@ -2087,8 +2129,7 @@ fn test_signature_help_string_argument_with_commas() {
 #[test]
 fn test_signature_help_no_args_function() {
     let source = "function noArgs(): void {}\nnoArgs();";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2111,8 +2152,7 @@ fn test_signature_help_no_args_function() {
 #[test]
 fn test_signature_help_single_param() {
     let source = "function log(msg: string): void {}\nlog('hello');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2136,8 +2176,7 @@ fn test_signature_help_single_param() {
 #[test]
 fn test_signature_help_at_open_paren() {
     let source = "function f(a: number): void {}\nf(";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2161,8 +2200,7 @@ fn test_signature_help_at_open_paren() {
 #[test]
 fn test_signature_help_class_constructor() {
     let source = "class Foo {\n  constructor(x: number, y: string) {}\n}\nnew Foo(1, 'a');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2186,8 +2224,7 @@ fn test_signature_help_class_constructor() {
 fn test_signature_help_arrow_function_call_with_age() {
     let source =
         "const greet = (name: string, age: number) => `Hello ${name}`;\ngreet('World', 25);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2210,8 +2247,7 @@ fn test_signature_help_arrow_function_call_with_age() {
 #[test]
 fn test_signature_help_outside_call() {
     let source = "function f() {}\nconst x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2236,8 +2272,7 @@ fn test_signature_help_outside_call() {
 #[test]
 fn test_signature_help_method_call_chain() {
     let source = "class Builder {\n  set(k: string, v: string): Builder { return this; }\n}\nconst b = new Builder();\nb.set('key', 'val');";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2259,8 +2294,7 @@ fn test_signature_help_method_call_chain() {
 #[test]
 fn test_signature_help_empty_source() {
     let source = "";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -2281,8 +2315,7 @@ fn test_signature_help_empty_source() {
 #[test]
 fn test_signature_help_many_params() {
     let source = "function many(a: number, b: string, c: boolean, d: number[], e: object): void {}\nmany(1, 'x', true, [], {});";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
     let interner = TypeInterner::new();
@@ -3073,6 +3106,247 @@ fn test_signature_help_ternary_expression_in_arg() {
         assert_eq!(
             h.active_parameter, 1,
             "Ternary in first arg should not confuse parameter counting"
+        );
+    }
+}
+
+// ── Intrinsic primitive method signature tests ──────────────────────────────
+//
+// Structural rule: when the callee is a method access on a primitive intrinsic
+// type (string, number, boolean, …) and the type system produced the no-lib
+// fallback `(...args: any[]) => ReturnType` shape, the LSP must replace the
+// synthetic parameter list with the real parameter names and optionality so
+// that tools display e.g. `toLowerCase(): string` instead of
+// `toLowerCase(...args: any[]): string`.
+
+fn sig_help_at(source: &str, line: u32, col: u32) -> Option<crate::SignatureHelp> {
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    provider.get_signature_help(root, Position::new(line, col), &mut cache)
+}
+
+// Helper: first signature in the help result.
+fn first_sig(help: &crate::SignatureHelp) -> &crate::SignatureInformation {
+    &help.signatures[help.active_signature as usize]
+}
+
+// ── No-param string methods ──────────────────────────────────────────────────
+
+#[test]
+fn test_intrinsic_sig_string_to_lower_case_no_params() {
+    // `const s: string` and `const t = "literal"` both exercise the path.
+    for (src, line, col) in [
+        ("const s: string = \"abc\";\ns.toLowerCase(", 1u32, 14u32),
+        ("const t = \"abc\";\nt.toLowerCase(", 1u32, 14u32),
+    ] {
+        let help = sig_help_at(src, line, col);
+        let Some(help) = help else { continue };
+        let sig = first_sig(&help);
+        assert!(
+            sig.label.contains("toLowerCase(): string"),
+            "Expected no-param label, got: {}",
+            sig.label
+        );
+        assert!(
+            sig.parameters.is_empty(),
+            "toLowerCase has no parameters, got: {:?}",
+            sig.parameters.iter().map(|p| &p.label).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn test_intrinsic_sig_string_to_upper_case_no_params() {
+    let help = sig_help_at("const s: string = \"\";\ns.toUpperCase(", 1, 14);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert!(
+        sig.parameters.is_empty(),
+        "toUpperCase has no parameters, got: {:?}",
+        sig.parameters.iter().map(|p| &p.label).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_intrinsic_sig_string_trim_no_params() {
+    let help = sig_help_at("const s: string = \"\";\ns.trim(", 1, 7);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert!(
+        sig.parameters.is_empty(),
+        "trim has no parameters, got: {:?}",
+        sig.parameters.iter().map(|p| &p.label).collect::<Vec<_>>()
+    );
+}
+
+// ── String methods with parameters ──────────────────────────────────────────
+
+#[test]
+fn test_intrinsic_sig_string_index_of_two_params() {
+    let help = sig_help_at("const s: string = \"abc\";\ns.indexOf(", 1, 10);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(
+        sig.parameters.len(),
+        2,
+        "indexOf should have 2 parameters, label: {}",
+        sig.label
+    );
+    assert_eq!(sig.parameters[0].name, "searchString");
+    assert!(!sig.parameters[0].is_optional, "searchString is required");
+    assert_eq!(sig.parameters[1].name, "position");
+    assert!(sig.parameters[1].is_optional, "position is optional");
+}
+
+#[test]
+fn test_intrinsic_sig_string_starts_with_two_params() {
+    let help = sig_help_at("const s: string = \"\";\ns.startsWith(", 1, 13);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(
+        sig.parameters.len(),
+        2,
+        "startsWith should have 2 parameters"
+    );
+    assert_eq!(sig.parameters[0].name, "searchString");
+    assert_eq!(sig.parameters[1].name, "position");
+    assert!(sig.parameters[1].is_optional);
+}
+
+#[test]
+fn test_intrinsic_sig_string_ends_with_end_position_param() {
+    let help = sig_help_at("const s: string = \"\";\ns.endsWith(", 1, 11);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(sig.parameters.len(), 2, "endsWith should have 2 parameters");
+    assert_eq!(sig.parameters[0].name, "searchString");
+    assert_eq!(sig.parameters[1].name, "endPosition");
+    assert!(sig.parameters[1].is_optional);
+}
+
+#[test]
+fn test_intrinsic_sig_string_char_at_single_pos_param() {
+    let help = sig_help_at("const s: string = \"\";\ns.charAt(", 1, 9);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(sig.parameters.len(), 1, "charAt should have 1 parameter");
+    assert_eq!(sig.parameters[0].name, "pos");
+    assert!(!sig.parameters[0].is_optional);
+}
+
+#[test]
+fn test_intrinsic_sig_string_slice_two_optional_params() {
+    let help = sig_help_at("const s: string = \"\";\ns.slice(", 1, 8);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(sig.parameters.len(), 2, "slice should have 2 parameters");
+    assert_eq!(sig.parameters[0].name, "start");
+    assert!(sig.parameters[0].is_optional, "start is optional for slice");
+    assert_eq!(sig.parameters[1].name, "end");
+    assert!(sig.parameters[1].is_optional, "end is optional for slice");
+}
+
+#[test]
+fn test_intrinsic_sig_string_pad_start_two_params() {
+    let help = sig_help_at("const s: string = \"\";\ns.padStart(", 1, 11);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(sig.parameters.len(), 2, "padStart should have 2 parameters");
+    assert_eq!(sig.parameters[0].name, "maxLength");
+    assert!(!sig.parameters[0].is_optional);
+    assert_eq!(sig.parameters[1].name, "fillString");
+    assert!(sig.parameters[1].is_optional);
+}
+
+// ── Number methods ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_intrinsic_sig_number_to_fixed_optional_param() {
+    let help = sig_help_at("const n: number = 3.14;\nn.toFixed(", 1, 10);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(sig.parameters.len(), 1, "toFixed should have 1 parameter");
+    assert_eq!(sig.parameters[0].name, "digits");
+    assert!(sig.parameters[0].is_optional, "digits is optional");
+}
+
+#[test]
+fn test_intrinsic_sig_number_to_string_optional_radix() {
+    let help = sig_help_at("const n: number = 42;\nn.toString(", 1, 11);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(
+        sig.parameters.len(),
+        1,
+        "number.toString should have 1 parameter"
+    );
+    assert_eq!(sig.parameters[0].name, "radix");
+    assert!(sig.parameters[0].is_optional);
+}
+
+#[test]
+fn test_intrinsic_sig_number_value_of_no_params() {
+    let help = sig_help_at("const n: number = 1;\nn.valueOf(", 1, 10);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert!(
+        sig.parameters.is_empty(),
+        "valueOf has no parameters, got: {:?}",
+        sig.parameters.iter().map(|p| &p.label).collect::<Vec<_>>()
+    );
+}
+
+// ── Boolean methods ──────────────────────────────────────────────────────────
+
+#[test]
+fn test_intrinsic_sig_boolean_to_string_no_params() {
+    let help = sig_help_at("const b: boolean = true;\nb.toString(", 1, 11);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert!(
+        sig.parameters.is_empty(),
+        "boolean.toString has no parameters, got: {:?}",
+        sig.parameters.iter().map(|p| &p.label).collect::<Vec<_>>()
+    );
+}
+
+// ── Active-parameter tracking ────────────────────────────────────────────────
+
+#[test]
+fn test_intrinsic_sig_active_param_advances_for_index_of() {
+    // Cursor after the comma should put active_parameter on the second arg.
+    let help = sig_help_at("const s: string = \"\";\ns.indexOf(\"x\", ", 1, 15);
+    let Some(help) = help else { return };
+    assert_eq!(
+        help.active_parameter, 1,
+        "active_parameter should be 1 when cursor is past the comma"
+    );
+}
+
+// ── Structural coverage: different identifier names don't affect the fix ─────
+
+#[test]
+fn test_intrinsic_sig_works_for_any_variable_name() {
+    // The fix must be structural (keyed by intrinsic kind + method name), not
+    // by identifier spelling.
+    for var in ["s", "myStr", "x", "foo"] {
+        let src = format!("const {var}: string = \"\";\n{var}.toLowerCase(");
+        let help = sig_help_at(&src, 1, 14 + var.len() as u32 - 1);
+        let Some(help) = help else { continue };
+        let sig = first_sig(&help);
+        assert!(
+            sig.parameters.is_empty(),
+            "toLowerCase params should be empty for variable '{}', label: {}",
+            var,
+            sig.label
         );
     }
 }

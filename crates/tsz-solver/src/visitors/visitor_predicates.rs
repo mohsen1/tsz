@@ -12,8 +12,9 @@
 //!   Variants that unwrap through `ReadonlyType`, `NoInfer`, and `TypeParameter` constraints.
 //! - **Object classification**: `ObjectTypeKind` enum and `classify_object_type`.
 
+use crate::construction::TypeDatabase;
 use crate::types::{IntrinsicKind, ObjectShapeId};
-use crate::{TypeData, TypeDatabase, TypeId};
+use crate::{TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tsz_common::Atom;
@@ -71,6 +72,24 @@ pub fn is_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
         return false;
     }
     matches!(types.lookup(type_id), Some(TypeData::Literal(_)))
+}
+
+/// Check if a type is a union whose every member is a fresh literal.
+///
+/// Returns `true` for `"a" | "b" | "c"`, `1 | 2 | 3`, `true | false`, etc.
+/// Returns `false` for scalar `Literal` types, primitives, and any union that
+/// contains at least one non-literal member.
+pub fn is_union_of_fresh_literals(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => {
+            let members = types.type_list(list_id);
+            !members.is_empty() && members.iter().all(|&m| is_literal_type(types, m))
+        }
+        _ => false,
+    }
 }
 
 /// Check if a type is a module namespace type (import * as ns).
@@ -429,6 +448,27 @@ pub fn is_index_access_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
         return false;
     }
     matches!(types.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
+}
+
+/// Returns `true` when `type_id`'s outer shape performs fresh tuple synthesis
+/// on evaluation — `Application`, `Conditional`, `Mapped`, `IndexAccess`, or
+/// `KeyOf`. Used by the checker to attribute the `tuple_too_large` flag to the
+/// alias whose body owns the synthesis, not to a transitive referrer whose body
+/// is a plain `Lazy` or already-materialized `Tuple`.
+pub fn is_fresh_tuple_synthesis_site(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        types.lookup(type_id),
+        Some(
+            TypeData::Application(_)
+                | TypeData::Conditional(_)
+                | TypeData::Mapped(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_),
+        )
+    )
 }
 
 /// Check if a type is a type query (typeof) type.
@@ -1087,6 +1127,11 @@ impl<'a, F> ContainsTypeChecker<'a, F>
 where
     F: Fn(&TypeData) -> bool,
 {
+    #[cfg(test)]
+    fn memo_entries(&self) -> usize {
+        self.memo.len()
+    }
+
     fn check(&mut self, type_id: TypeId) -> bool {
         // Fast path: intrinsic types (primitives, any, never, etc.) have no subtypes
         // and can never contain nested type structures.
@@ -1258,6 +1303,11 @@ struct FreeTypeParamChecker<'a> {
 }
 
 impl<'a> FreeTypeParamChecker<'a> {
+    #[cfg(test)]
+    fn memo_entries(&self) -> usize {
+        self.memo.len()
+    }
+
     fn check(&mut self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
@@ -1424,6 +1474,11 @@ struct FreeInferChecker<'a> {
 }
 
 impl<'a> FreeInferChecker<'a> {
+    #[cfg(test)]
+    fn memo_entries(&self) -> usize {
+        self.memo.len()
+    }
+
     fn check(&mut self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
@@ -1568,6 +1623,121 @@ impl<'a> FreeInferChecker<'a> {
     }
 }
 
+/// Check whether `type_id` contains a *free* reference to a type parameter
+/// other than `excluded_name`, treating each `TypeParameter`/`Infer` as a leaf.
+///
+/// A `TypeParameter`'s `constraint`/`default` are metadata, not uses:
+/// the iteration variable `K` in `{ [K in keyof T as ...]: T[K] }` carries
+/// a stale `keyof T` constraint after `T` is substituted, since the `K`
+/// instances inside the body still reference the pre-substitution record.
+pub fn contains_free_type_parameters_except_name(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    excluded_name: Atom,
+) -> bool {
+    with_predicate_buffers(|visited, stack| {
+        stack.push(type_id);
+        while let Some(current) = stack.pop() {
+            if current.is_intrinsic() || !visited.insert(current) {
+                continue;
+            }
+            let Some(data) = types.lookup(current) else {
+                continue;
+            };
+            match &data {
+                TypeData::TypeParameter(info) | TypeData::Infer(info) => {
+                    if info.name != excluded_name {
+                        return true;
+                    }
+                    // Skip the parameter's `constraint`/`default` — those are
+                    // metadata for the parameter, not uses by the enclosing
+                    // type. Same reason applies to Mapped/Function/Callable
+                    // type-param lists handled in the visit_structural_children
+                    // path below.
+                    continue;
+                }
+                TypeData::ThisType | TypeData::BoundParameter(_) => return true,
+                _ => {}
+            }
+            visit_structural_children(types, current, &data, |child| {
+                if !visited.contains(&child) {
+                    stack.push(child);
+                }
+            });
+        }
+        false
+    })
+}
+
+/// Variant of [`super::visitor::for_each_child_by_id`] that skips type-
+/// parameter `constraint`/`default` metadata on `Mapped`, `Function`, and
+/// `Callable` types. Used by free-type-parameter checks that must treat
+/// parameter-declaration metadata as bound by the host, not as free uses.
+fn visit_structural_children<F>(db: &dyn TypeDatabase, type_id: TypeId, data: &TypeData, mut f: F)
+where
+    F: FnMut(TypeId),
+{
+    match data {
+        TypeData::Mapped(mapped_id) => {
+            let mapped = db.get_mapped(*mapped_id);
+            f(mapped.constraint);
+            f(mapped.template);
+            if let Some(name_type) = mapped.name_type {
+                f(name_type);
+            }
+        }
+        TypeData::Function(func_id) => {
+            let sig = db.function_shape(*func_id);
+            f(sig.return_type);
+            if let Some(this_type) = sig.this_type {
+                f(this_type);
+            }
+            if let Some(predicate) = sig.type_predicate.as_ref()
+                && let Some(predicate_type) = predicate.type_id
+            {
+                f(predicate_type);
+            }
+            for param in &sig.params {
+                f(param.type_id);
+            }
+        }
+        TypeData::Callable(callable_id) => {
+            let callable = db.callable_shape(*callable_id);
+            for sig in callable
+                .call_signatures
+                .iter()
+                .chain(callable.construct_signatures.iter())
+            {
+                f(sig.return_type);
+                if let Some(this_type) = sig.this_type {
+                    f(this_type);
+                }
+                if let Some(predicate) = sig.type_predicate.as_ref()
+                    && let Some(predicate_type) = predicate.type_id
+                {
+                    f(predicate_type);
+                }
+                for param in &sig.params {
+                    f(param.type_id);
+                }
+            }
+            for prop in &callable.properties {
+                f(prop.type_id);
+                f(prop.write_type);
+            }
+            if let Some(sig) = callable.string_index.as_ref() {
+                f(sig.key_type);
+                f(sig.value_type);
+            }
+            if let Some(sig) = callable.number_index.as_ref() {
+                f(sig.key_type);
+                f(sig.value_type);
+            }
+        }
+        _ => super::visitor::for_each_child_by_id(db, type_id, f),
+    }
+}
+
 // =============================================================================
 // ShallowContainsTypeChecker — checks type parameter name without traversing
 // into type parameter constraints/defaults (prevents false circularity detection)
@@ -1583,6 +1753,11 @@ struct ShallowContainsTypeChecker<'a> {
 
 #[allow(dead_code)]
 impl<'a> ShallowContainsTypeChecker<'a> {
+    #[cfg(test)]
+    fn memo_entries(&self) -> usize {
+        self.memo.len()
+    }
+
     fn check(&mut self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
@@ -1926,5 +2101,62 @@ impl<'a> EmptyObjectChecker<'a> {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intern::TypeInterner;
+    use crate::types::TypeParamInfo;
+
+    fn traversal_guard() -> crate::recursion::RecursionGuard<TypeId> {
+        crate::recursion::RecursionGuard::with_profile(
+            crate::recursion::RecursionProfile::ShallowTraversal,
+        )
+    }
+
+    #[test]
+    fn predicate_checker_memo_entry_counts_are_observable() {
+        let interner = TypeInterner::new();
+        let t_name = interner.intern_string("T");
+        let u_name = interner.intern_string("U");
+        let t_param = interner.type_param(TypeParamInfo::simple(t_name));
+        let u_infer = interner.infer(TypeParamInfo::simple(u_name));
+        let wrapper = interner.readonly_type(t_param);
+
+        let mut contains_checker = ContainsTypeChecker {
+            types: &interner,
+            predicate: |key| matches!(key, TypeData::TypeParameter(_)),
+            memo: FxHashMap::default(),
+            guard: traversal_guard(),
+        };
+        assert!(contains_checker.check(wrapper));
+        assert!(contains_checker.memo_entries() > 0);
+
+        let mut free_type_param_checker = FreeTypeParamChecker {
+            types: &interner,
+            memo: FxHashMap::default(),
+            guard: traversal_guard(),
+        };
+        assert!(free_type_param_checker.check(wrapper));
+        assert!(free_type_param_checker.memo_entries() > 0);
+
+        let mut free_infer_checker = FreeInferChecker {
+            types: &interner,
+            memo: FxHashMap::default(),
+            guard: traversal_guard(),
+        };
+        assert!(free_infer_checker.check(u_infer));
+        assert!(free_infer_checker.memo_entries() > 0);
+
+        let mut shallow_checker = ShallowContainsTypeChecker {
+            types: &interner,
+            name: t_name,
+            memo: FxHashMap::default(),
+            guard: traversal_guard(),
+        };
+        assert!(shallow_checker.check(wrapper));
+        assert!(shallow_checker.memo_entries() > 0);
     }
 }

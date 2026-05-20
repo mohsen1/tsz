@@ -1,6 +1,6 @@
 //! `TypeResolver` trait implementation for `CheckerContext`.
 //!
-//! Implements `tsz_solver::TypeResolver` which enables the solver to resolve
+//! Implements `TypeResolver` which enables the solver to resolve
 //! `TypeData::Lazy(DefId)` references back to cached types during evaluation.
 
 use crate::context::{
@@ -10,6 +10,7 @@ use crate::module_resolution::module_specifier_candidates;
 use crate::query_boundaries::variance::Variance;
 use std::sync::Arc;
 use tsz_parser::parser::base::{NodeIndex, NodeList};
+use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerContext<'a> {
     /// Get the resolution error for a specifier under an explicit resolution-mode override.
@@ -255,20 +256,28 @@ impl<'a> CheckerContext<'a> {
         &self,
         type_params: &NodeList,
     ) -> Option<Arc<[Variance]>> {
+        self.declared_type_param_variances_for_list_in_arena(self.arena, type_params)
+    }
+
+    fn declared_type_param_variances_for_list_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        type_params: &NodeList,
+    ) -> Option<Arc<[Variance]>> {
         use tsz_scanner::SyntaxKind;
 
         let mut saw_annotation = false;
         let mut variances = Vec::with_capacity(type_params.nodes.len());
 
         for &param_idx in &type_params.nodes {
-            let param_node = self.arena.get(param_idx)?;
-            let param = self.arena.get_type_parameter(param_node)?;
+            let param_node = arena.get(param_idx)?;
+            let param = arena.get_type_parameter(param_node)?;
             let mut declared_in = false;
             let mut declared_out = false;
 
             if let Some(modifiers) = &param.modifiers {
                 for &modifier_idx in &modifiers.nodes {
-                    let Some(modifier_node) = self.arena.get(modifier_idx) else {
+                    let Some(modifier_node) = arena.get(modifier_idx) else {
                         continue;
                     };
                     if modifier_node.kind == SyntaxKind::InKeyword as u16 {
@@ -296,20 +305,26 @@ impl<'a> CheckerContext<'a> {
         &self,
         decl_idx: NodeIndex,
     ) -> Option<Arc<[Variance]>> {
-        let node = self.arena.get(decl_idx)?;
-        if let Some(interface) = self.arena.get_interface(node) {
-            return interface
-                .type_parameters
-                .as_ref()
-                .and_then(|params| self.declared_type_param_variances_for_list(params));
+        self.declared_type_param_variances_for_node_in_arena(self.arena, decl_idx)
+    }
+
+    fn declared_type_param_variances_for_node_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<Arc<[Variance]>> {
+        let node = arena.get(decl_idx)?;
+        if let Some(interface) = arena.get_interface(node) {
+            return interface.type_parameters.as_ref().and_then(|params| {
+                self.declared_type_param_variances_for_list_in_arena(arena, params)
+            });
         }
-        if let Some(class) = self.arena.get_class(node) {
-            return class
-                .type_parameters
-                .as_ref()
-                .and_then(|params| self.declared_type_param_variances_for_list(params));
+        if let Some(class) = arena.get_class(node) {
+            return class.type_parameters.as_ref().and_then(|params| {
+                self.declared_type_param_variances_for_list_in_arena(arena, params)
+            });
         }
-        if let Some(alias) = self.arena.get_type_alias(node) {
+        if let Some(alias) = arena.get_type_alias(node) {
             // tsc rejects `in`/`out` annotations on type aliases whose body
             // is not an object/function/constructor/mapped type (TS2637)
             // and IGNORES the declared variance for assignability. We mirror
@@ -318,7 +333,7 @@ impl<'a> CheckerContext<'a> {
             // computed (default-covariant) variance instead of enforcing the
             // user's `in out` annotation.
             use tsz_parser::parser::syntax_kind_ext;
-            let body_kind = self.arena.kind_at(alias.type_node);
+            let body_kind = arena.kind_at(alias.type_node);
             let variance_supported = body_kind.is_some_and(|kind| {
                 kind == syntax_kind_ext::TYPE_LITERAL
                     || kind == syntax_kind_ext::FUNCTION_TYPE
@@ -328,12 +343,51 @@ impl<'a> CheckerContext<'a> {
             if !variance_supported {
                 return None;
             }
-            return alias
-                .type_parameters
-                .as_ref()
-                .and_then(|params| self.declared_type_param_variances_for_list(params));
+            return alias.type_parameters.as_ref().and_then(|params| {
+                self.declared_type_param_variances_for_list_in_arena(arena, params)
+            });
         }
         None
+    }
+
+    fn merged_interface_declared_type_param_variances(
+        &self,
+        symbol: &tsz_binder::Symbol,
+    ) -> Option<Arc<[Variance]>> {
+        if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+            return None;
+        }
+
+        let mut merged: Option<Vec<Variance>> = None;
+        for decl_idx in symbol.all_declarations() {
+            let decl_arena = self
+                .binder
+                .arena_for_declaration_or(symbol.id, decl_idx, self.arena);
+            let Some(node) = decl_arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_arena.get_interface(node).is_none() {
+                continue;
+            }
+            let Some(variances) =
+                self.declared_type_param_variances_for_node_in_arena(decl_arena, decl_idx)
+            else {
+                continue;
+            };
+
+            if let Some(existing) = &mut merged {
+                if existing.len() != variances.len() {
+                    continue;
+                }
+                for (slot, variance) in existing.iter_mut().zip(variances.iter()) {
+                    *slot |= *variance;
+                }
+            } else {
+                merged = Some(variances.iter().copied().collect());
+            }
+        }
+
+        merged.map(Arc::from)
     }
 }
 
@@ -347,7 +401,7 @@ impl<'a> CheckerContext<'a> {
 /// - `resolve_lazy()` is read-only (looks up from cache)
 /// - Cache is populated by `CheckerState::get_type_of_symbol()` before Application evaluation
 /// - This separation keeps the solver layer (`ApplicationEvaluator`) independent of checker logic
-impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
+impl<'a> TypeResolver for CheckerContext<'a> {
     /// Resolve a symbol reference to its cached type (deprecated).
     ///
     /// `TypeData::Ref` is removed, but we keep this for compatibility.
@@ -355,7 +409,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     fn resolve_ref(
         &self,
         symbol: tsz_solver::SymbolRef,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         let sym_id = tsz_binder::SymbolId(symbol.0);
         self.symbol_types.get(&sym_id).copied()
@@ -364,7 +418,8 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     fn get_type_param_variance(&self, def_id: tsz_solver::DefId) -> Option<Arc<[Variance]>> {
         let sym_id = self.def_to_symbol_id(def_id)?;
         let symbol = self.binder.get_symbol(sym_id)?;
-        self.declared_type_param_variances_for_node(symbol.primary_declaration()?)
+        self.merged_interface_declared_type_param_variances(symbol)
+            .or_else(|| self.declared_type_param_variances_for_node(symbol.primary_declaration()?))
     }
 
     /// Resolve a `DefId` to its cached type.
@@ -377,7 +432,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     fn resolve_lazy(
         &self,
         def_id: tsz_solver::DefId,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         use tsz_binder::symbol_flags;
 
@@ -473,7 +528,19 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                             | tsz_solver::def::DefKind::Interface
                             | tsz_solver::def::DefKind::TypeAlias
                     ) {
-                        return Some(*instance_type);
+                        let type_alias_self_wrapper = kind == tsz_solver::def::DefKind::TypeAlias
+                            && crate::query_boundaries::definition_identity::is_lazy_def_identity(
+                                self.types,
+                                *instance_type,
+                                def_id,
+                            );
+                        // A type-alias self wrapper is its public identity,
+                        // not a structural body. Let inference/evaluation
+                        // fall through to the type environment or
+                        // DefinitionStore body for transparent aliases.
+                        if !type_alias_self_wrapper {
+                            return Some(*instance_type);
+                        }
                     }
                 } else {
                     // Fallback: look up symbol flags from binder (primary binder only,
@@ -568,7 +635,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         // (generic lib interfaces like PromiseLike<T>, Map<K,V>, Set<T>, etc.)
         if !is_atomics
             && let Ok(env) = self.type_env.try_borrow()
-            && let Some(body) = env.get_def(def_id)
+            && let Some(body) = TypeResolver::resolve_lazy(&*env, def_id, self.types)
             && body != tsz_solver::TypeId::UNKNOWN
             && body != tsz_solver::TypeId::ERROR
         {
@@ -634,7 +701,8 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             && file_idx != self.current_file_idx
             && self.share_owner_symbol_type_results
             && let Some((resolved, _)) = self.definition_store.get_resolved_cross_file_query(
-                crate::state_type_analysis::cross_file::CROSS_FILE_QUERY_SYMBOL_TYPE,
+                crate::state_type_analysis::cross_file::CrossFileQueryKind::SymbolType
+                    .as_storage_kind(),
                 file_idx as u32,
                 sym_id.0,
                 0,
@@ -675,7 +743,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
 
     fn resolve_this_type(
         &self,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         // Prefer the active `this` binding from the checker stack. Class-member
         // checking pushes the concrete receiver type here, which is more precise
@@ -759,7 +827,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     /// type environment, avoiding `RefCell` borrow conflicts when the subtype
     /// checker is called from within a mutable borrow of the type environment.
     fn get_array_base_type(&self) -> Option<tsz_solver::TypeId> {
-        tsz_solver::TypeResolver::get_array_base_type(&self.types)
+        TypeResolver::get_array_base_type(&self.types)
     }
 
     /// Get the type parameters for the Array<T> interface.
@@ -767,7 +835,11 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     fn get_array_base_type_params(&self) -> &[tsz_solver::TypeParamInfo] {
         // We can't borrow type_env and return a reference from it (lifetime issue),
         // so we fall back to the interner which stores the same data.
-        tsz_solver::TypeResolver::get_array_base_type_params(&self.types)
+        TypeResolver::get_array_base_type_params(&self.types)
+    }
+
+    fn get_readonly_array_base_type(&self) -> Option<tsz_solver::TypeId> {
+        TypeResolver::get_readonly_array_base_type(&self.types)
     }
 
     /// Get the base class type for a class/interface type.
@@ -788,7 +860,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     fn get_base_type(
         &self,
         type_id: tsz_solver::TypeId,
-        interner: &dyn tsz_solver::TypeDatabase,
+        interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         use crate::query_boundaries::common::callable_shape_id;
         use crate::query_boundaries::common::{lazy_def_id, object_symbol};
@@ -942,6 +1014,10 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         self.definition_store.get_kind(def_id)
     }
 
+    fn get_def_name(&self, def_id: tsz_solver::DefId) -> Option<tsz_common::interner::Atom> {
+        self.definition_store.get_name(def_id)
+    }
+
     fn is_builtin_readonly_array_def(&self, def_id: tsz_solver::DefId) -> bool {
         let has_readonly_array_name = self
             .definition_store
@@ -1081,7 +1157,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     fn is_enum_type(
         &self,
         type_id: tsz_solver::TypeId,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> bool {
         use tsz_binder::symbol_flags;
 

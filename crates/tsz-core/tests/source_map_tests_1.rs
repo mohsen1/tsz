@@ -7,6 +7,11 @@ use crate::parser::ParserState;
 use crate::source_map::*;
 use crate::source_map_test_utils::{decode_mappings, find_line_col, has_mapping_for_prefixes};
 use serde_json::Value;
+fn parse_test_source(source: &str) -> (crate::parser::ParserState, crate::parser::NodeIndex) {
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_vlq_encode_positive() {
@@ -40,8 +45,7 @@ fn test_simple_map_generic() {
     // Minimal test with just Map generic - checking for infinite loops
     let source = r#"const metadata = new Map<any, Map<string, any>>();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -76,8 +80,7 @@ class ApiController {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -118,8 +121,7 @@ class ApiController {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -164,8 +166,7 @@ class ApiController {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -215,8 +216,7 @@ class ApiController {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -257,8 +257,7 @@ class ApiController {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -303,8 +302,7 @@ class ApiController {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -339,8 +337,7 @@ class ApiController {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -395,8 +392,7 @@ class ApiController {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -450,8 +446,7 @@ class ApiController {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -563,8 +558,7 @@ fn test_decode_mappings_round_trip() {
 #[test]
 fn test_source_map_es5_transform_records_names() {
     let source = "const value = 1; const other = value;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -637,8 +631,7 @@ fn test_escape_json() {
 #[test]
 fn test_source_map_es5_transform_async_await_mapping() {
     let source = "async function fetch(payload) { await payload; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -685,8 +678,7 @@ fn test_source_map_es5_transform_async_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_await_return_mapping() {
     let source = "async function compute(value) { return await value; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -753,8 +745,7 @@ fn test_source_map_es5_transform_async_await_return_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_await_property_access_mapping() {
     let source = "async function load(user) { return (await user).name; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -820,8 +811,7 @@ fn test_source_map_es5_transform_async_await_property_access_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_arrow_mapping() {
     let source = "const run = async (value) => { return await value; };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -887,8 +877,7 @@ fn test_source_map_es5_transform_async_arrow_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_class_method_mapping() {
     let source = "class Box {\n    async run(value) { return await value; }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -981,8 +970,7 @@ fn test_source_map_es5_transform_async_class_method_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_nested_function_offset_mapping() {
     let source = "function outer() {\n    const before = 1;\n    async function run() {\n        await payloadValue;\n    }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1034,8 +1022,7 @@ fn test_source_map_es5_transform_async_nested_function_offset_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_await_conditional_mapping() {
     let source = "const run = async (value) => (value ? await value : 0);";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1128,8 +1115,7 @@ fn test_source_map_es5_transform_async_await_conditional_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_arrow_captures_this_mapping() {
     let source = "const run = async function() { return await this.value; };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1210,8 +1196,7 @@ fn test_source_map_es5_transform_async_arrow_captures_this_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_try_catch_mapping() {
     let source = "async function run() { try { await foo(); } catch { bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1295,8 +1280,7 @@ fn test_source_map_es5_transform_async_try_catch_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_try_catch_await_mapping() {
     let source = "async function run() { try { await foo(); } catch (err) { await bar(err); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1386,8 +1370,7 @@ fn test_source_map_es5_transform_async_try_catch_await_mapping() {
 fn test_source_map_es5_transform_async_try_catch_return_await_mapping() {
     let source =
         "async function run() { try { await foo(); } catch (err) { return await bar(err); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1477,8 +1460,7 @@ fn test_source_map_es5_transform_async_try_catch_return_await_mapping() {
 fn test_source_map_es5_transform_async_try_catch_throw_await_mapping() {
     let source =
         "async function run() { try { await foo(); } catch (err) { throw await bar(err); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1567,8 +1549,7 @@ fn test_source_map_es5_transform_async_try_catch_throw_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_try_catch_only_await_mapping() {
     let source = "async function run() { try { foo(); } catch (err) { await bar(err); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1653,8 +1634,7 @@ fn test_source_map_es5_transform_async_try_catch_only_await_mapping() {
 fn test_source_map_es5_transform_async_try_catch_finally_only_mapping() {
     let source =
         "async function run() { try { foo(); } catch { await bar(); } finally { baz(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1743,8 +1723,7 @@ fn test_source_map_es5_transform_async_try_catch_finally_only_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_if_else_mapping() {
     let source = "async function run(flag) { if (flag) { await foo(); } else { await bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1834,8 +1813,7 @@ fn test_source_map_es5_transform_async_if_else_mapping() {
 fn test_source_map_es5_transform_async_if_await_condition_mapping() {
     let source =
         "async function run(flag){ if (await foo(flag)) { bar(); } else { await baz(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -1924,8 +1902,7 @@ fn test_source_map_es5_transform_async_if_await_condition_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_if_await_and_mapping() {
     let source = "async function run(flag){ if ((await foo(flag)) && await bar()) { baz(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2014,8 +1991,7 @@ fn test_source_map_es5_transform_async_if_await_and_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_while_await_condition_mapping() {
     let source = "async function run(cond){ while (await foo(cond)) { bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2103,8 +2079,7 @@ fn test_source_map_es5_transform_async_while_await_condition_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_while_await_condition_list_mapping() {
     let source = "async function run(){ while ((await foo(), await bar())) { baz(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2193,8 +2168,7 @@ fn test_source_map_es5_transform_async_while_await_condition_list_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_ternary_mapping() {
     let source = "async function run(flag, a, b) { return flag ? await foo(a) : await bar(b); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2283,8 +2257,7 @@ fn test_source_map_es5_transform_async_ternary_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_ternary_await_condition_mapping() {
     let source = "async function run(){ return (await cond()) ? foo() : await bar(); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2378,8 +2351,7 @@ fn test_source_map_es5_transform_async_ternary_await_condition_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_ternary_consequent_await_mapping() {
     let source = "async function run(flag){ return flag ? await foo() : bar(); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2468,8 +2440,7 @@ fn test_source_map_es5_transform_async_ternary_consequent_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_logical_and_mapping() {
     let source = "async function run() { return (await foo()) && (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2558,8 +2529,7 @@ fn test_source_map_es5_transform_async_logical_and_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_logical_or_mapping() {
     let source = "async function run() { return (await foo()) || (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2648,8 +2618,7 @@ fn test_source_map_es5_transform_async_logical_or_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_logical_or_await_rhs_mapping() {
     let source = "async function run() { return foo() || await bar(); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2738,8 +2707,7 @@ fn test_source_map_es5_transform_async_logical_or_await_rhs_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_logical_and_await_rhs_mapping() {
     let source = "async function run() { return foo() && await bar(); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2828,8 +2796,7 @@ fn test_source_map_es5_transform_async_logical_and_await_rhs_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_logical_or_complex_mapping() {
     let source = "async function run(a, b){ return (await foo(a)) || (bar() && await baz(b)); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -2923,8 +2890,7 @@ fn test_source_map_es5_transform_async_logical_or_complex_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_logical_and_both_awaits_mapping() {
     let source = "async function run() { return (await foo()) && (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3013,8 +2979,7 @@ fn test_source_map_es5_transform_async_logical_and_both_awaits_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_add_mapping() {
     let source = "async function run() { return (await foo()) + (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3103,8 +3068,7 @@ fn test_source_map_es5_transform_async_binary_add_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_multiply_mapping() {
     let source = "async function run() { return (await foo()) * (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3193,8 +3157,7 @@ fn test_source_map_es5_transform_async_binary_multiply_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_subtract_mapping() {
     let source = "async function run() { return (await foo()) - (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3283,8 +3246,7 @@ fn test_source_map_es5_transform_async_binary_subtract_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_divide_mapping() {
     let source = "async function run() { return (await foo()) / (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3373,8 +3335,7 @@ fn test_source_map_es5_transform_async_binary_divide_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_modulo_mapping() {
     let source = "async function run() { return (await foo()) % (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3463,8 +3424,7 @@ fn test_source_map_es5_transform_async_binary_modulo_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_less_than_mapping() {
     let source = "async function run() { return (await foo()) < (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3553,8 +3513,7 @@ fn test_source_map_es5_transform_async_binary_less_than_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_strict_equal_mapping() {
     let source = "async function run() { return (await foo()) === (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3643,8 +3602,7 @@ fn test_source_map_es5_transform_async_binary_strict_equal_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_strict_not_equal_mapping() {
     let source = "async function run() { return (await foo()) !== (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3733,8 +3691,7 @@ fn test_source_map_es5_transform_async_binary_strict_not_equal_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_greater_equal_mapping() {
     let source = "async function run() { return (await foo()) >= (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3823,8 +3780,7 @@ fn test_source_map_es5_transform_async_binary_greater_equal_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_less_equal_mapping() {
     let source = "async function run() { return (await foo()) <= (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -3913,8 +3869,7 @@ fn test_source_map_es5_transform_async_binary_less_equal_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_greater_than_mapping() {
     let source = "async function run() { return (await foo()) > (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4003,8 +3958,7 @@ fn test_source_map_es5_transform_async_binary_greater_than_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_equal_mapping() {
     let source = "async function run() { return (await foo()) == (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4093,8 +4047,7 @@ fn test_source_map_es5_transform_async_binary_equal_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_not_equal_mapping() {
     let source = "async function run() { return (await foo()) != (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4183,8 +4136,7 @@ fn test_source_map_es5_transform_async_binary_not_equal_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_bitwise_and_mapping() {
     let source = "async function run() { return (await foo()) & (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4273,8 +4225,7 @@ fn test_source_map_es5_transform_async_binary_bitwise_and_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_bitwise_or_mapping() {
     let source = "async function run() { return (await foo()) | (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4363,8 +4314,7 @@ fn test_source_map_es5_transform_async_binary_bitwise_or_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_bitwise_xor_mapping() {
     let source = "async function run() { return (await foo()) ^ (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4453,8 +4403,7 @@ fn test_source_map_es5_transform_async_binary_bitwise_xor_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_destructuring_mapping() {
     let source = "async function run(){ const { value } = await foo(); return value; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4547,8 +4496,7 @@ fn test_source_map_es5_transform_async_destructuring_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_shift_left_mapping() {
     let source = "async function run() { return (await foo()) << (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4637,8 +4585,7 @@ fn test_source_map_es5_transform_async_binary_shift_left_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_shift_right_mapping() {
     let source = "async function run() { return (await foo()) >> (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4727,8 +4674,7 @@ fn test_source_map_es5_transform_async_binary_shift_right_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_binary_unsigned_shift_right_mapping() {
     let source = "async function run() { return (await foo()) >>> (await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4817,8 +4763,7 @@ fn test_source_map_es5_transform_async_binary_unsigned_shift_right_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_array_literal_mapping() {
     let source = "async function run(){ return [await foo(), await bar()]; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4907,8 +4852,7 @@ fn test_source_map_es5_transform_async_array_literal_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_array_literal_spread_mapping() {
     let source = "async function run(){ return [...await foo(), await bar()]; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -4997,8 +4941,7 @@ fn test_source_map_es5_transform_async_array_literal_spread_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_object_literal_mapping() {
     let source = "async function run(){ return { value: await foo(), other: await bar() }; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5087,8 +5030,7 @@ fn test_source_map_es5_transform_async_object_literal_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_object_literal_spread_mapping() {
     let source = "async function run(){ return { ...await foo(), value: await bar() }; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5177,8 +5119,7 @@ fn test_source_map_es5_transform_async_object_literal_spread_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_object_literal_computed_mapping() {
     let source = "async function run(){ return { [await key()]: 1, other: 2 }; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5262,8 +5203,7 @@ fn test_source_map_es5_transform_async_object_literal_computed_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_nested_await_call_mapping() {
     let source = "async function run(){ return await foo(await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5352,8 +5292,7 @@ fn test_source_map_es5_transform_async_nested_await_call_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_call_spread_mapping() {
     let source = "async function run(){ return foo(...await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5442,8 +5381,7 @@ fn test_source_map_es5_transform_async_call_spread_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_template_literal_mapping() {
     let source = "async function run(){ return `value ${await foo()}`; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5528,8 +5466,7 @@ fn test_source_map_es5_transform_async_template_literal_mapping() {
 fn test_source_map_es5_transform_async_try_catch_return_await_in_try_mapping() {
     let source =
         "async function run() { try { return await foo(); } catch (err) { await bar(err); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5618,8 +5555,7 @@ fn test_source_map_es5_transform_async_try_catch_return_await_in_try_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_try_finally_mapping() {
     let source = "async function run() { try { await foo(); } finally { bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5703,8 +5639,7 @@ fn test_source_map_es5_transform_async_try_finally_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_try_finally_only_await_mapping() {
     let source = "async function run() { try { foo(); } finally { await bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5788,8 +5723,7 @@ fn test_source_map_es5_transform_async_try_finally_only_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_try_finally_await_mapping() {
     let source = "async function run() { try { await foo(); } finally { await bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5878,8 +5812,7 @@ fn test_source_map_es5_transform_async_try_finally_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_try_finally_await_in_finally_direct_mapping() {
     let source = "async function run() {\n    try {\n        await work();\n    } finally {\n        const done = await cleanup();\n        report(done);\n    }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -5958,8 +5891,7 @@ fn test_source_map_es5_transform_async_try_finally_await_in_finally_direct_mappi
 #[test]
 fn test_source_map_es5_transform_async_try_finally_return_mapping() {
     let source = "async function run() { try { return await foo(); } finally { await bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6049,8 +5981,7 @@ fn test_source_map_es5_transform_async_try_finally_return_mapping() {
 fn test_source_map_es5_transform_async_try_catch_finally_mapping() {
     let source =
         "async function run() { try { await foo(); } catch { bar(); } finally { baz(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6144,8 +6075,7 @@ fn test_source_map_es5_transform_async_try_catch_finally_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_try_catch_finally_await_in_finally_mapping() {
     let source = "async function run() { try { foo(); } catch (err) { bar(err); } finally { await baz(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6239,8 +6169,7 @@ fn test_source_map_es5_transform_async_try_catch_finally_await_in_finally_mappin
 #[test]
 fn test_source_map_es5_transform_async_try_catch_finally_catch_finally_awaits_mapping() {
     let source = "async function run() { try { foo(); } catch (err) { await bar(err); } finally { await baz(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6334,8 +6263,7 @@ fn test_source_map_es5_transform_async_try_catch_finally_catch_finally_awaits_ma
 #[test]
 fn test_source_map_es5_transform_async_try_catch_finally_awaits_mapping() {
     let source = "async function run() { try { await foo(); } catch (err) { await bar(err); } finally { await baz(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6429,8 +6357,7 @@ fn test_source_map_es5_transform_async_try_catch_finally_awaits_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_assignment_mapping() {
     let source = "async function run(){ let value; value = await foo(); return value; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6523,8 +6450,7 @@ fn test_source_map_es5_transform_async_assignment_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_variable_initializer_await_mapping() {
     let source = "async function run(){ let value = await foo(); return value; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6608,8 +6534,7 @@ fn test_source_map_es5_transform_async_variable_initializer_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_variable_declaration_list_await_mapping() {
     let source = "async function run(){ let first = await getFirst(), second = await getSecond(); return second; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6698,8 +6623,7 @@ fn test_source_map_es5_transform_async_variable_declaration_list_await_mapping()
 #[test]
 fn test_source_map_es5_transform_async_unary_not_mapping() {
     let source = "async function run(){ return !(await foo()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6783,8 +6707,7 @@ fn test_source_map_es5_transform_async_unary_not_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_unary_negative_mapping() {
     let source = "async function run(){ return -(await foo()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6868,8 +6791,7 @@ fn test_source_map_es5_transform_async_unary_negative_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_unary_bitwise_not_mapping() {
     let source = "async function run(){ return ~(await foo()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -6953,8 +6875,7 @@ fn test_source_map_es5_transform_async_unary_bitwise_not_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_unary_void_mapping() {
     let source = "async function run(){ return void (await foo()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7038,8 +6959,7 @@ fn test_source_map_es5_transform_async_unary_void_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_unary_typeof_mapping() {
     let source = "async function run(){ return typeof (await foo()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7123,8 +7043,7 @@ fn test_source_map_es5_transform_async_unary_typeof_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_sequence_await_mapping() {
     let source = "async function run(){ return (await foo(), await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7213,8 +7132,7 @@ fn test_source_map_es5_transform_async_sequence_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_sequence_mixed_await_mapping() {
     let source = "async function run(){ return (foo(), await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7303,8 +7221,7 @@ fn test_source_map_es5_transform_async_sequence_mixed_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_optional_chaining_await_mapping() {
     let source = "async function run(){ return await foo?.bar(); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7393,8 +7310,7 @@ fn test_source_map_es5_transform_async_optional_chaining_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_nullish_coalescing_await_mapping() {
     let source = "async function run(){ return (await foo()) ?? bar(); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7483,8 +7399,7 @@ fn test_source_map_es5_transform_async_nullish_coalescing_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_delete_mapping() {
     let source = "async function run(){ return delete (await foo()).bar; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7573,8 +7488,7 @@ fn test_source_map_es5_transform_async_delete_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_compound_assignment_mapping() {
     let source = "async function run(){ let value = 0; value += await foo(); return value; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7667,8 +7581,7 @@ fn test_source_map_es5_transform_async_compound_assignment_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_compound_assignment_multiply_mapping() {
     let source = "async function run(){ let value = 2; value *= await foo(); return value; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7761,8 +7674,7 @@ fn test_source_map_es5_transform_async_compound_assignment_multiply_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_compound_assignment_divide_mapping() {
     let source = "async function run(){ let value = 4; value /= await foo(); return value; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7855,8 +7767,7 @@ fn test_source_map_es5_transform_async_compound_assignment_divide_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_compound_assignment_subtract_mapping() {
     let source = "async function run(){ let value = 5; value -= await foo(); return value; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -7949,8 +7860,7 @@ fn test_source_map_es5_transform_async_compound_assignment_subtract_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_compound_assignment_modulo_mapping() {
     let source = "async function run(){ let value = 7; value %= await foo(); return value; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8043,8 +7953,7 @@ fn test_source_map_es5_transform_async_compound_assignment_modulo_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_nested_arrow_capture_mapping() {
     let source = "async function run() { const bar = () => this.x; await bar(); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8136,8 +8045,7 @@ fn test_source_map_es5_transform_async_nested_arrow_capture_mapping() {
 fn test_source_map_es5_transform_async_try_catch_nested_arrow_mapping() {
     let source =
         "async function run(){ try { const bar=()=>this.x; await bar(); } catch { baz(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8232,8 +8140,7 @@ fn test_source_map_es5_transform_async_try_catch_nested_arrow_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_object_literal_arrow_mapping() {
     let source = "const obj = { run: async () => { await foo(); return this.x; } };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8325,8 +8232,7 @@ fn test_source_map_es5_transform_async_object_literal_arrow_mapping() {
 fn test_source_map_es5_transform_async_switch_mapping() {
     let source =
         "async function run(x){ switch(x){ case 1: await foo(); break; default: bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8417,8 +8323,7 @@ fn test_source_map_es5_transform_async_switch_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_for_loop_mapping() {
     let source = "async function run(){ for (let i=0;i<1;i++){ await foo(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8502,8 +8407,7 @@ fn test_source_map_es5_transform_async_for_loop_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_for_loop_await_condition_mapping() {
     let source = "async function run(cond){ for (; await foo(cond); ) { bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8587,8 +8491,7 @@ fn test_source_map_es5_transform_async_for_loop_await_condition_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_for_loop_await_condition_list_mapping() {
     let source = "async function run(){ for (; (await foo(), await bar()); ) { baz(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8678,8 +8581,7 @@ fn test_source_map_es5_transform_async_for_loop_await_condition_list_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_for_loop_await_initializer_mapping() {
     let source = "async function run(){ for (let i = await foo(); i < 1; i++) { bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8764,8 +8666,7 @@ fn test_source_map_es5_transform_async_for_loop_await_initializer_mapping() {
 fn test_source_map_es5_transform_async_for_loop_await_initializer_list_mapping() {
     let source =
         "async function run(){ for (let i = await foo(), j = await bar(); i < j; i++) { baz(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8855,8 +8756,7 @@ fn test_source_map_es5_transform_async_for_loop_await_initializer_list_mapping()
 #[test]
 fn test_source_map_es5_transform_async_for_loop_await_update_list_mapping() {
     let source = "async function run(){ let j = 0; for (let i = 0; i < 1; i = await foo(), j = await bar()) { baz(i, j); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -8946,8 +8846,7 @@ fn test_source_map_es5_transform_async_for_loop_await_update_list_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_for_loop_await_update_mapping() {
     let source = "async function run(){ for (let i = 0; i < 1; i = await foo()) { bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9031,8 +8930,7 @@ fn test_source_map_es5_transform_async_for_loop_await_update_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_for_loop_header_awaits_mapping() {
     let source = "async function run() {\n    for (let i = await init(); await cond(i); i = await step(i)) {\n        await body(i);\n    }\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9112,8 +9010,7 @@ fn test_source_map_es5_transform_async_for_loop_header_awaits_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_while_loop_mapping() {
     let source = "async function run(cond){ while (cond) { await foo(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9197,8 +9094,7 @@ fn test_source_map_es5_transform_async_while_loop_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_do_while_mapping() {
     let source = "async function run(cond){ do { await foo(); } while (cond); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9282,8 +9178,7 @@ fn test_source_map_es5_transform_async_do_while_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_do_while_await_condition_mapping() {
     let source = "async function run(cond){ do { bar(); } while (await foo(cond)); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9367,8 +9262,7 @@ fn test_source_map_es5_transform_async_do_while_await_condition_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_do_while_await_condition_list_mapping() {
     let source = "async function run(){ do { baz(); } while ((await foo(), await bar())); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9457,8 +9351,7 @@ fn test_source_map_es5_transform_async_do_while_await_condition_list_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_do_while_await_condition_direct_mapping() {
     let source = "async function run(flag) {\n    do {\n        tick(flag);\n    } while (await shouldContinue(flag));\n}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9531,8 +9424,7 @@ fn test_source_map_es5_transform_async_do_while_await_condition_direct_mapping()
 #[test]
 fn test_source_map_es5_transform_async_for_of_mapping() {
     let source = "async function run(items){ for (const item of items) { await foo(item); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9616,8 +9508,7 @@ fn test_source_map_es5_transform_async_for_of_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_for_of_await_rhs_mapping() {
     let source = "async function run(items){ for (const item of await foo(items)) { bar(item); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9701,8 +9592,7 @@ fn test_source_map_es5_transform_async_for_of_await_rhs_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_for_in_mapping() {
     let source = "async function run(obj){ for (const key in obj) { await foo(obj[key]); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9786,8 +9676,7 @@ fn test_source_map_es5_transform_async_for_in_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_for_in_await_rhs_mapping() {
     let source = "async function run(obj){ for (const key in await foo(obj)) { bar(key); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9872,8 +9761,7 @@ fn test_source_map_es5_transform_async_for_in_await_rhs_mapping() {
 fn test_source_map_es5_transform_async_switch_default_await_mapping() {
     let source =
         "async function run(x){ switch(x){ case 1: await foo(); break; default: await bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -9957,8 +9845,7 @@ fn test_source_map_es5_transform_async_switch_default_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_switch_default_only_await_mapping() {
     let source = "async function run(x){ switch(x){ case 1: break; default: await bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10042,8 +9929,7 @@ fn test_source_map_es5_transform_async_switch_default_only_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_switch_case_await_mapping() {
     let source = "async function run(x){ switch(x){ case 1: await foo(); break; case 2: await bar(); break; } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10127,8 +10013,7 @@ fn test_source_map_es5_transform_async_switch_case_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_switch_return_await_mapping() {
     let source = "async function run(x){ switch(x){ case 1: return await foo(); default: return await bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10217,8 +10102,7 @@ fn test_source_map_es5_transform_async_switch_return_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_switch_await_discriminant_mapping() {
     let source = "async function run(payload){ switch(await payload){ case 1: await foo(); break; default: await bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10303,8 +10187,7 @@ fn test_source_map_es5_transform_async_switch_await_discriminant_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_switch_fallthrough_await_mapping() {
     let source = "async function run(x){ switch(x){ case 1: case 2: await foo(); break; default: await bar(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10393,8 +10276,7 @@ fn test_source_map_es5_transform_async_switch_fallthrough_await_mapping() {
 #[test]
 fn test_source_map_es5_transform_class_extends_mapping() {
     let source = "class Base { base = 1; }\nclass Derived extends Base { value = 2; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10441,8 +10323,7 @@ fn test_source_map_es5_transform_class_extends_mapping() {
 #[test]
 fn test_source_map_es5_transform_class_property_initializer_mapping() {
     let source = "class Box { foo = 1; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10496,8 +10377,7 @@ fn test_source_map_es5_transform_class_property_initializer_mapping() {
 #[test]
 fn test_source_map_es5_transform_derived_ctor_super_initializer_mapping() {
     let source = "class Base {}\nclass Derived extends Base {\n    constructor() { super(); this.foo = 1; }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10554,8 +10434,7 @@ fn test_source_map_es5_transform_derived_ctor_super_initializer_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_new_expression_mapping() {
     let source = "async function run(){ return new Foo(await bar()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10644,8 +10523,7 @@ fn test_source_map_es5_transform_async_new_expression_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_tagged_template_mapping() {
     let source = "async function run(){ return tag`hello ${await bar()}`; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10734,8 +10612,7 @@ fn test_source_map_es5_transform_async_tagged_template_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_instanceof_mapping() {
     let source = "async function run(){ return (await bar()) instanceof Foo; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10827,8 +10704,7 @@ fn test_source_map_es5_transform_async_instanceof_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_exponentiation_mapping() {
     let source = "async function run(){ return (await base()) ** (await exp()); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -10917,8 +10793,7 @@ fn test_source_map_es5_transform_async_exponentiation_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_in_operator_mapping() {
     let source = "async function run(){ return (await key()) in obj; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11006,8 +10881,7 @@ fn test_source_map_es5_transform_async_in_operator_mapping() {
 #[test]
 fn test_source_map_es5_transform_async_nested_try_finally_mapping() {
     let source = "async function run(){ try { try { await inner(); } finally { await cleanup1(); } } finally { await cleanup2(); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11102,8 +10976,7 @@ fn test_source_map_es5_transform_async_nested_try_finally_mapping() {
 fn test_source_map_es5_transform_async_for_of_destructuring_mapping() {
     let source =
         "async function run(){ for (const [a, b] of await items()) { await process(a, b); } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11196,8 +11069,7 @@ fn test_source_map_es5_transform_async_for_of_destructuring_mapping() {
 #[ignore = "regressed after remote changes: yield expression source map mappings no longer generated"]
 fn test_source_map_es5_transform_generator_yield_mapping() {
     let source = "function* gen() { yield first(); yield second(); }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11262,8 +11134,7 @@ fn test_source_map_es5_transform_generator_yield_mapping() {
 #[test]
 fn test_source_map_names_array_multiple_identifiers() {
     let source = "function greet(name) { const message = 'Hello ' + name; return message; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11322,8 +11193,7 @@ fn test_source_map_sources_content_accuracy() {
 const result = hello("World");
 console.log(result);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11386,8 +11256,7 @@ class Example {
     greet() { return "hello"; }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11457,8 +11326,7 @@ const y = arr?.[0];
 const fn = (x: number) => x * 2;
 const z = fn?.(5);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11528,8 +11396,7 @@ a ||= "default";
 b &&= 10;
 c ??= "fallback";"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11598,8 +11465,7 @@ const hex = 0xFFFFFFFFFFFFFFFFn;
 const binary = 0b1010n;
 const sum = small + large;"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11673,8 +11539,7 @@ fn test_source_map_class_static_blocks() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11746,8 +11611,7 @@ fn test_source_map_dynamic_import() {
 const lazy = import("./lazy");
 const conditional = true ? import("./a") : import("./b");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11822,8 +11686,7 @@ const sum = (a: number, b = 0, ...rest: number[]) => {
 greet("Alice", "Dr.", "Prof.");
 sum(1, 2, 3, 4, 5);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11901,8 +11764,7 @@ async function processItems(items: string[]) {
         await processItem(item);
     }
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -11990,8 +11852,7 @@ enum Status {
 const myColor = Color.Red;
 const myStatus = Status.Active;"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12067,8 +11928,7 @@ function* infiniteSequence() {
         yield i++;
     }
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12152,8 +12012,7 @@ const swap = ([a, b]: [number, number]) => [b, a];
 const result = processPoint({ x: 10, y: 20 });
 const swapped = swap([1, 2]);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12249,8 +12108,7 @@ fn test_source_map_private_class_fields() {
 const c = new Counter("test");
 c.increment();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12327,8 +12185,7 @@ fn test_source_map_class_static_block_mapping() {
         console.log("Config loaded");
     }
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12413,8 +12270,7 @@ const result = obj.prop ?? "missing";
 const arr: (number | null)[] = [1, null, 3];
 const mapped = arr.map(x => x ?? 0);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12501,8 +12357,7 @@ const tagged = String.raw`path\to\${name}`;
 
 const result = format(["apple", "banana"]);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12595,8 +12450,7 @@ const instance2 = new NamedClass();
 const DynamicClass = factory();
 const instance3 = new DynamicClass("test");"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12665,8 +12519,7 @@ const cube = 3 ** 3;
 const power = base ** exponent;
 let x = 2;
 x **= 3;"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -12709,8 +12562,7 @@ const result = sum(...arr);
 
 const [first, ...rest] = arr;
 const { x, ...others } = { x: 1, y: 2, z: 3 };"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -12759,8 +12611,7 @@ class Calculator {
 function format(value: string, options: { uppercase?: boolean } = {}): string {
     return options.uppercase ? value.toUpperCase() : value;
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -12844,8 +12695,7 @@ const doubled = arr.map(x => x * 2);
 const filtered = arr.filter(x => x > 2);
 const reduced = arr.reduce((acc, x) => acc + x, 0);"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -12925,8 +12775,7 @@ class MyClass {
         return "method";
     }
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -12974,8 +12823,7 @@ const coords = { x: 10, y: 20 };
 const { x, y } = coords;
 
 const merged = { ...coords, z: 30 };"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -13069,8 +12917,7 @@ class Counter {
         return this.count;
     }
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -13153,8 +13000,7 @@ async function processItems(items: number[]) {
         console.log(item);
     }
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -13228,8 +13074,7 @@ fn test_source_map_typescript_namespaces() {
 namespace Nested.Inner {
     export const nested = "inner value";
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13297,8 +13142,7 @@ fn test_source_map_block_scoping_let_const_mapping() {
 const y = 2;
 let z = x + y;
 console.log(z);"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13360,8 +13204,7 @@ fn test_source_map_block_scoping_nested_blocks_mapping() {
     console.log(x);
 }
 console.log(x);"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13406,8 +13249,7 @@ fn test_source_map_block_scoping_for_loop_mapping() {
     let source = r#"for (let i = 0; i < 10; i++) {
     console.log(i);
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13457,8 +13299,7 @@ fn test_source_map_block_scoping_function_scope_mapping() {
     const result = local * 2;
     return result;
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13517,8 +13358,7 @@ fn test_source_map_enum_es5_string_enum_mapping() {
     Left = "LEFT",
     Right = "RIGHT"
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13573,8 +13413,7 @@ fn test_source_map_enum_es5_exported_enum_mapping() {
 }
 
 const current = Status.Active;"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13624,8 +13463,7 @@ fn test_source_map_enum_es5_computed_member_mapping() {
     B = A * 2,
     C = 10
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13674,8 +13512,7 @@ fn test_source_map_enum_es5_mixed_values_mapping() {
     Fourth,
     Fifth = 100
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13725,8 +13562,7 @@ import * as utils from "./utils";
 import defaultExport from "./default";
 
 console.log(foo, bar, utils, defaultExport);"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13782,8 +13618,7 @@ export function greet(name: string) {
 export class MyClass {
     constructor() {}
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13837,8 +13672,7 @@ fn test_source_map_commonjs_default_export_mapping() {
     let source = r#"const myValue = 100;
 
 export default myValue;"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13883,8 +13717,7 @@ fn test_source_map_commonjs_reexport_mapping() {
     // Test CommonJS re-export transform source mapping
     let source = r#"export { foo, bar } from "./module";
 export * from "./utils";"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -13944,8 +13777,7 @@ function process(input: unknown) {
 
 type Point = { x: number; y: number };
 const origin = { x: 0, y: 0 } as Point;"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -14181,8 +14013,7 @@ fn test_source_map_namespace_es5_basic_mapping() {
     let source = r#"namespace Foo {
     export const value = 42;
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14227,8 +14058,7 @@ fn test_source_map_namespace_es5_nested_mapping() {
         return "hello";
     }
 }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14279,8 +14109,7 @@ class MyComponent {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14340,8 +14169,7 @@ class Service {
     constructor() {}
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14401,8 +14229,7 @@ class Logger {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14464,8 +14291,7 @@ class Calculator {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14520,8 +14346,7 @@ class Container {
     constructor(@Inject service: any) {}
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14579,8 +14404,7 @@ class Service {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14640,8 +14464,7 @@ class Entity {
     name: string = "";
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14707,8 +14530,7 @@ class Config {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14773,8 +14595,7 @@ class Controller {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14839,8 +14660,7 @@ class User {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14896,8 +14716,7 @@ fn test_source_map_async_multiple_awaits() {
     return { numResult, strResult, boolResult };
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -14956,8 +14775,7 @@ fn test_source_map_async_try_catch() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15015,8 +14833,7 @@ fn test_source_map_async_for_of_loop() {
     return results;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15070,8 +14887,7 @@ fn test_source_map_async_iife() {
     return data.value;
 })();"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15128,8 +14944,7 @@ fn test_source_map_async_rest_params() {
     return results;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15184,8 +14999,7 @@ fn test_source_map_async_default_params() {
     return await fetch(url, { signal: controller.signal });
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15239,8 +15053,7 @@ fn test_source_map_async_destructuring_await() {
     return { name, email, age };
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15297,8 +15110,7 @@ fn test_source_map_async_nested_functions() {
     return result;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15354,8 +15166,7 @@ fn test_source_map_async_class_static_method() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15411,8 +15222,7 @@ fn test_source_map_async_while_loop() {
     return true;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15470,8 +15280,7 @@ fn test_source_map_es5_class_basic_iife() {
     y: number;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15529,8 +15338,7 @@ fn test_source_map_es5_class_constructor() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15588,8 +15396,7 @@ fn test_source_map_es5_class_instance_methods() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15648,8 +15455,7 @@ fn test_source_map_es5_class_static_methods() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15708,8 +15514,7 @@ fn test_source_map_es5_class_accessors() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15772,8 +15577,7 @@ class Dog extends Animal {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15833,8 +15637,7 @@ class Derived extends Base {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15890,8 +15693,7 @@ class DynamicClass {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -15950,8 +15752,7 @@ class Child extends Parent {
     level(): number { return 3; }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -16007,8 +15808,7 @@ fn test_source_map_es5_class_expression() {
     }
 };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -16065,8 +15865,7 @@ fn test_source_map_generator_basic_yield() {
     yield 1;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -16121,8 +15920,7 @@ fn test_source_map_generator_multiple_yields() {
     yield 3;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -16177,8 +15975,7 @@ fn test_source_map_generator_yield_in_loop() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -16236,8 +16033,7 @@ function* outer() {
     yield 3;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -16292,8 +16088,7 @@ fn test_source_map_generator_with_return() {
     return "done";
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -16354,8 +16149,7 @@ else if (i == 20) {
     i--;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ESNext,
@@ -16394,8 +16188,7 @@ namespace Shapes {
     var a = 10;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ESNext,
@@ -16430,8 +16223,7 @@ fn test_static_member_comment_preserved_after_class() {
     static origin = new Point(0, 0);
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
@@ -16459,8 +16251,7 @@ for ({ name = "noName" } of robots) {
     console.log(name);
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
@@ -16491,8 +16282,7 @@ fn test_non_exported_inner_namespace_no_parent_assignment() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
@@ -16532,8 +16322,7 @@ declare var console: any;
 
 var x = 1;"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ESNext,
@@ -16567,8 +16356,7 @@ declare var n;
 
 var x = 1;"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ESNext,
@@ -16605,8 +16393,7 @@ import ts = require("typescript");
 
 const x = ts.version;"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -16646,8 +16433,7 @@ fn test_commonjs_attached_comment_after_esmodule_marker() {
 import model = require("./greeter");
 var x = 1;"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES5,
@@ -16692,8 +16478,7 @@ fn test_computed_property_name_bracket_source_mapping() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -16736,8 +16521,7 @@ fn test_computed_property_name_getter_bracket_mapping() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -16779,8 +16563,7 @@ fn test_computed_property_object_literal_bracket_mapping() {
     }
 };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -16822,8 +16605,7 @@ fn test_sourcemap_semicolon_mapping() {
     // Line 2:     return 42;      (`;` at col 13)
     // Line 3: }
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -16873,8 +16655,7 @@ fn test_sourcemap_try_catch_finally() {
     // Line 5:     cleanup();
     // Line 6: }
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -16963,8 +16744,7 @@ fn test_sourcemap_for_loop_and_if_else() {
     // Line 5:     }
     // Line 6: }
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -17048,8 +16828,7 @@ fn test_sourcemap_parity_switch() {
                    \x20\x20\x20\x20\x20\x20\x20\x20x = x *10;\n\
                    }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -17131,8 +16910,7 @@ fn test_sourcemap_parity_while() {
                    \x20\x20\x20\x20a++;\n\
                    }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -17215,8 +16993,7 @@ fn test_sourcemap_parity_do_while() {
                    \x20\x20\x20\x20i++;\n\
                    } while (i < 20);";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -17309,8 +17086,7 @@ fn test_sourcemap_parity_if_else() {
                    \x20\x20\x20\x20i--;\n\
                    }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -17405,8 +17181,7 @@ fn test_sourcemap_parity_try_catch_finally() {
                    \x20\x20\x20\x20x = x * 10;\n\
                    }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -17489,8 +17264,7 @@ fn test_sourcemap_parity_computed_property_names_es6() {
                    \t}\n\
                    }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -17584,8 +17358,7 @@ fn test_sourcemap_parity_for_in() {
                    \x20\x20\x20\x20WScript.Echo(x);\n\
                    }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -17672,8 +17445,7 @@ fn test_sourcemap_parity_functions() {
                    \x20\x20\x20\x20return;\n\
                    }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -17747,8 +17519,7 @@ fn test_sourcemap_parity_statements() {
     // Source from sourceMapValidationStatements.ts (without directives)
     let source = "function f() {\n    var y;\n    var x = 0;\n    for (var i = 0; i < 10; i++) {\n        x += i;\n        x *= 0;\n    }\n    if (x > 17) {\n        x /= 9;\n    } else {\n        x += 10;\n        x++;\n    }\n    var a = [\n        1,\n        2,\n        3\n    ];\n    var obj = {\n        z: 1,\n        q: \"hello\"\n    };\n    for (var j in a) {\n        obj.z = a[j];\n        var v = 10;\n    }\n    try {\n        obj.q = \"ohhh\";\n    } catch (e) {\n        if (obj.z < 10) {\n            obj.z = 12;\n        } else {\n            obj.q = \"hmm\";\n        }\n    }\n    try {\n        throw new Error();\n    } catch (e1) {\n        var b = e1;\n    } finally {\n        y = 70;\n    }\n    with (obj) {\n        i = 2;\n        z = 10;\n    }\n    switch (obj.z) {\n        case 0: {\n            x++;\n            break;\n\n        }\n        case 1: {\n            x--;\n            break;\n\n        }\n        default: {\n            x *= 2;\n            x = 50;\n            break;\n\n        }\n    }\n    while (x < 10) {\n        x++;\n    }\n    do {\n        x--;\n    } while (x > 4)\n    x = y;\n    var z = (x == 1) ? x + 1 : x - 1;\n    (x == 1) ? x + 1 : x - 1;\n    x === 1;\n    x = z = 40;\n    eval(\"y\");\n    return;\n}\nvar b = function () {\n    var x = 10;\n    x = x + 1;\n};\nf();";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -17824,8 +17595,7 @@ fn test_sourcemap_parity_lambda_multiline() {
     // @target: es2015
     let source = "((item: string) =>\n    item\n)";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -17909,8 +17679,7 @@ fn test_sourcemap_parity_class_extends() {
                    \x20\x20\x20\x20public nameA = \"Ten\";\n\
                    }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
@@ -18004,8 +17773,7 @@ fn test_sourcemap_parity_enums() {
                    enum e3 {\n\
                    }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
@@ -18118,8 +17886,7 @@ fn test_sourcemap_parity_for() {
                    for (i = 0, j = 20; j < 20, i < 20; j++) {\n\
                    }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -18212,8 +17979,7 @@ fn test_sourcemap_parity_return_throw_break_continue() {
                    \x20\x20\x20\x20return;\n\
                    }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -18298,8 +18064,7 @@ fn test_sourcemap_parity_object_array_literals() {
                    let arr = [1, 2, 3];\n\
                    let nested = { a: { b: 1 }, c: [4, 5] };";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());
@@ -18404,8 +18169,7 @@ fn test_sourcemap_parity_variables() {
                    x = x + 1;\n\
                    y += 2;";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let options = PrinterOptions::default();
     let ctx = EmitContext::with_options(options.clone());

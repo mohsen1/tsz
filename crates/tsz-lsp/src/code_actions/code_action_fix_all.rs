@@ -69,8 +69,8 @@ impl<'a> CodeActionProvider<'a> {
         _root: NodeIndex,
         diagnostics: &[LspDiagnostic],
     ) -> Vec<CodeAction> {
-        let mut seen_codes = std::collections::HashSet::new();
-        let mut actions = Vec::new();
+        let mut seen_codes = std::collections::HashSet::with_capacity(diagnostics.len());
+        let mut actions = Vec::with_capacity(diagnostics.len().min(FIX_ALL_ENTRIES.len()));
 
         for diag in diagnostics {
             let code = match diag.code {

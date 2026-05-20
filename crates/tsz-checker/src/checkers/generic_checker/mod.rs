@@ -1,8 +1,10 @@
 //! Generic type argument validation (TS2344 constraint checking).
 
 use crate::query_boundaries::checkers::generic as query;
+use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use std::hash::{Hash, Hasher};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
@@ -18,6 +20,21 @@ pub(crate) struct CallTypeArgumentValidation {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn type_reference_arg_validation_scope_key(&self) -> u64 {
+        let mut entries = self
+            .ctx
+            .type_parameter_scope
+            .iter()
+            .map(|(name, type_id)| (name.as_str(), type_id.0))
+            .collect::<Vec<_>>();
+        entries.sort_unstable_by(|left, right| left.0.cmp(right.0));
+
+        let mut hasher = rustc_hash::FxHasher::default();
+        self.ctx.in_conditional_extends_depth.hash(&mut hasher);
+        entries.hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Check if a type node is an `infer` type, looking through parentheses.
     /// Returns true for `infer T`, `(infer T)`, `((infer T))`, etc.
     fn is_infer_type_node_through_parens(&self, mut node_idx: NodeIndex) -> bool {
@@ -180,29 +197,53 @@ impl<'a> CheckerState<'a> {
                 if self.type_nodes_structurally_equal(arg_idx, cond.check_type) {
                     let extends_type = self.get_type_from_type_node(cond.extends_type);
                     if extends_type != TypeId::ERROR {
-                        // Check if this single extends type satisfies the constraint
-                        // (bidirectional assignability for exact match)
+                        // Check if this single extends type satisfies the constraint.
+                        // For callable-like constraints, prefer conservative structural/
+                        // constraint-shape checks that avoid expensive shape expansion.
                         let db = self.ctx.types.as_type_database();
                         let constraint_is_callable = query::is_callable_type(db, constraint)
                             || self.is_function_constraint(constraint);
                         let extends_resolved = self.resolve_lazy_type(extends_type);
                         let extends_evaluated =
                             self.evaluate_type_for_assignability(extends_resolved);
-                        let extends_is_callable = query::is_callable_type(db, extends_type)
-                            || query::is_callable_type(db, extends_resolved)
-                            || query::is_callable_type(db, extends_evaluated)
-                            || self.is_function_constraint(extends_type)
-                            || self.is_function_constraint(extends_resolved);
-                        if constraint_is_callable
-                            && (extends_is_callable
-                                || self.is_assignable_to(extends_resolved, constraint)
-                                || self.is_assignable_to(extends_evaluated, constraint))
-                        {
-                            return true;
+                        if constraint_is_callable {
+                            let extends_is_callable = query::is_callable_type(db, extends_type)
+                                || query::is_callable_type(db, extends_resolved)
+                                || query::is_callable_type(db, extends_evaluated)
+                                || self.is_function_constraint(extends_type)
+                                || self.is_function_constraint(extends_resolved)
+                                || self.type_parameter_has_callable_constraint(extends_type)
+                                || self.type_parameter_has_callable_constraint(extends_resolved)
+                                || query::callable_shape_for_type(db, extends_type).is_some()
+                                || query::callable_shape_for_type(db, extends_resolved).is_some()
+                                || query::callable_shape_for_type(db, extends_evaluated).is_some();
+                            if extends_is_callable {
+                                return true;
+                            }
+                            let check_type_id = self.get_type_from_type_node(cond.check_type);
+                            if let Some(check_name) = query::type_parameter_name(db, check_type_id)
+                                && (query_common::contains_type_parameter_named(
+                                    db,
+                                    extends_resolved,
+                                    check_name,
+                                ) || query_common::contains_type_parameter_named(
+                                    db,
+                                    extends_evaluated,
+                                    check_name,
+                                ) || query_common::contains_type_parameter_named(
+                                    db,
+                                    extends_type,
+                                    check_name,
+                                ))
+                            {
+                                return true;
+                            }
                         }
                         if extends_type == constraint
                             || (self.is_assignable_to(extends_type, constraint)
                                 && self.is_assignable_to(constraint, extends_type))
+                            || self.is_assignable_to(extends_resolved, constraint)
+                            || self.is_assignable_to(extends_evaluated, constraint)
                         {
                             return true;
                         }
@@ -721,6 +762,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let validation_cache_key = (
+            type_ref_idx.0,
+            sym_id.0,
+            self.type_reference_arg_validation_scope_key(),
+        );
+        if self
+            .ctx
+            .type_reference_validation_caches
+            .arg_validation
+            .contains(&validation_cache_key)
+        {
+            return false;
+        }
+
         if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_lib(sym_id) {
             let lib_binders = self.get_lib_binders();
             if let Some(name) = self
@@ -778,12 +833,17 @@ impl<'a> CheckerState<'a> {
                             self.module_augmentation_has_type_params(module_spec, &import_name)
                         })
                 });
-            // Suppress TS2315 for symbols from unresolved modules (type is ERROR)
+            // Suppress TS2315 for symbols from unresolved modules (type is ERROR).
+            // The historical `symbol_type != TypeId::ANY` guard catches
+            // cross-arena symbols that defaulted to `any` because their
+            // declaration couldn't be located. It must NOT silence explicit
+            // `type X = any` declarations — tsc 6.0.3 emits TS2315 there.
             let symbol_type = self.get_type_of_symbol(sym_id);
+            let body_is_explicit_any = self.symbol_declaration_body_is_explicit_any(sym_id);
             if !has_type_params_in_decl
                 && !has_augmented_type_params
                 && symbol_type != TypeId::ERROR
-                && symbol_type != TypeId::ANY
+                && (symbol_type != TypeId::ANY || body_is_explicit_any)
                 && !type_args_list.nodes.is_empty()
             {
                 // TSC points the TS2315 error at the type name (e.g. `C` in
@@ -826,13 +886,21 @@ impl<'a> CheckerState<'a> {
         let min_required = self
             .count_required_type_params_from_ast(sym_id)
             .unwrap_or_else(|| self.count_required_reference_type_params(sym_id, &base_name));
-        self.validate_type_reference_type_arguments_against_params(
+        let diagnostics_before = self.ctx.diagnostics.len();
+        let count_mismatch = self.validate_type_reference_type_arguments_against_params(
             &type_params,
             min_required,
             type_args_list,
             type_arg_error_anchor,
             &display_name,
-        )
+        );
+        if !count_mismatch && self.ctx.diagnostics.len() == diagnostics_before {
+            self.ctx
+                .type_reference_validation_caches
+                .arg_validation
+                .insert(validation_cache_key);
+        }
+        count_mismatch
     }
 
     pub(crate) fn validate_type_reference_type_arguments_against_params(
@@ -968,10 +1036,13 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
             }
-            let type_arg_display = self.format_type_diagnostic(type_arg);
-            if type_arg_display.contains("HTMLElementDeprecatedTagNameMap[")
-                && self.format_type_diagnostic(constraint_for_check) == "Element"
-            {
+            if self.indexed_access_into_object_uniformly_satisfies_constraint(
+                type_arg,
+                constraint_for_check,
+            ) {
+                continue;
+            }
+            if self.array_element_infer_alias_satisfies_constraint(type_arg, constraint_for_check) {
                 continue;
             }
             let error_anchor = type_args_list
@@ -1221,10 +1292,16 @@ impl<'a> CheckerState<'a> {
 
 mod array_like_constraint_helpers;
 mod callable_constraint_helpers;
+mod conditional_constraint_helpers;
+mod constraint_syntax_instantiation;
 mod constraint_validation;
+mod constructor_accessibility_helpers;
+mod explicit_alias_constraint_helpers;
 mod infer_conditional_constraints;
 mod infer_conditional_helpers;
 mod instantiation_expression_constraints;
 mod mapped_constraint_helpers;
+mod merged_interface_constraints;
 mod recursive_heritage_constraint;
 mod symbol_declaration_helpers;
+mod union_constraint_helpers;

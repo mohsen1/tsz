@@ -184,3 +184,56 @@ fn binder_must_not_import_solver_or_checker() {
         violations.join("\n")
     );
 }
+
+// =============================================================================
+// Solver staged-engine guard
+// =============================================================================
+
+fn read_solver_source(rel: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(rel);
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
+}
+
+#[test]
+fn evaluation_engine_keeps_request_stage_boundary() {
+    let mod_rs = read_solver_source("evaluation/mod.rs");
+    let request_rs = read_solver_source("evaluation/request.rs");
+    let result_rs = read_solver_source("evaluation/result.rs");
+    let evaluate_rs = read_solver_source("evaluation/evaluate.rs");
+    let query_cache_rs = read_solver_source("caches/query_cache.rs");
+
+    assert!(
+        mod_rs.contains("pub mod request;"),
+        "evaluation module must keep its named request stage"
+    );
+    assert!(
+        request_rs.contains("pub struct EvaluationCacheKey")
+            && request_rs.contains("pub struct EvaluationOptions")
+            && request_rs.contains("pub struct EvaluationRequest"),
+        "evaluation/request.rs must own the typed request, options, and cache-key stage"
+    );
+    assert!(
+        mod_rs.contains("pub mod result;")
+            && result_rs.contains("pub struct EvaluationResult")
+            && result_rs.contains("pub const fn into_type_id"),
+        "evaluation/result.rs must own the typed result stage"
+    );
+    assert!(
+        evaluate_rs.contains("use crate::evaluation::request::EvaluationRequest;")
+            && evaluate_rs.contains("use crate::evaluation::result::EvaluationResult;")
+            && evaluate_rs.contains("pub fn evaluate_type_with_request")
+            && evaluate_rs.contains(
+                "pub fn evaluate_request_result(&mut self, request: EvaluationRequest) -> EvaluationResult"
+            )
+            && evaluate_rs
+                .contains("pub fn evaluate_request(&mut self, request: EvaluationRequest)"),
+        "evaluation/evaluate.rs must consume typed request/result stages instead of owning loose shell setup"
+    );
+    assert!(
+        query_cache_rs
+            .contains("use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};")
+            && query_cache_rs.contains("request.cache_key()")
+            && query_cache_rs.contains("evaluate_request_result(request).into_type_id()"),
+        "query cache evaluation entries must derive option-sensitive keys from EvaluationRequest and unwrap EvaluationResult only at the cache compatibility edge"
+    );
+}

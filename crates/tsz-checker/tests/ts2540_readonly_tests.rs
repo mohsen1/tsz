@@ -189,6 +189,44 @@ obj.c = true;
     );
 }
 
+#[test]
+fn test_nested_readonly_survives_prior_receiver_assignment() {
+    let source = r#"
+interface DeepFrozen {
+    readonly a: {
+        readonly b: number;
+    };
+}
+const df: DeepFrozen = { a: { b: 1 } };
+df.a = { b: 2 };
+df.a.b = 3;
+
+type AliasFrozen = {
+    readonly outer: {
+        readonly inner: number;
+    };
+};
+let af: AliasFrozen = { outer: { inner: 1 } };
+af.outer = { inner: 2 };
+af.outer.inner = 3;
+
+interface MutableParent {
+    slot: {
+        readonly leaf: number;
+    };
+}
+let mp: MutableParent = { slot: { leaf: 1 } };
+mp.slot = { leaf: 2 };
+mp.slot.leaf = 3;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(
+        ts2540_count, 5,
+        "Expected readonly diagnostics for both parent writes and nested child writes, got {ts2540_count}: {diags:?}"
+    );
+}
+
 // =========================================================================
 // Namespace let export should be mutable
 // =========================================================================
@@ -377,6 +415,31 @@ v[0] = 1;
 }
 
 #[test]
+fn test_readonly_tuple_fixed_element_suppresses_type_mismatch() {
+    // Fixed readonly tuple elements are named properties. When the write is
+    // invalid both because the element is readonly and because the assigned
+    // literal has the wrong type, tsc reports only TS2540 for that assignment.
+    let source = r#"
+const arr = [1, 2, 3] as const;
+arr[0] = 999;
+
+const nested = { a: [1, 2] as const };
+nested.a[0] = 999;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    let ts2322_count = diags.iter().filter(|d| d.0 == 2322).count();
+    assert_eq!(
+        ts2540_count, 2,
+        "Expected TS2540 for direct and nested readonly tuple fixed elements, got: {diags:?}"
+    );
+    assert_eq!(
+        ts2322_count, 0,
+        "TS2322 should be suppressed when TS2540 already reports the readonly fixed element write, got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_readonly_tuple_rest_element_emits_ts2542() {
     // Assigning to a rest-range index of a readonly tuple should emit TS2542
     // (index signature only permits reading).
@@ -537,5 +600,189 @@ type T = readonly Array<string>;
     assert!(
         has_error_with_code(source, 1354),
         "Should emit TS1354 for 'readonly Array<string>'"
+    );
+}
+
+// =========================================================================
+// DeepReadonly with Function branch – nested property TS2540 (issue #6591)
+// =========================================================================
+
+const DEEP_READONLY_PREAMBLE: &str = r"
+type DeepReadonly<T> = T extends Function
+  ? T
+  : T extends object
+    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+    : T;
+
+interface Nested {
+  a: {
+    b: {
+      c: number;
+    };
+  };
+  fn: () => void;
+}
+
+type DRN = DeepReadonly<Nested>;
+declare const drn: DRN;
+";
+
+#[test]
+fn test_deep_readonly_function_branch_all_levels_error() {
+    for (expr, label) in [
+        ("drn.a = { b: { c: 1 } };", "level 1 (drn.a)"),
+        ("drn.a.b = { c: 1 };", "level 2 (drn.a.b)"),
+        ("drn.a.b.c = 5;", "level 3 (drn.a.b.c)"),
+    ] {
+        let source = format!("{DEEP_READONLY_PREAMBLE}\n{expr}");
+        assert!(
+            has_error_with_code(&source, 2540),
+            "Should emit TS2540 at {label}"
+        );
+    }
+}
+
+#[test]
+fn test_deep_readonly_without_function_branch_nested_errors() {
+    let source = r"
+type DR<T> = { readonly [K in keyof T]: DR<T[K]> };
+declare const drn: DR<{ a: { b: { c: number } } }>;
+drn.a.b = { c: 1 };
+drn.a.b.c = 5;
+";
+    assert!(
+        has_error_with_code(source, 2540),
+        "Without Function branch: should still emit TS2540 for nested properties"
+    );
+}
+
+#[test]
+fn test_deep_readonly_function_branch_no_false_positive_on_mutable() {
+    let source = r"
+interface Nested {
+  a: { b: { c: number } };
+}
+declare const obj: Nested;
+obj.a.b = { c: 1 };
+obj.a.b.c = 5;
+";
+    assert!(
+        !has_error_with_code(source, 2540),
+        "Should NOT emit TS2540 for mutable nested properties"
+    );
+}
+
+// =========================================================================
+// as const deep readonly tests
+// =========================================================================
+
+#[test]
+fn test_as_const_nested_property_readonly_after_parent_write() {
+    let source = r#"
+const obj = { nested: { b: 2 } } as const;
+obj.nested = { b: 3 };
+obj.nested.b = 4;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(
+        ts2540_count, 2,
+        "Expected TS2540 for both outer and nested property writes on as-const object, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_as_const_multiple_levels_all_readonly() {
+    let source = r#"
+const config = { db: { host: { ip: "localhost" } } } as const;
+config.db = { host: { ip: "x" } };
+config.db.host = { ip: "x" };
+config.db.host.ip = "x";
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(
+        ts2540_count, 3,
+        "Expected TS2540 for all three levels of nested as-const writes, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_intersection_readonly_property_emits_ts2540() {
+    let source = r#"
+interface WithReadonly { readonly x: number; }
+interface WithMutable { y: string; }
+declare const inter: WithReadonly & WithMutable;
+inter.x = 5;
+inter.y = "ok";
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(ts2540_count, 1, "Expected TS2540 only for readonly x");
+    let ts2322_count = diags.iter().filter(|d| d.0 == 2322).count();
+    assert_eq!(ts2322_count, 0, "Expected no TS2322 for mutable y write");
+}
+
+#[test]
+fn test_readonly_function_return_type_property_emits_ts2540() {
+    let source = r#"
+function getReadonly(): { readonly x: number } {
+    return { x: 42 };
+}
+const result = getReadonly();
+result.x = 1;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assignment to readonly property from function return type"
+    );
+}
+
+// =========================================================================
+// Union type readonly edge cases
+// =========================================================================
+
+#[test]
+fn test_union_all_readonly_emits_ts2540() {
+    let source = r#"
+type A = { readonly x: number };
+type B = { readonly x: string };
+declare const ab: A | B;
+ab.x = 5;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 when all union members have readonly x"
+    );
+}
+
+#[test]
+fn test_union_any_readonly_emits_ts2540() {
+    // At runtime we can't know which branch of the union we're on, so writing
+    // to a property that is readonly in any member is unsafe.
+    let source = r#"
+type A = { readonly x: number };
+type B = { x: string };
+declare const ab: A | B;
+ab.x = 5;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 when any union member has readonly x (conservative union write semantics)"
+    );
+}
+
+#[test]
+fn test_union_no_readonly_no_ts2540() {
+    let source = r#"
+type C = { x: number };
+type D = { x: string };
+declare const cd: C | D;
+cd.x = 5;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().all(|d| d.0 != 2540),
+        "Should NOT emit TS2540 when no union member has readonly x, got: {diags:?}"
     );
 }

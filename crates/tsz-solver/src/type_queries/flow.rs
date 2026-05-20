@@ -4,7 +4,7 @@
 //! (narrowing, type predicates, constructor instances) and advanced type queries
 //! (promise detection, comparability, contextual type parameter extraction).
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::type_queries::{
     StringLiteralKeyKind, classify_for_string_literal_keys, get_array_element_type,
@@ -260,14 +260,10 @@ pub fn instance_type_from_constructor(db: &dyn TypeDatabase, type_id: TypeId) ->
     // Step 1: A `[Symbol.hasInstance](value: ...): value is T` predicate, when
     // present, defines the instance type. This wins over `prototype` and over
     // construct signature return types per tsc.
-    if let Some(predicate_type) = instance_type_from_symbol_has_instance(db, type_id) {
-        if predicate_type == TypeId::ANY
-            && let Some(generic_construct_type) =
-                generic_construct_instance_type_from_constructor(db, type_id)
-        {
-            return Some(generic_construct_type);
-        }
-        return Some(predicate_type);
+    if let Some(instance_type) =
+        instance_type_from_symbol_has_instance_with_any_fallback(db, type_id)
+    {
+        return Some(instance_type);
     }
 
     // Step 2: Check for `prototype` property (next priority per tsc spec).
@@ -395,6 +391,29 @@ pub fn instance_type_from_symbol_has_instance(
         // `asserts value is T` does not narrow the instanceof source type
         // (tsc treats only non-asserting predicates as narrowing).
         return None;
+    }
+    Some(predicate_type)
+}
+
+/// Resolve a constructor type to the instance type its `[Symbol.hasInstance]`
+/// predicate asserts, falling back to the erased generic construct return when
+/// the predicate target collapses to `any`. Returns `None` when the constructor
+/// has no usable `[Symbol.hasInstance]` predicate.
+///
+/// Shared by `instance_type_from_constructor` and `narrow_by_instanceof` so
+/// both solver entry points apply identical precedence: the `any`-fallback
+/// rule (`value is any` must not hide a more specific generic construct
+/// candidate like `Box<any>`) is enforced exactly once.
+pub fn instance_type_from_symbol_has_instance_with_any_fallback(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let predicate_type = instance_type_from_symbol_has_instance(db, type_id)?;
+    if predicate_type == TypeId::ANY
+        && let Some(generic_construct_type) =
+            generic_construct_instance_type_from_constructor(db, type_id)
+    {
+        return Some(generic_construct_type);
     }
     Some(predicate_type)
 }
@@ -910,6 +929,22 @@ fn types_are_comparable_for_assertion_inner(
             .any(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1));
     }
 
+    // For intersection source S1 & S2 & ... & Sn: any member comparable to target suffices.
+    // For intersection target T1 & T2 & ... & Tn: source must be comparable to every member
+    // (tsc's eachTypeRelatedToType via comparableRelation).
+    if let Some(TypeData::Intersection(list_id)) = db.lookup(source) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .any(|&m| types_are_comparable_for_assertion_inner(db, m, target, depth + 1));
+    }
+    if let Some(TypeData::Intersection(list_id)) = db.lookup(target) {
+        let members = db.type_list(list_id);
+        return members
+            .iter()
+            .all(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1));
+    }
+
     // Enum comparability: unwrap to member type union, matching
     // `types_are_comparable_inner` behavior.
     if let Some(TypeData::Enum(_def_id, members_type_id)) = db.lookup(source) {
@@ -921,6 +956,12 @@ fn types_are_comparable_for_assertion_inner(
 
     // Check primitive ↔ literal comparability
     if is_primitive_comparable(db, source, target) || is_primitive_comparable(db, target, source) {
+        return true;
+    }
+
+    if type_param_primitive_comparable_with_constraint(db, target, source)
+        || type_param_primitive_comparable_with_constraint(db, source, target)
+    {
         return true;
     }
 
@@ -975,6 +1016,23 @@ fn types_are_comparable_for_assertion_inner(
     // For type assertions, only check that overlapping properties are comparable.
     // Do NOT require all target properties to exist in the source.
     types_have_common_properties_relaxed(db, source, target, depth)
+}
+
+fn type_param_primitive_comparable_with_constraint(
+    db: &dyn TypeDatabase,
+    type_param: TypeId,
+    other: TypeId,
+) -> bool {
+    let Some(TypeData::TypeParameter(info)) = db.lookup(type_param) else {
+        return false;
+    };
+    let Some(constraint) = info
+        .constraint
+        .filter(|&c| c != TypeId::ANY && c != TypeId::UNKNOWN)
+    else {
+        return false;
+    };
+    is_primitive_comparable(db, other, constraint) || is_primitive_comparable(db, constraint, other)
 }
 
 fn callable_signatures_overlap_for_assertion(
@@ -1294,6 +1352,9 @@ fn types_have_common_properties_relaxed(
                 {
                     return true;
                 }
+                if are_distinct_literal_values(db, *source_ty, *target_ty) {
+                    return false;
+                }
                 types_are_comparable_for_assertion_inner(db, *source_ty, *target_ty, depth + 1)
             });
             if !any_comparable {
@@ -1321,6 +1382,16 @@ fn types_have_common_properties_relaxed(
     }
 
     found_common
+}
+
+fn are_distinct_literal_values(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
+    let Some(TypeData::Literal(source_lit)) = db.lookup(source) else {
+        return false;
+    };
+    let Some(TypeData::Literal(target_lit)) = db.lookup(target) else {
+        return false;
+    };
+    source_lit != target_lit
 }
 
 fn types_are_comparable_inner(
@@ -1591,8 +1662,9 @@ fn is_primitive_comparable(db: &dyn TypeDatabase, base: TypeId, other: TypeId) -
         return other == TypeId::SYMBOL
             || matches!(db.lookup(other), Some(TypeData::UniqueSymbol(_)));
     }
-    // Two literals of the same primitive kind are comparable (e.g. "foo" ~ "baz",  1 ~ 2).
-    // In tsc, comparability checks the "base constraint" — both widen to the same primitive.
+    // Two literals of the same primitive kind are broadly comparable. Assertion
+    // property overlap applies an additional value-level guard for shared
+    // discriminant/phantom properties before reaching this helper.
     if let Some(TypeData::Literal(lit_a)) = db.lookup(base) {
         if let Some(TypeData::Literal(lit_b)) = db.lookup(other) {
             return std::mem::discriminant(&lit_a) == std::mem::discriminant(&lit_b);
@@ -1933,7 +2005,7 @@ fn extract_contextual_type_params_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
     use crate::types::TupleElement;
 
     #[test]
@@ -2668,6 +2740,63 @@ mod tests {
             super::instance_type_from_symbol_has_instance(&db, constructor),
             None,
             "asserts predicates must not be used for instanceof narrowing"
+        );
+    }
+
+    /// Two distinct string literals remain broadly primitive-comparable. The
+    /// stricter value-level rule is applied by assertion property overlap, not
+    /// by this shared primitive helper.
+    #[test]
+    fn distinct_string_literals_are_primitive_comparable() {
+        let db = TypeInterner::new();
+        let lit_draft = db.literal_string("draft");
+        let lit_published = db.literal_string("published");
+        assert!(
+            is_primitive_comparable(&db, lit_draft, lit_published),
+            "\"draft\" must remain primitive-comparable to \"published\""
+        );
+        assert!(
+            is_primitive_comparable(&db, lit_published, lit_draft),
+            "\"published\" must remain primitive-comparable to \"draft\""
+        );
+    }
+
+    /// Two identical string literals must be primitive-comparable (same value).
+    #[test]
+    fn same_string_literal_is_comparable() {
+        let db = TypeInterner::new();
+        let lit_a = db.literal_string("draft");
+        let lit_b = db.literal_string("draft");
+        assert!(
+            is_primitive_comparable(&db, lit_a, lit_b),
+            "\"draft\" must be primitive-comparable to \"draft\""
+        );
+    }
+
+    /// A string literal must be primitive-comparable to its base primitive.
+    #[test]
+    fn string_literal_comparable_to_string_primitive() {
+        let db = TypeInterner::new();
+        let lit = db.literal_string("hello");
+        assert!(
+            is_primitive_comparable(&db, lit, TypeId::STRING),
+            "\"hello\" must be primitive-comparable to `string`"
+        );
+        assert!(
+            is_primitive_comparable(&db, TypeId::STRING, lit),
+            "`string` must be primitive-comparable to \"hello\""
+        );
+    }
+
+    /// Two distinct number literals remain broadly primitive-comparable.
+    #[test]
+    fn distinct_number_literals_are_primitive_comparable() {
+        let db = TypeInterner::new();
+        let lit_200 = db.literal_number(200.0);
+        let lit_404 = db.literal_number(404.0);
+        assert!(
+            is_primitive_comparable(&db, lit_200, lit_404),
+            "200 must remain primitive-comparable to 404"
         );
     }
 

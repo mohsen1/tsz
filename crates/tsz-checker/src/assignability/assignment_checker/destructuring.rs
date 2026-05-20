@@ -416,18 +416,41 @@ impl<'a> CheckerState<'a> {
         // Compute the rest type: source minus named properties
         let rest_type = self.omit_properties_from_type(source_type, &named_properties);
 
-        // Check assignability. Anchor the diagnostic at the rest target
-        // identifier exactly — tsc reports TS2322 at `notAssignable` in
-        // `({ b, ...notAssignable } = o)`, not at the enclosing binary
-        // assignment expression. Using the plain `check_assignable_or_report`
-        // walks up to the assignment and anchors at its start (col 1 of `(`).
-        self.ensure_relation_input_ready(rest_type);
-        self.ensure_relation_input_ready(rest_target_type);
+        // Check assignability anchored exactly at the rest target identifier.
+        // Keep the shared suppression / weak-union behavior from centralized
+        // assignability checks, but force the source display to come from the
+        // computed rest type (`rest_type`) instead of re-deriving from the
+        // rest-target identifier's declaration type.
+        let source = self.narrow_this_from_enclosing_typeof_guard(spread_expr, rest_type);
+        if self.should_suppress_assignability_diagnostic(source, rest_target_type) {
+            return;
+        }
+        if self.should_suppress_assignability_for_parse_recovery(spread_expr, spread_expr) {
+            return;
+        }
+        if self.is_assignable_to(source, rest_target_type) {
+            return;
+        }
 
-        let _ = self.check_assignable_or_report_at_exact_anchor(
-            rest_type,
+        // Use the canonical assign relation outcome so the weak-union hint is collected
+        // alongside the failure reason and can be reused by the skip gate.
+        let outcome = self.assign_relation_outcome(source, rest_target_type);
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
             rest_target_type,
             spread_expr,
+            Some(&outcome),
+        ) {
+            return;
+        }
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, rest_target_type, spread_expr);
+            return;
+        }
+
+        self.error_type_not_assignable_at_with_widened_source_display(
+            source,
+            rest_target_type,
             spread_expr,
         );
     }
@@ -1313,7 +1336,8 @@ impl<'a> CheckerState<'a> {
             _ => None,
         };
         if let Some(kind) = kind {
-            tsz_solver::TypeDatabase::get_boxed_type(self.ctx.types, kind).unwrap_or(type_id)
+            tsz_solver::construction::TypeDatabase::get_boxed_type(self.ctx.types, kind)
+                .unwrap_or(type_id)
         } else {
             type_id
         }

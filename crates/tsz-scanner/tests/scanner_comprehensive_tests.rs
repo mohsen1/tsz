@@ -1,3 +1,4 @@
+use tsz_common::ScriptTarget;
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
 
@@ -586,6 +587,32 @@ mod number_scanning {
     }
 
     #[test]
+    fn invalid_unicode_escape_identifier_start_scans_unknown() {
+        let mut scanner =
+            ScannerState::new("_\\uD4A5\\u7204\\uC316\\uE59F = local".to_string(), true);
+        let mut saw_unknown_escape = false;
+        loop {
+            let token = scanner.scan();
+            if token == SyntaxKind::Unknown && scanner.get_token_text().starts_with("\\u") {
+                saw_unknown_escape = true;
+            }
+            if token == SyntaxKind::EndOfFileToken {
+                break;
+            }
+        }
+
+        assert!(
+            saw_unknown_escape,
+            "expected at least one invalid unicode escape to scan as Unknown"
+        );
+        let diagnostics = scanner.get_scanner_diagnostics();
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1127),
+            "expected TS1127 for invalid unicode escape identifier start, got {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn decimal_bigint() {
         let mut scanner = ScannerState::new("0n".to_string(), true);
         let token = scanner.scan();
@@ -907,11 +934,47 @@ mod identifier_scanning {
     }
 
     #[test]
-    fn unicode_escape_braced_astral_identifier_start_recovers_as_debris() {
+    fn unicode_escape_braced_astral_identifier_start_is_identifier_in_es2015() {
         let mut scanner = ScannerState::new("\\u{102A7}".to_string(), true);
+        scanner.set_language_version(ScriptTarget::ES2015);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::Identifier);
+        assert_eq!(scanner.get_token_value_ref(), "𐊧");
+    }
+
+    #[test]
+    fn unicode_escape_braced_astral_identifier_start_recovers_as_debris_in_es5() {
+        let mut scanner = ScannerState::new("\\u{102A7}".to_string(), true);
+        scanner.set_language_version(ScriptTarget::ES5);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Unknown);
         assert_eq!(scanner.get_token_text(), "\\");
+    }
+
+    #[test]
+    fn unicode_escape_braced_astral_identifier_tail_recovers_as_debris_in_es5() {
+        let mut scanner = ScannerState::new("_\\u{102A7}".to_string(), true);
+        scanner.set_language_version(ScriptTarget::ES5);
+
+        assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+        assert_eq!(scanner.get_token_text(), "_");
+        assert_eq!(
+            scanner
+                .get_scanner_diagnostics()
+                .iter()
+                .map(|d| (d.code, d.pos))
+                .collect::<Vec<_>>(),
+            vec![(
+                tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+                1
+            )]
+        );
+
+        assert_eq!(scanner.scan(), SyntaxKind::Unknown);
+        assert_eq!(scanner.get_token_text(), "\\");
+        assert_eq!(scanner.scan(), SyntaxKind::Identifier);
+        assert_eq!(scanner.get_token_text(), "u");
+        assert_eq!(scanner.scan(), SyntaxKind::OpenBraceToken);
     }
 
     #[test]

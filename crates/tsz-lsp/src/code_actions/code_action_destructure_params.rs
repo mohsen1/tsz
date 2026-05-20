@@ -32,8 +32,8 @@ impl<'a> CodeActionProvider<'a> {
         }
 
         // Collect parameter info
-        let mut param_names = Vec::new();
-        let mut type_members = Vec::new();
+        let mut param_names = Vec::with_capacity(params.nodes.len());
+        let mut type_members = Vec::with_capacity(params.nodes.len());
 
         for &param_idx in &params.nodes {
             let param_node = self.arena.get(param_idx)?;

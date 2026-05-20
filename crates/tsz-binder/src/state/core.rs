@@ -41,6 +41,15 @@ fn is_js_like_file_name(file_name: &str) -> bool {
         || file_name.ends_with(".cjs")
 }
 
+pub(super) const fn next_persistent_scope_id(scope_count: usize) -> Option<ScopeId> {
+    // `ScopeId(u32::MAX)` is reserved as `ScopeId::NONE`, so valid persistent
+    // scope IDs are limited to `0..u32::MAX`.
+    if scope_count >= u32::MAX as usize {
+        return None;
+    }
+    Some(ScopeId(scope_count as u32))
+}
+
 impl BinderStateScopeInputs {
     pub(super) fn with_scopes(
         scopes: Arc<Vec<Scope>>,
@@ -495,9 +504,11 @@ impl BinderState {
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules: Arc::new(FxHashMap::default()),
+            module_augmentation_symbols: FxHashMap::default(),
             lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: Arc::new(FxHashMap::default()),
+            lib_type_namespace: Arc::new(FxHashMap::default()),
             module_exports: Arc::new(FxHashMap::default()),
             reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: Arc::new(FxHashMap::default()),
@@ -563,9 +574,11 @@ impl BinderState {
         Arc::make_mut(&mut self.module_augmentations).clear();
         self.in_module_augmentation = false;
         self.current_augmented_module = None;
+        self.module_augmentation_symbols.clear();
         Arc::make_mut(&mut self.lib_binders).clear();
         Arc::make_mut(&mut self.lib_symbol_ids).clear();
         Arc::make_mut(&mut self.lib_symbol_reverse_remap).clear();
+        Arc::make_mut(&mut self.lib_type_namespace).clear();
         Arc::make_mut(&mut self.module_exports).clear();
         Arc::make_mut(&mut self.reexports).clear();
         Arc::make_mut(&mut self.wildcard_reexports).clear();
@@ -737,9 +750,11 @@ impl BinderState {
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules: Arc::new(FxHashMap::default()),
+            module_augmentation_symbols: FxHashMap::default(),
             lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: Arc::new(FxHashMap::default()),
+            lib_type_namespace: Arc::new(FxHashMap::default()),
             module_exports: Arc::new(FxHashMap::default()),
             reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: Arc::new(FxHashMap::default()),
@@ -860,9 +875,11 @@ impl BinderState {
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules,
+            module_augmentation_symbols: FxHashMap::default(),
             lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: Arc::new(FxHashMap::default()),
+            lib_type_namespace: Arc::new(FxHashMap::default()),
             module_exports,
             reexports,
             wildcard_reexports,
@@ -916,8 +933,13 @@ impl BinderState {
         capacity: usize,
     ) {
         // Create new scope linked to current
-        let new_scope_id =
-            ScopeId(u32::try_from(self.scopes.len()).expect("persistent scope count exceeds u32"));
+        let Some(new_scope_id) = next_persistent_scope_id(self.scopes.len()) else {
+            tracing::warn!(
+                scope_count = self.scopes.len(),
+                "persistent scope count exceeded representable ScopeId range; skipping scope push"
+            );
+            return;
+        };
         let new_scope = if capacity > 0 {
             Scope::with_capacity(self.current_scope_id, kind, node, capacity)
         } else {
@@ -1107,8 +1129,7 @@ impl BinderState {
     /// - `module.exports.x = ...`
     /// - `exports.x = ...`
     fn source_file_has_commonjs_indicator(arena: &NodeArena, stmts: &[NodeIndex]) -> bool {
-        let mut stack: Vec<NodeIndex> =
-            stmts.iter().copied().filter(|idx| !idx.is_none()).collect();
+        let mut stack: Vec<NodeIndex> = stmts.iter().copied().filter(|idx| idx.is_some()).collect();
 
         while let Some(idx) = stack.pop() {
             let Some(node) = arena.get(idx) else {
@@ -1488,10 +1509,14 @@ impl BinderState {
         }
 
         // Restore lib symbols from the saved lib_symbols map (if they were pre-merged).
+        // lib_symbols was captured before binding, so user shadow symbols are already in
+        // file_locals; when a lib TYPE symbol is blocked, record it in lib_type_namespace.
         if has_lib_symbols {
             for (name, sym_id) in &lib_symbols {
                 if !self.file_locals.has(name) {
                     self.file_locals.set(name.clone(), *sym_id);
+                } else if self.lib_symbol_ids.contains(sym_id) {
+                    self.try_record_lib_type_shadow(name, *sym_id);
                 }
             }
         }

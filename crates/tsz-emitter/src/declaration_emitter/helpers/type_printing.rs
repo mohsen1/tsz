@@ -79,7 +79,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn should_preserve_named_application_for_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> bool {
         let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) else {
             return false;
@@ -108,7 +108,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn should_preserve_named_application_for_inferred_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> bool {
         if !self.should_preserve_named_application_for_emit(type_id, interner) {
             return false;
@@ -185,7 +185,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn type_contains_mapped_type_for_inferred_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         depth: usize,
     ) -> bool {
         if depth > 16 {
@@ -237,7 +237,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn display_alias_for_declaration_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> tsz_solver::types::TypeId {
         self.display_alias_for_policy(
             type_id,
@@ -249,11 +249,11 @@ impl<'a> DeclarationEmitter<'a> {
     fn display_alias_for_policy(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         preserve_named_application: fn(
             &Self,
             tsz_solver::types::TypeId,
-            &tsz_solver::TypeInterner,
+            &tsz_solver::construction::TypeInterner,
         ) -> bool,
     ) -> tsz_solver::types::TypeId {
         interner
@@ -265,11 +265,11 @@ impl<'a> DeclarationEmitter<'a> {
     fn apply_display_aliases_to_preserved_application_args(
         &self,
         type_id: tsz_solver::types::TypeId,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         preserve_named_application: fn(
             &Self,
             tsz_solver::types::TypeId,
-            &tsz_solver::TypeInterner,
+            &tsz_solver::construction::TypeInterner,
         ) -> bool,
     ) -> tsz_solver::types::TypeId {
         let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) else {
@@ -289,12 +289,12 @@ impl<'a> DeclarationEmitter<'a> {
                 let evaluated = if let Some(cache) = &self.type_cache {
                     let resolver = DtsCacheResolver { cache };
                     let mut evaluator =
-                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver)
+                        tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver)
                             .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(arg)
                 } else {
-                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner)
+                    let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner)
                         .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(arg)
@@ -326,9 +326,11 @@ impl<'a> DeclarationEmitter<'a> {
         tsz_solver::visitor::conditional_type_id(interner, body)?;
 
         let type_params = cache.def_type_params.get(&def_id.0)?;
-        let instantiated = tsz_solver::instantiate_generic(interner, body, type_params, &app.args);
+        let instantiated =
+            tsz_solver::computation::instantiate_generic(interner, body, type_params, &app.args);
         let resolver = DtsCacheResolver { cache };
-        let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+        let mut evaluator =
+            tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
         evaluator.set_max_mapped_keys(1_024);
         Some(evaluator.evaluate(instantiated))
     }
@@ -440,11 +442,11 @@ impl<'a> DeclarationEmitter<'a> {
                 let evaluated = if let Some(cache) = &self.type_cache {
                     let resolver = DtsCacheResolver { cache };
                     let mut evaluator =
-                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+                        tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(reduced_cond)
                 } else {
-                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+                    let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner);
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(reduced_cond)
                 };
@@ -586,6 +588,13 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 tsz_solver::type_queries::get_return_type(interner, callee_type)
             }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                let new_expr = self.arena.get_call_expr(node)?;
+                let callee_type = self
+                    .get_node_type_or_names(&[new_expr.expression])
+                    .or_else(|| self.get_type_via_symbol(new_expr.expression))?;
+                tsz_solver::type_queries::construct_return_type_for_type(interner, callee_type)
+            }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 || k == syntax_kind_ext::AWAIT_EXPRESSION =>
             {
@@ -677,7 +686,7 @@ impl<'a> DeclarationEmitter<'a> {
         preserve_named_application: fn(
             &Self,
             tsz_solver::types::TypeId,
-            &tsz_solver::TypeInterner,
+            &tsz_solver::construction::TypeInterner,
         ) -> bool,
     ) -> String {
         if let Some(interner) = self.type_interner {
@@ -691,12 +700,12 @@ impl<'a> DeclarationEmitter<'a> {
                 let evaluated = if let Some(cache) = &self.type_cache {
                     let resolver = DtsCacheResolver { cache };
                     let mut evaluator =
-                        tsz_solver::TypeEvaluator::with_resolver(interner, &resolver)
+                        tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver)
                             .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(type_id)
                 } else {
-                    let mut evaluator = tsz_solver::TypeEvaluator::new(interner)
+                    let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner)
                         .with_expanded_application_display_alias_args();
                     evaluator.set_max_mapped_keys(1_024);
                     evaluator.evaluate(type_id)
@@ -715,12 +724,13 @@ impl<'a> DeclarationEmitter<'a> {
                 )
             } else if let Some(cache) = &self.type_cache {
                 let resolver = DtsCacheResolver { cache };
-                let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+                let mut evaluator =
+                    tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
                 evaluator.set_max_mapped_keys(1_024);
                 let evaluated = evaluator.evaluate(type_id);
                 self.display_alias_for_policy(evaluated, interner, preserve_named_application)
             } else {
-                let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+                let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner);
                 evaluator.set_max_mapped_keys(1_024);
                 let evaluated = evaluator.evaluate(type_id);
                 self.display_alias_for_policy(evaluated, interner, preserve_named_application)
@@ -770,7 +780,10 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Print a `TypeId` as TypeScript syntax using `TypePrinter`.
     pub(crate) fn print_type_id(&self, type_id: tsz_solver::types::TypeId) -> String {
-        self.print_type_id_with_policy(type_id, Self::should_preserve_named_application_for_emit)
+        let printed = self
+            .print_type_id_with_policy(type_id, Self::should_preserve_named_application_for_emit);
+        self.expand_imported_indexed_access_type_text(&printed)
+            .unwrap_or(printed)
     }
 
     pub(crate) fn print_type_id_for_inferred_declaration(
@@ -799,6 +812,9 @@ impl<'a> DeclarationEmitter<'a> {
         };
         let printed =
             Self::simplify_inexact_optional_mapped_intersection_text(&printed).unwrap_or(printed);
+        let printed = self
+            .expand_imported_indexed_access_type_text(&printed)
+            .unwrap_or(printed);
         if Self::contains_portable_mapped_object_text(&printed)
             && let Some(expanded) =
                 self.expand_portable_intersection_type_text(self.arena, &printed)
@@ -1034,293 +1050,6 @@ impl<'a> DeclarationEmitter<'a> {
         out
     }
 
-    pub(in crate::declaration_emitter) fn simplify_inexact_optional_mapped_intersection_text(
-        type_text: &str,
-    ) -> Option<String> {
-        let start = type_text.find("{} & {")?;
-        let first_start = start + "{} & ".len();
-        let first_end = Self::balanced_brace_end(type_text, first_start)?;
-        let mut next = Self::skip_ascii_whitespace(type_text, first_end)?;
-        if !type_text.get(next..)?.starts_with('&') {
-            return None;
-        }
-        next += 1;
-        next = Self::skip_ascii_whitespace(type_text, next)?;
-        if !type_text.get(next..)?.starts_with('{') {
-            return None;
-        }
-        let second_end = Self::balanced_brace_end(type_text, next)?;
-        let candidate = type_text.get(start..second_end)?;
-        if !candidate.contains("as undefined extends")
-            || !candidate.contains("[keyof unknown]")
-            || !candidate.contains("? keyof unknown : never")
-            || !candidate.contains("? never : keyof unknown")
-        {
-            return None;
-        }
-
-        let source_object = Self::inexact_optional_source_object_text(candidate)?;
-        let simplified = Self::inexact_optional_object_intersection_text(&source_object)?;
-        let mut output =
-            String::with_capacity(type_text.len() - candidate.len() + simplified.len());
-        output.push_str(type_text.get(..start)?);
-        output.push_str(&simplified);
-        output.push_str(type_text.get(second_end..)?);
-        Some(output)
-    }
-
-    fn inexact_optional_source_object_text(candidate: &str) -> Option<String> {
-        let marker = "undefined extends";
-        let marker_start = candidate.find(marker)? + marker.len();
-        let object_start = Self::skip_ascii_whitespace(candidate, marker_start)?;
-        if !candidate.get(object_start..)?.starts_with('{') {
-            return None;
-        }
-        let object_end = Self::balanced_brace_end(candidate, object_start)?;
-        candidate.get(object_start..object_end).map(str::to_string)
-    }
-
-    fn inexact_optional_object_intersection_text(source_object: &str) -> Option<String> {
-        let inner = source_object.trim().strip_prefix('{')?.strip_suffix('}')?;
-        let members = Self::split_object_members(inner);
-        if members.is_empty() {
-            return None;
-        }
-
-        let mut optional_members = Vec::new();
-        let mut required_members = Vec::new();
-        for member in members {
-            let (name, explicit_optional, type_text) = Self::parse_object_property_member(&member)?;
-            let type_includes_undefined = Self::type_text_contains_undefined(type_text);
-            if explicit_optional || type_includes_undefined {
-                let optional_name = name.strip_suffix('?').unwrap_or(name).trim();
-                let optional_type = if type_includes_undefined {
-                    type_text.to_string()
-                } else {
-                    format!("{type_text} | undefined")
-                };
-                optional_members.push(format!("    {optional_name}?: {optional_type};"));
-            } else {
-                required_members.push(format!("    {name}: {type_text};"));
-            }
-        }
-
-        if optional_members.is_empty() || required_members.is_empty() {
-            return None;
-        }
-
-        Some(format!(
-            "{{\n{}\n}} & {{\n{}\n}}",
-            optional_members.join("\n"),
-            required_members.join("\n")
-        ))
-    }
-
-    fn split_object_members(inner: &str) -> Vec<String> {
-        let mut members = Vec::new();
-        let mut start = 0usize;
-        for idx in Self::top_level_byte_indices(inner, b';') {
-            let member = inner.get(start..idx).map(str::trim).unwrap_or_default();
-            if !member.is_empty() {
-                members.push(member.to_string());
-            }
-            start = idx + 1;
-        }
-        let tail = inner.get(start..).map(str::trim).unwrap_or_default();
-        if !tail.is_empty() {
-            members.push(tail.to_string());
-        }
-        members
-    }
-
-    fn parse_object_property_member(member: &str) -> Option<(&str, bool, &str)> {
-        let colon = Self::top_level_byte_indices(member, b':')
-            .into_iter()
-            .next()?;
-        let name = member.get(..colon)?.trim();
-        let type_text = member.get(colon + 1..)?.trim();
-        let explicit_optional = name.ends_with('?');
-        Some((name, explicit_optional, type_text))
-    }
-
-    fn type_text_contains_undefined(type_text: &str) -> bool {
-        let bytes = type_text.as_bytes();
-        let needle = b"undefined";
-        let mut i = 0usize;
-        while i + needle.len() <= bytes.len() {
-            if &bytes[i..i + needle.len()] == needle {
-                let before_ok = i == 0 || !Self::is_ident_char(bytes[i - 1]);
-                let after = i + needle.len();
-                let after_ok = after == bytes.len() || !Self::is_ident_char(bytes[after]);
-                if before_ok && after_ok {
-                    return true;
-                }
-                i += needle.len();
-            } else {
-                i += 1;
-            }
-        }
-        false
-    }
-
-    pub(in crate::declaration_emitter) fn type_text_has_undefined_branch(type_text: &str) -> bool {
-        let mut text = type_text.trim();
-        while let Some(inner) = Self::strip_balanced_outer_parens(text) {
-            text = inner.trim();
-        }
-
-        if text == "undefined" {
-            return true;
-        }
-
-        let union_indices = Self::top_level_byte_indices(text, b'|');
-        if union_indices.is_empty() {
-            return false;
-        }
-
-        let mut start = 0usize;
-        for index in union_indices {
-            if Self::type_text_has_undefined_branch(&text[start..index]) {
-                return true;
-            }
-            start = index + 1;
-        }
-        Self::type_text_has_undefined_branch(&text[start..])
-    }
-
-    fn strip_balanced_outer_parens(text: &str) -> Option<&str> {
-        let bytes = text.as_bytes();
-        if bytes.first() != Some(&b'(') || bytes.last() != Some(&b')') {
-            return None;
-        }
-
-        let mut depth = 0usize;
-        let mut quote: Option<u8> = None;
-        let mut escaped = false;
-
-        for (i, &byte) in bytes.iter().enumerate() {
-            if let Some(q) = quote {
-                if escaped {
-                    escaped = false;
-                } else if byte == b'\\' {
-                    escaped = true;
-                } else if byte == q {
-                    quote = None;
-                }
-                continue;
-            }
-
-            match byte {
-                b'\'' | b'"' | b'`' => quote = Some(byte),
-                b'(' => depth += 1,
-                b')' => {
-                    depth = depth.checked_sub(1)?;
-                    if depth == 0 && i != bytes.len() - 1 {
-                        return None;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        (depth == 0).then_some(&text[1..text.len() - 1])
-    }
-
-    fn skip_ascii_whitespace(text: &str, start: usize) -> Option<usize> {
-        let bytes = text.as_bytes();
-        let mut i = start;
-        while i < bytes.len() && (bytes[i] as char).is_ascii_whitespace() {
-            i += 1;
-        }
-        Some(i)
-    }
-
-    fn top_level_byte_indices(text: &str, target: u8) -> Vec<usize> {
-        let bytes = text.as_bytes();
-        let mut indices = Vec::new();
-        let mut brace_depth = 0usize;
-        let mut bracket_depth = 0usize;
-        let mut paren_depth = 0usize;
-        let mut angle_depth = 0usize;
-        let mut quote: Option<u8> = None;
-        let mut i = 0usize;
-        while i < bytes.len() {
-            let b = bytes[i];
-            if let Some(q) = quote {
-                if b == b'\\' {
-                    i = (i + 2).min(bytes.len());
-                    continue;
-                }
-                if b == q {
-                    quote = None;
-                }
-                i += 1;
-                continue;
-            }
-
-            match b {
-                b'\'' | b'"' | b'`' => quote = Some(b),
-                b'{' => brace_depth += 1,
-                b'}' => brace_depth = brace_depth.saturating_sub(1),
-                b'[' => bracket_depth += 1,
-                b']' => bracket_depth = bracket_depth.saturating_sub(1),
-                b'(' => paren_depth += 1,
-                b')' => paren_depth = paren_depth.saturating_sub(1),
-                b'<' => angle_depth += 1,
-                b'>' => angle_depth = angle_depth.saturating_sub(1),
-                _ if b == target
-                    && brace_depth == 0
-                    && bracket_depth == 0
-                    && paren_depth == 0
-                    && angle_depth == 0 =>
-                {
-                    indices.push(i);
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        indices
-    }
-
-    fn balanced_brace_end(text: &str, start: usize) -> Option<usize> {
-        let bytes = text.as_bytes();
-        if bytes.get(start).copied() != Some(b'{') {
-            return None;
-        }
-        let mut depth = 0usize;
-        let mut quote: Option<u8> = None;
-        let mut i = start;
-        while i < bytes.len() {
-            let b = bytes[i];
-            if let Some(q) = quote {
-                if b == b'\\' {
-                    i = (i + 2).min(bytes.len());
-                    continue;
-                }
-                if b == q {
-                    quote = None;
-                }
-                i += 1;
-                continue;
-            }
-
-            match b {
-                b'\'' | b'"' | b'`' => quote = Some(b),
-                b'{' => depth += 1,
-                b'}' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return Some(i + 1);
-                    }
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        None
-    }
-
     fn type_reference_type_argument_end(type_text: &str, start: usize) -> Option<usize> {
         let bytes = type_text.as_bytes();
         let mut depth = 0usize;
@@ -1446,6 +1175,18 @@ impl<'a> DeclarationEmitter<'a> {
         type_id: tsz_solver::types::TypeId,
         outer_type_params: &NodeList,
     ) -> String {
+        self.print_type_id_with_outer_type_param_nodes(type_id, &outer_type_params.nodes)
+    }
+
+    /// Like [`print_type_id_with_outer_type_params`] but accepts a flat slice of `NodeIndex`
+    /// values, enabling callers to combine type parameter lists from multiple scopes (e.g.
+    /// a class's type parameters together with a method's type parameters) without building
+    /// an intermediate `NodeList`.
+    pub(crate) fn print_type_id_with_outer_type_param_nodes(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        param_nodes: &[NodeIndex],
+    ) -> String {
         let elided_alias_names = self.function_local_type_alias_application_names(type_id);
         let Some(interner) = self.type_interner else {
             return "any".to_string();
@@ -1455,18 +1196,19 @@ impl<'a> DeclarationEmitter<'a> {
             type_id
         } else if let Some(cache) = &self.type_cache {
             let resolver = DtsCacheResolver { cache };
-            let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+            let mut evaluator =
+                tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
             evaluator.set_max_mapped_keys(1_024);
             let evaluated = evaluator.evaluate(type_id);
             self.display_alias_for_declaration_emit(evaluated, interner)
         } else {
-            let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
+            let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner);
             evaluator.set_max_mapped_keys(1_024);
             let evaluated = evaluator.evaluate(type_id);
             self.display_alias_for_declaration_emit(evaluated, interner)
         };
         let mut outer_names = Vec::new();
-        for &param_idx in &outer_type_params.nodes {
+        for &param_idx in param_nodes {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_type_parameter(param_node)
                 && let Some(name_text) = self.get_identifier_text(param.name)
@@ -1511,6 +1253,7 @@ impl<'a> DeclarationEmitter<'a> {
             Self::elide_type_reference_names(&printed, &elided_alias_names)
         }
     }
+
     pub(crate) fn collect_type_param_names(&self, type_params: &NodeList) -> Vec<String> {
         let mut names = Vec::new();
         for &param_idx in &type_params.nodes {

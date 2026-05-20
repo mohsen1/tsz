@@ -123,6 +123,48 @@ someGenerics3<number>(() => 3);
 }
 
 #[test]
+fn a9e_redeclaration_display_uses_global_window_intersection() {
+    let source = r#"
+function someGenerics9<T extends any>(a: T, b: T, c: T): T {
+    return null as any;
+}
+interface A91 {
+    x: number;
+    y?: string;
+}
+interface A92 {
+    x: number;
+    z?: Window;
+}
+var a9a = someGenerics9('', 0, []);
+var a9a: {};
+var a9e = someGenerics9(undefined, { x: 6, z: window }, { x: 6, y: '' });
+var a9e: {};
+var arr = someGenerics9([], null, undefined);
+var arr: any[];
+"#;
+
+    let diagnostics = diagnostics_with_libs(source);
+    let ts2403 = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == 2403 && diagnostic.message_text.contains("Variable 'a9e'")
+        })
+        .expect("expected a9e TS2403 redeclaration diagnostic");
+
+    assert!(
+        ts2403
+            .message_text
+            .contains("z: Window & typeof globalThis; y?: undefined;"),
+        "expected a9e TS2403 to display the global Window intersection, got: {ts2403:?}"
+    );
+    assert!(
+        !ts2403.message_text.contains("z: any; y?: undefined;"),
+        "a9e TS2403 must not leak `any` for the window argument: {ts2403:?}"
+    );
+}
+
+#[test]
 fn object_group_by_key_constraint_uses_property_key_in_diagnostic() {
     let source = r#"
 interface Employee {

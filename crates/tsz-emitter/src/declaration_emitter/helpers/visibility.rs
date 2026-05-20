@@ -6,6 +6,7 @@ use super::super::{DeclarationEmitter, ImportPlan, PlannedImportModule, PlannedI
 use crate::emitter::type_printer::TypePrinter;
 #[allow(unused_imports)]
 use crate::output::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
+use crate::transforms::emit_utils::string_literal_text;
 #[allow(unused_imports)]
 use rustc_hash::{FxHashMap, FxHashSet};
 #[allow(unused_imports)]
@@ -84,8 +85,7 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         }
 
-        self.arena
-            .has_modifier(modifiers, SyntaxKind::ExportKeyword)
+        self.has_export_modifier(modifiers)
     }
 
     /// Return true if a module declaration should be emitted when API filtering is enabled.
@@ -136,10 +136,7 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
         // If the member has an `export` keyword, keep it
-        if self
-            .arena
-            .has_modifier(modifiers, SyntaxKind::ExportKeyword)
-        {
+        if self.has_export_modifier(modifiers) {
             return false;
         }
         // If the member is referenced by the exported API surface, keep it
@@ -280,9 +277,6 @@ impl<'a> DeclarationEmitter<'a> {
         };
         let has_export_modifier = self.stmt_has_export_modifier(stmt_node)
             || self
-                .arena
-                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
-            || self
                 .get_source_slice(stmt_node.pos, stmt_node.end)
                 .is_some_and(|text| text.trim_start().starts_with("export "));
         if !has_export_modifier {
@@ -417,55 +411,47 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Check if a statement node has the `export` keyword modifier.
-    pub(crate) fn stmt_has_export_modifier(
-        &self,
-        stmt_node: &tsz_parser::parser::node::Node,
-    ) -> bool {
-        let k = stmt_node.kind;
-        if k == syntax_kind_ext::FUNCTION_DECLARATION {
-            if let Some(func) = self.arena.get_function(stmt_node) {
-                return self
-                    .arena
-                    .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword);
-            }
-        } else if k == syntax_kind_ext::CLASS_DECLARATION {
-            if let Some(class) = self.arena.get_class(stmt_node) {
-                return self
-                    .arena
-                    .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword);
-            }
-        } else if k == syntax_kind_ext::INTERFACE_DECLARATION {
-            if let Some(iface) = self.arena.get_interface(stmt_node) {
-                return self
-                    .arena
-                    .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword);
-            }
-        } else if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-            if let Some(alias) = self.arena.get_type_alias(stmt_node) {
-                return self
-                    .arena
-                    .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword);
-            }
-        } else if k == syntax_kind_ext::ENUM_DECLARATION {
-            if let Some(enum_data) = self.arena.get_enum(stmt_node) {
-                return self
-                    .arena
-                    .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
-            }
-        } else if k == syntax_kind_ext::VARIABLE_STATEMENT {
-            if let Some(var_stmt) = self.arena.get_variable(stmt_node) {
-                return self
-                    .arena
-                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
-            }
-        } else if k == syntax_kind_ext::MODULE_DECLARATION
-            && let Some(module) = self.arena.get_module(stmt_node)
-        {
-            return self
+    pub(crate) fn stmt_has_export_modifier(&self, stmt_node: &Node) -> bool {
+        self.node_has_export_modifier(stmt_node)
+    }
+
+    fn node_has_export_modifier(&self, node: &Node) -> bool {
+        match node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
                 .arena
-                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
+                .get_function(node)
+                .is_some_and(|func| self.has_export_modifier(&func.modifiers)),
+            k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                .arena
+                .get_class(node)
+                .is_some_and(|class| self.has_export_modifier(&class.modifiers)),
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
+                .arena
+                .get_interface(node)
+                .is_some_and(|iface| self.has_export_modifier(&iface.modifiers)),
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                .arena
+                .get_type_alias(node)
+                .is_some_and(|alias| self.has_export_modifier(&alias.modifiers)),
+            k if k == syntax_kind_ext::ENUM_DECLARATION => self
+                .arena
+                .get_enum(node)
+                .is_some_and(|enum_data| self.has_export_modifier(&enum_data.modifiers)),
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
+                .arena
+                .get_variable(node)
+                .is_some_and(|var_stmt| self.has_export_modifier(&var_stmt.modifiers)),
+            k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                .arena
+                .get_module(node)
+                .is_some_and(|module| self.has_export_modifier(&module.modifiers)),
+            _ => false,
         }
-        false
+    }
+
+    fn has_export_modifier(&self, modifiers: &Option<NodeList>) -> bool {
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::ExportKeyword)
     }
 
     /// Check whether the leading comments before `pos` contain `@internal`.
@@ -630,7 +616,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn public_api_type_surface_contains_typeof_name(&self, name: &str) -> bool {
+    pub(in crate::declaration_emitter) fn public_api_type_surface_contains_typeof_name(
+        &self,
+        name: &str,
+    ) -> bool {
         let Some(source_file) = self
             .current_source_file_idx
             .and_then(|source_file_idx| self.arena.get(source_file_idx))
@@ -715,7 +704,10 @@ impl<'a> DeclarationEmitter<'a> {
             .any(|child_idx| self.entity_name_contains_identifier(child_idx, name))
     }
 
-    fn public_api_export_specifier_exports_name(&self, name: &str) -> bool {
+    pub(in crate::declaration_emitter) fn public_api_export_specifier_exports_name(
+        &self,
+        name: &str,
+    ) -> bool {
         let Some(source_file) = self
             .current_source_file_idx
             .and_then(|source_file_idx| self.arena.get(source_file_idx))
@@ -867,16 +859,14 @@ impl<'a> DeclarationEmitter<'a> {
                         let Some(iface) = self.arena.get_interface(stmt_node) else {
                             return false;
                         };
-                        self.arena
-                            .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
+                        self.node_has_export_modifier(stmt_node)
                             && self.get_identifier_text(iface.name).as_deref() == Some(name)
                     }
                     k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                         let Some(alias) = self.arena.get_type_alias(stmt_node) else {
                             return false;
                         };
-                        self.arena
-                            .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
+                        self.node_has_export_modifier(stmt_node)
                             && self.get_identifier_text(alias.name).as_deref() == Some(name)
                     }
                     _ => false,
@@ -932,17 +922,10 @@ impl<'a> DeclarationEmitter<'a> {
         // modifier so a non-exported `type fn = …` does not falsely mark a
         // value-side const named `fn` as "type-only re-exported".
         let has_export = match decl_node.kind {
-            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                self.arena.get_interface(decl_node).is_some_and(|iface| {
-                    self.arena
-                        .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
-                })
-            }
-            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                self.arena.get_type_alias(decl_node).is_some_and(|alias| {
-                    self.arena
-                        .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
-                })
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION
+                || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
+            {
+                self.node_has_export_modifier(decl_node)
             }
             _ => false,
         };
@@ -1041,6 +1024,24 @@ impl<'a> DeclarationEmitter<'a> {
         idx
     }
 
+    pub(in crate::declaration_emitter) fn leftmost_qualified_name_ident(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let mut current = idx;
+        loop {
+            let node = self.arena.get(current)?;
+            if let Some(qn) = self.arena.get_qualified_name(node) {
+                current = qn.left;
+            } else {
+                return self
+                    .arena
+                    .get_identifier(node)
+                    .map(|id| id.escaped_text.clone());
+            }
+        }
+    }
+
     /// Check if a symbol is value-only (plain variable, no type/namespace/class flags).
     /// Value-only entities resolve to primitive types in .d.ts and don't need aliases.
     const fn symbol_is_value_only(&self, symbol: &tsz_binder::Symbol) -> bool {
@@ -1117,7 +1118,125 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         };
 
+        if self.import_specifier_has_emitted_canonical_name(binder, used, specifier) {
+            return false;
+        }
+
         self.imported_name_is_used(binder, used, specifier.name)
+    }
+
+    fn import_specifier_has_emitted_canonical_name(
+        &self,
+        binder: &BinderState,
+        used: &rustc_hash::FxHashMap<SymbolId, super::super::usage_analyzer::UsageKind>,
+        specifier: &tsz_parser::parser::node::SpecifierData,
+    ) -> bool {
+        let Some(import_name) = self.canonical_named_import_name_for_alias(specifier.name) else {
+            return false;
+        };
+        let Some(&canonical_sym_id) = self.import_name_map.get(import_name) else {
+            return false;
+        };
+
+        self.import_symbol_is_used(binder, used, canonical_sym_id)
+    }
+
+    pub(crate) fn canonical_named_import_name_for_alias(
+        &self,
+        name_idx: NodeIndex,
+    ) -> Option<&str> {
+        let binder = self.binder?;
+        let name_node = self.arena.get(name_idx)?;
+        let ident = self.arena.get_identifier(name_node)?;
+        let local_name = ident.escaped_text.as_str();
+        let sym_id = binder
+            .node_symbols
+            .get(&name_idx.0)
+            .copied()
+            .or_else(|| binder.file_locals.get(local_name))?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let import_module = symbol.import_module.as_deref()?;
+        let import_name = symbol.import_name.as_deref()?;
+
+        if import_name == "*"
+            || import_name == local_name
+            || self.import_name_map.get(import_name).copied() == Some(sym_id)
+        {
+            return None;
+        }
+
+        if !self.import_alias_has_sibling_canonical_specifier(sym_id, import_name) {
+            return None;
+        }
+
+        let canonical_sym_id = self.import_name_map.get(import_name).copied()?;
+        let canonical_symbol = binder.symbols.get(canonical_sym_id)?;
+        if canonical_symbol.escaped_name != import_name
+            || canonical_symbol.import_module.as_deref() != Some(import_module)
+        {
+            return None;
+        }
+
+        Some(import_name)
+    }
+
+    fn import_alias_has_sibling_canonical_specifier(
+        &self,
+        sym_id: SymbolId,
+        import_name: &str,
+    ) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let Some(alias_specifier_idx) = self.enclosing_import_specifier(decl_idx) else {
+                return false;
+            };
+            let Some(named_imports_idx) = self.arena.parent_of(alias_specifier_idx) else {
+                return false;
+            };
+            let Some(named_imports_node) = self.arena.get(named_imports_idx) else {
+                return false;
+            };
+            let Some(named_imports) = self.arena.get_named_imports(named_imports_node) else {
+                return false;
+            };
+
+            named_imports
+                .elements
+                .nodes
+                .iter()
+                .copied()
+                .any(|spec_idx| {
+                    if spec_idx == alias_specifier_idx {
+                        return false;
+                    }
+                    let Some(spec_node) = self.arena.get(spec_idx) else {
+                        return false;
+                    };
+                    let Some(specifier) = self.arena.get_specifier(spec_node) else {
+                        return false;
+                    };
+                    if specifier.property_name.is_some() {
+                        return false;
+                    }
+                    self.get_identifier_text(specifier.name).as_deref() == Some(import_name)
+                })
+        })
+    }
+
+    fn enclosing_import_specifier(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+        loop {
+            let node = self.arena.get(idx)?;
+            if node.kind == syntax_kind_ext::IMPORT_SPECIFIER {
+                return Some(idx);
+            }
+            idx = self.arena.parent_of(idx)?;
+        }
     }
 
     pub(in crate::declaration_emitter) fn imported_name_is_used(
@@ -1181,8 +1300,39 @@ impl<'a> DeclarationEmitter<'a> {
                 return false;
             }
 
+            if self.symbol_declared_in_ambient_module(used_sym_id, import_module) {
+                return false;
+            }
+
             used_symbol.import_module.as_deref() == Some(import_module)
                 || self.resolve_symbol_module_path(used_sym_id).as_deref() == Some(import_module)
+        })
+    }
+
+    fn symbol_declared_in_ambient_module(&self, sym_id: SymbolId, module_specifier: &str) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            let mut current_idx = decl_idx;
+            while let Some(parent_idx) = self.arena.parent_of(current_idx) {
+                let Some(parent_node) = self.arena.get(parent_idx) else {
+                    return false;
+                };
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(module) = self.arena.get_module(parent_node)
+                    && string_literal_text(self.arena, module.name).as_deref()
+                        == Some(module_specifier)
+                {
+                    return true;
+                }
+                current_idx = parent_idx;
+            }
+            false
         })
     }
 

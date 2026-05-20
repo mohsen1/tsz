@@ -16,7 +16,7 @@ use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 // =============================================================================
 // Test Helpers
@@ -489,13 +489,11 @@ const TS2305: u32 = 2305;
 // TS1202: Import assignment cannot be used when targeting ECMAScript modules
 const TS1202: u32 = 1202;
 // TS2792: Cannot find module ... did you mean to set moduleResolution
-#[allow(dead_code)]
 const TS2792: u32 = 2792;
 // TS2882: Cannot find module or type declarations for side-effect import
 const TS2882: u32 = 2882;
 
 /// Check if diagnostics contain a module-not-found error (either TS2307 or TS2792).
-#[allow(dead_code)]
 fn has_module_not_found(diagnostics: &[(u32, String)]) -> bool {
     has_error_code(diagnostics, TS2307) || has_error_code(diagnostics, TS2792)
 }

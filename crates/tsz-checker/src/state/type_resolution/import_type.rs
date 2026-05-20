@@ -152,7 +152,7 @@ impl<'a> CheckerState<'a> {
                 | tsz_binder::symbol_flags::INTERFACE
                 | tsz_binder::symbol_flags::TYPE_PARAMETER;
             let is_pure_type = symbol.is_type_only
-                || ((symbol.flags & pure_type_flags) != 0
+                || (symbol.has_any_flags(pure_type_flags)
                     && (symbol.flags & tsz_binder::symbol_flags::VALUE) == 0);
             if is_pure_type {
                 return record_and_return(sym_id);
@@ -168,7 +168,7 @@ impl<'a> CheckerState<'a> {
                 | tsz_binder::symbol_flags::INTERFACE
                 | tsz_binder::symbol_flags::TYPE_PARAMETER;
             let is_pure_type = symbol.is_type_only
-                || ((symbol.flags & pure_type_flags) != 0
+                || (symbol.has_any_flags(pure_type_flags)
                     && (symbol.flags & tsz_binder::symbol_flags::VALUE) == 0);
             if is_pure_type {
                 return Some(sym_id);
@@ -204,17 +204,15 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         segments: &[String],
     ) -> String {
-        let display_name = self.import_type_display_name(module_specifier);
-        let base = if self.target_module_has_export_equals(module_specifier) {
-            format!("\"{display_name}\".export=")
-        } else {
-            format!("\"{display_name}\"")
-        };
         if segments.is_empty() {
-            base
-        } else {
-            format!("{base}.{}", segments.join("."))
+            return self.import_type_namespace_name(module_specifier);
         }
+
+        // Nested access: segments already traverse into the export= namespace,
+        // so `.export=` must not appear in the display string.
+        // e.g. `import("mod").Bar.Q` missing → `"mod".Bar` (not `"mod".export=.Bar`)
+        let display_name = self.import_type_display_name(module_specifier);
+        format!("\"{display_name}\".{}", segments.join("."))
     }
 
     fn resolve_import_type_member_via_export_equals_type(
@@ -462,6 +460,9 @@ impl<'a> CheckerState<'a> {
             }
             let comments = source_file.comments.clone();
             let source_text = source_file.text.to_string();
+            // No cache fast-path on this delegate; every entry is a miss.
+            tsz_common::perf_counters::record_delegate_cross_arena_miss();
+            let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
             let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                 &target_arena,
                 &target_binder,
@@ -522,6 +523,9 @@ impl<'a> CheckerState<'a> {
         for source_file in &target_arena.source_files {
             let comments = source_file.comments.clone();
             let source_text = source_file.text.to_string();
+            // No cache fast-path on this delegate; every entry is a miss.
+            tsz_common::perf_counters::record_delegate_cross_arena_miss();
+            let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
             let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                 &target_arena,
                 &target_binder,
@@ -557,7 +561,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn format_generic_display_name_with_interner(
         name: &str,
         type_params: &[tsz_solver::TypeParamInfo],
-        types: &dyn tsz_solver::QueryDatabase,
+        types: &dyn tsz_solver::construction::QueryDatabase,
     ) -> String {
         if type_params.is_empty() {
             return name.to_string();
@@ -802,7 +806,7 @@ impl<'a> CheckerState<'a> {
                             .get_symbol_with_libs(sym_id, &lib_binders)
                             .is_some_and(|sym| {
                                 sym.is_type_only
-                                    || ((sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0)
+                                    || (sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE))
                             })
                     };
 

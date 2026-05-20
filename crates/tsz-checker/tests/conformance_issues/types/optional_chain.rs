@@ -716,6 +716,40 @@ let x = f.#bar;  // Outside class - should error TS18013 only (not TS18016)
     );
 }
 
+#[test]
+fn test_private_identifier_name_string_index_reports_ts7053() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r##"
+class Counter {
+    #count = 0;
+    #total = 0;
+}
+
+const counter = new Counter();
+const count = counter["#count"];
+const total = counter["#total"];
+
+const publicQuoted: { "#count": number } = { "#count": 1 };
+const ok: number = publicQuoted["#count"];
+
+export {};
+"##,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7053_count = diagnostics.iter().filter(|(code, _)| *code == 7053).count();
+    assert_eq!(
+        ts7053_count, 2,
+        "Expected TS7053 for string indexes that spell private identifiers. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// Issue: TS2416 false positive for private field "overrides"
 ///
 /// Expected: Private fields with same name in child class should NOT emit TS2416

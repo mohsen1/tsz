@@ -6,6 +6,7 @@
 //! - contextual call param normalization and generic-call result finalization,
 //! - `this.property<T>(...)` TS2347 suppression helpers.
 
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
@@ -370,6 +371,22 @@ impl<'a> CheckerState<'a> {
                                             .as_ref()
                                             .is_some_and(|skip| index < skip.len() && skip[index])
                                         {
+                                            if self
+                                                .check_object_literal_named_property_values_against_any_target(
+                                                    arg_idx,
+                                                    expected_param,
+                                                )
+                                            {
+                                                return true;
+                                            }
+                                            if param.rest {
+                                                return self
+                                                    .check_generic_rest_object_literal_values_against_sibling_annotation(
+                                                        arg_idx,
+                                                        index,
+                                                        args,
+                                                    );
+                                            }
                                             return false;
                                         }
                                         if is_type_parameter_type(self.ctx.types, expected_param) {
@@ -391,18 +408,21 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 false
                             };
-                            // Use contains_type_parameters (not just is_type_parameter_type) so that
-                            // callable expected types like `(...args: A) => B` — where A and B are
-                            // outer inference variables, not quantified in the signature — also
-                            // participate in deferral. `should_defer_contextual_argument_mismatch`
-                            // applies the real policy; this guard just avoids calling it for
-                            // fully-concrete expected types where deferral is never appropriate.
-                            let defer_mismatch =
+                            // Let the central deferral policy decide contextual/generic
+                            // constructor mismatches. The expected parameter can be fully
+                            // concrete after outer call inference, while the source argument
+                            // still has its own generic construct signature.
+                            let should_consult_deferral_policy =
                                 common::contains_type_parameters(self.ctx.types, expected_param)
-                                    && self.should_defer_contextual_argument_mismatch(
+                                    || self.generic_construct_argument_mismatch_may_be_contextual(
                                         arg_type,
                                         expected_param,
                                     );
+                            let defer_mismatch = should_consult_deferral_policy
+                                && self.should_defer_contextual_argument_mismatch(
+                                    arg_type,
+                                    expected_param,
+                                );
                             if !fresh_assignable && !excess_property_recovery && !defer_mismatch {
                                 allow_contextual_mismatch_deferral = false;
                             }
@@ -470,13 +490,13 @@ impl<'a> CheckerState<'a> {
                             // object literals when the contextual parameter type uses
                             // a constraint (e.g., Record<string, unknown>) rather than
                             // the final inferred type. Filter these out after the check.
-                            let epc_snap = self.ctx.snapshot_diagnostics();
+                            let epc_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
                             self.check_object_literal_excess_properties(
                                 arg_type,
                                 evaluated_param,
                                 arg_idx,
                             );
-                            self.ctx.rollback_diagnostics_filtered(&epc_snap, |diag| {
+                            epc_snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
                                 !matches!(
                                     diag.code,
                                     crate::diagnostics::diagnostic_codes::IS_OF_TYPE_UNKNOWN
@@ -506,6 +526,135 @@ impl<'a> CheckerState<'a> {
         };
 
         (result, allow_contextual_mismatch_deferral)
+    }
+
+    fn generic_construct_argument_mismatch_may_be_contextual(
+        &mut self,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> bool {
+        let (actual_has_construct, actual_has_generic_construct) =
+            self.construct_signature_flags(actual);
+        let (expected_has_construct, expected_has_generic_construct) =
+            self.construct_signature_flags(expected);
+
+        actual_has_construct
+            && expected_has_construct
+            && (actual_has_generic_construct || expected_has_generic_construct)
+    }
+
+    fn construct_signature_flags(&mut self, type_id: TypeId) -> (bool, bool) {
+        self.construct_signature_flags_for_type(type_id)
+            .or_else(|| {
+                let evaluated = self.evaluate_type_with_env(type_id);
+                (evaluated != type_id)
+                    .then(|| self.construct_signature_flags_for_type(evaluated))
+                    .flatten()
+            })
+            .unwrap_or((false, false))
+    }
+
+    fn construct_signature_flags_for_type(&self, type_id: TypeId) -> Option<(bool, bool)> {
+        if let Some(shape) = common::callable_shape_for_type_extended(self.ctx.types, type_id)
+            && !shape.construct_signatures.is_empty()
+        {
+            return Some((
+                true,
+                shape
+                    .construct_signatures
+                    .iter()
+                    .any(|signature| !signature.type_params.is_empty()),
+            ));
+        }
+
+        if let Some(shape) = common::function_shape_for_type(self.ctx.types, type_id)
+            && shape.is_constructor
+        {
+            return Some((true, !shape.type_params.is_empty()));
+        }
+
+        None
+    }
+
+    fn check_generic_rest_object_literal_values_against_sibling_annotation(
+        &mut self,
+        obj_literal_idx: NodeIndex,
+        current_arg_index: usize,
+        args: &[NodeIndex],
+    ) -> bool {
+        for (arg_index, &arg_idx) in args.iter().enumerate() {
+            if arg_index == current_arg_index {
+                continue;
+            }
+            let Some(annotation_type) = self.declared_type_of_identifier_argument(arg_idx) else {
+                continue;
+            };
+            if self.check_object_literal_named_property_values_against_any_target(
+                obj_literal_idx,
+                annotation_type,
+            ) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn declared_type_of_identifier_argument(&mut self, arg_idx: NodeIndex) -> Option<TypeId> {
+        let idx = self.ctx.arena.skip_parenthesized(arg_idx);
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(idx)?;
+        let stable_declarations = {
+            let symbol = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
+            symbol
+                .stable_declarations
+                .iter()
+                .copied()
+                .chain(std::iter::once(symbol.stable_value_declaration))
+                .filter(|loc| loc.is_known())
+                .collect::<Vec<_>>()
+        };
+
+        for stable_location in stable_declarations {
+            let Some((decl_idx, arena)) = self.ctx.node_at_stable_location(stable_location) else {
+                continue;
+            };
+            let Some(decl_node) = arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if decl.type_annotation.is_some() {
+                if stable_location.has_file_idx()
+                    && stable_location.file_idx != self.ctx.current_file_idx as u32
+                {
+                    return Some(self.type_of_value_declaration_for_cross_file_symbol(
+                        sym_id,
+                        decl_idx,
+                        stable_location.file_idx as usize,
+                    ));
+                }
+                if !std::ptr::eq(arena, self.ctx.arena)
+                    && let Some(target_file_idx) = self.ctx.get_file_idx_for_arena(arena)
+                    && target_file_idx != self.ctx.current_file_idx
+                {
+                    return Some(self.type_of_value_declaration_for_cross_file_symbol(
+                        sym_id,
+                        decl_idx,
+                        target_file_idx,
+                    ));
+                }
+                return Some(self.type_of_value_declaration_for_symbol(sym_id, decl_idx));
+            }
+        }
+
+        None
     }
 
     pub(crate) fn try_emit_ts2339_for_missing_this_property(
@@ -639,5 +788,98 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::CheckerOptions;
+    use crate::module_resolution::build_module_resolution_maps;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_parser::parser::syntax_kind_ext;
+    use tsz_solver::construction::TypeInterner;
+
+    #[test]
+    fn declared_type_of_identifier_argument_resolves_cross_file_stable_declaration() {
+        let files = [
+            (
+                "consumer.ts",
+                r#"
+declare function f<T>(...items: T[]): T;
+f(data, { a: 2 });
+"#,
+            ),
+            (
+                "shared.ts",
+                r#"
+declare let data: { a: 1, b: "abc", c: true };
+"#,
+            ),
+        ];
+
+        let mut arenas = Vec::with_capacity(files.len());
+        let mut binders = Vec::with_capacity(files.len());
+        let mut roots = Vec::with_capacity(files.len());
+        let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+        for (file_idx, (name, source)) in files.iter().enumerate() {
+            let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+            let root = parser.parse_source_file();
+            let mut binder = BinderState::new();
+            binder.set_file_idx(file_idx as u32);
+            binder.bind_source_file(parser.get_arena(), root);
+            arenas.push(Arc::new(parser.get_arena().clone()));
+            binders.push(Arc::new(binder));
+            roots.push(root);
+        }
+
+        let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+        let all_arenas = Arc::new(arenas);
+        let all_binders = Arc::new(binders);
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            all_arenas[0].as_ref(),
+            all_binders[0].as_ref(),
+            &types,
+            file_names[0].clone(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(0);
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::new(resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules);
+
+        checker.check_source_file(roots[0]);
+
+        let data_arg_idx = checker
+            .ctx
+            .arena
+            .nodes
+            .iter()
+            .find_map(|node| {
+                if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                    return None;
+                }
+                let call = checker.ctx.arena.get_call_expr(node)?;
+                let callee_node = checker.ctx.arena.get(call.expression)?;
+                let callee_ident = checker.ctx.arena.get_identifier(callee_node)?;
+                if callee_ident.escaped_text != "f" {
+                    return None;
+                }
+                call.arguments.as_ref()?.nodes.first().copied()
+            })
+            .expect("expected to find f(data, ...) call in consumer.ts");
+
+        let declared = checker.declared_type_of_identifier_argument(data_arg_idx);
+        assert!(
+            declared.is_some(),
+            "cross-file typed identifier argument should resolve a declared type"
+        );
     }
 }

@@ -8,18 +8,17 @@
 
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
-use crate::test_fixtures::TestContext;
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
+use tsz_checker::test_utils::load_compiled_lib_files;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Check source with `@noLib` semantics (no lib symbols merged, no
-/// lib_contexts on the checker). Routes through the shared
+/// `lib_contexts` on the checker). Routes through the shared
 /// `test_utils::check_with_options` — that helper also leaves
-/// lib_contexts empty by default, matching the original local helper.
+/// `lib_contexts` empty by default, matching the original local helper.
 fn check_without_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
     check_without_lib_with_options(source, CheckerOptions::default())
 }
@@ -380,124 +379,30 @@ const r = new Promise<number>((resolve) => resolve(1));
 // Tests with lib.d.ts loaded - these should NOT emit errors
 
 fn load_lib_files_for_global_type_tests() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let search_roots: Vec<&Path> = {
-        let mut roots = vec![manifest_dir];
-        let mut parent = manifest_dir.parent();
-        while let Some(dir) = parent {
-            roots.push(dir);
-            parent = dir.parent();
-        }
-        roots
-    };
-    let candidates = [
-        (
-            "lib.es5.d.ts",
-            [
-                "scripts/node_modules/typescript/lib/lib.es5.d.ts",
-                "scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts",
-                "scripts/emit/node_modules/typescript/lib/lib.es5.d.ts",
-                "crates/tsz-core/src/lib-assets-stripped/es5.d.ts",
-                "crates/tsz-core/src/lib-assets/es5.d.ts",
-                "../tsz-core/src/lib-assets-stripped/es5.d.ts",
-                "../tsz-core/src/lib-assets/es5.d.ts",
-                "TypeScript/node_modules/typescript/lib/lib.es5.d.ts",
-                "TypeScript/src/lib/es5.d.ts",
-            ],
-        ),
-        (
-            "lib.es2015.d.ts",
-            [
-                "scripts/node_modules/typescript/lib/lib.es2015.d.ts",
-                "scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts",
-                "scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts",
-                "crates/tsz-core/src/lib-assets-stripped/es2015.d.ts",
-                "crates/tsz-core/src/lib-assets/es2015.d.ts",
-                "../tsz-core/src/lib-assets-stripped/es2015.d.ts",
-                "../tsz-core/src/lib-assets/es2015.d.ts",
-                "TypeScript/node_modules/typescript/lib/lib.es2015.d.ts",
-                "TypeScript/src/lib/es2015.d.ts",
-            ],
-        ),
-        (
-            "lib.es2015.symbol.d.ts",
-            [
-                "scripts/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
-                "scripts/conformance/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
-                "scripts/emit/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
-                "crates/tsz-core/src/lib-assets-stripped/es2015.symbol.d.ts",
-                "crates/tsz-core/src/lib-assets/es2015.symbol.d.ts",
-                "../tsz-core/src/lib-assets-stripped/es2015.symbol.d.ts",
-                "../tsz-core/src/lib-assets/es2015.symbol.d.ts",
-                "TypeScript/node_modules/typescript/lib/lib.es2015.symbol.d.ts",
-                "TypeScript/src/lib/es2015.symbol.d.ts",
-            ],
-        ),
-    ];
-
-    let mut lib_files = Vec::new();
-    for (file_name, suffixes) in candidates {
-        let maybe_path = search_roots
-            .iter()
-            .flat_map(|root| suffixes.iter().map(move |suffix| root.join(suffix)))
-            .find(|path| path.exists());
-        if let Some(path) = maybe_path
-            && let Ok(content) = std::fs::read_to_string(&path)
-        {
-            lib_files.push(Arc::new(LibFile::from_source(
-                file_name.to_string(),
-                content,
-            )));
-        }
-    }
-    lib_files
+    load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+        "lib.dom.d.ts",
+    ])
 }
 
 /// Helper function to create a checker WITH lib.d.ts and check source code.
-/// This creates the checker with the parser's arena directly and loads lib files.
 fn check_with_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
-    let ctx = TestContext::new_with_libs(load_lib_files_for_global_type_tests());
-
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    // No parse errors expected in these tests
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions::default();
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(), // Use parser's arena directly
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(ctx.lib_files.len());
-    }
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    let lib_files = load_lib_files_for_global_type_tests();
+    crate::checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    )
 }
 
 #[test]

@@ -374,12 +374,24 @@ impl<'a> CheckerState<'a> {
             );
             return;
         }
-        let skip_prop_checks = props_type == TypeId::ANY
-            || props_type == TypeId::ERROR
-            || crate::query_boundaries::common::contains_error_type_in_args(
+        let props_has_error_type_in_args =
+            crate::query_boundaries::common::contains_error_type_in_args(
                 self.ctx.types,
                 props_type,
             );
+        let intrinsic_props_have_known_surface = component_type.is_none()
+            && special_attr_component_type.is_none()
+            && !raw_props_has_type_params
+            && (crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)
+                .is_some()
+                || crate::query_boundaries::common::intersection_members(
+                    self.ctx.types,
+                    props_type,
+                )
+                .is_some());
+        let skip_prop_checks = props_type == TypeId::ANY
+            || props_type == TypeId::ERROR
+            || (props_has_error_type_in_args && !intrinsic_props_have_known_surface);
 
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
             return;
@@ -397,6 +409,10 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 props_type,
             );
+        let suppress_excess_for_generic_props = props_has_type_params
+            && (raw_props_has_type_params
+                || component_type.is_some()
+                || special_attr_component_type.is_some());
         let component_has_managed_props_metadata = component_type.is_some_and(|comp| {
             use crate::query_boundaries::common::PropertyAccessResult;
             matches!(
@@ -721,17 +737,19 @@ impl<'a> CheckerState<'a> {
                                 entry.1 = attr_value_type;
                             }
 
-                            if component_has_managed_props_metadata {
-                                needs_special_attr_object_assignability = true;
-                                continue;
-                            }
-
                             let props_target_has_object_shape =
                                 crate::query_boundaries::common::object_shape_for_type(
                                     self.ctx.types,
                                     props_type,
                                 )
                                 .is_some();
+                            if component_has_managed_props_metadata
+                                && !props_target_has_object_shape
+                            {
+                                needs_special_attr_object_assignability = true;
+                                continue;
+                            }
+
                             if !props_target_has_object_shape {
                                 needs_special_attr_object_assignability = true;
                                 continue;
@@ -757,7 +775,8 @@ impl<'a> CheckerState<'a> {
                             });
 
                             if !has_string_index // excess property check
-                            && !props_has_type_params
+                            && !has_excess_property_error
+                            && !suppress_excess_for_generic_props
                             && !component_has_type_params
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
@@ -955,7 +974,7 @@ impl<'a> CheckerState<'a> {
                     if let (Some((start, end)), Some(snap)) =
                         (function_param_diagnostic_span, spec_snap)
                     {
-                        snap.rollback_filtered(&mut self.ctx, |diag| {
+                        snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
                             !(matches!(
                                 diag.code,
                                 7006 | 7019
@@ -1062,10 +1081,18 @@ impl<'a> CheckerState<'a> {
                 };
                 let spread_expr_idx = spread_data.expression;
                 let raw_spread_type = self.compute_type_of_node(spread_expr_idx);
-                if crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    raw_spread_type,
-                ) && !invalid_generic_spread_types.contains(&raw_spread_type)
+                let spread_has_type_parameters =
+                    crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        raw_spread_type,
+                    );
+                let unresolved_spread_into_generic_props = raw_spread_type == TypeId::UNKNOWN
+                    && crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        props_type,
+                    );
+                if (spread_has_type_parameters || unresolved_spread_into_generic_props)
+                    && !invalid_generic_spread_types.contains(&raw_spread_type)
                 {
                     invalid_generic_spread_types.push(raw_spread_type);
                 }

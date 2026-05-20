@@ -11,7 +11,10 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::iterators::get_iterator_info;
 use crate::types::{TupleElement, TupleListId, TypeData, TypeId};
 use crate::utils::{self, TupleRestExpansion};
-use crate::visitor::{array_element_type, is_type_parameter, tuple_list_id, type_param_info};
+use crate::visitor::{
+    array_element_type, is_type_parameter, object_shape_id, object_with_index_shape_id,
+    tuple_list_id, type_param_info,
+};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
@@ -193,13 +196,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 }
 
-                // An optional target slot accepts `undefined` in addition to its
-                // declared type (`[string?]` is structurally `[(string |
-                // undefined)?]`). This applies whether the source slot is
-                // optional or required — `[string, undefined?]` must remain
-                // assignable to `[string, number?]` because both source values
-                // (undefined or slot-absent) fit the target's optional slot.
-                let target_elem_type = if t_elem.optional {
+                // Without exact optional types, an optional target slot accepts
+                // `undefined` in addition to its declared type. With
+                // exactOptionalPropertyTypes, tuple optionals mirror property
+                // optionals: absence is allowed, but a present `undefined` must
+                // be explicitly included in the element type.
+                let target_elem_type = if t_elem.optional && !self.exact_optional_property_types {
                     self.interner.union2(t_elem.type_id, TypeId::UNDEFINED)
                 } else {
                     t_elem.type_id
@@ -491,6 +493,180 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         Some(direct)
+    }
+
+    pub(crate) fn recursive_array_alias_element_matches_array_interface(
+        &mut self,
+        source_elem: TypeId,
+        target_elem: TypeId,
+        recursive_alias_target: TypeId,
+    ) -> bool {
+        let Some(source_members) =
+            crate::type_queries::get_union_members(self.interner, source_elem)
+        else {
+            return false;
+        };
+        let Some(target_members) =
+            crate::type_queries::get_union_members(self.interner, target_elem)
+        else {
+            return false;
+        };
+
+        source_members.iter().copied().all(|source_member| {
+            target_members.iter().copied().any(|target_member| {
+                let direct = self.check_subtype(source_member, target_member).is_true();
+                direct
+                    || self.recursive_array_member_matches_array_interface(
+                        source_member,
+                        target_member,
+                        target_elem,
+                        recursive_alias_target,
+                        source_elem,
+                    )
+            })
+        })
+    }
+
+    fn recursive_array_member_matches_array_interface(
+        &mut self,
+        source_member: TypeId,
+        target_member: TypeId,
+        target_elem: TypeId,
+        recursive_alias_target: TypeId,
+        recursive_alias_eval: TypeId,
+    ) -> bool {
+        let Some(source_member_elem) = array_element_type(self.interner, source_member) else {
+            return false;
+        };
+        if source_member_elem != target_elem
+            && self.evaluate_type(source_member_elem) != target_elem
+            && source_member_elem != recursive_alias_target
+            && self.evaluate_type(source_member_elem) != recursive_alias_eval
+        {
+            return false;
+        }
+
+        let Some(shape_id) = object_with_index_shape_id(self.interner, target_member) else {
+            return false;
+        };
+        let shape = self.interner.object_shape(shape_id);
+        let Some(number_index) = &shape.number_index else {
+            return false;
+        };
+        if !self.recursive_array_index_value_points_to_alias(
+            number_index.value_type,
+            recursive_alias_target,
+            recursive_alias_eval,
+        ) {
+            return false;
+        }
+
+        self.is_array_interface_object(target_member, number_index.value_type)
+    }
+
+    fn recursive_array_index_value_points_to_alias(
+        &mut self,
+        value_type: TypeId,
+        recursive_alias_target: TypeId,
+        recursive_alias_eval: TypeId,
+    ) -> bool {
+        if value_type == recursive_alias_target {
+            return true;
+        }
+        let value_eval = self.evaluate_type(value_type);
+        if value_eval == recursive_alias_eval {
+            return true;
+        }
+        crate::type_queries::get_union_members(self.interner, value_eval).is_some_and(|members| {
+            members.iter().copied().any(|member| {
+                array_element_type(self.interner, member).is_some_and(|elem| {
+                    elem == recursive_alias_eval
+                        || elem == value_type
+                        || self.evaluate_type(elem) == recursive_alias_eval
+                        || self.evaluate_type(elem) == value_eval
+                })
+            })
+        })
+    }
+
+    fn is_array_interface_object(&mut self, target: TypeId, element_type: TypeId) -> bool {
+        let Some(target_shape_id) = object_with_index_shape_id(self.interner, target)
+            .or_else(|| object_shape_id(self.interner, target))
+        else {
+            return false;
+        };
+        let target_shape = self.interner.object_shape(target_shape_id);
+        let Some(target_symbol) = target_shape.symbol else {
+            if !self.shape_has_array_base_property_names(target_shape_id) {
+                return false;
+            }
+            return true;
+        };
+
+        let Some(array_base) = self.resolver.get_array_base_type() else {
+            return false;
+        };
+        if self.shape_symbol(array_base) == Some(target_symbol) {
+            return true;
+        }
+        if self.shape_has_array_base_property_names(target_shape_id) {
+            return true;
+        }
+        let evaluated_array_base = self.evaluate_type(array_base);
+        if self.shape_symbol(evaluated_array_base) == Some(target_symbol) {
+            return true;
+        }
+
+        let params = self.resolver.get_array_base_type_params();
+        let instantiated = if params.is_empty() {
+            array_base
+        } else {
+            let subst = TypeSubstitution::from_args(self.interner, params, &[element_type]);
+            instantiate_type(self.interner, array_base, &subst)
+        };
+        let instantiated = self.evaluate_type(instantiated);
+        let Some(array_shape_id) = object_with_index_shape_id(self.interner, instantiated)
+            .or_else(|| object_shape_id(self.interner, instantiated))
+        else {
+            return false;
+        };
+        self.interner.object_shape(array_shape_id).symbol == Some(target_symbol)
+    }
+
+    fn shape_symbol(&self, type_id: TypeId) -> Option<tsz_binder::SymbolId> {
+        let shape_id = object_with_index_shape_id(self.interner, type_id)
+            .or_else(|| object_shape_id(self.interner, type_id))?;
+        self.interner.object_shape(shape_id).symbol
+    }
+
+    fn shape_has_array_base_property_names(
+        &self,
+        target_shape_id: crate::types::ObjectShapeId,
+    ) -> bool {
+        let Some(array_base) = self.resolver.get_array_base_type() else {
+            return false;
+        };
+        let Some(array_shape_id) = object_with_index_shape_id(self.interner, array_base)
+            .or_else(|| object_shape_id(self.interner, array_base))
+        else {
+            return false;
+        };
+
+        let target_shape = self.interner.object_shape(target_shape_id);
+        let array_shape = self.interner.object_shape(array_shape_id);
+        if target_shape.number_index.is_none() || array_shape.number_index.is_none() {
+            return false;
+        }
+        if target_shape.string_index.is_some() != array_shape.string_index.is_some() {
+            return false;
+        }
+        target_shape.properties.len() == array_shape.properties.len()
+            && target_shape.properties.iter().all(|target_prop| {
+                array_shape
+                    .properties
+                    .iter()
+                    .any(|array_prop| array_prop.name == target_prop.name)
+            })
     }
 
     /// Check whether the target type has required properties that the source

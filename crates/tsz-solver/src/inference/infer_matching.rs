@@ -21,6 +21,8 @@ use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::infer::{InferenceContext, InferenceError, InferenceVar};
+use super::template_anchor::{find_leftmost_occurrence, find_next_anchor_alternatives};
+use super::template_segment_prefix::match_template_segment_prefix;
 
 impl<'a> InferenceContext<'a> {
     /// Perform structural type inference from a source type to a target type.
@@ -181,9 +183,12 @@ impl<'a> InferenceContext<'a> {
                 }
             }
 
-            // Array types: recurse into element types
+            // Array types: recurse into element types.
             (Some(TypeData::Array(source_elem)), Some(TypeData::Array(target_elem))) => {
+                let prev = self.in_array_element_context;
+                self.in_array_element_context = true;
                 self.infer_from_types(source_elem, target_elem, priority)?;
+                self.in_array_element_context = prev;
             }
 
             // Tuple types: recurse into elements
@@ -511,7 +516,12 @@ impl<'a> InferenceContext<'a> {
                         .flags
                         .contains(crate::types::ObjectFlags::ENUM_NAMESPACE);
 
-                let mut implicit_parts: Vec<TypeId> = Vec::new();
+                let implicit_capacity = if has_implicit_index {
+                    source_shape.properties.len() + usize::from(source_shape.number_index.is_some())
+                } else {
+                    0
+                };
+                let mut implicit_parts = Vec::with_capacity(implicit_capacity);
 
                 // Contribution from number index: in JS, numeric keys are converted
                 // to strings, so for anonymous/enum types a source number index
@@ -538,33 +548,18 @@ impl<'a> InferenceContext<'a> {
                 // e.g. `{ [sym]?: true }` should not contribute `true` when inferring
                 // T from `{ [s: string]: T }`.
                 if has_implicit_index && !source_shape.properties.is_empty() {
-                    // Under `exactOptionalPropertyTypes`, the `?` modifier does NOT
-                    // implicitly add `undefined` to a property's type. So any
-                    // `undefined` in `p.type_id` must have been explicitly written
-                    // by the user (e.g. `b?: number | undefined`) and should be
-                    // preserved during index-signature inference.
-                    //
-                    // Without EOPT, `b?: number` is equivalent to `b?: number | undefined`,
-                    // and tsc strips that synthetic `undefined` when inferring T from
-                    // `{ [k: string]: T }` to match its display behavior.
-                    let strip_optional_undefined = !self.interner.exact_optional_property_types();
                     for p in &source_shape.properties {
                         // Skip symbol-keyed properties — they are not reachable via
                         // a string index and must not pollute string-index inference.
                         if p.is_symbol_named {
                             continue;
                         }
-                        // For optional properties, strip `undefined` from optionality
-                        // unless `exactOptionalPropertyTypes` preserves explicit undefined.
-                        // tsc: `{ a: string, b?: number }` infers T as `string | number`
-                        // (not `string | number | undefined`). With EOPT enabled,
-                        // `b?: number | undefined` infers T as `string | number | undefined`.
-                        let prop_type = if p.optional && strip_optional_undefined {
-                            crate::narrowing::utils::remove_undefined(self.interner, p.type_id)
-                        } else {
-                            p.type_id
-                        };
-                        implicit_parts.push(prop_type);
+                        // Optionality represents that the property may be missing;
+                        // the stored property type represents the value when present.
+                        // Use it directly so `a?: number` contributes `number`, while
+                        // an explicitly annotated `b?: number | undefined` preserves
+                        // its written `undefined` member.
+                        implicit_parts.push(p.type_id);
                     }
                 }
 
@@ -679,7 +674,13 @@ impl<'a> InferenceContext<'a> {
             // e.g., for { foo: string, bar: number }, K = "foo" | "bar"
             let name_literals: Vec<TypeId> = string_named_props
                 .iter()
-                .map(|p| self.interner.literal_string_atom(p.name))
+                .map(|p| {
+                    crate::utils::literal_key_for_property_name(
+                        self.interner,
+                        p.name,
+                        p.is_string_named,
+                    )
+                })
                 .collect();
             let names_union = if name_literals.len() == 1 {
                 name_literals[0]
@@ -696,7 +697,11 @@ impl<'a> InferenceContext<'a> {
             // (e.g., Box<number> | Box<string> | Box<boolean>), not a single "best" type.
             let template_priority = InferencePriority::MappedType;
             for prop in &string_named_props {
-                let key_literal = self.interner.literal_string_atom(prop.name);
+                let key_literal = crate::utils::literal_key_for_property_name(
+                    self.interner,
+                    prop.name,
+                    prop.is_string_named,
+                );
                 let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
                 let instantiated_template =
                     instantiate_type(self.interner, mapped.template, &subst);
@@ -1482,7 +1487,9 @@ impl<'a> InferenceContext<'a> {
             | (TypeData::Callable(_), TypeData::Callable(_))
             | (TypeData::Function(_), TypeData::Function(_))
             | (TypeData::Tuple(_), TypeData::Tuple(_))
-            | (TypeData::Array(_), TypeData::Array(_)) => true,
+            | (TypeData::Array(_), TypeData::Array(_))
+            | (TypeData::Literal(LiteralValue::String(_)), TypeData::TemplateLiteral(_))
+            | (TypeData::TemplateLiteral(_), TypeData::TemplateLiteral(_)) => true,
             _ => false,
         }
     }
@@ -1695,7 +1702,8 @@ impl<'a> InferenceContext<'a> {
         {
             for span in spans.iter() {
                 if let TemplateSpan::Type(type_id) = span
-                    && let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
+                    && let Some(TypeData::Infer(param_info) | TypeData::TypeParameter(param_info)) =
+                        self.interner.lookup(*type_id)
                     && let Some(var) = self.find_type_param(param_info.name)
                 {
                     // Source is `any` or `string`, so infer that for all variables
@@ -1807,9 +1815,12 @@ impl<'a> InferenceContext<'a> {
                 }
 
                 TemplateSpan::Type(type_id) => {
-                    // Check if this is an infer variable. Intrinsics are never Infer.
+                    // Match both `infer T` (conditional) and generic `T` (type parameter).
+                    // Intrinsics are never Infer or TypeParameter.
                     if !type_id.is_intrinsic()
-                        && let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
+                        && let Some(
+                            TypeData::Infer(param_info) | TypeData::TypeParameter(param_info),
+                        ) = self.interner.lookup(*type_id)
                         && let Some(var) = self.find_type_param(param_info.name)
                     {
                         if is_last {
@@ -1817,23 +1828,31 @@ impl<'a> InferenceContext<'a> {
                             let captured = source[pos..].to_string();
                             bindings.push((var, captured));
                             pos = source.len();
+                        } else if let Some(alternatives) =
+                            find_next_anchor_alternatives(self.interner, spans, i, |type_id| {
+                                if type_id.is_intrinsic() {
+                                    return false;
+                                }
+                                matches!(
+                                    self.interner.lookup(type_id),
+                                    Some(
+                                        TypeData::Infer(param_info)
+                                            | TypeData::TypeParameter(param_info)
+                                    ) if self.find_type_param(param_info.name).is_some()
+                                )
+                            })
+                        {
+                            let capture_end = find_leftmost_occurrence(source, pos, &alternatives)?;
+                            let captured = source[pos..capture_end].to_string();
+                            bindings.push((var, captured));
+                            pos = capture_end;
                         } else {
-                            // Non-last span: capture until next literal anchor (non-greedy)
-                            // Find the next text span to use as an anchor
-                            if let Some(anchor_text) = self.find_next_text_anchor(spans, i) {
-                                let anchor = self.interner.resolve_atom(anchor_text).to_string();
-                                // Find the first occurrence of the anchor (non-greedy)
-                                let capture_end = source[pos..].find(&anchor)? + pos;
-                                let captured = source[pos..capture_end].to_string();
-                                bindings.push((var, captured));
-                                pos = capture_end;
-                            } else {
-                                // No text anchor found (e.g., `${infer A}${infer B}`)
-                                // Capture empty string for non-greedy match and continue
-                                bindings.push((var, String::new()));
-                                // pos remains unchanged - next infer var starts here
-                            }
+                            bindings.push((var, String::new()));
                         }
+                    } else {
+                        let next_pos =
+                            match_template_segment_prefix(self.interner, source, pos, *type_id)?;
+                        pos = next_pos;
                     }
                 }
             }
@@ -1841,17 +1860,6 @@ impl<'a> InferenceContext<'a> {
 
         // Must have consumed the entire source string
         (pos == source.len()).then_some(bindings)
-    }
-
-    /// Find the next text span after a given index to use as a matching anchor.
-    fn find_next_text_anchor(&self, spans: &[TemplateSpan], start_idx: usize) -> Option<Atom> {
-        spans.iter().skip(start_idx + 1).find_map(|span| {
-            if let TemplateSpan::Text(text) = span {
-                Some(*text)
-            } else {
-                None
-            }
-        })
     }
 
     /// Get the "partially inferable" version of a type for property inference.

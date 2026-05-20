@@ -1,13 +1,17 @@
 use super::*;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
+fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_declaration_checker_variable() {
     let source = "let x = 1;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -85,6 +89,91 @@ export const x = 0;
 }
 
 #[test]
+fn test_ts2664_for_unresolved_relative_module_augmentation() {
+    let diagnostics = crate::test_utils::check_multi_file(
+        &[(
+            "/project/src/test.ts",
+            r#"
+export {};
+
+declare module "./nonexistent" {
+    interface Extra {
+        extra: boolean;
+    }
+}
+"#,
+        )],
+        "/project/src/test.ts",
+        crate::context::CheckerOptions::default(),
+    );
+
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 2664),
+        "Expected TS2664 for unresolved relative module augmentation, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2664_for_unresolved_parent_relative_module_augmentation() {
+    let diagnostics = crate::test_utils::check_multi_file(
+        &[(
+            "/project/src/nested/test.ts",
+            r#"
+export {};
+
+declare module "../missing" {
+    interface Extra {
+        extra: boolean;
+    }
+}
+"#,
+        )],
+        "/project/src/nested/test.ts",
+        crate::context::CheckerOptions::default(),
+    );
+
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 2664),
+        "Expected TS2664 for unresolved parent-relative module augmentation, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_no_ts2664_for_resolved_relative_module_augmentation() {
+    let diagnostics = crate::test_utils::check_multi_file(
+        &[
+            (
+                "/project/src/target.ts",
+                r#"
+export interface Existing {
+    value: string;
+}
+"#,
+            ),
+            (
+                "/project/src/test.ts",
+                r#"
+export {};
+
+declare module "./target" {
+    interface Existing {
+        extra: boolean;
+    }
+}
+"#,
+            ),
+        ],
+        "/project/src/test.ts",
+        crate::context::CheckerOptions::default(),
+    );
+
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2664),
+        "Did not expect TS2664 for resolved relative module augmentation, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_ts2564_property_without_initializer() {
     // Test that TS2564 is reported for properties without initializers
     let source = r#"
@@ -93,8 +182,7 @@ x: number;  // Should report TS2564
 y: string = "hello";  // Should NOT report (has initializer)
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -140,8 +228,7 @@ class Foo {
 x!: number;  // Should NOT report (has definite assignment assertion)
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -187,8 +274,7 @@ class Foo {
 static x: number;  // Should NOT report (static property)
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -234,8 +320,7 @@ class Foo {
 x: number;  // Should NOT report (strict mode disabled)
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -282,8 +367,7 @@ constructor() {
 }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -335,8 +419,7 @@ constructor(flag: boolean) {
 }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -387,8 +470,7 @@ constructor(flag: boolean) {
 }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -439,8 +521,7 @@ constructor(flag: boolean) {
 }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -490,8 +571,7 @@ constructor() {
 }
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);

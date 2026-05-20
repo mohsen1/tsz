@@ -1930,3 +1930,32 @@ fn test_document_highlights_honors_files_to_search_across_files() {
         "expected 2+ highlight spans in /b.ts (import + use), got: {b_spans:?}"
     );
 }
+
+/// Regression for issue #8527: documentHighlight on a heritage-cycle source
+/// must not crash the server (previously SIGABRT'd via stack overflow).
+#[test]
+fn test_document_highlights_does_not_panic_on_circular_heritage() {
+    let mut server = make_server();
+    let source = "class C extends D {\n    prop0: string;\n    prop1: string;\n}\n\nclass D extends C {\n    prop0: string;\n    prop1: string;\n}\n\nvar d: D;\nd.prop1;\n";
+    let file_path = "/tests/cases/fourslash/file1.ts";
+    server
+        .open_files
+        .insert(file_path.to_string(), source.to_string());
+
+    // Line 12 column 3 = the `prop1` access on `d.prop1` (1-based).
+    let req = make_request(
+        "documentHighlights",
+        serde_json::json!({
+            "file": file_path,
+            "line": 12,
+            "offset": 3,
+            "filesToSearch": [file_path],
+        }),
+    );
+
+    let resp = server.handle_tsserver_request(req);
+    assert!(
+        resp.success,
+        "documentHighlights must return without crashing on circular heritage; response: {resp:?}"
+    );
+}

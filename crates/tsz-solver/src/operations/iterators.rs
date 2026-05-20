@@ -5,8 +5,13 @@
 //! loop type checking.
 
 use super::property::PropertyAccessEvaluator;
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::types::{PropertyInfo, TypeData, TypeId};
+use crate::visitor::{
+    array_element_type, object_shape_id, object_with_index_shape_id, readonly_inner_type,
+    tuple_list_id,
+};
+use smallvec::SmallVec;
 
 /// Information about an iterator type extracted from a type.
 ///
@@ -160,6 +165,65 @@ fn get_tuple_iterator_info(db: &dyn TypeDatabase, tuple_type: TypeId) -> Option<
     }
 }
 
+/// Shared structural guard for the "string is iterable, so it satisfies an
+/// iterable parameter" shortcuts. Used by both `SubtypeChecker` (boxed-
+/// primitive subtype rule) and `CallEvaluator` (call-site argument check)
+/// so the two paths agree on which targets are *purely* iterable.
+///
+/// Returns `true` when `String` does NOT structurally satisfy `target`
+/// — `target` is (or unwraps / evaluates to) an `Array` or `Tuple`, or
+/// its object shape carries a named property other than the iterable
+/// protocol (`[Symbol.iterator]` / `__@iterator`) and `length`. In
+/// those cases the shortcut MUST NOT fire (`push`/`pop` on `T[]`,
+/// `callee` on `IArguments`, etc.).
+///
+/// `evaluate` is invoked at most once and only after the cheap
+/// array/tuple probes on `target` itself have failed; callers therefore
+/// don't pay the full evaluator walk on common shapes that are already
+/// rejected by syntactic inspection. Behavior matches the long-standing
+/// `SubtypeChecker::target_has_non_iterable_properties` — three array /
+/// tuple probes (`target`, `readonly_inner(target)`, `evaluated`) and an
+/// object-shape lookup on `target`.
+pub fn target_has_non_iterable_property_shape<F>(
+    db: &dyn TypeDatabase,
+    target: TypeId,
+    evaluate: F,
+) -> bool
+where
+    F: FnOnce(TypeId) -> TypeId,
+{
+    if array_element_type(db, target).is_some() || tuple_list_id(db, target).is_some() {
+        return true;
+    }
+    let readonly_inner = readonly_inner_type(db, target).unwrap_or(target);
+    if readonly_inner != target
+        && (array_element_type(db, readonly_inner).is_some()
+            || tuple_list_id(db, readonly_inner).is_some())
+    {
+        return true;
+    }
+    let evaluated = evaluate(target);
+    if evaluated != target
+        && (array_element_type(db, evaluated).is_some() || tuple_list_id(db, evaluated).is_some())
+    {
+        return true;
+    }
+
+    let Some(shape_id) =
+        object_shape_id(db, target).or_else(|| object_with_index_shape_id(db, target))
+    else {
+        return false;
+    };
+    let shape = db.object_shape(shape_id);
+    let sym_iter = db.intern_string("[Symbol.iterator]");
+    let internal_iter = db.intern_string("__@iterator");
+    let length_atom = db.intern_string("length");
+    shape
+        .properties
+        .iter()
+        .any(|prop| prop.name != sym_iter && prop.name != internal_iter && prop.name != length_atom)
+}
+
 /// Extract T from a Promise<T> type.
 ///
 /// Handles two representations:
@@ -237,16 +301,21 @@ fn extract_iterator_result_types(
 ) -> Option<IteratorInfo> {
     use crate::type_queries::is_promise_like;
 
-    // Get the return type and parameter types of next()
-    let (next_return_type, next_params) = match db.lookup(next_method_type) {
+    // Get the return type and first parameter type of next().
+    let (next_return_type, next_type) = match db.lookup(next_method_type) {
         Some(TypeData::Function(shape_id)) => {
             let shape = db.function_shape(shape_id);
-            (shape.return_type, shape.params.clone())
+            let next_type = shape
+                .params
+                .first()
+                .map_or(TypeId::UNDEFINED, |p| p.type_id);
+            (shape.return_type, next_type)
         }
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
             let sig = shape.call_signatures.first()?;
-            (sig.return_type, sig.params.clone())
+            let next_type = sig.params.first().map_or(TypeId::UNDEFINED, |p| p.type_id);
+            (sig.return_type, next_type)
         }
         _ => return None,
     };
@@ -265,9 +334,6 @@ fn extract_iterator_result_types(
     // Extract yield_type and return_type from IteratorResult<T, TReturn>
     // IteratorResult = { value: T, done: false } | { value: TReturn, done: true }
     let (yield_type, return_type) = extract_iterator_result_value_types(db, iterator_result_type);
-
-    // Extract next_type from the first parameter of next()
-    let next_type = next_params.first().map_or(TypeId::UNDEFINED, |p| p.type_id);
 
     Some(IteratorInfo {
         iterator_type,
@@ -297,8 +363,8 @@ pub fn extract_iterator_result_value_types(
     match db.lookup(iterator_result_type) {
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
-            let mut yield_types = Vec::new();
-            let mut return_types = Vec::new();
+            let mut yield_types: SmallVec<[TypeId; 2]> = SmallVec::new();
+            let mut return_types: SmallVec<[TypeId; 2]> = SmallVec::new();
 
             for &member_id in members.iter() {
                 let member_id = db.evaluate_type(member_id);

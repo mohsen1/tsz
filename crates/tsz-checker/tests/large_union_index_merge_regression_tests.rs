@@ -113,3 +113,48 @@ function assertNodeTagName<
         "did not expect TS2677 for ElementTagNameMap[T] predicate, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn renamed_indexed_access_base_constraint_satisfies_element_constraints() {
+    let diagnostics = check_source_strict(
+        r#"
+interface Node {
+    nodeType: number;
+}
+
+interface Element extends Node {
+    tagName: string;
+}
+
+interface HTMLElement extends Element {
+    [index: number]: HTMLElement;
+}
+
+interface LegacyTagMap {
+    acronym: HTMLElement;
+    applet: HTMLUnknownElement;
+}
+
+interface HTMLUnknownElement extends HTMLElement {
+    unknown: string;
+}
+
+interface HTMLCollectionOf<T extends Element> {
+    item(index: number): T;
+}
+
+interface QueryRoot {
+    getElementsByLegacyTagName<K extends keyof LegacyTagMap>(
+        qualifiedName: K
+    ): HTMLCollectionOf<LegacyTagMap[K]>;
+}
+"#,
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT),
+        "did not expect TS2344 for renamed tag map indexed access satisfying Element, got: {diagnostics:?}"
+    );
+}

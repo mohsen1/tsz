@@ -22,19 +22,38 @@ The goal is a correct, fast, drop-in replacement for `tsc`, with both native and
 TypeScript is intentionally unsound. `tsz` keeps a sound core solver and layers a compatibility
 engine on top to match TypeScript behavior while preserving correctness where possible.
 
-### Status
+## Performance
 
-> [!NOTE]
-> **Nearly complete.** TypeScript support is in its final compiler stages, with remaining work focused on performance tuning and LSP support in WebAssembly.
+`tsz` is **2.21x faster** across 49 successful micro benchmark cases. Large-project performance work is still underway.
 
-`tsz` will be released after TypeScript 6 stable is released. `tsz` will only be compatible with TypeScript 6, not any older versions.
+```
+tsz:  [█████████░░░░░░░░░░░] 3s
+tsgo: [████████████████████] 7s
+```
 
+## Install
+
+> [!WARNING]
+> `tsz` is pre-release software and not yet a drop-in replacement for `tsc`.
+> Diagnostics, inference, and emit may differ from TypeScript today. Use for
+> experimentation only.
+
+**macOS & Linux**
+
+```sh
+curl -fsSL https://tsz.dev/install | sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://tsz.dev/install.ps1 | iex
+```
+
+## TypeScript compatiblity 
 <!-- TS_VERSION_START -->
 Currently targeting `TypeScript`@`6.0.3`
 <!-- TS_VERSION_END -->
-
-## Progress
-
 ### Type Checker
 
 To ensure tsz is a drop-in replacement for `tsc`, we run the official TypeScript conformance
@@ -43,7 +62,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [████████████████████] 99.6% (12,537/12,582 tests)
+Progress: [████████████████████] 100.0% (12,582/12,582 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -57,8 +76,8 @@ to ensure correct code generation.
 
 <!-- EMIT_START -->
 ```
-JavaScript:  [███████████████████░] 93.6% (12,662 / 13,526 tests)
-Declaration: [████████████████░░░░] 82.0% (1,417 / 1,727 tests)
+JavaScript:  [███████████████████░] 94.8% (12,820 / 13,530 tests)
+Declaration: [██████████████████░░] 91.7% (1,531 / 1,669 tests)
 ```
 <!-- EMIT_END -->
 
@@ -69,7 +88,7 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 
 <!-- FOURSLASH_START -->
 ```
-Progress: [████████████████████] 100.0% (6,562 / 6,562 tests)
+Progress: [████████████████████] 99.9% (6,558 / 6,562 tests)
 ```
 <!-- FOURSLASH_END -->
 

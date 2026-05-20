@@ -8,6 +8,7 @@
 //! 3. Make transform state explicit and easier to pass around
 //! 4. Enable transforms to manage their own state without bloating Printer
 
+use crate::context::target_facts::EmitTargetFacts;
 use crate::emitter::PrinterOptions;
 use crate::transforms::block_scoping_es5::BlockScopeState;
 use crate::transforms::private_fields_es5::PrivateFieldState;
@@ -137,6 +138,10 @@ pub struct ModuleTransformState {
     /// `exports.A = A;` emission in `export { A }` re-export handling.
     pub iife_exported_names: FxHashSet<String>,
 
+    /// Export names already folded for a local namespace binding. This keeps
+    /// `export { N as Alias }` from suppressing unrelated aliases of `N`.
+    pub iife_exported_bindings: FxHashMap<String, FxHashSet<String>>,
+
     /// Names whose `exports.X = X;` was already emitted inline after their
     /// declaration. Used to suppress duplicate emission in `export { X }` clauses.
     pub inline_exported_names: FxHashSet<String>,
@@ -207,6 +212,9 @@ pub struct EmitContext {
     /// Whether to emit ES5 (classes→IIFEs, arrows→functions)
     pub target_es5: bool,
 
+    /// Target-derived facts used by the direct-to-target emit plan.
+    pub target_facts: EmitTargetFacts,
+
     /// Whether exponentiation (`**` / `**=`) needs downleveling (target < ES2016)
     pub needs_es2016_lowering: bool,
 
@@ -263,12 +271,23 @@ pub struct EmitContext {
     /// File-level counter for generated `arguments_N` capture bindings.
     pub arguments_capture_counter: u32,
 
+    /// Async ES2015+ lowering emits a nested `function*`. When a `var`
+    /// declaration in that generator redeclares an async parameter, tsc hoists
+    /// the declaration and leaves an assignment at the original site.
+    pub async_generator_shadowed_parameter_names: Vec<String>,
+
     /// Auto-detect module mode: if true, detect imports/exports and apply `CommonJS`
     pub auto_detect_module: bool,
 
     /// Original module kind before wrapper body override (AMD/UMD → `CommonJS`).
     /// Used by export assignment to emit `return X` instead of `module.exports = X` in AMD.
     pub original_module_kind: Option<ModuleKind>,
+
+    /// Outer `options.module` saved while a CommonJS-export-body mask is
+    /// active. Kept separate from `original_module_kind` so the AMD/UMD/System
+    /// wrapper kind survives a nested CJS-export mask.
+    pub cjs_export_body_outer_module: Option<ModuleKind>,
+
     pub file_is_module: bool,
 }
 
@@ -280,10 +299,13 @@ impl EmitContext {
 
     /// Create a new `EmitContext` with the given options
     pub fn with_options(options: PrinterOptions) -> Self {
+        let target_facts = EmitTargetFacts::from_target(options.target);
+        let initial_counters = options.bundle_module_counters.clone();
         let mut ctx = Self {
             options,
             flags: EmitFlags::default(),
             target_es5: false,
+            target_facts,
             needs_es2016_lowering: false,
             needs_es2018_lowering: false,
             needs_es2019_lowering: false,
@@ -293,7 +315,10 @@ impl EmitContext {
             needs_async_lowering: false,
             arrow_state: ArrowTransformState::default(),
             destructuring_state: DestructuringState::default(),
-            module_state: ModuleTransformState::default(),
+            module_state: ModuleTransformState {
+                module_temp_counters: initial_counters,
+                ..Default::default()
+            },
             block_scope_state: BlockScopeState::default(),
             private_field_state: PrivateFieldState::default(),
             emit_await_as_yield: false,
@@ -301,8 +326,10 @@ impl EmitContext {
             rewrite_arguments_to_arguments_1: false,
             arguments_capture_name: None,
             arguments_capture_counter: 0,
+            async_generator_shadowed_parameter_names: Vec::new(),
             auto_detect_module: false,
             original_module_kind: None,
+            cjs_export_body_outer_module: None,
             file_is_module: false,
         };
         ctx.sync_target_gates();
@@ -311,14 +338,15 @@ impl EmitContext {
 
     const fn sync_target_gates(&mut self) {
         let target = self.options.target;
-        self.target_es5 = matches!(target, ScriptTarget::ES3 | ScriptTarget::ES5);
-        self.needs_es2016_lowering = !target.supports_es2016();
-        self.needs_es2018_lowering = !target.supports_es2018();
-        self.needs_es2019_lowering = !target.supports_es2019();
-        self.needs_es2020_lowering = !target.supports_es2020();
-        self.needs_es2021_lowering = !target.supports_es2021();
-        self.needs_es2022_lowering = !target.supports_es2022();
-        self.needs_async_lowering = !target.supports_es2017();
+        self.target_facts = EmitTargetFacts::from_target(target);
+        self.target_es5 = self.target_facts.legacy_es5_or_lower;
+        self.needs_es2016_lowering = self.target_facts.needs_es2016_lowering;
+        self.needs_es2018_lowering = self.target_facts.needs_es2018_lowering;
+        self.needs_es2019_lowering = self.target_facts.needs_es2019_lowering;
+        self.needs_es2020_lowering = self.target_facts.needs_es2020_lowering;
+        self.needs_es2021_lowering = self.target_facts.needs_es2021_lowering;
+        self.needs_es2022_lowering = self.target_facts.needs_es2022_lowering;
+        self.needs_async_lowering = self.target_facts.needs_async_lowering;
     }
 
     /// Set the full script target and refresh all derived target gates.
@@ -379,20 +407,49 @@ impl EmitContext {
         self.options.module.is_commonjs()
     }
 
-    /// Check if we're effectively in `CommonJS` mode, even when the module kind
-    /// is temporarily set to `None` inside export body emission.
+    /// Returns true when the original module kind was AMD, UMD, or System.
     ///
-    /// During CJS export emission, `options.module` is temporarily set to `None`
-    /// to prevent re-applying CJS transforms. But JSX calls still need to know
-    /// the true module kind to emit `(0, jsx_runtime_1.jsx)()` vs `_jsx()`.
+    /// The wrapper temporarily overrides `options.module` to `CommonJS` while
+    /// emitting the body, so callers can check this to distinguish wrapper
+    /// body emission from genuine CJS output.
+    pub const fn is_inside_module_wrapper_body(&self) -> bool {
+        matches!(
+            self.original_module_kind,
+            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+        )
+    }
+
+    /// Module kind that should drive emission decisions in a sub-emitter
+    /// (ES5 class lowering, namespace IIFE, etc.). Picks the CommonJS-export
+    /// mask first, then the wrapper kind, then `options.module`.
+    pub const fn outer_module_kind(&self) -> ModuleKind {
+        if let Some(outer) = self.cjs_export_body_outer_module {
+            return outer;
+        }
+        if let Some(original) = self.original_module_kind {
+            return original;
+        }
+        self.options.module
+    }
+
+    /// True when the emitted body is `CommonJS`-flavored: a real `CommonJS`
+    /// module, a `CommonJS`-export body mask, or an AMD/UMD/System wrapper
+    /// (whose body exposes `require`/`exports`).
     pub const fn is_effectively_commonjs(&self) -> bool {
         if self.options.module.is_commonjs() {
             return true;
         }
-        if let Some(original) = self.original_module_kind {
-            return original.is_commonjs();
+        if let Some(outer) = self.cjs_export_body_outer_module
+            && outer.is_commonjs()
+        {
+            return true;
         }
-        false
+        if let Some(original) = self.original_module_kind
+            && original.is_commonjs()
+        {
+            return true;
+        }
+        self.is_inside_module_wrapper_body()
     }
 }
 

@@ -103,9 +103,11 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);
 
-        // Check readonly first — suppress TS2322 when TS2540/TS2542 fires.
+        // Check readonly first — compound assignment is a read-and-write, so any
+        // readonly diagnostic (TS2540 *or* TS2542) suppresses the cascading
+        // TS2322 because the write would never happen.
         let is_readonly_target = if !is_const {
-            self.check_readonly_assignment(left_idx, expr_idx)
+            self.check_readonly_assignment(left_idx, expr_idx).emitted()
         } else {
             false
         };

@@ -214,7 +214,17 @@ impl<'a> TypeDefinitionProvider<'a> {
 
     /// Find a type annotation child node within a declaration.
     fn find_type_annotation_child(&self, parent_idx: NodeIndex) -> Option<NodeIndex> {
-        // Scan children for type reference nodes
+        self.find_type_annotation_children(parent_idx)
+            .into_iter()
+            .next()
+    }
+
+    /// Find every type-node child of `parent_idx`, in arena order.
+    ///
+    /// Used by union/intersection resolution to enumerate all constituents
+    /// rather than truncating to the first one.
+    fn find_type_annotation_children(&self, parent_idx: NodeIndex) -> Vec<NodeIndex> {
+        let mut children = Vec::new();
         for (i, node) in self.arena.nodes.iter().enumerate() {
             let idx = NodeIndex(i as u32);
             let parent = self
@@ -222,15 +232,11 @@ impl<'a> TypeDefinitionProvider<'a> {
                 .get_extended(idx)
                 .map_or(NodeIndex::NONE, |ext| ext.parent);
 
-            // Check if this node is a child of parent
-            if parent == parent_idx {
-                // Check if this is a type node
-                if self.is_type_node(node.kind) {
-                    return Some(idx);
-                }
+            if parent == parent_idx && self.is_type_node(node.kind) {
+                children.push(idx);
             }
         }
-        None
+        children
     }
 
     /// Find a return type child node within a function declaration.
@@ -281,13 +287,34 @@ impl<'a> TypeDefinitionProvider<'a> {
             }
         }
 
-        // For union/intersection, we could return multiple locations
-        // For now, just return the first resolvable type
+        // For union/intersection, surface every constituent's definition.
+        // LSP allows multiple locations in a TypeDefinitionResult, so we
+        // recurse into each member, flatten the results, and dedupe by
+        // (file_path, range) while preserving declaration order.
         if node.kind == UNION_TYPE || node.kind == INTERSECTION_TYPE {
-            // Find first type child and resolve it
-            if let Some(first_type) = self.find_type_annotation_child(type_node) {
-                return self.resolve_type_to_location(root, first_type);
+            let members = self.find_type_annotation_children(type_node);
+            if members.is_empty() {
+                return None;
             }
+
+            let mut locations: Vec<Location> = Vec::new();
+            for member in members {
+                if let Some(member_locations) = self.resolve_type_to_location(root, member) {
+                    for loc in member_locations {
+                        if !locations.iter().any(|existing| {
+                            existing.file_path == loc.file_path && existing.range == loc.range
+                        }) {
+                            locations.push(loc);
+                        }
+                    }
+                }
+            }
+
+            return if locations.is_empty() {
+                None
+            } else {
+                Some(locations)
+            };
         }
 
         None

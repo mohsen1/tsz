@@ -65,3 +65,19 @@ fn cjs_inline_export_skips_type_only_import_equals() {
         "Type-only import-equals alias should not produce a runtime export.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn cjs_export_import_equals_missing_trailing_entity_identifier_emits_assignment() {
+    let source = "export import x = N.A.\n";
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("exports.x = N.A.;"),
+        "Exported recovered import-equals entity name should still emit the CJS export assignment.\nOutput:\n{output}"
+    );
+}

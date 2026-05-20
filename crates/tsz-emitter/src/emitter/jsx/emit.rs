@@ -1,5 +1,4 @@
-use super::super::Printer;
-use super::super::core::JsxEmit;
+use super::super::{JsxEmit, ModuleKind, Printer};
 use super::{
     AttrGroup, JsxAttrInfo, JsxAttrValue, JsxAttrsInfo, JsxChildSep, decode_jsx_entities,
     escape_jsx_text_for_js_with_quote, needs_quoting, process_jsx_text,
@@ -9,13 +8,71 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+fn skip_jsx_quoted_text(bytes: &[u8], mut pos: usize, end: usize) -> usize {
+    let quote = bytes[pos];
+    pos += 1;
+    while pos < end {
+        if bytes[pos] == b'\\' {
+            pos = (pos + 2).min(end);
+        } else if bytes[pos] == quote {
+            return pos + 1;
+        } else {
+            pos += 1;
+        }
+    }
+    end
+}
+
+fn skip_jsx_braced_expression(bytes: &[u8], mut pos: usize, end: usize) -> usize {
+    let mut depth = 1usize;
+    pos += 1;
+    while pos < end {
+        match bytes[pos] {
+            b'\'' | b'"' | b'`' => {
+                pos = skip_jsx_quoted_text(bytes, pos, end);
+            }
+            b'/' if pos + 1 < end && bytes[pos + 1] == b'/' => {
+                pos += 2;
+                while pos < end && !matches!(bytes[pos], b'\n' | b'\r') {
+                    pos += 1;
+                }
+            }
+            b'/' if pos + 1 < end && bytes[pos + 1] == b'*' => {
+                pos += 2;
+                while pos + 1 < end {
+                    if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                        pos += 2;
+                        break;
+                    }
+                    pos += 1;
+                }
+            }
+            b'{' => {
+                depth += 1;
+                pos += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                pos += 1;
+                if depth == 0 {
+                    return pos;
+                }
+            }
+            _ => {
+                pos += 1;
+            }
+        }
+    }
+    end
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // JSX - Preserve Mode (default)
     // =========================================================================
 
     pub(in super::super) fn emit_jsx_element(&mut self, node: &Node) {
-        match self.ctx.options.jsx {
+        match self.effective_jsx_emit() {
             JsxEmit::React => self.emit_jsx_element_classic(node),
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => self.emit_jsx_element_automatic(node),
             _ => self.emit_jsx_element_preserve(node),
@@ -23,7 +80,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(in super::super) fn emit_jsx_self_closing_element(&mut self, node: &Node) {
-        match self.ctx.options.jsx {
+        match self.effective_jsx_emit() {
             JsxEmit::React => self.emit_jsx_self_closing_classic(node),
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => {
                 self.emit_jsx_self_closing_automatic(node);
@@ -33,7 +90,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(in super::super) fn emit_jsx_fragment(&mut self, node: &Node) {
-        match self.ctx.options.jsx {
+        match self.effective_jsx_emit() {
             JsxEmit::React => self.emit_jsx_fragment_classic(node),
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => self.emit_jsx_fragment_automatic(node),
             _ => self.emit_jsx_fragment_preserve(node),
@@ -166,7 +223,14 @@ impl<'a> Printer<'a> {
         let attributes = opening.attributes;
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
 
-        self.emit_create_element_call(tag_name, attributes, &children);
+        self.emit_create_element_call(tag_name, attributes, opening_node.end, &children);
+        let trailing_start = self
+            .arena
+            .get(jsx.closing_element)
+            .map_or(node.end, |closing| {
+                self.find_token_end_before_trivia(closing.pos, closing.end)
+            });
+        self.emit_jsx_transformed_trailing_comments(trailing_start);
     }
 
     fn emit_jsx_self_closing_classic(&mut self, node: &Node) {
@@ -177,7 +241,11 @@ impl<'a> Printer<'a> {
         let tag_name = jsx.tag_name;
         let attributes = jsx.attributes;
 
-        self.emit_create_element_call(tag_name, attributes, &[]);
+        self.emit_create_element_call(tag_name, attributes, node.end, &[]);
+        let trailing_start = self
+            .find_jsx_self_closing_tag_end(node)
+            .unwrap_or_else(|| self.find_token_end_before_trivia(node.pos, node.end));
+        self.emit_jsx_transformed_trailing_comments(trailing_start);
     }
 
     fn emit_jsx_fragment_classic(&mut self, node: &Node) {
@@ -189,9 +257,9 @@ impl<'a> Printer<'a> {
         let factory = self.get_jsx_factory();
         let fragment_factory = self.get_jsx_fragment_factory();
 
-        self.write(&factory);
+        self.emit_jsx_factory_call_target(&factory);
         self.write("(");
-        self.write(&fragment_factory);
+        self.emit_jsx_factory_reference(&fragment_factory);
         self.write(", null");
 
         // Children -- use multiline when multiple children or any child is a JSX element
@@ -218,6 +286,131 @@ impl<'a> Printer<'a> {
         if multiline {
             self.decrease_indent();
         }
+        let trailing_start = self
+            .arena
+            .get(jsx.closing_fragment)
+            .map_or(node.end, |closing| {
+                self.find_token_end_before_trivia(closing.pos, closing.end)
+            });
+        self.emit_jsx_transformed_trailing_comments(trailing_start);
+    }
+
+    fn emit_jsx_transformed_trailing_comments(&mut self, end_pos: u32) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        if self.emit_jsx_trailing_comments_from_cursor(end_pos) {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        for comment in crate::emitter::get_trailing_comment_ranges(text, end_pos as usize) {
+            self.write_space();
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment.pos as usize, comment.end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment.pos));
+            }
+            while self.comment_emit_idx < self.all_comments.len()
+                && self.all_comments[self.comment_emit_idx].pos <= comment.pos
+            {
+                self.comment_emit_idx += 1;
+            }
+            if comment.has_trailing_newline {
+                self.write_line();
+            }
+        }
+    }
+
+    fn find_jsx_self_closing_tag_end(&self, node: &Node) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut pos = node.pos as usize;
+        let end = (node.end as usize).min(bytes.len());
+
+        while pos + 1 < end {
+            match bytes[pos] {
+                b'\'' | b'"' | b'`' => {
+                    pos = skip_jsx_quoted_text(bytes, pos, end);
+                }
+                b'{' => {
+                    pos = skip_jsx_braced_expression(bytes, pos, end);
+                }
+                b'/' if bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < end && !matches!(bytes[pos], b'\n' | b'\r') {
+                        pos += 1;
+                    }
+                }
+                b'/' if bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < end {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                b'/' if bytes[pos + 1] == b'>' => {
+                    return Some((pos + 2) as u32);
+                }
+                _ => {
+                    pos += 1;
+                }
+            }
+        }
+
+        None
+    }
+
+    fn emit_jsx_trailing_comments_from_cursor(&mut self, end_pos: u32) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+
+        let mut emitted = false;
+        let bytes = text.as_bytes();
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            let comment_pos = comment.pos;
+            let comment_end = comment.end;
+            let has_trailing_new_line = comment.has_trailing_new_line;
+
+            if comment_pos < end_pos {
+                self.comment_emit_idx += 1;
+                continue;
+            }
+
+            let gap_start = std::cmp::min(end_pos as usize, bytes.len());
+            let gap_end = std::cmp::min(comment_pos as usize, bytes.len());
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r')
+            {
+                break;
+            }
+
+            self.write_space();
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+            }
+            self.comment_emit_idx += 1;
+            emitted = true;
+            if has_trailing_new_line {
+                self.write_line();
+            }
+        }
+
+        emitted
     }
 
     /// Emit `factory(tag, props, ...children)`
@@ -225,6 +418,7 @@ impl<'a> Printer<'a> {
         &mut self,
         tag_name: NodeIndex,
         attributes: NodeIndex,
+        attribute_comment_end: u32,
         children: &[NodeIndex],
     ) {
         let factory = self.get_jsx_factory();
@@ -234,7 +428,7 @@ impl<'a> Printer<'a> {
         let filtered_children = self.collect_jsx_children(children);
         let has_spread = attrs_info.has_spread;
 
-        self.write(&factory);
+        self.emit_jsx_factory_call_target(&factory);
         self.write("(");
 
         // Tag name
@@ -249,7 +443,7 @@ impl<'a> Printer<'a> {
         } else {
             self.emit_jsx_attrs_as_object(&attrs_info.attrs);
         }
-        self.skip_jsx_attribute_line_comments(attributes);
+        self.skip_jsx_attribute_line_comments(attributes, attribute_comment_end);
 
         // Children -- tsc formats children on separate indented lines when there are
         // multiple children OR when any child is itself a JSX element (nested createElement).
@@ -322,8 +516,9 @@ impl<'a> Printer<'a> {
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
         let filtered_children = self.collect_jsx_children(&children);
         let is_jsxs = filtered_children.len() > 1;
-        let is_cjs = self.ctx.is_effectively_commonjs();
-        let is_dev = matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev);
+        let is_cjs = self.ctx.is_effectively_commonjs()
+            && !matches!(self.ctx.original_module_kind, Some(ModuleKind::System));
+        let is_dev = matches!(self.effective_jsx_emit(), JsxEmit::ReactJsxDev);
         let func_name = if is_dev {
             "jsxDEV"
         } else if is_jsxs {
@@ -416,8 +611,9 @@ impl<'a> Printer<'a> {
             .collect();
         let has_non_key_attrs = !non_key_attrs.is_empty() || attrs_info.has_spread;
 
-        let is_cjs = self.ctx.is_effectively_commonjs();
-        let is_dev = matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev);
+        let is_cjs = self.ctx.is_effectively_commonjs()
+            && !matches!(self.ctx.original_module_kind, Some(ModuleKind::System));
+        let is_dev = matches!(self.effective_jsx_emit(), JsxEmit::ReactJsxDev);
         let func_name = if is_dev {
             "jsxDEV"
         } else if is_jsxs {
@@ -526,7 +722,8 @@ impl<'a> Printer<'a> {
     ) {
         let attrs_info = self.collect_jsx_attributes_info(attributes);
         let filtered_children = self.collect_jsx_children(children);
-        let is_cjs = self.ctx.is_effectively_commonjs();
+        let is_cjs = self.ctx.is_effectively_commonjs()
+            && !matches!(self.ctx.original_module_kind, Some(ModuleKind::System));
 
         if is_cjs {
             let base_var = self.jsx_cjs_base_var();
@@ -589,6 +786,41 @@ impl<'a> Printer<'a> {
             .to_string()
     }
 
+    fn emit_jsx_factory_call_target(&mut self, factory: &str) {
+        self.emit_jsx_factory_reference_with_context(factory, true);
+    }
+
+    fn emit_jsx_factory_reference(&mut self, factory: &str) {
+        self.emit_jsx_factory_reference_with_context(factory, false);
+    }
+
+    fn emit_jsx_factory_reference_with_context(&mut self, factory: &str, call_target: bool) {
+        let (root, suffix) = factory
+            .split_once('.')
+            .map_or((factory, ""), |(root, rest)| (root, rest));
+        if root.is_empty() {
+            self.write(factory);
+            return;
+        }
+
+        if let Some(substitution) = self.commonjs_named_import_substitutions.get(root).cloned() {
+            if call_target && suffix.is_empty() && !self.in_system_execute_body {
+                self.write("(0, ");
+                self.write(&substitution);
+                self.write(")");
+            } else {
+                self.write(&substitution);
+                if !suffix.is_empty() {
+                    self.write(".");
+                    self.write(suffix);
+                }
+            }
+            return;
+        }
+
+        self.write(factory);
+    }
+
     /// Emit a JSX tag name as a function argument.
     /// Intrinsic elements (lowercase) -> string literal.
     /// Component elements (uppercase/dotted/namespaced) -> identifier/expression.
@@ -607,7 +839,7 @@ impl<'a> Printer<'a> {
                     self.write(text);
                     self.write("\"");
                 } else {
-                    self.write(text);
+                    self.emit(tag_name);
                 }
                 return;
             }
@@ -851,7 +1083,13 @@ impl<'a> Printer<'a> {
         if node.is_identifier()
             && let Some(ident) = self.arena.get_identifier(node)
         {
-            return self.arena.resolve_identifier_text(ident).to_string();
+            let cooked = self.arena.resolve_identifier_text(ident);
+            if !needs_quoting(cooked)
+                && let Some(original) = ident.original_text.as_deref()
+            {
+                return original.to_string();
+            }
+            return cooked.to_string();
         }
 
         if node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME
@@ -891,7 +1129,10 @@ impl<'a> Printer<'a> {
             if let Some(expr) = self.arena.get_jsx_expression(node)
                 && expr.expression.is_some()
             {
-                return JsxAttrValue::Expr(expr.expression);
+                return JsxAttrValue::Expr {
+                    expr: expr.expression,
+                    trailing_comment_scope: Some(init_idx),
+                };
             }
             if let Some(expr) = self.arena.get_jsx_expression(node)
                 && expr.dot_dot_dot_token
@@ -902,7 +1143,10 @@ impl<'a> Printer<'a> {
         }
 
         // JSX element used as attr value
-        JsxAttrValue::Expr(init_idx)
+        JsxAttrValue::Expr {
+            expr: init_idx,
+            trailing_comment_scope: None,
+        }
     }
 
     /// Collect non-trivial JSX children. Filters out whitespace-only text nodes
@@ -965,14 +1209,14 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn skip_jsx_attribute_line_comments(&mut self, attributes: NodeIndex) {
+    fn skip_jsx_attribute_line_comments(&mut self, attributes: NodeIndex, max_pos: u32) {
         let Some(attrs_node) = self.arena.get(attributes) else {
             return;
         };
 
         while self.comment_emit_idx < self.all_comments.len() {
             let comment = &self.all_comments[self.comment_emit_idx];
-            if comment.pos >= attrs_node.pos && comment.end <= attrs_node.end {
+            if comment.pos >= attrs_node.pos && comment.end <= max_pos {
                 if !comment.is_multi_line {
                     self.comment_emit_idx += 1;
                     continue;
@@ -1016,10 +1260,24 @@ impl<'a> Printer<'a> {
             return false;
         }
         // Check that there are no comments inside the expression range
-        !self
+        let has_tracked_comment = self
             .all_comments
             .iter()
-            .any(|c| c.pos >= node.pos && c.end <= node.end)
+            .any(|c| c.pos >= node.pos && c.end <= node.end);
+        if has_tracked_comment {
+            return false;
+        }
+        let first_unfiltered = self
+            .source_comment_ranges
+            .partition_point(|comment| comment.end <= node.pos);
+        if self.source_comment_ranges[first_unfiltered..]
+            .iter()
+            .take_while(|comment| comment.pos < node.end)
+            .any(|comment| comment.pos >= node.pos && comment.end <= node.end)
+        {
+            return false;
+        }
+        true
     }
 
     /// Walk all JSX children in source order, emitting non-empty children and
@@ -1211,10 +1469,44 @@ impl<'a> Printer<'a> {
             JsxAttrValue::Bool(b) => {
                 self.write(if *b { "true" } else { "false" });
             }
-            JsxAttrValue::Expr(idx) => {
-                self.emit(*idx);
+            JsxAttrValue::Expr {
+                expr,
+                trailing_comment_scope,
+            } => {
+                if let Some(scope_idx) = trailing_comment_scope
+                    && let Some(scope_node) = self.arena.get(*scope_idx)
+                {
+                    self.skip_jsx_attribute_expr_trailing_comments(scope_node);
+                }
+                self.emit(*expr);
             }
             JsxAttrValue::EmptyExpression => {}
+        }
+    }
+
+    fn skip_jsx_attribute_expr_trailing_comments(&mut self, scope_node: &Node) {
+        let Some(text) = self.source_text else {
+            return;
+        };
+        let actual_end = self.find_token_end_before_trivia(scope_node.pos, scope_node.end);
+        let bytes = text.as_bytes();
+        while self.comment_emit_idx < self.all_comments.len() {
+            let c_pos = self.all_comments[self.comment_emit_idx].pos;
+            if c_pos < actual_end {
+                break;
+            }
+            if c_pos >= scope_node.end {
+                break;
+            }
+            let gap_start = actual_end as usize;
+            let gap_end = std::cmp::min(c_pos as usize, bytes.len());
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r')
+            {
+                break;
+            }
+            self.comment_emit_idx += 1;
         }
     }
 }

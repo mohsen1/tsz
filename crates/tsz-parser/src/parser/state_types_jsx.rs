@@ -177,7 +177,7 @@ impl ParserState {
         // Parse return type (supports type predicates: param is T)
         let type_annotation = self.parse_return_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_function_type(
             syntax_kind_ext::FUNCTION_TYPE,
@@ -210,7 +210,7 @@ impl ParserState {
         // Parse return type (supports type predicates: param is T)
         let type_annotation = self.parse_return_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_function_type(
             syntax_kind_ext::FUNCTION_TYPE,
@@ -245,7 +245,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::EqualsGreaterThanToken);
         let type_annotation = self.parse_return_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         // Use ConstructorType kind - reuse FunctionTypeData since structure is the same
         self.arena.add_function_type(
@@ -764,7 +764,7 @@ impl ParserState {
                     && let Some(close_data) = self.arena.get_jsx_closing(close_node)
                 {
                     let close_tag = close_data.tag_name;
-                    if !close_tag.is_none() && !self.jsx_tag_names_match(open_tag, close_tag) {
+                    if close_tag.is_some() && !self.jsx_tag_names_match(open_tag, close_tag) {
                         // Check if closing matches parent's tag (tsc pattern)
                         let matches_parent = currently_opened_tag
                             .is_some_and(|pt| self.jsx_tag_names_match(pt, close_tag));

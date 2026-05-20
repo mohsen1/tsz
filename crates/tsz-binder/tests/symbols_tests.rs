@@ -478,6 +478,72 @@ mod symbol_arena_tests {
         assert_eq!(deserialized.find_by_name("nonexistent"), None);
         assert!(deserialized.find_all_by_name("nonexistent").is_empty());
     }
+
+    #[test]
+    fn reserve_symbol_ids_default_arena_assigns_zero_based_ids() {
+        let mut arena = SymbolArena::new();
+        arena.reserve_symbol_ids(3);
+
+        assert_eq!(arena.len(), 3);
+        let ids: Vec<_> = arena.iter().map(|s| s.id).collect();
+        assert_eq!(ids, vec![SymbolId(0), SymbolId(1), SymbolId(2)]);
+
+        // Placeholders are reachable through their stored ID.
+        assert_eq!(arena.get(SymbolId(0)).map(|s| s.id), Some(SymbolId(0)));
+        assert_eq!(arena.get(SymbolId(2)).map(|s| s.id), Some(SymbolId(2)));
+    }
+
+    #[test]
+    fn reserve_symbol_ids_offsets_ids_by_base_offset() {
+        let mut arena = SymbolArena::new_with_base(1000);
+        arena.reserve_symbol_ids(3);
+
+        assert_eq!(arena.len(), 3);
+
+        // Stored IDs must reflect base_offset, mirroring alloc/alloc_from.
+        let ids: Vec<_> = arena.iter().map(|s| s.id).collect();
+        assert_eq!(ids, vec![SymbolId(1000), SymbolId(1001), SymbolId(1002)]);
+
+        // get/get_mut treat (id - base_offset) as the slot index, so offset IDs
+        // round-trip and IDs below base_offset stay rejected.
+        assert_eq!(
+            arena.get(SymbolId(1000)).map(|s| s.id),
+            Some(SymbolId(1000))
+        );
+        assert_eq!(
+            arena.get(SymbolId(1002)).map(|s| s.id),
+            Some(SymbolId(1002))
+        );
+        assert!(arena.get(SymbolId(0)).is_none());
+        assert!(arena.get(SymbolId(2)).is_none());
+    }
+
+    #[test]
+    fn reserve_symbol_ids_then_alloc_continues_with_offset() {
+        let mut arena = SymbolArena::new_with_base(1000);
+        arena.reserve_symbol_ids(2);
+
+        // The next alloc must keep using base_offset and pick up where the
+        // reserved range left off.
+        let id = arena.alloc(symbol_flags::FUNCTION, "f".to_string());
+        assert_eq!(id, SymbolId(1002));
+        assert_eq!(arena.len(), 3);
+        assert_eq!(arena.get(id).map(|s| s.escaped_name.as_str()), Some("f"));
+    }
+
+    #[test]
+    fn reserve_symbol_ids_is_idempotent_when_count_not_greater() {
+        let mut arena = SymbolArena::new_with_base(1000);
+        arena.reserve_symbol_ids(2);
+        let before: Vec<_> = arena.iter().map(|s| s.id).collect();
+
+        arena.reserve_symbol_ids(2); // no-op
+        arena.reserve_symbol_ids(1); // also no-op (count <= current_len)
+
+        let after: Vec<_> = arena.iter().map(|s| s.id).collect();
+        assert_eq!(before, after);
+        assert_eq!(arena.len(), 2);
+    }
 }
 
 // =============================================================================

@@ -1,8 +1,9 @@
 //! Parser state - literal, binding pattern, and compound expression parsing.
 
 use super::state::{
-    CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN, CONTEXT_FLAG_GENERATOR,
-    CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION, CONTEXT_FLAG_STATIC_BLOCK, ParserState,
+    CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN, CONTEXT_FLAG_FUNCTION_BODY,
+    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION, CONTEXT_FLAG_STATIC_BLOCK,
+    ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -1034,6 +1035,7 @@ impl ParserState {
         let start_pos = self.token_pos();
         let is_unterminated = self.scanner.is_unterminated();
         let text = self.scanner.get_token_value_ref().to_string();
+        let raw_text = Some(self.scanner.get_token_text_ref().to_string());
         let has_invalid_escape =
             (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) != 0;
         let end_pos = self.token_end();
@@ -1050,7 +1052,7 @@ impl ParserState {
             end_pos,
             LiteralData {
                 text,
-                raw_text: None,
+                raw_text,
                 value: None,
                 has_invalid_escape,
             },
@@ -1076,6 +1078,7 @@ impl ParserState {
 
     fn parse_template_head(&mut self) -> NodeIndex {
         let head_text = self.scanner.get_token_value_ref().to_string();
+        let raw_text = Some(self.scanner.get_token_text_ref().to_string());
         let has_invalid_escape =
             (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) != 0;
         let head_start = self.token_pos();
@@ -1089,7 +1092,7 @@ impl ParserState {
             head_end,
             LiteralData {
                 text: head_text,
-                raw_text: None,
+                raw_text,
                 value: None,
                 has_invalid_escape,
             },
@@ -1204,6 +1207,7 @@ impl ParserState {
 
         let is_unterminated = self.scanner.is_unterminated();
         let literal_text = self.scanner.get_token_value_ref().to_string();
+        let raw_text = Some(self.scanner.get_token_text_ref().to_string());
         let has_invalid_escape =
             (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) != 0;
         let literal_kind = if is_tail {
@@ -1226,7 +1230,7 @@ impl ParserState {
             literal_end,
             LiteralData {
                 text: literal_text,
-                raw_text: None,
+                raw_text,
                 value: None,
                 has_invalid_escape,
             },
@@ -2106,7 +2110,11 @@ impl ParserState {
         };
 
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_block()
+            let saved_body_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
+            let block = self.parse_block();
+            self.context_flags = saved_body_flags;
+            block
         } else {
             if had_open_paren && !self.is_token(SyntaxKind::CloseBraceToken) {
                 use tsz_common::diagnostics::diagnostic_codes;
@@ -2199,7 +2207,11 @@ impl ParserState {
         }
 
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_block()
+            let saved_body_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
+            let block = self.parse_block();
+            self.context_flags = saved_body_flags;
+            block
         } else {
             if had_open_paren && !self.is_token(SyntaxKind::CloseBraceToken) {
                 use tsz_common::diagnostics::diagnostic_codes;
@@ -2303,6 +2315,7 @@ impl ParserState {
                 self.context_flags |= CONTEXT_FLAG_ASYNC;
             }
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
+            self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
             self.push_label_scope();
             let body = if self.is_token(SyntaxKind::OpenBraceToken) {
                 self.parse_block()
@@ -2390,6 +2403,7 @@ impl ParserState {
         if asterisk {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
+        self.context_flags |= CONTEXT_FLAG_FUNCTION_BODY;
 
         let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
         let mut body_already_consumed_by_recovery = false;

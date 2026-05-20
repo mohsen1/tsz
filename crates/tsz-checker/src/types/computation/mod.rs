@@ -10,6 +10,7 @@
 //! - `call_display` — display skeleton and constructor-propagation helpers for calls
 //! - `call_helpers` — shared helpers for call/new expressions
 //! - `complex` — new expression type computation core
+//! - `complex_contextual_application` — contextual application comparison helpers
 //! - `complex_new_target` — new expression target validation and abstract constructor detection
 //! - `complex_js_constructor` — JS constructor instance type synthesis
 //! - `expression_guards` — expression-shape helpers for diagnostics/contextual typing
@@ -34,12 +35,17 @@ pub(crate) mod call_finalize;
 pub(crate) mod call_helpers;
 pub(crate) mod call_inference;
 pub(crate) mod call_result;
+mod call_result_signatures;
 pub(crate) mod complex;
+mod complex_constructor_inference;
 pub(crate) mod complex_constructors;
+mod complex_contextual_application;
+mod complex_contextual_new;
 pub(crate) mod complex_js_constructor;
 pub(crate) mod complex_new_target;
 pub(crate) mod contextual;
 pub(crate) mod expression_guards;
+pub(crate) mod generic_new_inference;
 pub mod helpers;
 pub(crate) mod identifier;
 pub(crate) mod identifier_flow;
@@ -48,5 +54,6 @@ pub(crate) mod object_literal;
 pub(crate) mod object_literal_circularity;
 pub(crate) mod object_literal_context;
 pub(crate) mod object_literal_support;
+pub(crate) mod object_literal_widening;
 pub(crate) mod tagged_template;
 pub(crate) mod type_operators;

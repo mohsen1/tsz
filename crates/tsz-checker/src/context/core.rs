@@ -9,7 +9,10 @@ use std::sync::Arc;
 
 use crate::control_flow::FlowGraph;
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
-use crate::module_resolution::module_specifier_candidates;
+use crate::module_resolution::{
+    build_file_name_index, module_specifier_candidates, probe_file_name_index,
+    resolve_specifier_via_file_index,
+};
 use tsz_binder::symbols::StableLocation;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_parser::parser::NodeIndex;
@@ -99,12 +102,13 @@ impl TypeCache {
 impl<'a> CheckerContext<'a> {
     /// Resolve a `SymbolId` to its owning file index.
     ///
-    /// Checks the shared `global_symbol_file_index` first (pre-built, read-only,
-    /// no `RefCell` overhead), then falls back to the layered
-    /// `cross_file_symbol_targets` overlay for dynamically-discovered mappings.
+    /// Checks the layered `cross_file_symbol_targets` overlay first, then falls
+    /// back to the shared `global_symbol_file_index` base map.
     /// Returns `None` if the symbol has no known cross-file owner.
     pub fn resolve_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
-        // Check shared base map first (covers all pre-computed entries, no RefCell cost)
+        if let Some(idx) = self.resolve_dynamic_symbol_file_index(sym_id) {
+            return Some(idx);
+        }
         if let Some(&idx) = self
             .global_symbol_file_index
             .as_ref()
@@ -112,6 +116,11 @@ impl<'a> CheckerContext<'a> {
         {
             return Some(idx);
         }
+        None
+    }
+
+    /// Resolve only dynamically-discovered `SymbolId` ownership.
+    pub fn resolve_dynamic_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
         self.cross_file_symbol_targets.borrow().get(sym_id)
     }
 
@@ -123,12 +132,11 @@ impl<'a> CheckerContext<'a> {
             || self.cross_file_symbol_targets.borrow().contains_key(sym_id)
     }
 
-    /// Register a dynamically-discovered `SymbolId` → file index mapping
-    /// in the local overlay.
+    /// Register a dynamically-discovered `SymbolId` → file index mapping in the local overlay.
     pub fn register_symbol_file_target(&self, sym_id: SymbolId, file_idx: usize) {
         self.cross_file_symbol_targets
             .borrow_mut()
-            .insert(sym_id, file_idx);
+            .register(sym_id, file_idx);
     }
 
     pub fn register_symbol_file_index(&self, sym_id: SymbolId, file_idx: usize) {
@@ -150,9 +158,9 @@ impl<'a> CheckerContext<'a> {
         );
     }
 
-    /// Attributed overlay inheritance. The counter call remains so the perf
-    /// dump tracks how often this handoff occurs, but entries-copied is zero
-    /// because the child now inherits an `Arc` parent snapshot.
+    /// Attributed overlay inheritance. Records the child's *visible* entry
+    /// count (own + transitive parents) — meaningful under the Arc-snapshot
+    /// model where nothing is physically copied. See `PERFORMANCE_PLAN.md` §4.T0.3.
     pub fn copy_symbol_file_targets_to_attributed(
         &self,
         child: &mut CheckerContext<'_>,
@@ -162,8 +170,8 @@ impl<'a> CheckerContext<'a> {
             .cross_file_symbol_targets
             .borrow_mut()
             .snapshot_for_child();
-        if parent_snapshot.is_some() {
-            tsz_common::perf_counters::record_overlay_copy(reason, 0);
+        if let Some(snap) = parent_snapshot.as_ref() {
+            tsz_common::perf_counters::record_overlay_copy(reason, snap.total_entries() as u64);
         }
         child
             .cross_file_symbol_targets
@@ -265,6 +273,10 @@ impl<'a> CheckerContext<'a> {
         // This enables import-qualified type display like `import("a").F`.
         self.module_specifiers = Arc::new(Self::build_module_specifiers(&arenas));
         self.module_path_specifiers = Arc::new(Self::build_module_path_specifiers(&arenas));
+        // Build the reverse file-name index lazily when not pre-populated by ProgramContext.
+        if self.global_file_name_index.is_none() && !arenas.is_empty() {
+            self.global_file_name_index = Some(Arc::new(build_file_name_index(&arenas)));
+        }
         self.all_arenas = Some(arenas);
     }
 
@@ -466,6 +478,7 @@ impl<'a> CheckerContext<'a> {
         self.lib_binders_cached = parent.lib_binders_cached.clone();
         self.set_actual_lib_file_count(parent.actual_lib_file_count);
         self.shared_lib_type_cache = parent.shared_lib_type_cache.clone();
+        self.cross_file_type_params_cache = parent.cross_file_type_params_cache.clone();
         self.program_reexports = parent.program_reexports.clone();
         self.program_wildcard_reexports = parent.program_wildcard_reexports.clone();
         self.program_wildcard_reexports_type_only =
@@ -492,9 +505,9 @@ impl<'a> CheckerContext<'a> {
     /// `set_declared_modules_from_skeleton`), the declared-modules binder scan
     /// is skipped — the skeleton-derived data is used instead.
     pub fn set_all_binders(&mut self, binders: Arc<Vec<Arc<BinderState>>>) {
-        // If the 5 name-based global indices are already pre-populated (from ProjectEnv),
+        // If the 5 name-based global indices are already pre-populated (from ProgramContext),
         // skip the O(N) binder scans entirely. This is the fast path for multi-file
-        // checking where ProjectEnv::build_global_indices was called once at the driver level.
+        // checking where ProgramContext::build_global_indices was called once at the driver level.
         // Note: global_arena_index, global_declared_modules, and global_expando_index
         // are handled separately below (they're built on demand if not pre-set).
         let has_prebuilt_indices = self.global_file_locals_index.is_some()
@@ -510,29 +523,17 @@ impl<'a> CheckerContext<'a> {
                 let mut dm = super::GlobalDeclaredModules::default();
                 for binder in binders.iter() {
                     for module_spec in binder.module_exports.keys() {
-                        let normalized = module_spec.trim_matches('"').trim_matches('\'');
-                        if normalized.contains('*') {
-                            dm.patterns.push(normalized.to_string());
-                        } else {
-                            dm.exact.insert(normalized.to_string());
-                        }
+                        dm.insert_module_name(module_spec);
                     }
                     for name in binder
                         .declared_modules
                         .iter()
                         .chain(binder.shorthand_ambient_modules.iter())
                     {
-                        let normalized = name.trim_matches('"').trim_matches('\'');
-                        if normalized.contains('*') {
-                            dm.patterns.push(normalized.to_string());
-                        } else {
-                            dm.exact.insert(normalized.to_string());
-                        }
+                        dm.insert_module_name(name);
                     }
                 }
-                dm.patterns.sort();
-                dm.patterns.dedup();
-                dm.finalize();
+                dm.finish();
                 self.global_declared_modules = Some(Arc::new(dm));
             }
             if self.global_expando_index.is_none() {
@@ -555,7 +556,7 @@ impl<'a> CheckerContext<'a> {
         }
 
         // Fallback: build all indices from scratch (legacy path for tests and
-        // callers that don't use ProjectEnv).
+        // callers that don't use ProgramContext).
         let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
         // outer_key = module specifier, inner = export name
         let mut module_exports_index: crate::context::ModuleExportsIndexMap = FxHashMap::default();
@@ -597,12 +598,7 @@ impl<'a> CheckerContext<'a> {
                         .push((file_idx, sym_id));
                 }
                 if let Some(ref mut dm) = declared_modules {
-                    let normalized = module_spec.trim_matches('"').trim_matches('\'');
-                    if normalized.contains('*') {
-                        dm.patterns.push(normalized.to_string());
-                    } else {
-                        dm.exact.insert(normalized.to_string());
-                    }
+                    dm.insert_module_name(module_spec);
                 }
             }
 
@@ -612,12 +608,7 @@ impl<'a> CheckerContext<'a> {
                     .iter()
                     .chain(binder.shorthand_ambient_modules.iter())
                 {
-                    let normalized = name.trim_matches('"').trim_matches('\'');
-                    if normalized.contains('*') {
-                        dm.patterns.push(normalized.to_string());
-                    } else {
-                        dm.exact.insert(normalized.to_string());
-                    }
+                    dm.insert_module_name(name);
                 }
             }
         }
@@ -637,9 +628,7 @@ impl<'a> CheckerContext<'a> {
         }
 
         if let Some(mut dm) = declared_modules {
-            dm.patterns.sort();
-            dm.patterns.dedup();
-            dm.finalize();
+            dm.finish();
             self.global_declared_modules = Some(Arc::new(dm));
         }
 
@@ -994,7 +983,7 @@ impl<'a> CheckerContext<'a> {
             return Some(v);
         }
         // Backslash-normalized variant (only allocates when input has backslashes).
-        let normalized: Option<String> = if file_name.contains('\\') {
+        let normalized: Option<String> = if file_name.as_bytes().contains(&b'\\') {
             let n = file_name.replace('\\', "/");
             if let Some(v) = map.get(&n) {
                 return Some(v);
@@ -1035,9 +1024,9 @@ impl<'a> CheckerContext<'a> {
     /// Look up the re-export entries for `file_name` in the cross-file
     /// program-wide re-export map.
     ///
-    /// Prefers `ProjectEnv`-level `program_reexports` (a single `Arc`-shared
+    /// Prefers `ProgramContext`-level `program_reexports` (a single `Arc`-shared
     /// allocation across all N cross-file lookup binders). Falls back to
-    /// `binder.reexports` for standalone callers without a `ProjectEnv`.
+    /// `binder.reexports` for standalone callers without a `ProgramContext`.
     /// Tries file-name key variants (`./foo.ts` / `foo.ts` / backslash-
     /// normalized).
     pub fn reexports_for_file<'b>(
@@ -1080,7 +1069,7 @@ impl<'a> CheckerContext<'a> {
     /// Prefers the project-wide `program_module_exports` (an `Arc`-shared
     /// allocation across all N cross-file lookup binders). Falls back to
     /// `binder.module_exports` for standalone callers without a
-    /// `ProjectEnv`. Tries file-name key variants
+    /// `ProgramContext`. Tries file-name key variants
     /// (`./foo.ts` / `foo.ts` / backslash-normalized).
     pub fn module_exports_for_module<'b>(
         &'b self,
@@ -1104,7 +1093,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Resolve a node → symbol lookup by arena pointer against the
     /// cross-file node-symbol map. Prefers the shared project-wide map
-    /// installed by `ProjectEnv::apply_to`; falls back to the per-binder
+    /// installed by `ProgramContext::apply_to`; falls back to the per-binder
     /// copy for tests and standalone callers.
     pub fn cross_file_node_symbols_for_arena<'b>(
         &'b self,
@@ -1133,7 +1122,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Resolve `sym_id` to its alias partner. Prefers the project-wide
-    /// `program_alias_partners` map installed by `ProjectEnv::apply_to`;
+    /// `program_alias_partners` map installed by `ProgramContext::apply_to`;
     /// falls back to per-binder `alias_partners` for tests/standalone callers.
     pub fn alias_partner_for(
         &self,
@@ -1191,11 +1180,48 @@ impl<'a> CheckerContext<'a> {
 
     /// Resolve an import specifier from a specific file to its target file index.
     /// Like `resolve_import_target` but for any source file, not just the current one.
+    ///
+    /// Stage 1: `global_file_name_index` (always populated by `set_all_arenas`).
+    /// Stage 2: `resolved_module_paths` (driver FS map, fallback for path-mapped imports).
     pub fn resolve_import_target_from_file(
         &self,
         source_file_idx: usize,
         specifier: &str,
     ) -> Option<usize> {
+        if let Some(idx) = self.global_file_name_index.as_ref() {
+            // Absolute paths (both POSIX `/` and Windows `\`): empty src_dir
+            // causes resolve_specifier_via_file_index to use the specifier verbatim.
+            if specifier.starts_with('/') || specifier.starts_with('\\') {
+                if let Some(result) = resolve_specifier_via_file_index("", specifier, idx) {
+                    return Some(result);
+                }
+            } else if let Some(source_file_name) = self
+                .all_arenas
+                .as_ref()
+                .and_then(|a| a.get(source_file_idx))
+                .and_then(|a| a.source_files.first())
+                .map(|sf| sf.file_name.as_str())
+            {
+                if let Some(result) =
+                    resolve_specifier_via_file_index(source_file_name, specifier, idx)
+                {
+                    return Some(result);
+                }
+                // Bare names (single-segment like `types` or multi-segment like
+                // `packages/foo/src/bar`) that resolve_specifier_via_file_index
+                // rejects as potential package subpaths are probed directly
+                // against the index. External npm packages won't be in the index;
+                // project-relative bare paths will match by file name or stem.
+                if !specifier.starts_with("./")
+                    && !specifier.starts_with("../")
+                    && !specifier.starts_with('/')
+                    && let Some(result) = probe_file_name_index(specifier, idx)
+                {
+                    return Some(result);
+                }
+            }
+        }
+
         if let Some(paths) = self.resolved_module_paths.as_ref() {
             for candidate in module_specifier_candidates(specifier) {
                 if let Some(target_idx) = paths.get(&(source_file_idx, candidate)) {
@@ -1204,92 +1230,7 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        let arenas = self.all_arenas.as_ref()?;
-
-        // Direct-match fast path on the pre-built reverse index when one is
-        // wired in. The previous version of this fast path did an O(N)
-        // linear scan over `all_arenas` allocating a `.replace('\\', "/")`
-        // String per arena per call — which on a 6000-file project with
-        // bare imports like `@shared/foo` showed up as the #1 hot leaf at
-        // 22.46% self-time on a profiled subset. The reverse index keys are
-        // already normalized file names, so a single `get(&specifier)` (and
-        // a backslash-normalized variant if needed) covers the same cases
-        // without per-arena allocation.
-        //
-        // Importantly, this fast path is NOT a substitute for the linear
-        // scan below: the index covers *literal* file-name matches, but
-        // `resolve_specifier_via_file_index` will return `None` for bare
-        // specifiers that contain a slash without a `./` / `../` / `/`
-        // prefix (project-relative paths like `packages/foo/src/bar.ts`).
-        // The linear scan handled those by direct comparison; we preserve
-        // that behavior here without scanning, by trying the index lookup
-        // for both the raw and stripped-extension forms.
-        let normalized_specifier = if specifier.contains('\\') {
-            specifier.replace('\\', "/")
-        } else {
-            specifier.to_string()
-        };
-
-        if let Some(idx) = self.global_file_name_index.as_ref() {
-            // 1. Direct file-name hit (fully-qualified specifier).
-            if let Some(&target_idx) = idx.get(&normalized_specifier) {
-                return Some(target_idx);
-            }
-            // 2. Extension-stem fan-out: the linear scan also matched on
-            //    `strip_ts_extension(spec) == strip_ts_extension(file_name)`,
-            //    which lets a `.js` import resolve to a `.ts` source. Probe
-            //    the index with every TS/JS extension applied to the stem.
-            let stripped = Self::strip_ts_extension(&normalized_specifier);
-            const FAN_OUT_EXTS: &[&str] = &[
-                ".ts", ".tsx", ".d.ts", ".d.tsx", ".mts", ".cts", ".d.mts", ".d.cts", ".js",
-                ".jsx", ".mjs", ".cjs",
-            ];
-            // Reuse a single buffer across the fan-out attempts to avoid
-            // per-extension `String` allocation.
-            let mut buf = String::with_capacity(stripped.len() + 6);
-            for ext in FAN_OUT_EXTS {
-                buf.clear();
-                buf.push_str(stripped);
-                buf.push_str(ext);
-                if let Some(&target_idx) = idx.get(&buf) {
-                    return Some(target_idx);
-                }
-            }
-        }
-
-        let source_file_name = arenas
-            .get(source_file_idx)
-            .and_then(|arena| arena.source_files.first())
-            .map(|sf| sf.file_name.as_str())?;
-
-        if let Some(idx) = self.global_file_name_index.as_ref() {
-            return crate::module_resolution::resolve_specifier_via_file_index(
-                source_file_name,
-                specifier,
-                idx,
-            );
-        }
-
-        // No pre-built index (legacy single-context paths with no ProjectEnv
-        // wiring). Use the original linear scan, then build a one-shot
-        // reverse index for richer specifier resolution.
-        let stripped_specifier = Self::strip_ts_extension(&normalized_specifier);
-        if let Some((target_idx, _)) = arenas.iter().enumerate().find(|(_, arena)| {
-            arena.source_files.first().is_some_and(|sf| {
-                let file_name = sf.file_name.replace('\\', "/");
-                file_name == normalized_specifier
-                    || Self::strip_ts_extension(&file_name) == stripped_specifier
-            })
-        }) {
-            return Some(target_idx);
-        }
-
-        let fallback_idx = crate::module_resolution::build_file_name_index(arenas);
-        crate::module_resolution::resolve_specifier_via_file_index(
-            source_file_name,
-            specifier,
-            &fallback_idx,
-        )
+        None
     }
 
     /// Resolve a member exported by the target module of an ALIAS symbol.
@@ -1347,7 +1288,15 @@ impl<'a> CheckerContext<'a> {
         let module_specifier = symbol.import_module.as_ref()?;
         let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
 
-        let source_file_idx = symbol.decl_file_idx as usize;
+        let source_file_idx = if self
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|local| local.flags & tsz_binder::symbol_flags::ALIAS != 0)
+        {
+            self.current_file_idx
+        } else {
+            symbol.decl_file_idx as usize
+        };
         if let Some(target_idx) =
             self.resolve_import_target_from_file(source_file_idx, module_specifier)
         {
@@ -1379,12 +1328,26 @@ impl<'a> CheckerContext<'a> {
         let module_specifier = symbol.import_module.as_ref()?;
         let import_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
 
-        let source_file_idx = symbol.decl_file_idx as usize;
+        let source_file_idx = if self
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|local| local.flags & tsz_binder::symbol_flags::ALIAS != 0)
+        {
+            self.current_file_idx
+        } else {
+            symbol.decl_file_idx as usize
+        };
         if let Some(target_idx) =
             self.resolve_import_target_from_file(source_file_idx, module_specifier)
         {
             let target_binder = self.get_binder_for_file(target_idx)?;
-            let result = target_binder.file_locals.get(import_name)?;
+            let target_arena = self.get_arena_for_file(target_idx as u32);
+            let file_name = &target_arena.source_files.first()?.file_name;
+            let result = target_binder
+                .module_exports
+                .get(file_name)
+                .and_then(|exports| exports.get(import_name))
+                .or_else(|| target_binder.file_locals.get(import_name))?;
             self.register_symbol_file_target(result, target_idx);
             return Some(result);
         }
@@ -1872,10 +1835,6 @@ impl<'a> CheckerContext<'a> {
         self.recursion_depth.borrow_mut().leave();
     }
 
-    // =========================================================================
-    // Flow Graph Queries
-    // =========================================================================
-
     /// Check flow usage at a specific AST node.
     ///
     /// This method queries the control flow graph to determine flow-sensitive
@@ -1990,6 +1949,41 @@ mod tests {
         assert!(cache.class_instance_type_cache.is_empty());
         assert!(cache.class_constructor_type_cache.is_empty());
         assert!(cache.class_instance_type_to_decl.is_empty());
+    }
+}
+
+impl super::ProgramContext {
+    /// Build the shared `SymbolId` → file-index map from `symbol_file_targets`.
+    ///
+    /// Call this once after populating `symbol_file_targets`. The resulting
+    /// `Arc<FxHashMap>` is shared (O(1) clone) across all checkers, eliminating
+    /// the per-checker O(N) copy into `cross_file_symbol_targets`.
+    pub fn build_global_symbol_file_index(&mut self) {
+        let mut map: FxHashMap<SymbolId, usize> =
+            FxHashMap::with_capacity_and_hasher(self.symbol_file_targets.len(), Default::default());
+        for &(sym_id, file_idx) in self.symbol_file_targets.iter() {
+            map.insert(sym_id, file_idx);
+        }
+        self.global_symbol_file_index = Some(Arc::new(map));
+    }
+
+    /// Build global indices only when the skeleton fingerprint has changed.
+    ///
+    /// Compares `new_fingerprint` against `self.last_skeleton_fingerprint`.
+    /// If they match, the global indices are already valid and the expensive
+    /// O(N) binder scan is skipped entirely. If they differ (or this is the
+    /// first build), delegates to `build_global_indices` and stores the new
+    /// fingerprint for future comparisons.
+    ///
+    /// Returns `true` if indices were rebuilt, `false` if cached.
+    pub fn build_global_indices_if_changed(&mut self, new_fingerprint: u64) -> bool {
+        if self.last_skeleton_fingerprint == Some(new_fingerprint) {
+            // All global indices (name-based + arena) + skeleton indices are still valid.
+            return false;
+        }
+        self.build_global_indices();
+        self.last_skeleton_fingerprint = Some(new_fingerprint);
+        true
     }
 }
 

@@ -2,16 +2,31 @@
 //! primitive/array/function/application property resolution.
 
 use super::*;
-use crate::apparent_primitive_member_kind;
 use crate::evaluation::evaluate_rules::apparent::make_apparent_method_type;
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type_cached, instantiate_type_with_infer_cached,
     substitute_this_type_cached,
 };
+use crate::objects::apparent_primitive_member_kind;
 use crate::types::{
     MappedType, MappedTypeId, PropertyInfo, PropertyLookup, TupleElement, TypeApplicationId,
     TypeParamInfo,
 };
+
+fn is_array_mutating_method(prop_name: &str) -> bool {
+    matches!(
+        prop_name,
+        "copyWithin"
+            | "fill"
+            | "pop"
+            | "push"
+            | "reverse"
+            | "shift"
+            | "sort"
+            | "splice"
+            | "unshift"
+    )
+}
 
 impl<'a> PropertyAccessEvaluator<'a> {
     #[inline]
@@ -390,8 +405,109 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 .constraint
                 .is_some_and(|constraint| self.is_key_in_mapped_constraint(constraint, prop_name)),
 
+            // Template literal constraint: a property key is in the constraint when
+            // its string form matches the template pattern. Without this branch,
+            // `{ [K in `data-${string}`]: V }` rejects every literal key like
+            // `"data-id"`, surfacing as TS2353 false positives in object literals.
+            TypeData::TemplateLiteral(list_id) => {
+                self.literal_matches_template_pattern(prop_name, list_id)
+            }
+
             // Other types - be conservative and reject
             _ => false,
+        }
+    }
+
+    /// Match a literal property name against a template literal pattern.
+    ///
+    /// Handles the common cases sufficient for mapped-type key checks:
+    /// - `Text(atom)` spans must match the prefix of the remaining input.
+    /// - `Type(t)` spans where `t` is a string literal must match exactly.
+    /// - `Type(t)` spans where `t` is `string`/`any`/`unknown` consume any
+    ///   characters (with backtracking when followed by more spans).
+    /// - `Type(t)` spans where `t` is `number` consume a numeric token.
+    ///
+    /// More exotic Type span contents (intersections, generic intrinsics,
+    /// constrained type parameters) are not handled here; they require the
+    /// solver's full subtype context and are not reachable through ordinary
+    /// string-pattern mapped constraints.
+    fn literal_matches_template_pattern(
+        &self,
+        prop_name: &str,
+        list_id: crate::types::TemplateLiteralId,
+    ) -> bool {
+        let spans = self.interner().template_list(list_id);
+        self.match_template_spans(prop_name, &spans, 0)
+    }
+
+    fn match_template_spans(
+        &self,
+        remaining: &str,
+        spans: &[crate::types::TemplateSpan],
+        idx: usize,
+    ) -> bool {
+        use crate::types::{IntrinsicKind, TemplateSpan};
+        use crate::visitor::{intrinsic_kind, literal_string};
+
+        if idx >= spans.len() {
+            return remaining.is_empty();
+        }
+
+        match &spans[idx] {
+            TemplateSpan::Text(text_atom) => {
+                let text = self.interner().resolve_atom(*text_atom);
+                if let Some(rest) = remaining.strip_prefix(text.as_str()) {
+                    self.match_template_spans(rest, spans, idx + 1)
+                } else {
+                    false
+                }
+            }
+            TemplateSpan::Type(type_id) => {
+                if let Some(literal) = literal_string(self.interner(), *type_id) {
+                    let lit = self.interner().resolve_atom(literal);
+                    if let Some(rest) = remaining.strip_prefix(lit.as_str()) {
+                        return self.match_template_spans(rest, spans, idx + 1);
+                    }
+                    return false;
+                }
+                let kind = intrinsic_kind(self.interner(), *type_id);
+                match kind {
+                    Some(IntrinsicKind::String)
+                    | Some(IntrinsicKind::Any)
+                    | Some(IntrinsicKind::Unknown) => {
+                        // Backtrack over all possible split points: try matching
+                        // 0, 1, ..., n characters of `remaining` against the
+                        // wildcard, deferring the rest to subsequent spans.
+                        for split in 0..=remaining.len() {
+                            if remaining.is_char_boundary(split)
+                                && self.match_template_spans(&remaining[split..], spans, idx + 1)
+                            {
+                                return true;
+                            }
+                        }
+                        false
+                    }
+                    Some(IntrinsicKind::Number) => {
+                        let digits_end = remaining
+                            .char_indices()
+                            .take_while(|(_, c)| c.is_ascii_digit())
+                            .last()
+                            .map_or(0, |(i, c)| i + c.len_utf8());
+                        if digits_end == 0 {
+                            return false;
+                        }
+                        for split in 1..=digits_end {
+                            if remaining.is_char_boundary(split)
+                                && self.match_template_spans(&remaining[split..], spans, idx + 1)
+                            {
+                                return true;
+                            }
+                        }
+                        false
+                    }
+                    _ => false,
+                }
+            }
         }
     }
 
@@ -550,6 +666,37 @@ impl<'a> PropertyAccessEvaluator<'a> {
         Vec::new()
     }
 
+    fn instantiate_application_member_type(
+        &self,
+        member_type: TypeId,
+        type_params: &[TypeParamInfo],
+        type_args: &[TypeId],
+        app_type: TypeId,
+        infer_aware: bool,
+    ) -> TypeId {
+        let contains_declared_this = crate::contains_this_type(self.interner(), member_type);
+        let instantiated = if type_params.is_empty() {
+            member_type
+        } else {
+            let substitution = TypeSubstitution::from_args(self.interner(), type_params, type_args);
+            if infer_aware {
+                self.instantiate_type_with_infer_cached(member_type, &substitution)
+            } else {
+                self.instantiate_type_cached(member_type, &substitution)
+            }
+        };
+
+        // Do not rebind `ThisType` introduced by a type argument. For
+        // `Array<this>.push(...items: T[])`, instantiating `T` yields `this[]`;
+        // rebinding that `this` to the receiver application would incorrectly
+        // produce `Array<this>[]`.
+        if contains_declared_this {
+            self.substitute_this_type_cached(instantiated, app_type)
+        } else {
+            instantiated
+        }
+    }
+
     /// Resolve property access on a generic Application type (e.g., `D<string>`) nominally.
     ///
     /// This preserves nominal identity for classes/interfaces instead of structurally
@@ -592,22 +739,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
                 let type_params = self.application_base_type_params(app.base, shape.symbol);
 
-                // Instantiate the property type with type-param substitution (only
-                // when we have valid type-params for this base). Then ALWAYS run
-                // `substitute_this_type` so `Promise<this>`-style return types
-                // resolve to the actual receiver — even when type-params are
-                // unavailable (e.g., non-Array generic interface resolved to
-                // Object). Without the always-on `this` substitution, regressions
-                // appear in patterns like `(a: Bar | Baz).doThing(): Promise<this>`.
-                let instantiated_prop_type = if type_params.is_empty() {
-                    prop.type_id
-                } else {
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-                    self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
-                };
-                let app_type = self.interner().application(app.base, app.args.clone());
-                let final_type = self.substitute_this_type_cached(instantiated_prop_type, app_type);
+                let final_type = self.instantiate_application_member_type(
+                    prop.type_id,
+                    &type_params,
+                    &app.args,
+                    app_type,
+                    true,
+                );
 
                 return PropertyAccessResult::simple(final_type);
             }
@@ -626,15 +764,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
                 let type_params = self.application_base_type_params(app.base, shape.symbol);
 
-                let instantiated_prop_type = if type_params.is_empty() {
-                    prop.type_id
-                } else {
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-                    self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
-                };
-                let app_type = self.interner().application(app.base, app.args.clone());
-                let final_type = self.substitute_this_type_cached(instantiated_prop_type, app_type);
+                let final_type = self.instantiate_application_member_type(
+                    prop.type_id,
+                    &type_params,
+                    &app.args,
+                    app_type,
+                    true,
+                );
 
                 return PropertyAccessResult::simple(final_type);
             }
@@ -660,15 +796,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
                 let type_params = self.application_base_type_params(app.base, shape.symbol);
 
-                let instantiated_prop_type = if type_params.is_empty() {
-                    prop.type_id
-                } else {
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-                    self.instantiate_type_with_infer_cached(prop.type_id, &substitution)
-                };
-                let app_type = self.interner().application(app.base, app.args.clone());
-                let final_type = self.substitute_this_type_cached(instantiated_prop_type, app_type);
+                let final_type = self.instantiate_application_member_type(
+                    prop.type_id,
+                    &type_params,
+                    &app.args,
+                    app_type,
+                    true,
+                );
 
                 return PropertyAccessResult::simple(final_type);
             }
@@ -694,11 +828,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     TypeSubstitution::from_args(self.interner(), type_params, &app.args);
                 let instantiated_base = self.instantiate_type_cached(app.base, &substitution);
                 if instantiated_base != app.base {
-                    return self.resolve_property_access_inner(
+                    let previous_skip_this_binding = self.is_skip_this_binding();
+                    self.set_skip_this_binding(true);
+                    let result = self.resolve_property_access_inner(
                         instantiated_base,
                         prop_name,
                         Some(prop_atom),
                     );
+                    self.set_skip_this_binding(previous_skip_this_binding);
+                    return result;
                 }
             }
         }
@@ -792,27 +930,21 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if let Some(prop) =
                     self.lookup_object_property(shape_id, &shape.properties, prop_atom)
                 {
-                    // Found! Now instantiate the property type with the type arguments
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-
                     // Instantiate both read and write types
-                    let instantiated_read_type =
-                        self.instantiate_type_cached(prop.type_id, &substitution);
-                    let instantiated_write_type =
-                        self.instantiate_type_cached(prop.write_type, &substitution);
-                    let instantiated_read_type =
-                        if crate::contains_this_type(self.interner(), instantiated_read_type) {
-                            self.substitute_this_type_cached(instantiated_read_type, app_type)
-                        } else {
-                            instantiated_read_type
-                        };
-                    let instantiated_write_type =
-                        if crate::contains_this_type(self.interner(), instantiated_write_type) {
-                            self.substitute_this_type_cached(instantiated_write_type, app_type)
-                        } else {
-                            instantiated_write_type
-                        };
+                    let instantiated_read_type = self.instantiate_application_member_type(
+                        prop.type_id,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
+                    let instantiated_write_type = self.instantiate_application_member_type(
+                        prop.write_type,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
                     let read_type = self.optional_property_type(&PropertyInfo {
                         name: prop.name,
                         type_id: instantiated_read_type,
@@ -840,16 +972,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Property not found in explicit properties - check index signatures
                 if let Some(ref idx) = shape.string_index {
                     // Found string index signature - instantiate the value type
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-                    let instantiated_value =
-                        self.instantiate_type_cached(idx.value_type, &substitution);
-                    let instantiated_value =
-                        if crate::contains_this_type(self.interner(), instantiated_value) {
-                            self.substitute_this_type_cached(instantiated_value, app_type)
-                        } else {
-                            instantiated_value
-                        };
+                    let instantiated_value = self.instantiate_application_member_type(
+                        idx.value_type,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
 
                     return PropertyAccessResult::from_index(
                         self.add_undefined_if_unchecked(instantiated_value),
@@ -862,16 +991,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if resolver.is_numeric_index_name(prop_name)
                     && let Some(ref idx) = shape.number_index
                 {
-                    let substitution =
-                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-                    let instantiated_value =
-                        self.instantiate_type_cached(idx.value_type, &substitution);
-                    let instantiated_value =
-                        if crate::contains_this_type(self.interner(), instantiated_value) {
-                            self.substitute_this_type_cached(instantiated_value, app_type)
-                        } else {
-                            instantiated_value
-                        };
+                    let instantiated_value = self.instantiate_application_member_type(
+                        idx.value_type,
+                        &type_params,
+                        &app.args,
+                        app_type,
+                        false,
+                    );
 
                     return PropertyAccessResult::from_index(
                         self.add_undefined_if_unchecked(instantiated_value),
@@ -1189,6 +1315,82 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         self.resolve_apparent_property(IntrinsicKind::Symbol, TypeId::SYMBOL, prop_name, prop_atom)
+    }
+
+    /// Property access on `ReadonlyType(inner)`: routes array/tuple inners through `ReadonlyArray<T>` so mutating methods are absent.
+    pub(crate) fn resolve_readonly_type_property(
+        &self,
+        readonly_type: TypeId,
+        inner: TypeId,
+        prop_name: &str,
+        prop_atom: Option<Atom>,
+    ) -> PropertyAccessResult {
+        let inner_data = self.interner().lookup(inner);
+        let element_type = match inner_data {
+            Some(TypeData::Array(elem)) => Some(elem),
+            Some(TypeData::Tuple(_)) => Some(self.array_element_type(inner)),
+            _ => None,
+        };
+
+        let Some(elem) = element_type else {
+            return self.resolve_property_access_inner(inner, prop_name, prop_atom);
+        };
+
+        let prop_atom = prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
+
+        if is_array_mutating_method(prop_name) {
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: readonly_type,
+                property_name: prop_atom,
+            };
+        }
+
+        if prop_name == "length" {
+            if let Some(length_type) = self.compute_tuple_length_type(inner) {
+                return PropertyAccessResult::simple(length_type);
+            }
+            return PropertyAccessResult::simple(TypeId::NUMBER);
+        }
+
+        if prop_name == "toLocaleString" {
+            return self.method_result(TypeId::STRING);
+        }
+
+        if let Some(TypeData::Tuple(elements_id)) = inner_data
+            && let Some(index_text) = crate::utils::canonicalize_numeric_name(prop_name)
+            && let Ok(index) = index_text.parse::<usize>()
+        {
+            let elements = self.interner().tuple_list(elements_id);
+            if let Some(element_type) = self.tuple_fixed_element_type(&elements, index) {
+                return PropertyAccessResult::simple(element_type);
+            }
+        }
+
+        use crate::objects::index_signatures::IndexSignatureResolver;
+        if IndexSignatureResolver::new(self.interner()).is_numeric_index_name(prop_name) {
+            let element_or_undefined = self.element_type_with_undefined(elem);
+            return PropertyAccessResult::from_index(element_or_undefined);
+        }
+
+        let readonly_array_base =
+            crate::relations::subtype::TypeResolver::get_readonly_array_base_type(self.db);
+
+        if let Some(readonly_base) = readonly_array_base {
+            let app_type = self.interner().application(readonly_base, vec![elem]);
+            let result = self.resolve_property_access_inner(app_type, prop_name, Some(prop_atom));
+            if result.is_success() {
+                return result;
+            }
+            if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
+                return result;
+            }
+            return PropertyAccessResult::PropertyNotFound {
+                type_id: readonly_type,
+                property_name: prop_atom,
+            };
+        }
+
+        self.resolve_property_access_inner(inner, prop_name, Some(prop_atom))
     }
 
     /// Resolve properties on array type.

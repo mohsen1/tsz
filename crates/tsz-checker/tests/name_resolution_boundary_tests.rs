@@ -10,14 +10,12 @@
 //! - TS2724 (namespace export spelling suggestion)
 //! - TS2749 (value used as type)
 
-use std::sync::Arc;
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::module_resolution::build_module_resolution_maps;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::{
+    diagnostic_codes, diagnostic_count, diagnostics_where, diagnostics_with_code,
+    has_diagnostic_code, has_diagnostic_code_where,
+};
 
 fn check(source: &str) -> Vec<Diagnostic> {
     let mut parser =
@@ -27,7 +25,7 @@ fn check(source: &str) -> Vec<Diagnostic> {
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let options = CheckerOptions::default();
 
     let mut checker = tsz_checker::state::CheckerState::new(
@@ -43,55 +41,14 @@ fn check(source: &str) -> Vec<Diagnostic> {
 }
 
 fn check_named_files(files: &[(&str, &str)], entry_file: &str) -> Vec<Diagnostic> {
-    let mut arenas = Vec::with_capacity(files.len());
-    let mut binders = Vec::with_capacity(files.len());
-    let mut roots = Vec::with_capacity(files.len());
-    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
-
-    for (name, source) in files {
-        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
-        let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-        arenas.push(Arc::new(parser.get_arena().clone()));
-        binders.push(Arc::new(binder));
-        roots.push(root);
-    }
-
-    let entry_idx = file_names
-        .iter()
-        .position(|name| name == entry_file)
-        .expect("entry file should exist");
-    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
-
-    let all_arenas = Arc::new(arenas);
-    let all_binders = Arc::new(binders);
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        all_arenas[entry_idx].as_ref(),
-        all_binders[entry_idx].as_ref(),
-        &types,
-        file_names[entry_idx].clone(),
-        CheckerOptions::default(),
-    );
-
-    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
-    checker.ctx.set_all_binders(Arc::clone(&all_binders));
-    checker.ctx.set_current_file_idx(entry_idx);
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker
-        .ctx
-        .set_resolved_module_paths(Arc::new(resolved_module_paths));
-    checker.ctx.set_resolved_modules(resolved_modules);
-    checker.check_source_file(roots[entry_idx]);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
+    tsz_checker::test_utils::check_multi_file(files, entry_file, CheckerOptions::default())
+        .into_iter()
         .filter(|d| d.code != 2318)
-        .cloned()
         .collect()
+}
+
+fn expect_diagnostic_code<'a>(diags: &'a [Diagnostic], code: u32, message: &str) -> &'a Diagnostic {
+    diags.iter().find(|d| d.code == code).expect(message)
 }
 
 // =========================================================================
@@ -107,7 +64,7 @@ let x = Foo;
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2693),
+        has_diagnostic_code(&diags, 2693),
         "Expected TS2693 for type alias used as value, got: {diags:?}"
     );
 }
@@ -121,7 +78,7 @@ let y = Bar;
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2693),
+        has_diagnostic_code(&diags, 2693),
         "Expected TS2693 for interface used as value, got: {diags:?}"
     );
 }
@@ -135,7 +92,7 @@ let z = Baz;
 "#,
     );
     assert!(
-        !diags.iter().any(|d| d.code == 2693),
+        !has_diagnostic_code(&diags, 2693),
         "Should not emit TS2693 for class (which is also a value), got: {diags:?}"
     );
 }
@@ -150,7 +107,7 @@ let x = FAILURE;
 "#,
     );
     assert!(
-        !diags.iter().any(|d| d.code == 2693),
+        !has_diagnostic_code(&diags, 2693),
         "Should not emit TS2693 when value shadows type alias, got: {diags:?}"
     );
 }
@@ -170,7 +127,7 @@ let x = MyNs;
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2708),
+        has_diagnostic_code(&diags, 2708),
         "Expected TS2708 for uninstantiated namespace used as value, got: {diags:?}"
     );
 }
@@ -186,7 +143,7 @@ let x = MyNs;
 "#,
     );
     assert!(
-        !diags.iter().any(|d| d.code == 2708),
+        !has_diagnostic_code(&diags, 2708),
         "Should not emit TS2708 for instantiated namespace, got: {diags:?}"
     );
 }
@@ -221,7 +178,7 @@ var x: foo.A = foo.bar("hello");
         ],
         "use.ts",
     );
-    let ts2708_count = diags.iter().filter(|d| d.code == 2708).count();
+    let ts2708_count = diagnostic_count(&diags, 2708);
     assert_eq!(
         ts2708_count, 1,
         "Expected exactly one TS2708 for value access through the import alias, got: {diags:?}"
@@ -241,16 +198,15 @@ let x: myVal;
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2749),
+        has_diagnostic_code(&diags, 2749),
         "Expected TS2749 for value used as type, got: {diags:?}"
     );
 }
 
 fn assert_missing_name_positions(source: &str, starts: &[u32]) {
     let diags = check(source);
-    let actual: Vec<u32> = diags
+    let actual: Vec<u32> = diagnostics_with_code(&diags, 2304)
         .iter()
-        .filter(|d| d.code == 2304)
         .map(|d| d.start)
         .collect();
     assert_eq!(
@@ -294,7 +250,7 @@ let x: MyNs.Bar;
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2694),
+        has_diagnostic_code(&diags, 2694),
         "Expected TS2694 for missing namespace export, got: {diags:?}"
     );
 }
@@ -310,7 +266,7 @@ let x: MyNs.Foo;
 "#,
     );
     assert!(
-        !diags.iter().any(|d| d.code == 2694),
+        !has_diagnostic_code(&diags, 2694),
         "Should not emit TS2694 for existing namespace export, got: {diags:?}"
     );
 }
@@ -333,11 +289,11 @@ export declare function bar(): X.bar;
         "b.ts",
     );
     assert!(
-        diags.iter().any(|d| d.code == 2694),
+        has_diagnostic_code(&diags, 2694),
         "Expected TS2694 for missing namespace export, got: {diags:?}"
     );
     assert!(
-        !diags.iter().any(|d| d.code == 2749),
+        !has_diagnostic_code(&diags, 2749),
         "File-level exports should not leak into namespace member lookup, got: {diags:?}"
     );
 }
@@ -357,7 +313,7 @@ namespace MyNs {
 let x: MyNs.MyTyp;
 "#,
     );
-    let has_ns_error = diags.iter().any(|d| d.code == 2694 || d.code == 2724);
+    let has_ns_error = has_diagnostic_code_where(&diags, |code| code == 2694 || code == 2724);
     assert!(
         has_ns_error,
         "Expected TS2694 or TS2724 for misspelled namespace export, got: {diags:?}"
@@ -377,10 +333,7 @@ let p = new Pair(1, 2);
 let t: Pair;
 "#,
     );
-    let type_value_errors: Vec<_> = diags
-        .iter()
-        .filter(|d| d.code == 2693 || d.code == 2749)
-        .collect();
+    let type_value_errors = diagnostics_where(&diags, |code| code == 2693 || code == 2749);
     assert!(
         type_value_errors.is_empty(),
         "Class should not produce type/value errors, got: {type_value_errors:?}"
@@ -396,10 +349,7 @@ let d = Direction.Up;
 let t: Direction;
 "#,
     );
-    let type_value_errors: Vec<_> = diags
-        .iter()
-        .filter(|d| d.code == 2693 || d.code == 2749 || d.code == 2708)
-        .collect();
+    let type_value_errors = diagnostics_where(&diags, |code| matches!(code, 2693 | 2749 | 2708));
     assert!(
         type_value_errors.is_empty(),
         "Enum should not produce type/value errors, got: {type_value_errors:?}"
@@ -418,7 +368,7 @@ type StringAlias = string;
 let v = StringAlias;
 "#,
     );
-    let ts2693_count = diags.iter().filter(|d| d.code == 2693).count();
+    let ts2693_count = diagnostic_count(&diags, 2693);
     assert!(
         ts2693_count == 1,
         "Expected exactly 1 TS2693, got {ts2693_count}: {diags:?}"
@@ -435,7 +385,7 @@ namespace PureTypeNs {
 let v = PureTypeNs;
 "#,
     );
-    let ts2708_count = diags.iter().filter(|d| d.code == 2708).count();
+    let ts2708_count = diagnostic_count(&diags, 2708);
     assert!(
         ts2708_count == 1,
         "Expected exactly 1 TS2708, got {ts2708_count}: {diags:?}"
@@ -451,7 +401,7 @@ type T = { x: myFunc };
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2749),
+        has_diagnostic_code(&diags, 2749),
         "Expected TS2749 for function used as type in type literal, got: {diags:?}"
     );
 }
@@ -467,7 +417,7 @@ let x: NS.val;
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2749 || d.code == 2694),
+        has_diagnostic_code_where(&diags, |code| code == 2749 || code == 2694),
         "Expected TS2749 or TS2694 for value-only qualified name, got: {diags:?}"
     );
 }
@@ -489,7 +439,7 @@ export {};
 "#,
     );
 
-    let ts2749_count = diags.iter().filter(|d| d.code == 2749).count();
+    let ts2749_count = diagnostic_count(&diags, 2749);
     assert_eq!(
         ts2749_count, 0,
         "Expected no TS2749 when a re-exported value/namespace merge anchors a nested type member, got: {diags:?}"
@@ -513,7 +463,7 @@ export {};
 "#,
     );
 
-    let ts2749_count = diags.iter().filter(|d| d.code == 2749).count();
+    let ts2749_count = diagnostic_count(&diags, 2749);
     assert_eq!(
         ts2749_count, 1,
         "Expected TS2749 when the merged value/namespace export is used as the final type, got: {diags:?}"
@@ -532,7 +482,7 @@ let x: UnknownTypeName;
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2304 || d.code == 2552),
+        has_diagnostic_code_where(&diags, |code| code == 2304 || code == 2552),
         "Expected TS2304/TS2552 for unknown type name, got: {diags:?}"
     );
 }
@@ -549,7 +499,7 @@ interface IFoo { x: number; }
 let v = IFoo;
 "#,
     );
-    let ts2693_count = diags.iter().filter(|d| d.code == 2693).count();
+    let ts2693_count = diagnostic_count(&diags, 2693);
     assert!(
         ts2693_count <= 1,
         "Should emit at most 1 TS2693, got {ts2693_count}: {diags:?}"
@@ -566,7 +516,7 @@ namespace NS {
 let v = NS;
 "#,
     );
-    let ts2708_count = diags.iter().filter(|d| d.code == 2708).count();
+    let ts2708_count = diagnostic_count(&diags, 2708);
     assert!(
         ts2708_count <= 1,
         "Should emit at most 1 TS2708, got {ts2708_count}: {diags:?}"
@@ -581,7 +531,7 @@ const myVal = 42;
 let x: myVal;
 "#,
     );
-    let ts2749_count = diags.iter().filter(|d| d.code == 2749).count();
+    let ts2749_count = diagnostic_count(&diags, 2749);
     assert!(
         ts2749_count <= 1,
         "Should emit at most 1 TS2749, got {ts2749_count}: {diags:?}"
@@ -602,10 +552,7 @@ function test() {
 }
 "#,
     );
-    let relevant: Vec<_> = diags
-        .iter()
-        .filter(|d| d.code == 2304 || d.code == 2693 || d.code == 2749)
-        .collect();
+    let relevant = diagnostics_where(&diags, |code| matches!(code, 2304 | 2693 | 2749));
     assert!(
         relevant.is_empty(),
         "Expected no name resolution errors for known value, got: {relevant:?}"
@@ -622,10 +569,7 @@ namespace NS {
 let x = NS.val;
 "#,
     );
-    let relevant: Vec<_> = diags
-        .iter()
-        .filter(|d| d.code == 2694 || d.code == 2708 || d.code == 2724)
-        .collect();
+    let relevant = diagnostics_where(&diags, |code| matches!(code, 2694 | 2708 | 2724));
     assert!(
         relevant.is_empty(),
         "Valid namespace member access should not produce errors, got: {relevant:?}"
@@ -645,7 +589,7 @@ let x: Outer.Inner.DoesNotExist;
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2694),
+        has_diagnostic_code(&diags, 2694),
         "Expected TS2694 for missing nested namespace export, got: {diags:?}"
     );
 }
@@ -664,10 +608,8 @@ declare module "m" {
 "#,
     );
 
-    let ts2694 = diags
-        .iter()
-        .find(|d| d.code == 2694)
-        .expect("Expected TS2694 for missing namespace export");
+    let ts2694 =
+        expect_diagnostic_code(&diags, 2694, "Expected TS2694 for missing namespace export");
 
     assert!(
         ts2694
@@ -690,10 +632,8 @@ let x: Promise.Resolver<string>;
 "#,
     );
 
-    let ts2694 = diags
-        .iter()
-        .find(|d| d.code == 2694)
-        .expect("Expected TS2694 for missing namespace export");
+    let ts2694 =
+        expect_diagnostic_code(&diags, 2694, "Expected TS2694 for missing namespace export");
 
     assert!(
         ts2694
@@ -716,10 +656,11 @@ let x: Outer.Inner.DoesNotExist;
 "#,
     );
 
-    let ts2694 = diags
-        .iter()
-        .find(|d| d.code == 2694)
-        .expect("Expected TS2694 for missing nested namespace export");
+    let ts2694 = expect_diagnostic_code(
+        &diags,
+        2694,
+        "Expected TS2694 for missing nested namespace export",
+    );
 
     assert!(
         ts2694
@@ -745,10 +686,8 @@ let x: booz.bar;
 "#,
     );
 
-    let ts2694 = diags
-        .iter()
-        .find(|d| d.code == 2694)
-        .expect("Expected TS2694 for missing namespace export");
+    let ts2694 =
+        expect_diagnostic_code(&diags, 2694, "Expected TS2694 for missing namespace export");
 
     assert!(
         ts2694
@@ -778,15 +717,15 @@ fn phase2_primitive_keyword_type_as_value_routes_through_boundary() {
         let src = format!("const x = {keyword};");
         let diags = check(&src);
         assert!(
-            diags.iter().any(|d| d.code == 2693),
+            has_diagnostic_code(&diags, 2693),
             "Expected TS2693 for '{keyword}' used as value, got: {:?}",
-            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+            diagnostic_codes(&diags)
         );
         // Should not emit TS2304 alongside TS2693
         assert!(
-            !diags.iter().any(|d| d.code == 2304),
+            !has_diagnostic_code(&diags, 2304),
             "Should not emit TS2304 alongside TS2693 for '{keyword}', got: {:?}",
-            diags.iter().map(|d| d.code).collect::<Vec<_>>()
+            diagnostic_codes(&diags)
         );
     }
 }
@@ -801,9 +740,9 @@ function f(): myVal { return ""; }
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 2749),
+        has_diagnostic_code(&diags, 2749),
         "Expected TS2749 for value used as return type, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -812,16 +751,16 @@ function f(): myVal { return ""; }
 fn phase2_keyword_type_in_new_routes_through_boundary() {
     let diags = check("const x = new string();");
     assert!(
-        diags.iter().any(|d| d.code == 2693),
+        has_diagnostic_code(&diags, 2693),
         "Expected TS2693 for 'new string()', got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
 #[test]
 fn phase2_unresolved_new_target_reports_ts2304_not_ts2693() {
     let diags = check("new A().b();");
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let codes = diagnostic_codes(&diags);
     assert!(
         codes.contains(&2304),
         "Expected TS2304 for unresolved constructor target, got: {diags:?}"
@@ -844,7 +783,7 @@ class C {
 "#,
     );
     assert!(
-        !diags.iter().any(|d| d.code == 17013),
+        !has_diagnostic_code(&diags, 17013),
         "Did not expect TS17013 for new.target inside a constructor, got: {diags:?}"
     );
 }
@@ -861,7 +800,7 @@ class C {
 "#,
     );
     assert!(
-        diags.iter().any(|d| d.code == 17013),
+        has_diagnostic_code(&diags, 17013),
         "Expected TS17013 for new.target inside a method, got: {diags:?}"
     );
 }
@@ -898,9 +837,9 @@ class Derived extends Bace {}
     );
     // Should get TS2304 or TS2552 (spelling suggestion for "Base" -> "Bace")
     assert!(
-        diags.iter().any(|d| d.code == 2304 || d.code == 2552),
+        has_diagnostic_code_where(&diags, |code| code == 2304 || code == 2552),
         "Expected TS2304/TS2552 for misspelled heritage name, got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -909,9 +848,9 @@ class Derived extends Bace {}
 fn phase2_typeof_default_routes_through_boundary() {
     let diags = check("type T = typeof default;");
     assert!(
-        diags.iter().any(|d| d.code == 2304),
+        has_diagnostic_code(&diags, 2304),
         "Expected TS2304 for 'typeof default', got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -927,12 +866,12 @@ function f() {
 "#,
     );
     // Should not produce TS2552 suggestions for "private"
-    let has_ts2552 = diags.iter().any(|d| d.code == 2552);
+    let has_ts2552 = has_diagnostic_code(&diags, 2552);
     // Either TS2304 or no error (strict mode may produce different diagnostics)
     assert!(
         !has_ts2552,
         "Should not emit TS2552 for 'private', got: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }
 
@@ -945,10 +884,10 @@ interface Foo { x: number; }
 const a = Foo;
 "#,
     );
-    let ts2693_count = diags.iter().filter(|d| d.code == 2693).count();
+    let ts2693_count = diagnostic_count(&diags, 2693);
     assert!(
         ts2693_count <= 1,
         "Should emit at most 1 TS2693 for interface as value, got {ts2693_count}: {:?}",
-        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+        diagnostic_codes(&diags)
     );
 }

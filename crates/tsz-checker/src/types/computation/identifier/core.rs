@@ -198,6 +198,63 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn same_file_value_symbol_for_type_symbol(
+        &self,
+        type_sym_id: tsz_binder::SymbolId,
+    ) -> Option<(tsz_binder::SymbolId, NodeIndex, usize)> {
+        let type_symbol = self.get_symbol_globally(type_sym_id)?;
+        if (type_symbol.flags & tsz_binder::symbol_flags::VALUE) != 0 {
+            return None;
+        }
+        let file_idx = self.ctx.resolve_symbol_file_index(type_sym_id)?;
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        for &candidate_id in binder
+            .get_symbols()
+            .find_all_by_name(&type_symbol.escaped_name)
+        {
+            if candidate_id == type_sym_id {
+                continue;
+            }
+            let Some(candidate) = binder.get_symbol(candidate_id) else {
+                continue;
+            };
+            if candidate.escaped_name != type_symbol.escaped_name
+                || (candidate.flags & tsz_binder::symbol_flags::VALUE) == 0
+                || (candidate.flags & tsz_binder::symbol_flags::ALIAS) != 0
+                || candidate.import_module.is_some()
+                || !candidate.value_declaration.is_some()
+            {
+                continue;
+            }
+            self.ctx.register_symbol_file_target(candidate_id, file_idx);
+            return Some((candidate_id, candidate.value_declaration, file_idx));
+        }
+        None
+    }
+
+    pub(crate) fn local_current_file_value_symbol_named(
+        &self,
+        name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        self.ctx
+            .binder
+            .get_symbols()
+            .find_all_by_name(name)
+            .iter()
+            .copied()
+            .find(|&candidate_id| {
+                self.ctx
+                    .binder
+                    .get_symbol(candidate_id)
+                    .is_some_and(|candidate| {
+                        candidate.has_any_flags(symbol_flags::VALUE)
+                            && candidate.value_declaration.is_some()
+                            && (candidate.decl_file_idx == u32::MAX
+                                || candidate.decl_file_idx == self.ctx.current_file_idx as u32)
+                    })
+            })
+    }
+
     fn has_recursive_alias_shape_for_flow_compare(&self, type_id: TypeId) -> bool {
         common_query::contains_lazy_or_recursive(self.ctx.types.as_type_database(), type_id)
     }
@@ -545,6 +602,13 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            if !self.is_identifier_in_type_position(idx)
+                && self.identifier_is_type_only_module_exports_import_projection(idx)
+            {
+                self.error_type_only_value_at(name, idx);
+                return TypeId::ERROR;
+            }
+
             if self.is_type_only_import_equals_namespace_expr(idx) {
                 // When the import-equals resolves to a pure type (interface,
                 // type alias) rather than a namespace/module, tsc emits TS2693
@@ -604,6 +668,19 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.alias_resolves_to_type_only(sym_id) {
+                if !self.is_identifier_in_type_position(idx)
+                    && let Some(candidate_id) = self.local_current_file_value_symbol_named(name)
+                    && let Some(candidate) = self.ctx.binder.get_symbol(candidate_id)
+                    && candidate.value_declaration.is_some()
+                {
+                    let value_type = self.type_of_value_declaration_for_symbol(
+                        candidate_id,
+                        candidate.value_declaration,
+                    );
+                    if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                        return self.check_flow_usage(idx, value_type, candidate_id);
+                    }
+                }
                 let augmentation_lookup = self
                     .get_cross_file_symbol(sym_id)
                     .or_else(|| self.ctx.binder.get_symbol(sym_id))
@@ -956,6 +1033,27 @@ impl<'a> CheckerState<'a> {
             }
 
             let has_alias = (flags & tsz_binder::symbol_flags::ALIAS) != 0;
+            if !self.is_identifier_in_type_position(idx)
+                && (flags
+                    & (tsz_binder::symbol_flags::INTERFACE | tsz_binder::symbol_flags::TYPE_ALIAS))
+                    != 0
+                && (flags & tsz_binder::symbol_flags::VALUE) == 0
+                && let Some((value_sym_id, value_decl, value_file_idx)) =
+                    self.same_file_value_symbol_for_type_symbol(sym_id)
+            {
+                let value_type = if value_file_idx == self.ctx.current_file_idx {
+                    self.type_of_value_declaration_for_symbol(value_sym_id, value_decl)
+                } else {
+                    self.type_of_value_declaration_for_cross_file_symbol(
+                        value_sym_id,
+                        value_decl,
+                        value_file_idx,
+                    )
+                };
+                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                    return self.check_flow_usage(idx, value_type, sym_id);
+                }
+            }
             // When a symbol has both TYPE_ALIAS and VALUE flags (e.g.,
             // `type FAILURE = "FAILURE"; const FAILURE = "FAILURE";`),
             // the merged binder symbol has both flags. In value/expression
@@ -1052,6 +1150,16 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
+            if !self.is_identifier_in_type_position(idx)
+                && self.ctx.import_conflict_names.contains(name)
+                && (flags & tsz_binder::symbol_flags::NAMESPACE_MODULE) != 0
+            {
+                let namespace_type = self.get_type_of_symbol(sym_id);
+                if namespace_type != TypeId::UNKNOWN && namespace_type != TypeId::ERROR {
+                    return self.check_flow_usage(idx, namespace_type, sym_id);
+                }
+            }
+
             // NOTE: tsc 6.0 does NOT emit TS2585 based on target version alone.
             // ES2015+ globals (Symbol, Promise, Map, Set, etc.) may be available
             // even with target ES5 because lib.dom.d.ts transitively loads
@@ -1130,6 +1238,8 @@ impl<'a> CheckerState<'a> {
                         if let Some(target) = self.get_symbol_globally(target_sym_id)
                             && (target.flags & tsz_binder::symbol_flags::ALIAS) != 0
                             && target.import_module.is_none()
+                            && (target.escaped_name == "default"
+                                || target.import_name.as_deref() == Some("default"))
                             && let Some(decl_idx) = target.primary_declaration()
                             && let Some(target_file_idx) =
                                 self.ctx.resolve_symbol_file_index(target_sym_id)
@@ -1154,12 +1264,21 @@ impl<'a> CheckerState<'a> {
                                 | tsz_binder::symbol_flags::TYPE_ALIAS))
                             != 0
                             && (tflags & tsz_binder::symbol_flags::VALUE) != 0
+                            && (tflags & tsz_binder::symbol_flags::ALIAS) == 0
+                            && target.import_module.is_none()
                             && target.value_declaration.is_some()
                         {
                             let target_value_decl = target.value_declaration;
                             let target_file_idx =
                                 self.ctx.resolve_symbol_file_index(target_sym_id)?;
                             Some((target_sym_id, target_value_decl, target_file_idx))
+                        } else if (tflags
+                            & (tsz_binder::symbol_flags::INTERFACE
+                                | tsz_binder::symbol_flags::TYPE_ALIAS))
+                            != 0
+                            && (tflags & tsz_binder::symbol_flags::VALUE) == 0
+                        {
+                            self.same_file_value_symbol_for_type_symbol(target_sym_id)
                         } else {
                             None
                         }
@@ -1206,6 +1325,14 @@ impl<'a> CheckerState<'a> {
                             target_sym_id,
                             target_value_decl,
                             target_file_idx,
+                        )
+                    } else if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+                        && file_idx != self.ctx.current_file_idx
+                    {
+                        self.type_of_value_declaration_for_cross_file_symbol(
+                            sym_id,
+                            preferred_value_decl,
+                            file_idx,
                         )
                     } else {
                         self.type_of_value_declaration_for_symbol(sym_id, preferred_value_decl)
@@ -1453,14 +1580,32 @@ impl<'a> CheckerState<'a> {
                 && symbol.has_any_flags(symbol_flags::ENUM)
                 && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
             {
-                self.enum_object_type(sym_id)
-                    .inspect(|&enum_obj| {
+                let is_merged_enum_namespace = symbol
+                    .has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE);
+                if is_merged_enum_namespace {
+                    // When an enum merges with a namespace its value-position type must
+                    // include both enum member properties and namespace-exported values.
+                    let cached = self.ctx.enum_namespace_types.get(&sym_id).copied();
+                    cached.unwrap_or_else(|| {
+                        let base = self.get_type_of_symbol(sym_id);
+                        let merged = self.merge_namespace_exports_into_object(sym_id, base);
                         let def_id = self.ctx.get_or_create_def_id(sym_id);
                         self.ctx
                             .definition_store
-                            .register_type_to_def(enum_obj, def_id);
+                            .register_type_to_def(merged, def_id);
+                        self.ctx.enum_namespace_types.insert(sym_id, merged);
+                        merged
                     })
-                    .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+                } else {
+                    self.enum_object_type(sym_id)
+                        .inspect(|&enum_obj| {
+                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            self.ctx
+                                .definition_store
+                                .register_type_to_def(enum_obj, def_id);
+                        })
+                        .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+                }
             } else if (flags & symbol_flags::CLASS) != 0
                 && (flags & symbol_flags::FUNCTION) == 0
                 && has_value

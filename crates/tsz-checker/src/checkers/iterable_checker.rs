@@ -7,6 +7,7 @@ use crate::query_boundaries::checkers::iterable::{
     function_shape_for_type, is_array_type, is_string_literal_type, is_string_type, is_this_type,
     is_tuple_type, union_members_for_type,
 };
+use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -16,6 +17,10 @@ use tsz_solver::TypeId;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    const fn requires_array_like_iteration_for_es5_target(&self) -> bool {
+        self.ctx.compiler_options.target.is_es5() && !self.ctx.compiler_options.downlevel_iteration
+    }
+
     // =========================================================================
     // Iterable Protocol Checking
     // =========================================================================
@@ -472,6 +477,14 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::operations::get_iterator_info(self.ctx.types, iterable_type, true)
                 && info.yield_type != TypeId::ANY
             {
+                // get_iterator_info fast-paths Array/Tuple as sync iterators regardless of
+                // is_async, so for-await-of must additionally await their element type.
+                if matches!(
+                    classify_for_of_element_type(self.ctx.types, iterable_type),
+                    ForOfElementKind::Array(_) | ForOfElementKind::Tuple(_)
+                ) {
+                    return self.apply_awaited(info.yield_type);
+                }
                 return info.yield_type;
             }
             // Solver-level resolution can return ANY (or None) for Application
@@ -491,17 +504,7 @@ impl<'a> CheckerState<'a> {
             }
             // Fall back to sync iterator protocol + Promise unwrapping.
             let elem_type = self.for_of_element_type_classified(iterable_type, 0);
-            if let Some(unwrapped) = self.unwrap_promise_type(elem_type) {
-                return unwrapped;
-            }
-            // unwrap_promise_type can fail when the element type has been resolved to
-            // an Object shape (e.g. Promise<number> from lib files).  Fall back to the
-            // tsc approach: if the element is promise-like (has a callable `then`),
-            // extract the fulfillment type from `then`'s onfulfilled callback parameter.
-            if let Some(awaited) = self.get_awaited_type_of_promise_like(elem_type) {
-                return awaited;
-            }
-            elem_type
+            self.apply_awaited(elem_type)
         } else {
             self.for_of_element_type_classified(iterable_type, 0)
         }
@@ -548,10 +551,7 @@ impl<'a> CheckerState<'a> {
         // Step 4: Call next() to get Promise<IteratorResult<T>>, then await it
         // to get IteratorResult<T>, then extract the yield value type.
         let next_return = self.get_call_return_type(next_fn_type);
-        let awaited_next = self
-            .unwrap_promise_type(next_return)
-            .or_else(|| self.get_awaited_type_of_promise_like(next_return))
-            .unwrap_or(next_return);
+        let awaited_next = self.apply_awaited(next_return);
 
         // Extract the yield type from the IteratorResult discriminated union by
         // partitioning on `done` — naive `.value` access would conflate the
@@ -634,6 +634,16 @@ impl<'a> CheckerState<'a> {
                 self.resolve_iterator_element_type(type_id)
             }
         }
+    }
+
+    /// Unwrap `Promise<T>` → `T`; returns `ty` unchanged for non-promise types.
+    fn apply_awaited(&mut self, ty: TypeId) -> TypeId {
+        if ty.is_intrinsic() {
+            return ty;
+        }
+        self.unwrap_promise_type(ty)
+            .or_else(|| self.get_awaited_type_of_promise_like(ty))
+            .unwrap_or(ty)
     }
 
     /// Extract the fulfillment type from a promise-like type by following the
@@ -929,7 +939,7 @@ impl<'a> CheckerState<'a> {
         // - Emit TS2461 if the type contains a string constituent but the remaining non-string
         //   type is not array-like (TSC strips strings from union before checking array-likeness).
         // - Emit TS2495 if the type is neither an array nor a string (not iterable at all).
-        if self.ctx.compiler_options.target.is_es5() {
+        if self.requires_array_like_iteration_for_es5_target() {
             if self.is_array_or_tuple_or_string(expr_type) {
                 return true;
             }
@@ -975,7 +985,7 @@ impl<'a> CheckerState<'a> {
     pub fn check_spread_iterability(&mut self, spread_type: TypeId, expr_idx: NodeIndex) -> bool {
         // In ES5 without downlevel iteration, spread requires an array/tuple source.
         // Match tsc by emitting TS2461 for non-array spread arguments.
-        if self.ctx.compiler_options.target.is_es5() {
+        if self.requires_array_like_iteration_for_es5_target() {
             if spread_type == TypeId::ANY || spread_type == TypeId::UNKNOWN {
                 return true;
             }
@@ -1016,12 +1026,23 @@ impl<'a> CheckerState<'a> {
         // Generic mapped tuple/object forms (`{ [K in keyof T]: ... }`) are used
         // as spread sources in variadic generic flows. tsc does not report TS2488
         // for these unresolved generic mapped types at this point.
-        if crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, spread_type) {
+        if common::is_generic_mapped_type(self.ctx.types, spread_type) {
             let anchor = self.spread_iterability_error_anchor(expr_idx);
             if anchor != expr_idx {
                 self.emit_ts2589_spread_instantiation_depth(anchor);
                 return false;
             }
+            return true;
+        }
+
+        // Conditional/IndexAccess/Application types containing free type parameters
+        // cannot have iterability proven at the generic instantiation boundary —
+        // tsc defers TS2488 to instantiation time for these deferred generic types.
+        if (common::is_conditional_type(self.ctx.types, spread_type)
+            || common::is_index_access_type(self.ctx.types, spread_type)
+            || common::is_generic_type(self.ctx.types, spread_type))
+            && common::contains_free_type_parameters(self.ctx.types, spread_type)
+        {
             return true;
         }
 
@@ -1152,7 +1173,7 @@ impl<'a> CheckerState<'a> {
         // In ES5 mode (without downlevelIteration), array destructuring requires actual arrays.
         // - Emit TS2802 if the type has Symbol.iterator (iterable but requires ES2015/downlevelIteration).
         // - Emit TS2461 if the type is not an array type.
-        if self.ctx.compiler_options.target.is_es5() && !is_assignment_array_target {
+        if self.requires_array_like_iteration_for_es5_target() && !is_assignment_array_target {
             // Nested binding patterns can be fed an over-widened union from positional
             // destructuring inference (e.g. `[a, [b]] = [1, ["x"]]`). tsc does not report
             // TS2461 for these cases.
@@ -1662,10 +1683,28 @@ impl<'a> CheckerState<'a> {
             None => return true, // Can't determine - don't emit false positive
         };
 
+        // If either side is any/unknown, or the iterator accepts undefined, avoid
+        // a false positive. `yield*` commonly delegates from generators whose
+        // containing TNext is explicitly `unknown`.
+        if sent_type == TypeId::ANY || sent_type == TypeId::UNKNOWN {
+            return true;
+        }
+
         // If TNext is any, unknown, or undefined, the sent type is always compatible
         if next_type == TypeId::ANY
             || next_type == TypeId::UNKNOWN
             || next_type == TypeId::UNDEFINED
+            || common::is_type_parameter_like(self.ctx.types, next_type)
+            || common::contains_free_type_parameters(self.ctx.types, next_type)
+        {
+            return true;
+        }
+
+        // A generic or inference-bearing TNext cannot be compared reliably from
+        // the declaration alone. Defer rather than reporting TS2763-TS2766 false
+        // positives before instantiation supplies the concrete sent type.
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, next_type)
+            || crate::query_boundaries::common::contains_infer_types(self.ctx.types, next_type)
         {
             return true;
         }

@@ -717,6 +717,33 @@ fn test_logical_or_never_left() {
 }
 
 #[test]
+fn test_logical_or_union_origin_orders_truthy_left_before_right() {
+    // tsc displays `(options || X).a` errors with the truthy-narrowed left
+    // operand FIRST, then the right operand. Locks the union_origin order
+    // recorded by `||`: [truthy_left, right]. Uses two distinct primitives
+    // so subtype reduction can't collapse the union to one side; that keeps
+    // the test focused on the order recorded for the surviving union.
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+    let truthy_left = TypeId::NUMBER;
+    let right = TypeId::STRING;
+    let result = eval.evaluate(truthy_left, right, "||");
+    let result_id = match result {
+        BinaryOpResult::Success(t) => t,
+        _ => panic!("Expected Success for || operation"),
+    };
+    let origin = interner
+        .get_union_origin(result_id)
+        .expect("|| should record a union_origin for display order");
+    assert_eq!(
+        &**origin,
+        &[truthy_left, right],
+        "union_origin must record [truthy_left, right] so diagnostics display \
+         the truthy-narrowed left operand first"
+    );
+}
+
+#[test]
 fn test_logical_nullish_coalescing() {
     let interner = TypeInterner::new();
     let eval = BinaryOpEvaluator::new(&interner);
@@ -1411,5 +1438,196 @@ fn test_string_plus_unknown() {
     assert_success(
         &eval.evaluate(TypeId::UNKNOWN, TypeId::STRING, "+"),
         TypeId::UNKNOWN,
+    );
+}
+
+// =============================================================================
+// Issue #5887: optional type-parameter || {} produces {} (not T | {})
+// Structural rule: when (T | undefined) || X or (T | undefined) ?? X where T is
+// a type parameter, tsc yields (T & {}) | X. For X = {}, this reduces to {}
+// because T & {} <: {}, matching tsc's NonNullable<T> approximation.
+// =============================================================================
+
+/// Build an unconstrained type parameter `T` (or `K` etc.) and return its TypeId.
+fn make_unconstrained_type_param(interner: &TypeInterner, name: &str) -> TypeId {
+    let info = TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    interner.type_param(info)
+}
+
+/// Build a type parameter constrained to `string`.
+fn make_string_constrained_type_param(interner: &TypeInterner, name: &str) -> TypeId {
+    let info = TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    interner.type_param(info)
+}
+
+#[test]
+fn test_optional_type_param_or_empty_object_reduces_to_empty_object() {
+    // `(D | undefined) || {}` should produce `{}` (via `D & {}` truthy-left
+    // then subtype-reduction), NOT `D | {}`.
+    // Regression for issue #5887: tsz was producing `D | {}` which then failed
+    // the `<: object` check with a false-positive TS2322.
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+
+    let d = make_unconstrained_type_param(&interner, "D");
+    let d_or_undef = interner.union2(d, TypeId::UNDEFINED);
+    let empty_obj = interner.object(vec![]);
+
+    let result = eval.evaluate(d_or_undef, empty_obj, "||");
+    let result_id = match result {
+        BinaryOpResult::Success(t) => t,
+        _ => panic!("Expected Success for || operation"),
+    };
+
+    // Result must be assignable to `object` (i.e., it should be `{}`).
+    // Check via SubtypeChecker that result <: object.
+    use crate::relations::subtype::SubtypeChecker;
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(result_id, TypeId::OBJECT),
+        "Expected (D | undefined) || {{}} to produce a type assignable to `object`, \
+         but got {result_id:?} which is not. \
+         (Root cause: non_nullable_type_parameter_result must apply D & {{}} for type params \
+         narrowed from D | undefined.)"
+    );
+}
+
+#[test]
+fn test_optional_type_param_nullish_coalesce_empty_object_reduces_to_empty_object() {
+    // `(D | undefined) ?? {}` should also produce a type assignable to `object`.
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+
+    let d = make_unconstrained_type_param(&interner, "D");
+    let d_or_undef = interner.union2(d, TypeId::UNDEFINED);
+    let empty_obj = interner.object(vec![]);
+
+    let result = eval.evaluate(d_or_undef, empty_obj, "??");
+    let result_id = match result {
+        BinaryOpResult::Success(t) => t,
+        _ => panic!("Expected Success for ?? operation"),
+    };
+
+    use crate::relations::subtype::SubtypeChecker;
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(result_id, TypeId::OBJECT),
+        "Expected (D | undefined) ?? {{}} to produce a type assignable to `object`, \
+         but got {result_id:?}."
+    );
+}
+
+#[test]
+fn test_optional_type_param_name_invariant_k_or_empty_object() {
+    // Same rule holds regardless of the type-parameter name (`K` not `D`).
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+
+    let k = make_unconstrained_type_param(&interner, "K");
+    let k_or_undef = interner.union2(k, TypeId::UNDEFINED);
+    let empty_obj = interner.object(vec![]);
+
+    let result = eval.evaluate(k_or_undef, empty_obj, "||");
+    let result_id = match result {
+        BinaryOpResult::Success(t) => t,
+        _ => panic!("Expected Success for || operation"),
+    };
+
+    use crate::relations::subtype::SubtypeChecker;
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(result_id, TypeId::OBJECT),
+        "Type-parameter name must not affect the result: \
+         (K | undefined) || {{}} must be assignable to `object`."
+    );
+}
+
+#[test]
+fn test_type_param_or_null_plus_empty_object_reduces_to_empty_object() {
+    // `(D | null) || {}` — null instead of undefined — same fix applies.
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+
+    let d = make_unconstrained_type_param(&interner, "D");
+    let d_or_null = interner.union2(d, TypeId::NULL);
+    let empty_obj = interner.object(vec![]);
+
+    let result = eval.evaluate(d_or_null, empty_obj, "||");
+    let result_id = match result {
+        BinaryOpResult::Success(t) => t,
+        _ => panic!("Expected Success for || operation"),
+    };
+
+    use crate::relations::subtype::SubtypeChecker;
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(result_id, TypeId::OBJECT),
+        "Expected (D | null) || {{}} to produce a type assignable to `object`, \
+         but got {result_id:?}."
+    );
+}
+
+#[test]
+fn test_optional_type_param_or_object_does_not_reduce_for_primitive_fallback() {
+    // `(D | undefined) || "hello"` should NOT produce a type assignable to `object`
+    // because `"hello"` (string literal) is a primitive.
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+
+    let d = make_unconstrained_type_param(&interner, "D");
+    let d_or_undef = interner.union2(d, TypeId::UNDEFINED);
+
+    let result = eval.evaluate(d_or_undef, TypeId::STRING, "||");
+    let result_id = match result {
+        BinaryOpResult::Success(t) => t,
+        _ => panic!("Expected Success"),
+    };
+
+    use crate::relations::subtype::SubtypeChecker;
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(result_id, TypeId::OBJECT),
+        "Expected (D | undefined) || string to NOT be assignable to `object` \
+         (string is a primitive), but got {result_id:?} which appears to be assignable."
+    );
+}
+
+#[test]
+fn test_string_constrained_type_param_or_empty_object_not_assignable_to_object() {
+    // `(D extends string | undefined) || {}` should NOT be assignable to `object`
+    // because D is constrained to string (a primitive), so `D | {}` contains
+    // a potential primitive even after the || reduction.
+    //
+    // (TypeScript itself would error here: D extends string means D could
+    // be "hello", and "hello" is not an `object`.)
+    let interner = TypeInterner::new();
+    let eval = BinaryOpEvaluator::new(&interner);
+
+    let d_str = make_string_constrained_type_param(&interner, "D");
+    let d_or_undef = interner.union2(d_str, TypeId::UNDEFINED);
+    let empty_obj = interner.object(vec![]);
+
+    let result = eval.evaluate(d_or_undef, empty_obj, "||");
+    let result_id = match result {
+        BinaryOpResult::Success(t) => t,
+        _ => panic!("Expected Success"),
+    };
+
+    use crate::relations::subtype::SubtypeChecker;
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(result_id, TypeId::OBJECT),
+        "Expected (D extends string | undefined) || {{}} to NOT be assignable to `object`, \
+         but got {result_id:?} which appears to be assignable."
     );
 }

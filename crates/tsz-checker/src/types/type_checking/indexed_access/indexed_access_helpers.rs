@@ -7,14 +7,17 @@ use tsz_solver::TypeId;
 /// Check if a property with the given name is private or protected on the given type.
 /// Delegates to the solver's type query via `query_boundaries`.
 pub(super) fn has_nonpublic_property(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
     name: &str,
 ) -> bool {
     crate::query_boundaries::common::has_nonpublic_property(db, type_id, name)
 }
 
-pub(super) fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+pub(super) fn is_broad_index_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    ty: TypeId,
+) -> bool {
     if matches!(ty, TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL) {
         return true;
     }
@@ -27,8 +30,19 @@ pub(super) fn is_broad_index_type(db: &dyn tsz_solver::TypeDatabase, ty: TypeId)
     })
 }
 
+pub(super) fn generic_constrained_index(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    object_type: TypeId,
+    index_type: TypeId,
+    index_constraint: Option<TypeId>,
+) -> bool {
+    index_constraint.is_some()
+        && crate::query_boundaries::common::is_type_parameter_like(db, object_type)
+        && crate::query_boundaries::common::is_type_parameter_like(db, index_type)
+}
+
 pub(super) fn same_type_param_name(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     left: TypeId,
     right: TypeId,
 ) -> bool {
@@ -38,11 +52,35 @@ pub(super) fn same_type_param_name(
 }
 
 pub(super) fn same_object_key_space(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     left: TypeId,
     right: TypeId,
 ) -> bool {
     left == right || same_type_param_name(db, left, right)
+}
+
+pub(super) fn remapped_mapped_type_template_index_should_report_ts2536(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    object_type_for_check: TypeId,
+    index_type: TypeId,
+    index_type_for_check: TypeId,
+) -> bool {
+    let Some(mapped_id) =
+        crate::query_boundaries::common::mapped_type_id(db, object_type_for_check)
+    else {
+        return false;
+    };
+    let mapped = db.mapped_type(mapped_id);
+    if mapped.name_type.is_none() {
+        return false;
+    }
+    if !crate::query_boundaries::common::is_template_literal_type(db, index_type)
+        && !crate::query_boundaries::common::is_template_literal_type(db, index_type_for_check)
+    {
+        return false;
+    }
+    crate::query_boundaries::common::contains_type_parameters(db, index_type)
+        || crate::query_boundaries::common::contains_type_parameters(db, index_type_for_check)
 }
 
 pub(super) fn indexed_access_object_alias_application_exceeds_depth(
@@ -102,6 +140,403 @@ pub(super) fn indexed_access_object_alias_application_exceeds_depth(
 }
 
 impl<'a> CheckerState<'a> {
+    /// TS4105: Emit "Private or protected member '{name}' cannot be accessed on
+    /// a type parameter." for each type-parameter portion of `object_type` whose
+    /// constraint has a non-public property with the given `name`.
+    ///
+    /// For union object types (e.g. `(T | B)["a"]`), each member is checked
+    /// individually. Only actual `TypeParameter` nodes trigger the diagnostic —
+    /// concrete class types are skipped (tsc only reports TS4105 on type params).
+    pub(super) fn check_ts4105_private_on_type_parameter(
+        &mut self,
+        error_node: NodeIndex,
+        object_type: TypeId,
+        property_name: &str,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        // Collect the type parameters to inspect: either the object type itself
+        // (if it's a type parameter) or the type-parameter members of a union.
+        let mut type_params_to_check: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
+
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, object_type) {
+            type_params_to_check.push(object_type);
+        } else if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
+        {
+            for &member in &members {
+                if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, member) {
+                    type_params_to_check.push(member);
+                }
+            }
+        }
+
+        let mut emitted = false;
+        for &tp in &type_params_to_check {
+            if let Some(constraint) =
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, tp)
+                && has_nonpublic_property(self.ctx.types, constraint, property_name)
+                && !emitted
+            {
+                let message = format_message(
+                        diagnostic_messages::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
+                        &[property_name],
+                    );
+                self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::PRIVATE_OR_PROTECTED_MEMBER_CANNOT_BE_ACCESSED_ON_A_TYPE_PARAMETER,
+                    );
+                emitted = true;
+            }
+        }
+    }
+
+    pub(super) fn is_numeric_index_on_parameters_utility(
+        &self,
+        object_type_node: NodeIndex,
+        index_type: TypeId,
+    ) -> bool {
+        crate::query_boundaries::common::number_literal_value(self.ctx.types, index_type).is_some()
+            && self.node_text(object_type_node).is_some_and(|text| {
+                let text = text.trim();
+                text.starts_with("Parameters<") || text.starts_with("ConstructorParameters<")
+            })
+    }
+
+    pub(super) fn index_constraint_keyof_matches_mapped_constraint(
+        &mut self,
+        index_constraint: Option<TypeId>,
+        mapped_constraint: TypeId,
+        keyof: TypeId,
+    ) -> bool {
+        let Some(index_constraint) = index_constraint else {
+            return false;
+        };
+        let index_constraint_eval = self.evaluate_type_with_env(index_constraint);
+
+        // Collect keyof operands from each candidate. A candidate may be a direct
+        // `keyof X` or an intersection like `keyof X & string` — in the latter case
+        // we extract the `keyof X` members from the intersection so the index operand
+        // can still be matched against the mapped constraint's key space.
+        let mut keyof_operands: Vec<TypeId> = Vec::new();
+        for candidate in [index_constraint, index_constraint_eval] {
+            if let Some(operand) =
+                crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
+            {
+                keyof_operands.push(operand);
+            } else if let Some(members) =
+                crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
+            {
+                for m in members {
+                    if let Some(operand) =
+                        crate::query_boundaries::state::checking::keyof_target(self.ctx.types, m)
+                    {
+                        keyof_operands.push(operand);
+                    }
+                }
+            }
+        }
+
+        keyof_operands.into_iter().any(|index_operand| {
+            crate::query_boundaries::state::checking::keyof_target(
+                self.ctx.types,
+                mapped_constraint,
+            )
+            .is_some_and(|constraint_operand| {
+                same_object_key_space(self.ctx.types, index_operand, constraint_operand)
+            }) || crate::query_boundaries::state::checking::keyof_target(self.ctx.types, keyof)
+                .is_some_and(|keyof_operand| {
+                    same_object_key_space(self.ctx.types, index_operand, keyof_operand)
+                })
+        })
+    }
+
+    pub(super) fn indexed_access_literal_property_exists_in_alias_union(
+        &self,
+        object_node_idx: NodeIndex,
+        index_node_idx: NodeIndex,
+    ) -> bool {
+        let Some(property_name) = self.type_index_string_literal(index_node_idx) else {
+            return false;
+        };
+        self.alias_body_for_non_generic_type_reference_from_node(object_node_idx)
+            .is_some_and(|body_idx| {
+                self.alias_union_members_have_property(body_idx, &property_name)
+            })
+    }
+
+    fn type_index_string_literal(&self, node_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(node_idx)?;
+        if let Some(literal) = self.ctx.arena.get_literal(node) {
+            return Some(literal.text.to_string());
+        }
+        if let Some(literal_type) = self.ctx.arena.get_literal_type(node) {
+            let literal_node = self.ctx.arena.get(literal_type.literal)?;
+            let literal = self.ctx.arena.get_literal(literal_node)?;
+            return Some(literal.text.to_string());
+        }
+        None
+    }
+
+    fn alias_union_members_have_property(
+        &self,
+        object_node_idx: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        let Some(object_node) = self.ctx.arena.get(object_node_idx) else {
+            return false;
+        };
+
+        if object_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(object_node)
+        {
+            return self.alias_union_members_have_property(wrapped.type_node, property_name);
+        }
+
+        if object_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            return self
+                .alias_body_for_non_generic_type_reference(object_node)
+                .is_some_and(|body_idx| {
+                    self.alias_union_members_have_property(body_idx, property_name)
+                });
+        }
+
+        if object_node.kind == syntax_kind_ext::UNION_TYPE {
+            let Some(composite) = self.ctx.arena.get_composite_type(object_node) else {
+                return false;
+            };
+            return !composite.types.nodes.is_empty()
+                && composite.types.nodes.iter().all(|&member_idx| {
+                    self.alias_union_members_have_property(member_idx, property_name)
+                });
+        }
+
+        if object_node.kind == syntax_kind_ext::TYPE_LITERAL {
+            return self.type_literal_has_declared_property(object_node, property_name);
+        }
+
+        false
+    }
+
+    fn alias_body_for_non_generic_type_reference(
+        &self,
+        object_node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        let type_ref = self.ctx.arena.get_type_ref(object_node)?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+
+        let raw_sym_id = self.resolve_type_symbol_for_lowering(type_ref.type_name)?;
+        let sym_id = tsz_binder::SymbolId(raw_sym_id);
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)
+            || symbol.declarations.len() != 1
+        {
+            return None;
+        }
+
+        let decl_node = self.ctx.arena.get(symbol.declarations[0])?;
+        let type_alias = self.ctx.arena.get_type_alias(decl_node)?;
+        if type_alias
+            .type_parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty())
+        {
+            return None;
+        }
+        Some(type_alias.type_node)
+    }
+
+    fn alias_body_for_non_generic_type_reference_from_node(
+        &self,
+        mut node_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        loop {
+            let object_node = self.ctx.arena.get(node_idx)?;
+            if object_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+                node_idx = self.ctx.arena.get_wrapped_type(object_node)?.type_node;
+                continue;
+            }
+            return self.alias_body_for_non_generic_type_reference(object_node);
+        }
+    }
+
+    fn type_literal_has_declared_property(
+        &self,
+        type_literal_node: &tsz_parser::parser::node::Node,
+        property_name: &str,
+    ) -> bool {
+        let Some(type_literal) = self.ctx.arena.get_type_literal(type_literal_node) else {
+            return false;
+        };
+        type_literal.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                return false;
+            };
+            let Some(signature) = self.ctx.arena.get_signature(member_node) else {
+                return false;
+            };
+            crate::types_domain::queries::core::get_literal_property_name(
+                self.ctx.arena,
+                signature.name,
+            )
+            .as_deref()
+                == Some(property_name)
+        })
+    }
+
+    pub(super) fn type_literal_keyof_from_node(
+        &mut self,
+        type_node_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let obj_node = self.ctx.arena.get(type_node_idx)?;
+        if obj_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return None;
+        }
+        let type_lit = self.ctx.arena.get_type_literal(obj_node)?;
+        let mut key_types = Vec::new();
+        for &member_idx in &type_lit.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                return None;
+            }
+            if let Some(sig) = self.ctx.arena.get_signature(member_node)
+                && let Some(name) = self.get_property_name(sig.name)
+            {
+                let key_type = self
+                    .ctx
+                    .arena
+                    .get(sig.name)
+                    .filter(|name_node| name_node.kind == SyntaxKind::NumericLiteral as u16)
+                    .and_then(|name_node| self.ctx.arena.get_literal(name_node))
+                    .and_then(|lit| {
+                        lit.value
+                            .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
+                    })
+                    .map(|value| self.ctx.types.factory().literal_number(value))
+                    .unwrap_or_else(|| {
+                        let atom = self.ctx.types.intern_string(&name);
+                        self.ctx.types.factory().literal_string_atom(atom)
+                    });
+                key_types.push(key_type);
+            }
+        }
+
+        if key_types.is_empty() {
+            None
+        } else {
+            Some(self.ctx.types.factory().union(key_types))
+        }
+    }
+
+    pub(super) fn type_literal_member_values_accept_index(
+        &mut self,
+        type_node_idx: NodeIndex,
+        index_type: TypeId,
+        index_constraint: Option<TypeId>,
+    ) -> bool {
+        let Some(obj_node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if obj_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return false;
+        }
+        let Some(type_lit) = self.ctx.arena.get_type_literal(obj_node) else {
+            return false;
+        };
+        let index_for_check = self.evaluate_type_with_env(index_type);
+        let constraint_for_check =
+            index_constraint.map(|constraint| self.evaluate_type_with_env(constraint));
+        let mut saw_value = false;
+
+        for &member_idx in &type_lit.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                continue;
+            };
+            if sig.type_annotation == NodeIndex::NONE {
+                return false;
+            }
+            let Some(value_keyof) = self.type_literal_keyof_from_node(sig.type_annotation) else {
+                return false;
+            };
+            if !self.is_assignable_to(index_for_check, value_keyof)
+                && !constraint_for_check
+                    .is_some_and(|constraint| self.is_assignable_to(constraint, value_keyof))
+            {
+                return false;
+            }
+            saw_value = true;
+        }
+
+        saw_value
+    }
+
+    pub(super) fn nested_type_literal_index_access_allows_index(
+        &mut self,
+        object_type_node_idx: NodeIndex,
+        outer_index_node_idx: NodeIndex,
+        outer_index_type: TypeId,
+    ) -> bool {
+        let Some(object_node) = self.ctx.arena.get(object_type_node_idx) else {
+            return false;
+        };
+        let Some(nested) = self.ctx.arena.get_indexed_access_type(object_node) else {
+            return false;
+        };
+
+        let nested_index_type = self.get_type_from_type_node(nested.index_type);
+        let mut nested_index_constraint =
+            crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                nested_index_type,
+            );
+        if crate::query_boundaries::common::is_type_parameter_like(
+            self.ctx.types,
+            nested_index_type,
+        ) && nested_index_constraint.is_none()
+        {
+            nested_index_constraint = self
+                .resolve_index_constraint_from_declaration(nested.index_type, nested.object_type);
+        }
+
+        let mut outer_index_constraint = crate::query_boundaries::common::type_parameter_constraint(
+            self.ctx.types,
+            outer_index_type,
+        );
+        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, outer_index_type)
+            && outer_index_constraint.is_none()
+        {
+            outer_index_constraint = self.resolve_index_constraint_from_declaration(
+                outer_index_node_idx,
+                object_type_node_idx,
+            );
+        }
+
+        let Some(nested_base_keyof) = self.type_literal_keyof_from_node(nested.object_type) else {
+            return false;
+        };
+        let nested_index_for_check = nested_index_constraint.unwrap_or(nested_index_type);
+        let nested_index_for_check = self.evaluate_type_with_env(nested_index_for_check);
+
+        self.is_assignable_to(nested_index_for_check, nested_base_keyof)
+            && self.type_literal_member_values_accept_index(
+                nested.object_type,
+                outer_index_type,
+                outer_index_constraint,
+            )
+    }
+
     fn array_like_kind_has_length(
         &self,
         kind: crate::query_boundaries::type_checking_utilities::ArrayLikeKind,
@@ -400,5 +835,29 @@ impl<'a> CheckerState<'a> {
                     .get_symbol(sym_id)
                     .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_PARAMETER))
             })
+    }
+
+    /// Structural rule: when the object has a plain string index signature and the index
+    /// type is assignable to `string | number`, suppress TS2536.
+    ///
+    /// Plain string index signatures (`key_type == STRING`) accept both string and number
+    /// keys per JS coercion semantics. If the index is provably within `string | number`
+    /// (no symbol members possible), it is always a valid key.
+    pub(super) fn keyof_index_valid_for_string_indexed_object(
+        &mut self,
+        object_type: TypeId,
+        index_type_for_check: TypeId,
+    ) -> bool {
+        let has_plain_string_index = self
+            .ctx
+            .types
+            .get_index_signatures(object_type)
+            .string_index
+            .is_some_and(|sig| sig.key_type == TypeId::STRING);
+        if !has_plain_string_index {
+            return false;
+        }
+        let string_or_number = self.ctx.types.union2(TypeId::STRING, TypeId::NUMBER);
+        self.is_assignable_to(index_type_for_check, string_or_number)
     }
 }

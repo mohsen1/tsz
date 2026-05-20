@@ -38,7 +38,11 @@
 //! chains with any other transforms (like `ES5Class`).
 
 mod core;
+mod decorator_helpers;
 mod helpers;
+mod helpers_class_expr_static_name;
+mod name_helpers;
+mod parameter_prologue;
 mod visit_children;
 
 pub use self::core::LoweringPass;

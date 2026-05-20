@@ -1,1188 +1,10 @@
 use super::{ParamTransformPlan, Printer};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{FunctionData, Node};
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::syntax::transform_utils::{contains_arguments_reference, contains_this_reference};
-use tsz_scanner::SyntaxKind;
+use tsz_parser::syntax::transform_utils::contains_new_target_reference;
 
 impl<'a> Printer<'a> {
-    // =========================================================================
-    // Functions
-    // =========================================================================
-
-    pub(super) fn emit_arrow_function(&mut self, node: &Node, _idx: NodeIndex) {
-        let Some(func) = self.arena.get_function(node) else {
-            return;
-        };
-
-        // Parser recovery parity: malformed return type like `(a): => {}` should
-        // preserve recovered shape instead of applying arrow lowering.
-        if self.is_recovery_arrow_missing_return_type(node, func) {
-            self.write("(");
-            self.emit_function_parameters_js(&func.parameters.nodes);
-            self.write(")");
-            if let Some(body_node) = self.arena.get(func.body)
-                && body_node.kind == syntax_kind_ext::BLOCK
-            {
-                self.write(";");
-                self.write_line();
-                let prev_emitting_function_body_block = self.emitting_function_body_block;
-                self.emitting_function_body_block = true;
-                self.function_scope_depth += 1;
-                self.emit(func.body);
-                self.function_scope_depth -= 1;
-                self.emitting_function_body_block = prev_emitting_function_body_block;
-                self.write_line();
-            }
-            return;
-        }
-
-        if self.ctx.target_es5 {
-            let captures_this = contains_this_reference(self.arena, _idx);
-            let captures_arguments = contains_arguments_reference(self.arena, _idx);
-            self.emit_arrow_function_es5(node, func, captures_this, captures_arguments, &None);
-            return;
-        }
-
-        self.emit_arrow_function_native(func);
-    }
-
-    fn is_recovery_arrow_missing_return_type(
-        &self,
-        node: &Node,
-        func: &tsz_parser::parser::node::FunctionData,
-    ) -> bool {
-        if let Some(text) = self.source_text {
-            let start = node.pos as usize;
-            let end = node.end as usize;
-            if start < end && end <= text.len() {
-                let slice = &text[start..end];
-                if slice.contains("): =>") || slice.contains("):=>") {
-                    return true;
-                }
-            }
-        }
-
-        if func.type_annotation.is_none() {
-            return false;
-        }
-
-        let Some(type_node) = self.arena.get(func.type_annotation) else {
-            return false;
-        };
-
-        // Parser recovery can surface malformed return types as bare identifier
-        // placeholders; treat them as invalid arrow return type annotations.
-        type_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-    }
-
-    /// Emit native ES6+ arrow function syntax
-    #[tracing::instrument(level = "trace", skip(self, func), fields(param_count = func.parameters.nodes.len()))]
-    fn emit_arrow_function_native(&mut self, func: &tsz_parser::parser::node::FunctionData) {
-        // For ES2015/ES2016, lower async arrows: () => __awaiter(this, void 0, void 0, function* () { ... })
-        if func.is_async && self.ctx.needs_async_lowering {
-            self.emit_arrow_function_async_lowered(func);
-            return;
-        }
-
-        if self.native_arrow_default_params_need_temp_prologue(func) {
-            self.emit_arrow_function_native_with_default_prologue(func);
-            return;
-        }
-
-        if func.is_async {
-            self.write("async ");
-        }
-
-        // TypeScript preserves parentheses from source:
-        // - If source had `(x) => x`, emit `(x) => x` even though x is simple
-        // - If source had `x => x`, emit `x => x`
-        // - If source had `(x: string) => x`, emit `(x) => x` (parens preserved)
-        let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
-        let is_simple = self.is_simple_single_parameter(&func.parameters.nodes);
-        let needs_parens = source_had_parens || !is_simple || func.is_async;
-
-        tracing::trace!(
-            source_had_parens,
-            is_simple,
-            needs_parens,
-            "Arrow function parenthesis decision"
-        );
-
-        if needs_parens {
-            // Emit any comments that appear before the opening paren in the source.
-            // e.g., `f: /**own f*/ (a) => 0` → comment should be before `(`.
-            if let Some(&first_param_idx) = func.parameters.nodes.first()
-                && let Some(first_param) = self.arena.get(first_param_idx)
-                && let Some(source) = self.source_text
-            {
-                let bytes = source.as_bytes();
-                let mut pos = first_param.pos as usize;
-                // Scan backward from first parameter to find `(`
-                while pos > 0 {
-                    pos -= 1;
-                    if bytes[pos] == b'(' {
-                        break;
-                    }
-                }
-                if bytes.get(pos) == Some(&b'(') {
-                    // Emit comments that are before the `(` position
-                    if self.has_pending_comment_before(pos as u32) {
-                        self.emit_comments_before_pos(pos as u32);
-                        self.pending_block_comment_space = false;
-                        self.write(" ");
-                    }
-                }
-            }
-            self.write("(");
-        }
-        let prev_namespace_exported_names = self.namespace_exported_names.clone();
-        self.emit_function_parameters_js(&func.parameters.nodes);
-        if needs_parens {
-            // Map closing `)` — scan backward from body start since parser
-            // may include `)` in the parameter node's range.
-            if let Some(body_node) = self.arena.get(func.body) {
-                let search_start = func
-                    .parameters
-                    .nodes
-                    .first()
-                    .and_then(|&idx| self.arena.get(idx))
-                    .map_or(0, |n| n.pos);
-                self.map_closing_paren_backward(search_start, body_node.pos);
-            }
-            self.write(")");
-        }
-
-        // Map `=>` arrow to source position (split space from token to get correct mapping column)
-        self.write_space();
-        {
-            let search_start = func
-                .parameters
-                .nodes
-                .last()
-                .and_then(|&idx| self.arena.get(idx))
-                .map_or(0, |n| n.end);
-            let search_end = self.arena.get(func.body).map_or(u32::MAX, |n| n.pos);
-            self.map_token_after(search_start, search_end, b'=');
-        }
-        self.write("=> ");
-
-        // Body - wrap in parens if it resolves to an object literal
-        // (e.g., `a => <any>{}` → `a => ({})` to avoid block ambiguity)
-        let body_is_block = self
-            .arena
-            .get(func.body)
-            .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
-
-        // Arrow functions introduce their own temp scope. Without this, hoisted temps
-        // created by the enclosing scope can be spuriously injected into single-line
-        // arrow bodies during block emission.
-        self.push_temp_scope();
-        self.remove_namespace_exported_parameter_names(&func.parameters.nodes);
-        self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
-
-        // If we have pending object rest params and a concise body, convert to block body
-        if !body_is_block && !self.pending_object_rest_params.is_empty() {
-            let rest_params: Vec<(String, NodeIndex)> =
-                std::mem::take(&mut self.pending_object_rest_params);
-            self.write("{");
-            self.write_line();
-            self.increase_indent();
-            // Emit the rest preamble
-            for (temp_name, pattern_idx) in &rest_params {
-                self.write("var ");
-                self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
-                self.write(";");
-                self.write_line();
-            }
-            // Emit the concise body as a return statement
-            self.write("return ");
-            self.function_scope_depth += 1;
-            self.arrow_function_scope_depth += 1;
-            self.emit(func.body);
-            self.arrow_function_scope_depth -= 1;
-            self.function_scope_depth -= 1;
-            self.write(";");
-            self.write_line();
-            self.decrease_indent();
-            self.write("}");
-        } else if !body_is_block && self.arrow_concise_body_needs_temp_prologue(func.body) {
-            self.emit_arrow_concise_body_with_temp_prologue(func.body);
-        } else if !body_is_block && self.concise_body_needs_parens(func.body) {
-            // Emit comments between => and the body expression (e.g. triple-slash comments)
-            if let Some(body_node) = self.arena.get(func.body) {
-                self.emit_comments_before_pos(body_node.pos);
-            }
-            self.write("(");
-            self.emit(func.body);
-            self.write(")");
-        } else {
-            // Emit comments between => and the body expression (e.g. triple-slash comments)
-            // tsc preserves these and places the body on a new line when comments exist.
-            if !body_is_block && let Some(body_node) = self.arena.get(func.body) {
-                self.emit_comments_before_pos(body_node.pos);
-            }
-            let prev_emitting_function_body_block = self.emitting_function_body_block;
-            self.emitting_function_body_block = true;
-            let prev_pending_function_body_parameters = std::mem::replace(
-                &mut self.pending_function_body_parameters,
-                func.parameters.nodes.clone(),
-            );
-            self.function_scope_depth += 1;
-            self.arrow_function_scope_depth += 1;
-            let prev_declared = std::mem::take(&mut self.declared_namespace_names);
-            if body_is_block
-                || !self.emit_arrow_concise_body_with_stripped_type_erasure_parens(func.body)
-            {
-                self.emit(func.body);
-            }
-            self.declared_namespace_names = prev_declared;
-            self.arrow_function_scope_depth -= 1;
-            self.function_scope_depth -= 1;
-            self.pending_function_body_parameters = prev_pending_function_body_parameters;
-            self.emitting_function_body_block = prev_emitting_function_body_block;
-        }
-
-        self.pop_commonjs_exported_var_parameter_shadow_names();
-        self.namespace_exported_names = prev_namespace_exported_names;
-        self.pop_temp_scope();
-    }
-
-    fn emit_arrow_concise_body_with_stripped_type_erasure_parens(
-        &mut self,
-        body: NodeIndex,
-    ) -> bool {
-        let Some(body_node) = self.arena.get(body) else {
-            return false;
-        };
-        if body_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            return false;
-        };
-        let Some(paren) = self.arena.get_parenthesized(body_node) else {
-            return false;
-        };
-        let Some(inner) = self.arena.get(paren.expression) else {
-            return false;
-        };
-        if inner.kind != syntax_kind_ext::TYPE_ASSERTION
-            && inner.kind != syntax_kind_ext::AS_EXPRESSION
-            && inner.kind != syntax_kind_ext::SATISFIES_EXPRESSION
-        {
-            return false;
-        }
-
-        let unwrapped_kind = self.unwrap_type_assertion_kind(paren.expression);
-        let can_strip = matches!(
-            unwrapped_kind,
-            Some(k) if k == SyntaxKind::Identifier as u16
-                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                || k == SyntaxKind::ThisKeyword as u16
-                || k == SyntaxKind::SuperKeyword as u16
-                || k == SyntaxKind::NullKeyword as u16
-                || k == SyntaxKind::TrueKeyword as u16
-                || k == SyntaxKind::FalseKeyword as u16
-                || k == SyntaxKind::NumericLiteral as u16
-                || k == SyntaxKind::BigIntLiteral as u16
-                || k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::RegularExpressionLiteral as u16
-                || k == syntax_kind_ext::TEMPLATE_EXPRESSION
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                || k == syntax_kind_ext::NON_NULL_EXPRESSION
-                || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                || (k == syntax_kind_ext::CALL_EXPRESSION && !self.paren_in_new_callee)
-                || (k == syntax_kind_ext::NEW_EXPRESSION && !self.paren_in_access_position)
-                || ((k == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || k == syntax_kind_ext::CLASS_EXPRESSION)
-                    && !self.ctx.flags.paren_leftmost_function_or_object
-                    && (!self.paren_in_access_position || self.paren_is_direct_call_callee))
-        );
-        if !can_strip {
-            return false;
-        }
-
-        let Some(actual_inner_start) = self
-            .source_text
-            .map(|_| self.skip_trivia_forward(inner.pos, inner.pos.saturating_add(2048)))
-        else {
-            return false;
-        };
-
-        let has_newline_comment = self.all_comments.iter().any(|comment| {
-            comment.pos >= body_node.pos
-                && comment.end <= actual_inner_start
-                && comment.has_trailing_new_line
-        });
-        if !has_newline_comment {
-            return false;
-        }
-
-        self.write_line();
-        self.emit(paren.expression);
-        true
-    }
-
-    fn emit_arrow_function_native_with_default_prologue(
-        &mut self,
-        func: &tsz_parser::parser::node::FunctionData,
-    ) {
-        let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
-        let is_simple = self.is_simple_single_parameter(&func.parameters.nodes);
-        let needs_parens = source_had_parens || !is_simple;
-
-        if needs_parens {
-            self.write("(");
-        }
-        self.emit_function_parameter_names_js(&func.parameters.nodes);
-        if needs_parens {
-            self.write(")");
-        }
-
-        self.write_space();
-        self.write("=> ");
-
-        self.push_temp_scope();
-        let prev_namespace_exported_names = self.namespace_exported_names.clone();
-        self.remove_namespace_exported_parameter_names(&func.parameters.nodes);
-        self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
-        self.write("{");
-        self.write_line();
-        self.increase_indent();
-        self.emit_native_default_param_prologue(&func.parameters.nodes);
-
-        let body_node = self.arena.get(func.body);
-        let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
-        self.function_scope_depth += 1;
-        self.arrow_function_scope_depth += 1;
-        if is_block {
-            if let Some(block_node) = body_node
-                && let Some(block) = self.arena.get_block(block_node)
-            {
-                for &stmt_idx in &block.statements.nodes {
-                    let before_len = self.writer.len();
-                    self.emit(stmt_idx);
-                    if self.writer.len() > before_len {
-                        self.write_line();
-                    }
-                }
-            }
-        } else {
-            self.write("return ");
-            self.emit(func.body);
-            self.write(";");
-            self.write_line();
-        }
-        self.arrow_function_scope_depth -= 1;
-        self.function_scope_depth -= 1;
-
-        self.decrease_indent();
-        self.write("}");
-        self.pop_commonjs_exported_var_parameter_shadow_names();
-        self.namespace_exported_names = prev_namespace_exported_names;
-        self.pop_temp_scope();
-    }
-
-    fn emit_function_parameter_names_js(&mut self, params: &[NodeIndex]) {
-        let mut first = true;
-        for &param_idx in params {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                continue;
-            };
-            if param.name.is_none() || param.dot_dot_dot_token {
-                continue;
-            }
-            if !first {
-                self.write(", ");
-            }
-            first = false;
-            self.emit_parameter_name_js(param.name);
-        }
-    }
-
-    fn emit_native_default_param_prologue(&mut self, params: &[NodeIndex]) {
-        for &param_idx in params {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                continue;
-            };
-            if param.initializer.is_none() {
-                continue;
-            }
-            let name =
-                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, param.name);
-            self.emit_param_default_assignment(&name, param.initializer);
-        }
-    }
-
-    fn remove_namespace_exported_parameter_name(&mut self, param_idx: NodeIndex) {
-        if let Some(param) = self.arena.get_parameter_at(param_idx) {
-            let name = self.get_identifier_text_idx(param.name);
-            if !name.is_empty() {
-                self.namespace_exported_names.remove(name.as_str());
-            }
-        }
-    }
-
-    pub(in crate::emitter) fn remove_namespace_exported_parameter_names(
-        &mut self,
-        params: &[NodeIndex],
-    ) {
-        for &param_idx in params {
-            self.remove_namespace_exported_parameter_name(param_idx);
-        }
-    }
-
-    fn native_arrow_default_params_need_temp_prologue(
-        &self,
-        func: &tsz_parser::parser::node::FunctionData,
-    ) -> bool {
-        if func.is_async || self.ctx.options.target.supports_es2020() {
-            return false;
-        }
-        if !self.arrow_params_are_simple_identifiers(&func.parameters.nodes) {
-            return false;
-        }
-        func.parameters.nodes.iter().copied().any(|param_idx| {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                return false;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                return false;
-            };
-            param.initializer.is_some()
-                && self.param_initializer_generates_hoisted_temp(param.initializer)
-        })
-    }
-
-    fn arrow_params_are_simple_identifiers(&self, params: &[NodeIndex]) -> bool {
-        params.iter().copied().all(|param_idx| {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                return false;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                return false;
-            };
-            if param.dot_dot_dot_token || param.name.is_none() {
-                return false;
-            }
-            self.arena
-                .get(param.name)
-                .is_some_and(|name| name.kind == tsz_scanner::SyntaxKind::Identifier as u16)
-        })
-    }
-
-    pub(super) fn param_initializer_generates_hoisted_temp(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        if let Some(binary) = self.arena.get_binary_expr(node) {
-            if binary.operator_token == tsz_scanner::SyntaxKind::QuestionQuestionToken as u16
-                && !self.is_simple_nullish_expression(binary.left)
-            {
-                return true;
-            }
-            return self.param_initializer_generates_hoisted_temp(binary.left)
-                || self.param_initializer_generates_hoisted_temp(binary.right);
-        }
-
-        if let Some(access) = self.arena.get_access_expr(node) {
-            if access.question_dot_token && !self.is_simple_nullish_expression(access.expression) {
-                return true;
-            }
-            return self.param_initializer_generates_hoisted_temp(access.expression)
-                || self.param_initializer_generates_hoisted_temp(access.name_or_argument);
-        }
-
-        if let Some(call) = self.arena.get_call_expr(node) {
-            if node.is_optional_chain() && !self.is_simple_nullish_expression(call.expression) {
-                return true;
-            }
-            if self.param_initializer_generates_hoisted_temp(call.expression) {
-                return true;
-            }
-            if let Some(args) = &call.arguments {
-                return args
-                    .nodes
-                    .iter()
-                    .copied()
-                    .any(|arg| self.param_initializer_generates_hoisted_temp(arg));
-            }
-        }
-
-        if let Some(paren) = self.arena.get_parenthesized(node) {
-            return self.param_initializer_generates_hoisted_temp(paren.expression);
-        }
-
-        if let Some(assertion) = self.arena.get_type_assertion(node) {
-            return self.param_initializer_generates_hoisted_temp(assertion.expression);
-        }
-
-        if let Some(cond) = self.arena.get_conditional_expr(node) {
-            return self.param_initializer_generates_hoisted_temp(cond.condition)
-                || self.param_initializer_generates_hoisted_temp(cond.when_true)
-                || self.param_initializer_generates_hoisted_temp(cond.when_false);
-        }
-
-        if let Some(unary) = self.arena.get_unary_expr(node) {
-            return self.param_initializer_generates_hoisted_temp(unary.operand);
-        }
-
-        if let Some(unary) = self.arena.get_unary_expr_ex(node) {
-            return self.param_initializer_generates_hoisted_temp(unary.expression);
-        }
-
-        if let Some(literal) = self.arena.get_literal_expr(node) {
-            return literal
-                .elements
-                .nodes
-                .iter()
-                .copied()
-                .any(|element| self.param_initializer_generates_hoisted_temp(element));
-        }
-
-        false
-    }
-
-    fn async_arrow_needs_parameter_forwarding(&self, params: &[NodeIndex]) -> bool {
-        params.iter().copied().any(|param_idx| {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                return false;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                return false;
-            };
-            self.arena.get(param.name).is_some_and(|name_node| {
-                name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-            })
-        })
-    }
-
-    /// Issue #3758: any parameter with a default initializer means tsc
-    /// moves the entire parameter list into the generator function and
-    /// forwards via `(...args_<n>) => __awaiter(..., [...args_<n>], ..., function* (<orig>) {})`
-    /// so the default-initializer expression is evaluated lazily inside
-    /// the generator (synchronous throws turn into rejected promises).
-    fn async_arrow_has_default_param(&self, params: &[NodeIndex]) -> bool {
-        params.iter().copied().any(|param_idx| {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                return false;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                return false;
-            };
-            param.initializer.is_some()
-        })
-    }
-
-    fn async_arrow_forwarded_parameter_names(&mut self, params: &[NodeIndex]) -> Vec<String> {
-        params
-            .iter()
-            .copied()
-            .filter_map(|param_idx| {
-                let param_node = self.arena.get(param_idx)?;
-                let param = self.arena.get_parameter(param_node)?;
-                let name_node = self.arena.get(param.name)?;
-                if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                    && let Some(ident) = self.arena.get_identifier(name_node)
-                    && !ident.escaped_text.is_empty()
-                {
-                    return Some(self.make_unique_name_from_base(&ident.escaped_text));
-                }
-                Some(self.make_unique_name())
-            })
-            .collect()
-    }
-
-    /// Emit an async arrow function lowered for ES2015/ES2016 targets.
-    /// Transforms simple arrows as `async () => body` → `() => __awaiter(...)`.
-    /// Arrows with binding-pattern parameters forward temp parameters into the
-    /// generator, matching tsc's `(_a) => __awaiter(..., [_a], ..., function* ({ x }) {})`.
-    fn emit_arrow_function_async_lowered(&mut self, func: &tsz_parser::parser::node::FunctionData) {
-        // Don't emit `async` - it's lowered away
-
-        // For arrow functions on ES2015+, TSC passes `this` to __awaiter when
-        // the arrow's lexical `this` comes from a non-arrow function/method.
-        // Arrow-only nesting at the top level still has no meaningful `this`.
-        let this_arg = if self.function_scope_depth > self.arrow_function_scope_depth {
-            "this"
-        } else {
-            "void 0"
-        };
-
-        let await_param_recovery = func
-            .parameters
-            .nodes
-            .iter()
-            .copied()
-            .any(|param_idx| self.param_initializer_has_top_level_await(param_idx))
-            && crate::transforms::emit_utils::block_is_empty(self.arena, func.body)
-            && crate::transforms::emit_utils::first_await_default_param_name(
-                self.arena,
-                &func.parameters.nodes,
-            )
-            .is_some();
-
-        if await_param_recovery {
-            self.emit_async_arrow_await_param_recovery(func, this_arg);
-            return;
-        }
-
-        let has_object_rest_param = self.ctx.needs_es2018_lowering
-            && !self.ctx.target_es5
-            && self.any_param_has_object_rest(&func.parameters.nodes);
-        // Issue #3758: when any parameter has a default initializer, tsc
-        // shifts the entire parameter list into the generator and forwards
-        // arguments via `(...args_<n>) => __awaiter(..., [...args_<n>], ...,
-        // function* (<orig params>) { ... })`. This makes default-initializer
-        // expressions evaluate inside the generator, so synchronous throws
-        // turn into rejected promises instead of escaping the call site.
-        let needs_default_param_forwarding =
-            !has_object_rest_param && self.async_arrow_has_default_param(&func.parameters.nodes);
-        if needs_default_param_forwarding {
-            self.emit_async_arrow_default_param_forwarding(func, this_arg);
-            return;
-        }
-        let forward_parameter_names = (!has_object_rest_param
-            && self.async_arrow_needs_parameter_forwarding(&func.parameters.nodes))
-        .then(|| self.async_arrow_forwarded_parameter_names(&func.parameters.nodes));
-
-        // TSC always wraps parameters in parens when lowering async arrows,
-        // even if the original source had `async x => ...` without parens.
-        self.write("(");
-        if let Some(names) = forward_parameter_names.as_ref() {
-            for (idx, name) in names.iter().enumerate() {
-                if idx > 0 {
-                    self.write(", ");
-                }
-                self.write(name);
-            }
-        } else {
-            self.emit_function_parameters_js(&func.parameters.nodes);
-        }
-        self.write(")");
-        let object_rest_param_prologue: Vec<(String, NodeIndex)> =
-            std::mem::take(&mut self.pending_object_rest_params);
-        let has_object_rest_param_prologue = !object_rest_param_prologue.is_empty();
-
-        // Check if the body references `arguments`. If so, we must capture it
-        // before entering the generator: `() => { var arguments_1 = arguments; return __awaiter(...); }`
-        // However, if we're already inside a generator body that has captured arguments
-        // (rewrite_arguments_to_arguments_1 is true), don't create another capture -
-        // the references are already being rewritten to `arguments_1`.
-        let captures_arguments = !self.ctx.rewrite_arguments_to_arguments_1
-            && contains_arguments_reference(self.arena, func.body);
-
-        let body_node = self.arena.get(func.body);
-        let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
-
-        // Check if body is empty and single-line in source for compact formatting
-        let body_is_empty_single_line = is_block
-            && self
-                .arena
-                .get(func.body)
-                .and_then(|n| {
-                    let block = self.arena.get_block(n)?;
-                    if block.statements.nodes.is_empty() {
-                        Some(self.is_single_line(n))
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(false);
-
-        // Check if the entire body is single-line in source
-        let body_is_single_line = is_block
-            && self
-                .arena
-                .get(func.body)
-                .map(|n| self.is_single_line(n))
-                .unwrap_or(false);
-
-        if body_is_empty_single_line
-            && !has_object_rest_param_prologue
-            && forward_parameter_names.is_none()
-        {
-            self.write(" => ");
-            self.write_helper("__awaiter");
-            self.write("(");
-            self.write(this_arg);
-            self.write(", void 0, void 0, function* () { })");
-            return;
-        }
-
-        if let Some(names) = forward_parameter_names {
-            self.write(" => ");
-            self.write_helper("__awaiter");
-            self.write("(");
-            self.write(this_arg);
-            self.write(", [");
-            for (idx, name) in names.iter().enumerate() {
-                if idx > 0 {
-                    self.write(", ");
-                }
-                self.write(name);
-            }
-            self.write("], void 0, function* (");
-            self.emit_function_parameters_js(&func.parameters.nodes);
-            let forwarded_object_rest_param_prologue: Vec<(String, NodeIndex)> =
-                std::mem::take(&mut self.pending_object_rest_params);
-            let has_forwarded_object_rest_param_prologue =
-                !forwarded_object_rest_param_prologue.is_empty();
-            self.write(") {");
-
-            let saved_yield = self.ctx.emit_await_as_yield;
-            self.ctx.emit_await_as_yield = true;
-            if is_block {
-                if body_is_single_line && !has_forwarded_object_rest_param_prologue {
-                    if let Some(body_node) = self.arena.get(func.body)
-                        && let Some(block) = self.arena.get_block(body_node)
-                    {
-                        for &stmt in &block.statements.nodes {
-                            self.write(" ");
-                            self.emit(stmt);
-                        }
-                    }
-                } else {
-                    self.write_line();
-                    self.increase_indent();
-                    self.emit_object_rest_param_prologue_entries(
-                        &forwarded_object_rest_param_prologue,
-                    );
-                    if let Some(body_node) = self.arena.get(func.body)
-                        && let Some(block) = self.arena.get_block(body_node)
-                    {
-                        for &stmt in &block.statements.nodes {
-                            self.emit(stmt);
-                            self.write_line();
-                        }
-                    }
-                    self.decrease_indent();
-                }
-            } else {
-                self.write(" return ");
-                self.emit_expression(func.body);
-                self.write(";");
-            }
-            self.ctx.emit_await_as_yield = saved_yield;
-            self.write(" })");
-            return;
-        }
-
-        // When capturing arguments, always use block form:
-        // `() => { var arguments_1 = arguments; return __awaiter(..., function* () { ... arguments_1 ... }); }`
-        if captures_arguments {
-            let arguments_capture_name = loop {
-                self.ctx.arguments_capture_counter += 1;
-                let candidate = format!("arguments_{}", self.ctx.arguments_capture_counter);
-                if !self.file_identifiers.contains(&candidate) {
-                    break candidate;
-                }
-            };
-            self.write(" => {");
-            self.write_line();
-            self.increase_indent();
-            self.write("var ");
-            self.write(&arguments_capture_name);
-            self.write(" = arguments;");
-            self.write_line();
-            self.write("return ");
-            self.write_helper("__awaiter");
-            self.write("(");
-            self.write(this_arg);
-            self.write(", void 0, void 0, function* () {");
-
-            let saved_yield = self.ctx.emit_await_as_yield;
-            let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
-            let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
-            self.ctx.emit_await_as_yield = true;
-            self.ctx.rewrite_arguments_to_arguments_1 = true;
-            self.ctx.arguments_capture_name = Some(arguments_capture_name);
-
-            if is_block {
-                if body_is_single_line && !has_object_rest_param_prologue {
-                    if let Some(body_node) = self.arena.get(func.body)
-                        && let Some(block) = self.arena.get_block(body_node)
-                    {
-                        for &stmt in &block.statements.nodes {
-                            self.write(" ");
-                            self.emit(stmt);
-                        }
-                    }
-                    self.write(" })");
-                } else {
-                    self.write_line();
-                    self.increase_indent();
-                    self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
-                    if let Some(body_node) = self.arena.get(func.body)
-                        && let Some(block) = self.arena.get_block(body_node)
-                    {
-                        for &stmt in &block.statements.nodes {
-                            self.emit(stmt);
-                            self.write_line();
-                        }
-                    }
-                    self.decrease_indent();
-                    self.write("})");
-                }
-            } else if has_object_rest_param_prologue {
-                self.write_line();
-                self.increase_indent();
-                self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
-                self.write("return ");
-                self.emit_expression(func.body);
-                self.write(";");
-                self.write_line();
-                self.decrease_indent();
-                self.write("})");
-            } else {
-                self.write(" return ");
-                self.emit_expression(func.body);
-                self.write("; })");
-            }
-
-            self.ctx.emit_await_as_yield = saved_yield;
-            self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
-            self.ctx.arguments_capture_name = saved_arguments_capture_name;
-
-            self.write(";");
-            self.write_line();
-            self.decrease_indent();
-            self.write("}");
-            return;
-        }
-
-        if body_is_single_line && !has_object_rest_param_prologue {
-            // Single-line body: emit inline like TSC
-            // e.g., () => __awaiter(this, void 0, void 0, function* () { return yield this; })
-            self.write(" => ");
-            self.write_helper("__awaiter");
-            self.write("(");
-            self.write(this_arg);
-            self.write(", void 0, void 0, function* () {");
-
-            let saved_yield = self.ctx.emit_await_as_yield;
-            self.ctx.emit_await_as_yield = true;
-            if let Some(body_node) = self.arena.get(func.body)
-                && let Some(block) = self.arena.get_block(body_node)
-            {
-                for &stmt in &block.statements.nodes {
-                    self.write(" ");
-                    self.emit(stmt);
-                }
-            }
-            self.ctx.emit_await_as_yield = saved_yield;
-            self.write(" })");
-            return;
-        }
-
-        if !is_block {
-            // Concise expression body: emit single-line unless parameter
-            // lowering needs a generator prologue.
-            self.write(" => ");
-            self.write_helper("__awaiter");
-            self.write("(");
-            self.write(this_arg);
-            self.write(", void 0, void 0, function* () {");
-            let saved_yield = self.ctx.emit_await_as_yield;
-            self.ctx.emit_await_as_yield = true;
-            if has_object_rest_param_prologue {
-                self.write_line();
-                self.increase_indent();
-                self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
-                self.write("return ");
-                self.emit_expression(func.body);
-                self.write(";");
-                self.write_line();
-                self.decrease_indent();
-            } else {
-                self.write(" return ");
-                self.emit_expression(func.body);
-                self.write(";");
-            }
-            self.ctx.emit_await_as_yield = saved_yield;
-            self.write(" })");
-            return;
-        }
-
-        self.write(" => ");
-        self.write_helper("__awaiter");
-        self.write("(");
-        self.write(this_arg);
-        self.write(", void 0, void 0, function* () {");
-        self.write_line();
-        self.increase_indent();
-
-        // Emit body with await→yield substitution
-        let saved_yield = self.ctx.emit_await_as_yield;
-        self.ctx.emit_await_as_yield = true;
-        self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
-
-        // Block body: emit statements directly
-        if let Some(body_node) = self.arena.get(func.body)
-            && let Some(block) = self.arena.get_block(body_node)
-        {
-            for &stmt in &block.statements.nodes {
-                self.emit(stmt);
-                self.write_line();
-            }
-        }
-
-        self.ctx.emit_await_as_yield = saved_yield;
-
-        self.decrease_indent();
-        self.write("})");
-    }
-
-    fn emit_object_rest_param_prologue_entries(&mut self, entries: &[(String, NodeIndex)]) {
-        for (temp_name, pattern_idx) in entries {
-            self.write("var ");
-            self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
-            self.write(";");
-            self.write_line();
-        }
-    }
-
-    /// Issue #3758: lower `async (x = init()) => body` so the default
-    /// initializer evaluates inside the generator function rather than at
-    /// outer call time. tsc emits:
-    ///
-    /// ```js
-    /// (...args_1) => __awaiter(this, [...args_1], void 0, function* (x = init()) { return x; })
-    /// ```
-    ///
-    /// — synchronous throws from `init()` reject the returned promise
-    /// instead of escaping the call site.
-    fn emit_async_arrow_default_param_forwarding(
-        &mut self,
-        func: &tsz_parser::parser::node::FunctionData,
-        this_arg: &str,
-    ) {
-        let args_name = self.make_unique_name_from_base("args");
-
-        self.write("(...");
-        self.write(&args_name);
-        self.write(") => ");
-        self.write_helper("__awaiter");
-        self.write("(");
-        self.write(this_arg);
-        self.write(", [...");
-        self.write(&args_name);
-        self.write("], void 0, function* (");
-        self.emit_function_parameters_js(&func.parameters.nodes);
-        self.write(") {");
-
-        let body_node = self.arena.get(func.body);
-        let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
-        let body_is_single_line = is_block
-            && self
-                .arena
-                .get(func.body)
-                .map(|n| self.is_single_line(n))
-                .unwrap_or(false);
-
-        let saved_yield = self.ctx.emit_await_as_yield;
-        self.ctx.emit_await_as_yield = true;
-        if is_block {
-            if body_is_single_line {
-                if let Some(body_node) = self.arena.get(func.body)
-                    && let Some(block) = self.arena.get_block(body_node)
-                {
-                    for &stmt in &block.statements.nodes {
-                        self.write(" ");
-                        self.emit(stmt);
-                    }
-                }
-            } else {
-                self.write_line();
-                self.increase_indent();
-                if let Some(body_node) = self.arena.get(func.body)
-                    && let Some(block) = self.arena.get_block(body_node)
-                {
-                    for &stmt in &block.statements.nodes {
-                        self.emit(stmt);
-                        self.write_line();
-                    }
-                }
-                self.decrease_indent();
-            }
-        } else {
-            self.write(" return ");
-            self.emit_expression(func.body);
-            self.write(";");
-        }
-        self.ctx.emit_await_as_yield = saved_yield;
-        self.write(" })");
-    }
-
-    fn emit_async_arrow_await_param_recovery(
-        &mut self,
-        func: &tsz_parser::parser::node::FunctionData,
-        this_arg: &str,
-    ) {
-        let Some(param_name) = crate::transforms::emit_utils::first_await_default_param_name(
-            self.arena,
-            &func.parameters.nodes,
-        ) else {
-            return;
-        };
-        let args_name = self.make_unique_name_from_base("args");
-
-        self.write("(...");
-        self.write(&args_name);
-        self.write(") => ");
-        self.write_helper("__awaiter");
-        self.write("(");
-        self.write(this_arg);
-        self.write(", [...");
-        self.write(&args_name);
-        self.write("], void 0, function* (");
-        self.write(&param_name);
-        self.write(" = yield ");
-        self.write(") {");
-        self.write_line();
-        self.write("})");
-    }
-
-    /// Check if the source had parentheses around the parameters
-    #[tracing::instrument(level = "trace", skip(self, params), fields(param_count = params.len()))]
-    fn source_has_arrow_function_parens(&self, params: &[NodeIndex]) -> bool {
-        if params.is_empty() {
-            // Empty param list always has parens: () => x
-            tracing::trace!("Empty param list, returning true");
-            return true;
-        }
-
-        // FIRST: Check source text if available (most reliable)
-        // Scan forward from the last parameter NAME to find ')' before '=>'
-        // Important: Use the parameter NAME's end, not the whole parameter's end
-        // (which includes type annotations that we want to detect)
-        if let Some(source) = self.source_text
-            && let Some(last_param) = params.last()
-            && let Some(param_node) = self.arena.get(*last_param)
-            && let Some(param_data) = self.arena.get_parameter(param_node)
-        {
-            // Get the parameter NAME's end position, not the whole parameter
-            if let Some(name_node) = self.arena.get(param_data.name) {
-                let end_pos = name_node.end as usize;
-                tracing::trace!(
-                    end_pos,
-                    source_len = source.len(),
-                    "Scanning source from param NAME end"
-                );
-
-                // Ensure we don't go out of bounds
-                if end_pos < source.len() {
-                    // Scan forward from the end of the parameter NAME
-                    // Look for ')' (had parens) or '=' from '=>' (no parens)
-                    let suffix = &source[end_pos..];
-                    let preview = &suffix[..std::cmp::min(30, suffix.len())];
-                    tracing::trace!(preview, "Source suffix preview");
-                    for ch in suffix.chars() {
-                        match ch {
-                            // Whitespace - skip
-                            // Found closing paren - had parens
-                            ')' => {
-                                tracing::trace!("Found ')' in source, returning true");
-                                return true;
-                            }
-                            // Found '=' from '=>' - no parens (simple param without parens)
-                            '=' => {
-                                tracing::trace!("Found '=' in source, returning false");
-                                return false;
-                            }
-                            // Colon indicates type annotation, keep scanning
-                            ':' => {
-                                tracing::trace!("Found ':' (type annotation), continuing scan");
-                                continue;
-                            }
-                            // Any other character - keep scanning
-                            _ => continue,
-                        }
-                    }
-                }
-            }
-        }
-
-        // FALLBACK: If source text check failed or no source available,
-        // check if parameter has modifiers or type annotations.
-        // Parameters with these MUST have had parens in valid TS.
-        tracing::trace!("Entering fallback check for modifiers/type annotations");
-        if let Some(first_param) = params.first()
-            && let Some(param_node) = self.arena.get(*first_param)
-            && let Some(param) = self.arena.get_parameter(param_node)
-        {
-            // Check for modifiers (public, private, protected, readonly, etc.)
-            if let Some(mods) = &param.modifiers {
-                let mod_count = mods.nodes.len();
-                tracing::trace!(mod_count, "Found modifiers");
-                if !mods.nodes.is_empty() {
-                    tracing::trace!("Has modifiers, returning true");
-                    return true;
-                }
-            }
-            // Check for type annotation
-            let has_type = param.type_annotation.is_some();
-            tracing::trace!(has_type, "Type annotation check");
-            if has_type {
-                tracing::trace!("Has type annotation, returning true");
-                return true;
-            }
-        }
-
-        // Default to parens if we couldn't determine
-        tracing::trace!("Fallback: returning true (conservative default)");
-        true
-    }
-
-    /// Check if parameters are a simple single parameter that doesn't need parens
-    /// For JS emit, type annotations don't matter since they're always stripped.
-    fn is_simple_single_parameter(&self, params: &[NodeIndex]) -> bool {
-        // Must have exactly one parameter
-        if params.len() != 1 {
-            return false;
-        }
-
-        let param_idx = params[0];
-        let Some(param_node) = self.arena.get(param_idx) else {
-            return false;
-        };
-        let Some(param) = self.arena.get_parameter(param_node) else {
-            return false;
-        };
-
-        // Must not be a rest parameter
-        if param.dot_dot_dot_token {
-            return false;
-        }
-
-        // Type annotations are irrelevant for JS emit - they're always stripped
-
-        // Must have no initializer
-        if param.initializer.is_some() {
-            return false;
-        }
-
-        // The name must be a simple identifier (not a destructuring pattern)
-        if param.name.is_none() {
-            return false;
-        }
-
-        let Some(name_node) = self.arena.get(param.name) else {
-            return false;
-        };
-
-        // Check if it's an identifier (not ArrayBindingPattern or ObjectBindingPattern)
-        name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-    }
-
     pub(super) fn emit_function_expression(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(func) = self.arena.get_function(node) else {
             return;
@@ -1194,10 +16,23 @@ impl<'a> Printer<'a> {
         let self_paren = self.ctx.flags.paren_leftmost_function_or_object;
         if self_paren {
             self.ctx.flags.paren_leftmost_function_or_object = false;
-            self.write("(");
+            self.open_paren();
         }
 
-        if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
+        let has_generator_asterisk = func.asterisk_token
+            || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                self.source_text,
+                node.pos,
+                self.arena.get(func.body).map_or(node.end, |body| body.pos),
+            );
+
+        let emit_invalid_namespace_static =
+            self.should_emit_invalid_namespace_static_modifier(node, &func.modifiers);
+        if emit_invalid_namespace_static {
+            self.write("static ");
+        }
+
+        if func.is_async && self.ctx.needs_async_lowering && !has_generator_asterisk {
             let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)
             } else {
@@ -1205,13 +40,13 @@ impl<'a> Printer<'a> {
             };
             self.emit_async_function_es5(func, &func_name, "this");
             if self_paren {
-                self.write(")");
+                self.close_paren();
             }
             return;
         }
 
         // Async generator: async function* f() → function f() { return __asyncGenerator(...) }
-        if func.is_async && self.ctx.needs_async_lowering && func.asterisk_token {
+        if func.is_async && self.ctx.needs_es2018_lowering && has_generator_asterisk {
             let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)
             } else {
@@ -1219,7 +54,7 @@ impl<'a> Printer<'a> {
             };
             self.emit_async_generator_lowered(func, &func_name);
             if self_paren {
-                self.write(")");
+                self.close_paren();
             }
             return;
         }
@@ -1228,6 +63,11 @@ impl<'a> Printer<'a> {
             self.write("async ");
         }
 
+        let needs_new_target_capture =
+            self.ctx.target_es5 && self.function_body_contains_new_target(func);
+        let function_name =
+            self.function_expression_emit_name(_idx, func.name, needs_new_target_capture);
+
         self.write("function");
 
         if func.asterisk_token {
@@ -1235,9 +75,9 @@ impl<'a> Printer<'a> {
         }
 
         // Name (if any)
-        if func.name.is_some() {
+        if let Some(name) = function_name.as_deref() {
             self.write_space();
-            self.emit_decl_name(func.name);
+            self.write(name);
         } else {
             // Space before ( only for anonymous functions: function (x) vs function name(x)
             self.write(" ");
@@ -1256,7 +96,7 @@ impl<'a> Printer<'a> {
                 .map(|source_pos| source_pos.pos)
                 .unwrap_or(search_start)
         };
-        self.write("(");
+        self.open_paren();
         let search_start = func
             .parameters
             .nodes
@@ -1278,7 +118,8 @@ impl<'a> Printer<'a> {
             search_start,
             search_end,
         );
-        self.write(") ");
+        self.close_paren();
+        self.write_space();
 
         // Emit body - tsc never collapses multi-line function expression bodies
         // to single lines. Single-line formatting is preserved via emit_block
@@ -1303,7 +144,13 @@ impl<'a> Printer<'a> {
         // Regular functions have their own `arguments`, so turn off the rewrite flag
         let prev_rewrite_args = self.ctx.rewrite_arguments_to_arguments_1;
         self.ctx.rewrite_arguments_to_arguments_1 = false;
+        let prev_arguments_capture_name = self.ctx.arguments_capture_name.take();
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
+        let previous_new_target_capture = needs_new_target_capture.then(|| {
+            self.push_new_target_capture_for_initializer(
+                self.ordinary_function_new_target_initializer(function_name.as_deref()),
+            )
+        });
         self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
         for &param_idx in &func.parameters.nodes {
             if let Some(param) = self.arena.get_parameter_at(param_idx) {
@@ -1317,7 +164,11 @@ impl<'a> Printer<'a> {
         self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.ctx.rewrite_arguments_to_arguments_1 = prev_rewrite_args;
+        self.ctx.arguments_capture_name = prev_arguments_capture_name;
         self.ctx.flags.in_generator = prev_in_generator;
+        if let Some(previous) = previous_new_target_capture {
+            self.restore_new_target_capture(previous);
+        }
         self.declared_namespace_names = prev_declared;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
@@ -1325,8 +176,140 @@ impl<'a> Printer<'a> {
         self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
         if self_paren {
-            self.write(")");
+            self.close_paren();
         }
+    }
+
+    pub(crate) fn function_body_contains_new_target(&self, func: &FunctionData) -> bool {
+        (func.body.is_some() && contains_new_target_reference(self.arena, func.body))
+            || func.parameters.nodes.iter().any(|&param_idx| {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    return false;
+                };
+                let Some(param) = self.arena.get_parameter(param_node) else {
+                    return false;
+                };
+                param.initializer.is_some()
+                    && contains_new_target_reference(self.arena, param.initializer)
+            })
+    }
+
+    pub(crate) fn ordinary_function_new_target_initializer(
+        &self,
+        function_name: Option<&str>,
+    ) -> String {
+        if let Some(function_name) = function_name
+            && !function_name.is_empty()
+        {
+            format!("this && this instanceof {function_name} ? this.constructor : void 0")
+        } else {
+            "this && this instanceof _a ? this.constructor : void 0".to_string()
+        }
+    }
+
+    pub(crate) fn function_expression_emit_name(
+        &self,
+        idx: NodeIndex,
+        explicit_name: NodeIndex,
+        needs_new_target_capture: bool,
+    ) -> Option<String> {
+        if explicit_name.is_some() {
+            return Some(self.get_identifier_text_idx(explicit_name));
+        }
+        if needs_new_target_capture {
+            self.infer_function_expression_name(idx)
+                .or_else(|| Some("_a".to_string()))
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn infer_function_expression_name(&self, idx: NodeIndex) -> Option<String> {
+        let parent_idx = self.arena.parent_of(idx)?;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent = self.arena.get(parent_idx)?;
+        match parent.kind {
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => self
+                .arena
+                .get_variable_declaration(parent)
+                .map(|decl| decl.name)
+                .and_then(|name| self.get_simple_identifier_text(name)),
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_property_assignment(parent)
+                .map(|prop| prop.name)
+                .and_then(|name| self.get_simple_identifier_text(name)),
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let binary = self.arena.get_binary_expr(parent)?;
+                if binary.right != idx {
+                    return None;
+                }
+                self.expression_name_for_named_evaluation(binary.left)
+            }
+            _ => None,
+        }
+    }
+
+    fn get_simple_identifier_text(&self, idx: NodeIndex) -> Option<String> {
+        self.arena.get(idx).and_then(|node| {
+            if node.is_identifier() {
+                Some(self.get_identifier_text_idx(idx))
+            } else {
+                None
+            }
+        })
+    }
+
+    fn expression_name_for_named_evaluation(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.is_identifier() {
+            return Some(self.get_identifier_text_idx(idx));
+        }
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(node)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+        {
+            if name_node.is_identifier() {
+                return Some(self.get_identifier_text_idx(access.name_or_argument));
+            }
+            if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+                return self.get_string_literal_text(access.name_or_argument);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn push_new_target_capture_for_initializer(
+        &mut self,
+        initializer: String,
+    ) -> Option<String> {
+        let previous = self
+            .current_new_target_substitution
+            .replace("_newTarget".into());
+        self.pending_new_target_capture_initializer = Some(initializer);
+        previous
+    }
+
+    pub(crate) fn restore_new_target_capture(&mut self, previous: Option<String>) {
+        self.current_new_target_substitution = previous;
+        self.pending_new_target_capture_initializer = None;
+    }
+
+    pub(crate) const fn has_pending_new_target_capture(&self) -> bool {
+        self.pending_new_target_capture_initializer.is_some()
+    }
+
+    pub(crate) fn emit_pending_new_target_capture(&mut self) {
+        let Some(initializer) = self.pending_new_target_capture_initializer.take() else {
+            return;
+        };
+        self.write("var _newTarget = ");
+        self.write(&initializer);
+        self.write(";");
+        self.write_line();
     }
 
     /// Check if a statement is a simple return statement (for single-line emission).
@@ -1381,12 +364,23 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let is_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = false;
+
         self.write("{ ");
+        let var_insert_pos = is_function_body_block.then_some(self.writer.len());
         for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
             if i > 0 {
                 self.write(" ");
             }
             self.emit(stmt_idx);
+        }
+        if let Some(byte_offset) = var_insert_pos
+            && !self.hoisted_assignment_temps.is_empty()
+        {
+            let var_decl = format!("var {}; ", self.hoisted_assignment_temps.join(", "));
+            self.writer.insert_at(byte_offset, &var_decl);
+            self.hoisted_assignment_temps.clear();
         }
         self.write(" }");
     }
@@ -1406,9 +400,14 @@ impl<'a> Printer<'a> {
         self.write("{");
         self.write_line();
         self.increase_indent();
+        let is_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = false;
         self.ctx.block_scope_state.enter_function_scope();
         self.skip_block_opening_line_comments(block_node, block);
+        self.emit_pending_new_target_capture();
         self.emit_param_prologue(transforms);
+        let hoisted_var_byte_offset =
+            is_function_body_block.then_some((self.writer.len(), self.writer.current_line()));
 
         for &stmt_idx in &block.statements.nodes {
             let before_len = self.writer.len();
@@ -1419,6 +418,9 @@ impl<'a> Printer<'a> {
         }
 
         self.ctx.block_scope_state.exit_scope();
+        if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
+            self.insert_function_body_hoisted_temps_at(byte_offset, line_no);
+        }
         self.decrease_indent();
         self.write("}");
     }
@@ -1479,11 +481,13 @@ impl<'a> Printer<'a> {
 
         // Clear any previous pending rest params
         self.pending_object_rest_params.clear();
+        self.pending_object_rest_param_defaults.clear();
 
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         let mut first = true;
         let mut object_rest_temp_counter = 0u32;
         let mut object_rest_temp_names = Vec::<String>::new();
+        let mut lowered_object_rest_param_seen = false;
         for &param_idx in params {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
@@ -1493,6 +497,16 @@ impl<'a> Printer<'a> {
                 // But preserve rest parameters (`...`) even with missing names,
                 // matching tsc behavior: `function sum(...) { }`.
                 if param.name.is_none() && !param.dot_dot_dot_token {
+                    if let Some(recovered_name) =
+                        self.recovered_parameter_name_from_type_or_range(param_idx, param)
+                    {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+                        self.write(&recovered_name);
+                        self.remove_namespace_exported_parameter_name(param_idx);
+                    }
                     continue;
                 }
                 // Skip parameters where the name is an empty/missing identifier
@@ -1505,6 +519,17 @@ impl<'a> Printer<'a> {
                     && let Some(ident) = self.arena.get_identifier(name_node)
                     && ident.escaped_text.is_empty()
                 {
+                    let Some(recovered_name) =
+                        self.recovered_parameter_name_from_type_or_range(param_idx, param)
+                    else {
+                        continue;
+                    };
+                    if !first {
+                        self.write(", ");
+                    }
+                    first = false;
+                    self.write(&recovered_name);
+                    self.remove_namespace_exported_parameter_name(param_idx);
                     continue;
                 }
 
@@ -1552,6 +577,7 @@ impl<'a> Printer<'a> {
 
                 // ES2018 object rest lowering: replace destructuring param with a temp
                 if needs_rest_lowering && self.param_has_object_rest(param_idx) {
+                    lowered_object_rest_param_seen = true;
                     let temp = self.next_object_rest_param_temp_name(
                         &mut object_rest_temp_counter,
                         &mut object_rest_temp_names,
@@ -1566,8 +592,10 @@ impl<'a> Printer<'a> {
                     {
                         self.skip_comments_in_range(type_node.pos, type_node.end);
                     }
-                    // Don't emit default value here — it'll be in the body as `if (_a === void 0)`
-                    // Skip initializer comments too
+                    if param.initializer.is_some() {
+                        self.write(" = ");
+                        self.emit(param.initializer);
+                    }
                     self.pending_object_rest_params.push((temp, param.name));
                     continue;
                 }
@@ -1660,7 +688,19 @@ impl<'a> Printer<'a> {
                         self.pending_block_comment_space = false;
                     }
                 }
-                if param.initializer.is_some() {
+                let simple_param_name = self
+                    .arena
+                    .get(param.name)
+                    .is_some_and(|node| node.is_identifier())
+                    .then(|| self.get_identifier_text_idx(param.name))
+                    .filter(|name| !name.is_empty());
+                if lowered_object_rest_param_seen
+                    && param.initializer.is_some()
+                    && let Some(param_name) = simple_param_name
+                {
+                    self.pending_object_rest_param_defaults
+                        .push((param_name, param.initializer));
+                } else if param.initializer.is_some() {
                     self.write(" = ");
                     self.emit(param.initializer);
                 } else if self.parameter_has_missing_initializer(param_node, param) {
@@ -1819,6 +859,19 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if self.ctx.options.legacy_decorators
+            && let Some(modifiers) = param.modifiers.as_ref()
+        {
+            for &mod_idx in &modifiers.nodes {
+                let Some(mod_node) = self.arena.get(mod_idx) else {
+                    continue;
+                };
+                if mod_node.kind == syntax_kind_ext::DECORATOR {
+                    self.skip_comments_for_erased_node(mod_node);
+                }
+            }
+        }
+
         if param.dot_dot_dot_token {
             self.write("...");
             if let Some(name_node) = self.arena.get(param.name) {
@@ -1947,6 +1000,12 @@ impl<'a> Printer<'a> {
             .map(|source_pos| source_pos.pos)
             .unwrap_or(search_end);
 
+        if let Some(recovered_name) =
+            self.recovered_empty_parameter_name_from_header(open_paren_pos, close_paren_pos)
+        {
+            self.write(&recovered_name);
+        }
+
         let mut comment_start = open_paren_pos.saturating_add(1);
         if let Some(source_text) = self.source_text {
             let bytes = source_text.as_bytes();
@@ -1965,7 +1024,50 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_parameter_name_js(&mut self, name_idx: NodeIndex) {
+    fn recovered_parameter_name_from_type_or_range(
+        &self,
+        param_idx: NodeIndex,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> Option<String> {
+        let source = self.source_text?;
+
+        let raw = self
+            .arena
+            .get(param.type_annotation)
+            .and_then(|type_node| {
+                crate::safe_slice::slice(source, type_node.pos as usize, type_node.end as usize)
+                    .ok()
+            })
+            .or_else(|| {
+                self.arena.get(param_idx).and_then(|param_node| {
+                    crate::safe_slice::slice(
+                        source,
+                        param_node.pos as usize,
+                        param_node.end as usize,
+                    )
+                    .ok()
+                })
+            })?;
+
+        raw.trim_matches(|ch: char| ch == ':' || ch.is_whitespace())
+            .split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
+            .find(|part| !part.is_empty())
+            .map(str::to_string)
+    }
+
+    pub(in crate::emitter) fn recovered_empty_parameter_name_from_header(
+        &self,
+        open_paren_pos: u32,
+        close_paren_pos: u32,
+    ) -> Option<String> {
+        let source = self.source_text?;
+        let start = open_paren_pos.checked_add(1)? as usize;
+        let end = close_paren_pos as usize;
+        let raw = crate::safe_slice::slice(source, start, end).ok()?;
+        recovered_parameter_name_from_colon_header(raw)
+    }
+
+    pub(in crate::emitter) fn emit_parameter_name_js(&mut self, name_idx: NodeIndex) {
         let Some(name_node) = self.arena.get(name_idx) else {
             return;
         };
@@ -2052,11 +1154,23 @@ impl<'a> Printer<'a> {
     }
 }
 
+fn recovered_parameter_name_from_colon_header(raw: &str) -> Option<String> {
+    let after_colon = raw.trim().strip_prefix(':')?;
+    after_colon
+        .split(|ch: char| !matches!(ch, '_' | '$') && !ch.is_ascii_alphanumeric())
+        .find(|part| !part.is_empty())
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_common::ScriptTarget;
-    use tsz_parser::ParserState;
+    fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        (parser, root)
+    }
 
     /// Async arrow functions must always have parenthesized parameters,
     /// matching tsc behavior. `async x => x` becomes `async (x) => x`.
@@ -2064,8 +1178,7 @@ mod tests {
     fn async_arrow_always_parenthesizes_params() {
         let source = "const f = async i => i;";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -2084,8 +1197,7 @@ mod tests {
     fn non_async_arrow_preserves_no_parens() {
         let source = "const f = x => x;";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -2108,8 +1220,7 @@ mod tests {
     fn async_arrow_with_source_parens_keeps_them() {
         let source = "const f = async (x) => x;";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -2126,8 +1237,7 @@ mod tests {
     fn parenthesized_arrow_body_type_erasure_strips_parens_across_comment() {
         let source = "const x = (a: any[]) => (\n    // comment\n    undefined as number\n);";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(
             &parser.arena,
@@ -2161,8 +1271,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "function f() { (async () => { return 10; })(); }";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2178,8 +1287,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "const g = async () => { return 10; };";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2195,8 +1303,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "class C { method() { return (async () => 42)(); } }";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2211,8 +1318,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "const outer = () => async () => 1;";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2227,8 +1333,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "const f = async (dispatch: Dispatch, { foo }: OwnProps) => { return foo; };";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2245,8 +1350,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "async ({ foo, bar, ...rest }) => bar(await foo);";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2274,8 +1378,7 @@ mod tests {
     fn function_with_empty_parameter_comment_preserves_comment() {
         let source = "function foo(/** nothing */) { return 1; }";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
         printer.print(root);
@@ -2296,8 +1399,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "var foo = async (a = await): Promise<void> => {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2308,12 +1410,62 @@ mod tests {
     }
 
     #[test]
+    fn async_arrow_default_param_preserves_leading_args_and_reuses_arguments_capture() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "function f() { const a1 = async (x, y = z) => {}; const a2 = async (x = z) => { return async () => arguments; }; const a3 = async () => { return async (x = z) => arguments; }; }";
+        let (parser, root) = parse_test_source(source);
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result.code.contains(
+                "const a1 = (x_1, ...args_1) => __awaiter(this, [x_1, ...args_1], void 0, function* (x, y = z) { });"
+            ),
+            "Leading parameters before the first default should stay explicit and the default tail should be forwarded.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
+            result.code.contains("var arguments_1 = arguments;"),
+            "The first async arrow that needs lexical arguments should create a function-scoped capture.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
+            result.code.contains(
+                "const a3 = () => __awaiter(this, void 0, void 0, function* () { return (...args_1) => __awaiter(this, [...args_1], void 0, function* (x = z) { return arguments_1; }); });"
+            ),
+            "Sibling async arrows should reuse the existing function-scoped arguments capture.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("var arguments_2 = arguments;"),
+            "Sibling async arrows should not create redundant lexical arguments captures.\nOutput:\n{}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn async_function_es2015_single_line_moved_params_stays_inline() {
+        use crate::output::printer::{PrintOptions, lower_and_print};
+
+        let source = "async function f(x = z) { return async () => arguments; }";
+        let (parser, root) = parse_test_source(source);
+        let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
+
+        assert!(
+            result.code.contains(
+                "return __awaiter(this, arguments, void 0, function* (x = z) { return () => __awaiter(this, void 0, void 0, function* () { return arguments_1; }); });"
+            ),
+            "Single-line async function bodies with moved parameters should stay inline in the generator wrapper.\nOutput:\n{}",
+            result.code
+        );
+    }
+
+    #[test]
     fn async_function_await_arrow_param_recovery_native_keeps_await_param() {
         use crate::output::printer::lower_and_print;
 
         let source = "async function foo(a = await => await): Promise<void> {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(
             &parser.arena,
             root,
@@ -2337,8 +1489,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "async function foo(a = await => await): Promise<void> {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2353,8 +1504,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "async function foo({ foo = await bar }) {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2374,8 +1524,7 @@ mod tests {
         use crate::output::printer::{PrintOptions, lower_and_print};
 
         let source = "async function h(a, { x }) {}";
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let result = lower_and_print(&parser.arena, root, PrintOptions::es6());
 
         assert!(
@@ -2394,8 +1543,7 @@ mod tests {
     fn malformed_rest_parameter_modifier_recovers_following_parameter() {
         let source = "class C { constructor(...public rest: string[]) {} }";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
         printer.print(root);
@@ -2418,8 +1566,7 @@ mod tests {
   ) {}
 }";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
         printer.print(root);
@@ -2439,8 +1586,7 @@ mod tests {
     fn empty_param_name_dropped() {
         let source = "function f(a,\u{00AC}) {}";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);
@@ -2462,8 +1608,7 @@ mod tests {
     fn omitted_call_args_dropped() {
         let source = "foo(a,,b);";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
+        let (parser, root) = parse_test_source(source);
 
         let mut printer = Printer::new(&parser.arena, PrintOptions::default());
         printer.set_source_text(source);

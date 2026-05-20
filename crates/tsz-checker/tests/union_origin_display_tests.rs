@@ -51,3 +51,58 @@ function f2(x: T1 | null, y: T1 & T2) {
         ts2859.message_text
     );
 }
+
+/// Source-written string literal unions do not always display in declaration
+/// order. This locks a tsc-compatible counterexample so union origin
+/// preservation does not over-apply to all string literal unions.
+#[test]
+fn ts2322_renamed_string_literal_union_uses_tsc_display_order() {
+    let source = r#"
+type Status = "active" | "inactive" | "pending";
+declare const s: "draft" | "active" | "inactive";
+const x: Status = s;
+"#;
+    let diags = check_source_diagnostics(source);
+    let ts2322 = diags
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("Expected TS2322, got: {diags:?}"));
+    assert!(
+        ts2322
+            .message_text
+            .contains(r#""active" | "inactive" | "draft""#),
+        "Source type must display in tsc order. Got: {}",
+        ts2322.message_text
+    );
+    assert!(
+        !ts2322
+            .message_text
+            .contains(r#""draft" | "active" | "inactive""#),
+        "Source type must not preserve declaration order here. Got: {}",
+        ts2322.message_text
+    );
+}
+
+#[test]
+fn ts2322_mixed_number_string_literal_union_uses_tsc_display_order() {
+    let source = r#"
+type Target = "b";
+declare const s: "a" | 1;
+const x: Target = s;
+"#;
+    let diags = check_source_diagnostics(source);
+    let ts2322 = diags
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("Expected TS2322, got: {diags:?}"));
+    assert!(
+        ts2322.message_text.contains(r#"1 | "a""#),
+        "Source type must display mixed literal union in tsc order. Got: {}",
+        ts2322.message_text
+    );
+    assert!(
+        !ts2322.message_text.contains(r#""a" | 1"#),
+        "Source type must not preserve mixed literal declaration order. Got: {}",
+        ts2322.message_text
+    );
+}

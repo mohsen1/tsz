@@ -4,16 +4,19 @@
 
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
-use crate::parser::ParserState;
 use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
+fn parse_test_source(source: &str) -> (crate::parser::ParserState, crate::parser::NodeIndex) {
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
 
 #[test]
 fn test_break_at_top_level_emits_ts1105() {
     // break at top level should emit TS1105
     let source = "break;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -41,8 +44,7 @@ fn test_break_at_top_level_emits_ts1105() {
 fn test_continue_at_top_level_emits_ts1104() {
     // continue at top level should emit TS1104
     let source = "continue;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -75,8 +77,7 @@ switch (0) {
         break;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -109,8 +110,7 @@ switch (0) {
         continue;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -142,8 +142,7 @@ while (true) {
     break;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -175,8 +174,7 @@ for (let i = 0; i < 10; i++) {
     continue;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -209,8 +207,7 @@ for (const x of arr) {
     break;
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -245,8 +242,7 @@ while (true) {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);
@@ -282,8 +278,7 @@ while (true) {
     }
 }
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let (parser, root) = parse_test_source(source);
 
     let mut binder = BinderState::new();
     merge_shared_lib_symbols(&mut binder);

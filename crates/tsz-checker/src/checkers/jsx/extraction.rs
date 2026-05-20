@@ -5,148 +5,12 @@
 //! (TS2604), return types (TS2786), and provides helpers for generic/overloaded
 //! component detection.
 
-use super::runtime;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
-    fn jsx_class_component_props_alias_hint(&self, instance_type: TypeId) -> Option<TypeId> {
-        let app = crate::query_boundaries::common::type_application(self.ctx.types, instance_type)
-            .or_else(|| {
-                self.ctx
-                    .types
-                    .get_display_alias(instance_type)
-                    .and_then(|alias| {
-                        crate::query_boundaries::common::type_application(self.ctx.types, alias)
-                    })
-            })?;
-        let &props_arg = app.args.first()?;
-        crate::query_boundaries::common::type_has_displayable_name(self.ctx.types, props_arg)
-            .then_some(props_arg)
-    }
-
-    fn store_jsx_props_display_alias_if_matching(&mut self, props_type: TypeId, alias: TypeId) {
-        if self.ctx.types.get_display_alias(props_type).is_some() {
-            return;
-        }
-        let alias_evaluated = self.evaluate_type_with_env(alias);
-        if alias_evaluated != TypeId::ERROR
-            && self.is_assignable_to(alias_evaluated, props_type)
-            && self.is_assignable_to(props_type, alias_evaluated)
-        {
-            self.ctx.types.store_display_alias(props_type, alias);
-        }
-    }
-
-    fn jsx_type_contains_callable_surface(&mut self, type_id: TypeId) -> bool {
-        let mut stack = vec![type_id];
-        let mut seen = rustc_hash::FxHashSet::default();
-        while let Some(current) = stack.pop() {
-            if !seen.insert(current) {
-                continue;
-            }
-            let evaluated = self.evaluate_type_with_env(current);
-            let resolved = self.resolve_type_for_property_access(evaluated);
-            let resolved = self.resolve_lazy_type(resolved);
-            if resolved != current {
-                stack.push(resolved);
-            }
-            if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, current)
-                .is_some()
-                || crate::query_boundaries::common::call_signatures_for_type(
-                    self.ctx.types,
-                    current,
-                )
-                .is_some_and(|sigs| !sigs.is_empty())
-                || crate::query_boundaries::common::construct_signatures_for_type(
-                    self.ctx.types,
-                    current,
-                )
-                .is_some_and(|sigs| !sigs.is_empty())
-            {
-                return true;
-            }
-            if let Some(members) =
-                crate::query_boundaries::common::intersection_members(self.ctx.types, current)
-            {
-                stack.extend(members);
-            }
-            if let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, current)
-            {
-                stack.extend(members);
-            }
-        }
-        false
-    }
-
-    fn effective_jsx_factory_name(&self) -> String {
-        let pragma_factory = self
-            .current_jsx_source_text()
-            .and_then(runtime::extract_jsx_pragma);
-        pragma_factory.unwrap_or_else(|| self.ctx.compiler_options.jsx_factory.clone())
-    }
-
-    fn report_jsx_factory_arity_mismatch(
-        &mut self,
-        tag_name_idx: NodeIndex,
-        required_arg_count: usize,
-    ) {
-        let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
-        let factory_name = self.effective_jsx_factory_name();
-        self.error_at_node_msg(
-            tag_name_idx,
-            crate::diagnostics::diagnostic_codes::TAG_EXPECTS_AT_LEAST_ARGUMENTS_BUT_THE_JSX_FACTORY_PROVIDES_AT_MOST,
-            &[&tag_text, &required_arg_count.to_string(), &factory_name, "2"],
-        );
-    }
-
-    fn jsx_sfc_required_param_count(params: &[tsz_solver::ParamInfo]) -> usize {
-        params
-            .iter()
-            .take_while(|param| param.is_required())
-            .count()
-    }
-
-    pub(super) fn check_jsx_sfc_factory_arity(
-        &mut self,
-        component_type: TypeId,
-        tag_name_idx: NodeIndex,
-    ) -> bool {
-        if let Some(shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, component_type)
-            && !shape.is_constructor
-            && shape.type_params.is_empty()
-        {
-            let required_arg_count = Self::jsx_sfc_required_param_count(&shape.params);
-            if required_arg_count > 2 {
-                self.report_jsx_factory_arity_mismatch(tag_name_idx, required_arg_count);
-                return true;
-            }
-            return false;
-        }
-
-        if let Some(sigs) = crate::query_boundaries::common::call_signatures_for_type(
-            self.ctx.types,
-            component_type,
-        ) {
-            let non_generic: Vec<_> = sigs
-                .iter()
-                .filter(|sig| sig.type_params.is_empty())
-                .collect();
-            if non_generic.len() == 1 {
-                let required_arg_count = Self::jsx_sfc_required_param_count(&non_generic[0].params);
-                if required_arg_count > 2 {
-                    self.report_jsx_factory_arity_mismatch(tag_name_idx, required_arg_count);
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
     pub(super) fn apply_jsx_library_managed_attributes(
         &mut self,
         component_type: TypeId,
@@ -299,6 +163,18 @@ impl<'a> CheckerState<'a> {
         element_idx: Option<NodeIndex>,
     ) -> Option<(TypeId, bool)> {
         let raw_component_type = component_type;
+        if let Some(props_type) =
+            self.react_component_alias_application_props_arg(raw_component_type)
+        {
+            let raw_has_type_params = crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                props_type,
+            );
+            let props_type =
+                self.apply_jsx_library_managed_attributes(raw_component_type, props_type);
+            return Some((props_type, raw_has_type_params));
+        }
+
         let component_type = self.normalize_jsx_component_type_for_resolution(component_type);
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
@@ -497,15 +373,31 @@ impl<'a> CheckerState<'a> {
     ) {
         let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
         let is_this_tag = tag_text == "this";
-        if !is_this_tag
-            && tag_text
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_lowercase())
+        if is_this_tag {
+            use crate::diagnostics::diagnostic_codes;
+
+            if let Some((start, _)) = self.get_node_span(tag_name_idx)
+                && self.ctx.diagnostics.iter().any(|diag| {
+                    diag.code == diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT
+                        && diag.start == start
+                })
+            {
+                return;
+            }
+            self.error_at_node_msg(
+                tag_name_idx,
+                diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES,
+                &[&tag_text],
+            );
+            return;
+        }
+        if tag_text
+            .as_bytes()
+            .first()
+            .is_some_and(|ch| ch.is_ascii_lowercase())
         {
             return;
         }
-        // Skip for types that are inherently allowed in JSX position
         if component_type == TypeId::ANY
             || component_type == TypeId::ERROR
             || component_type == TypeId::UNKNOWN
@@ -513,11 +405,9 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
-        // Skip type parameters — they may resolve to callable types
         if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, component_type) {
             return;
         }
-        // Skip string-like tag values without going through full assignability.
         // Dynamic tag names like `<Tag>` where `Tag` is `string` or a union of
         // string literals are valid JSX and should be treated like intrinsic
         // element lookups. A structural relation check here is unnecessarily
@@ -545,6 +435,36 @@ impl<'a> CheckerState<'a> {
                 .is_some()
         {
             return;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, component_type)
+        {
+            let mut saw_component_union = false;
+            let mut all_component_unions = true;
+            for member_type in members {
+                let member_type = if crate::query_boundaries::common::needs_evaluation_for_merge(
+                    self.ctx.types,
+                    member_type,
+                ) {
+                    self.evaluate_type_with_env(member_type)
+                } else {
+                    member_type
+                };
+                if self.is_jsx_string_tag_type(member_type) {
+                    continue;
+                }
+                saw_component_union = true;
+                if self
+                    .get_jsx_props_type_for_component_member(member_type, None)
+                    .is_none()
+                {
+                    all_component_unions = false;
+                    break;
+                }
+            }
+            if saw_component_union && all_component_unions {
+                return;
+            }
         }
         // Check if the type (or any union member) has call/construct signatures
         let (types_to_check, is_union) = if let Some(members) =
@@ -673,6 +593,169 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn jsx_component_return_check_types(
+        &mut self,
+        component_type: TypeId,
+    ) -> Vec<(TypeId, TypeId)> {
+        let mut stack = vec![(component_type, component_type)];
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut types = Vec::new();
+
+        while let Some((raw_type_id, type_id)) = stack.pop() {
+            let resolved = if crate::query_boundaries::common::needs_evaluation_for_merge(
+                self.ctx.types,
+                type_id,
+            ) {
+                self.evaluate_type_with_env(type_id)
+            } else {
+                type_id
+            };
+            if !seen.insert((raw_type_id, resolved)) {
+                continue;
+            }
+            if let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+            {
+                stack.extend(members.into_iter().map(|member| (member, member)));
+            } else {
+                types.push((raw_type_id, resolved));
+            }
+        }
+
+        types
+    }
+
+    fn jsx_instantiated_application_body_for_return_check(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+            .or_else(|| {
+                self.ctx.types.get_display_alias(type_id).and_then(|alias| {
+                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                })
+            })?;
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)?;
+        let (body_type, type_params) = {
+            let env = self.ctx.type_env.borrow();
+            (
+                TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types),
+                TypeResolver::get_lazy_type_params(&*env, def_id).unwrap_or_default(),
+            )
+        };
+        let body_type = body_type?;
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &type_params,
+            &app.args,
+        );
+        Some(crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            body_type,
+            &substitution,
+        ))
+    }
+
+    fn jsx_property_type_for_return_check(
+        &mut self,
+        type_id: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let mut stack = vec![type_id];
+        let mut seen = rustc_hash::FxHashSet::default();
+        while let Some(candidate) = stack.pop() {
+            if !seen.insert(candidate) {
+                continue;
+            }
+            match self.resolve_property_access_with_env(candidate, property_name) {
+                PropertyAccessResult::Success { type_id, .. } => return Some(type_id),
+                _ => {
+                    if let Some(alias) = self.ctx.types.get_display_alias(candidate) {
+                        stack.push(alias);
+                    }
+                    if let Some(instantiated) =
+                        self.jsx_instantiated_application_body_for_return_check(candidate)
+                    {
+                        stack.push(instantiated);
+                    }
+                    let evaluated = self.evaluate_type_with_env(candidate);
+                    if evaluated != candidate {
+                        stack.push(evaluated);
+                    }
+                    let lazy_resolved = self.resolve_lazy_type(candidate);
+                    if lazy_resolved != candidate {
+                        stack.push(lazy_resolved);
+                    }
+                    let property_resolved = self.resolve_type_for_property_access(candidate);
+                    if property_resolved != candidate {
+                        stack.push(property_resolved);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn jsx_callable_return_types_for_return_check(&mut self, type_id: TypeId) -> Vec<TypeId> {
+        let type_id =
+            if crate::query_boundaries::common::needs_evaluation_for_merge(self.ctx.types, type_id)
+            {
+                self.evaluate_type_with_env(type_id)
+            } else {
+                type_id
+            };
+        let mut returns = Vec::new();
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
+            && !shape.is_constructor
+        {
+            returns.push(self.evaluate_type_with_env(shape.return_type));
+        }
+        if let Some(sigs) =
+            crate::query_boundaries::common::get_call_signatures(self.ctx.types, type_id)
+        {
+            returns.extend(
+                sigs.iter()
+                    .map(|sig| self.evaluate_type_with_env(sig.return_type)),
+            );
+        }
+        returns
+    }
+
+    pub(super) fn jsx_construct_return_satisfies_element_class_render(
+        &mut self,
+        instance_type: TypeId,
+        element_class_type: TypeId,
+    ) -> bool {
+        let Some(source_render) = self.jsx_property_type_for_return_check(instance_type, "render")
+        else {
+            return false;
+        };
+        let Some(target_render) =
+            self.jsx_property_type_for_return_check(element_class_type, "render")
+        else {
+            return false;
+        };
+        if self.is_assignable_to(source_render, target_render) {
+            return true;
+        }
+
+        let source_returns = self.jsx_callable_return_types_for_return_check(source_render);
+        let target_returns = self.jsx_callable_return_types_for_return_check(target_render);
+        if source_returns.is_empty() || target_returns.is_empty() {
+            return false;
+        }
+
+        source_returns.iter().any(|&source_return| {
+            target_returns
+                .iter()
+                .any(|&target_return| self.is_assignable_to(source_return, target_return))
+        })
+    }
+
     /// TS2786: Check that a JSX component's return type is assignable to
     /// `JSX.Element` (SFC) or `JSX.ElementClass` (class component).
     pub(super) fn check_jsx_component_return_type(
@@ -733,18 +816,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let types_to_check = if let Some(members) =
+        let is_union =
             crate::query_boundaries::common::union_members(self.ctx.types, component_type)
-        {
-            members
-        } else {
-            vec![component_type]
-        };
+                .is_some();
+        let types_to_check = self.jsx_component_return_check_types(component_type);
 
         let mut any_checked = false;
         let mut all_valid = true;
+        let is_react_component_alias_union =
+            self.is_react_jsx_component_alias_union(component_type);
 
-        for &member_type in &types_to_check {
+        for (raw_member_type, member_type) in types_to_check {
+            if self.is_jsx_string_tag_type(member_type) {
+                continue;
+            }
             if !is_concrete(member_type) {
                 continue;
             }
@@ -755,7 +840,25 @@ impl<'a> CheckerState<'a> {
             ) {
                 continue;
             }
-
+            // In a union, React component alias Applications (ComponentType<P>,
+            // ReactType<P>, ComponentClass<P>, StatelessComponent<P>, etc.) are
+            // valid JSX component shapes. Skip the return-type check: their
+            // recursive return types (ReactElement<P> ↔ ComponentClass<P>/SFC<P>)
+            // trigger cycle-detection false positives in the assignability checker.
+            // The alias-application skip does not require props to be extractable
+            // because the skip reason is cycle avoidance, not props availability.
+            // The second clause (branch display) still requires props as an
+            // extra guard that the member is a concrete component shape.
+            let is_alias_app = self.is_react_jsx_component_alias_application(raw_member_type);
+            let is_branch_disp =
+                !is_alias_app && self.is_react_jsx_component_branch_display(raw_member_type);
+            let branch_has_props = is_branch_disp
+                && self
+                    .get_jsx_props_type_for_component_member(member_type, None)
+                    .is_some();
+            if is_union && (is_alias_app || (is_react_component_alias_union && branch_has_props)) {
+                continue;
+            }
             let is_unresolved = |t: TypeId| -> bool {
                 !is_concrete(t)
                     || crate::query_boundaries::common::needs_evaluation_for_merge(
@@ -839,9 +942,7 @@ impl<'a> CheckerState<'a> {
                         if is_unresolved(ret) || is_valid_null_like_return(ret) {
                             return true;
                         }
-                        // For construct sigs, skip if the return type still
-                        // contains type parameters (from outer scopes). The
-                        // instance type is incomplete until instantiation.
+                        // For construct sigs, skip unresolved outer-scope type parameters.
                         if !is_call_sig
                             && crate::query_boundaries::common::contains_type_parameters(
                                 self.ctx.types,
@@ -872,6 +973,9 @@ impl<'a> CheckerState<'a> {
                                 ret
                             };
                             self.is_assignable_to(check_ret, t)
+                                || (!is_call_sig
+                                    && self
+                                        .jsx_construct_return_can_use_render_fallback(check_ret, t))
                         })
                     });
                     if any_concrete {
@@ -1355,7 +1459,15 @@ impl<'a> CheckerState<'a> {
         };
         let props_alias_hint = self
             .jsx_class_component_props_alias_hint(raw_instance_type)
-            .or_else(|| self.jsx_class_component_props_alias_hint(instance_type));
+            .or_else(|| self.jsx_class_component_props_alias_hint(instance_type))
+            .or_else(|| {
+                first_param_type.filter(|&param_type| {
+                    crate::query_boundaries::common::type_has_displayable_name(
+                        self.ctx.types,
+                        param_type,
+                    )
+                })
+            });
 
         // Look up ElementAttributesProperty to know which instance property is props
         // Pass element_idx so TS2608 can be emitted if >1 property
@@ -1492,310 +1604,5 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-    }
-
-    fn strip_implicit_jsx_children_from_props_fallback(&mut self, props_type: TypeId) -> TypeId {
-        let props_type = self.normalize_jsx_required_props_target(props_type);
-        if let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)
-        {
-            let filtered_props: Vec<_> = shape
-                .properties
-                .iter()
-                .filter(|prop| self.ctx.types.resolve_atom(prop.name) != "children")
-                .cloned()
-                .collect();
-            if filtered_props.len() != shape.properties.len() {
-                return self.ctx.types.factory().object(filtered_props);
-            }
-        }
-
-        let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)
-        else {
-            return props_type;
-        };
-
-        let filtered: Vec<_> = members
-            .into_iter()
-            .filter(|member| {
-                let Some(shape) =
-                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, *member)
-                else {
-                    return true;
-                };
-                if shape.properties.len() != 1 {
-                    return true;
-                }
-                let prop = &shape.properties[0];
-                self.ctx.types.resolve_atom(prop.name) != "children"
-            })
-            .collect();
-
-        match filtered.len() {
-            0 => props_type,
-            1 => filtered[0],
-            _ => self.ctx.types.factory().intersection(filtered),
-        }
-    }
-
-    fn jsx_managed_attributes_preserve_original_props(
-        &mut self,
-        original_props: TypeId,
-        managed_props: TypeId,
-    ) -> bool {
-        use crate::query_boundaries::common::PropertyAccessResult;
-
-        let original_props = self.normalize_jsx_required_props_target(original_props);
-        let managed_props = self.normalize_jsx_required_props_target(managed_props);
-        let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, original_props)
-        else {
-            return true;
-        };
-
-        shape.properties.iter().all(|prop| {
-            let prop_name = self.ctx.types.resolve_atom(prop.name);
-            matches!(
-                self.resolve_property_access_with_env(managed_props, &prop_name),
-                PropertyAccessResult::Success { .. }
-            )
-        })
-    }
-
-    fn try_apply_jsx_default_props_fallback(
-        &mut self,
-        props_type: TypeId,
-        default_props_type: TypeId,
-    ) -> Option<TypeId> {
-        let props_type = self.normalize_jsx_required_props_target(props_type);
-        let props_shape =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, props_type)?;
-        if props_shape.string_index.is_some() || props_shape.number_index.is_some() {
-            return None;
-        }
-
-        let default_props_type = self.evaluate_type_with_env(default_props_type);
-        let default_shape = crate::query_boundaries::common::object_shape_for_type(
-            self.ctx.types,
-            default_props_type,
-        )?;
-        if default_shape.properties.is_empty() {
-            return Some(props_type);
-        }
-
-        let defaulted_names: rustc_hash::FxHashSet<_> = default_shape
-            .properties
-            .iter()
-            .map(|prop| prop.name)
-            .collect();
-        let mut changed = false;
-        let properties: Vec<_> = props_shape
-            .properties
-            .iter()
-            .cloned()
-            .map(|mut prop| {
-                if defaulted_names.contains(&prop.name) && !prop.optional {
-                    prop.optional = true;
-                    changed = true;
-                }
-                prop
-            })
-            .collect();
-
-        if !changed {
-            return Some(props_type);
-        }
-
-        Some(self.ctx.types.factory().object(properties))
-    }
-
-    /// Get the property name from `JSX.ElementAttributesProperty`.
-    /// Returns None/Some("")/Some("name"); emits TS2608 if >1 property.
-    pub(super) fn get_element_attributes_property_name_with_check(
-        &mut self,
-        _element_idx: Option<NodeIndex>,
-    ) -> Option<String> {
-        let jsx_sym_id = self.get_jsx_namespace_type()?;
-        let lib_binders = self.get_lib_binders();
-        let symbol = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
-        let exports = symbol.exports.as_ref()?;
-        let eap_sym_id = exports.get("ElementAttributesProperty")?;
-
-        // Get the type of ElementAttributesProperty
-        let eap_type = self.type_reference_symbol_type(eap_sym_id);
-        let evaluated = self.evaluate_type_with_env(eap_type);
-
-        // If the type couldn't be resolved (unknown/error), the symbol's declarations
-        // are likely in a different file's arena (cross-file project mode). Fall back to
-        // "props" as the standard JSX convention — all React types and most JSX configs
-        // use `{ props: {} }` as the ElementAttributesProperty interface.
-        if evaluated == TypeId::UNKNOWN || evaluated == TypeId::ERROR {
-            return Some("props".to_string());
-        }
-
-        // Check if it has any properties
-        if let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
-        {
-            if shape.properties.is_empty() {
-                return Some(String::new()); // Empty interface
-            }
-            // TS2608: ElementAttributesProperty may not have more than one property
-            if shape.properties.len() > 1 {
-                // Emit at the ElementAttributesProperty declaration, not the JSX element
-                // Look up the symbol to get its declaration position
-                if let Some(eap_symbol) = self.ctx.binder.get_symbol(eap_sym_id)
-                    && let Some(&decl_idx) = eap_symbol.declarations.first()
-                {
-                    let anchor_idx = self
-                        .ctx
-                        .arena
-                        .get(decl_idx)
-                        .and_then(|node| self.ctx.arena.get_interface(node))
-                        .map(|iface| iface.name)
-                        .unwrap_or(decl_idx);
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node_msg(
-                        anchor_idx,
-                        diagnostic_codes::THE_GLOBAL_TYPE_JSX_MAY_NOT_HAVE_MORE_THAN_ONE_PROPERTY,
-                        &["ElementAttributesProperty"],
-                    );
-                }
-                // tsc's getJsxElementPropertiesName returns undefined when the
-                // EAP interface declares more than one property. That routes the
-                // attributes type back through the no-EAP branch (first
-                // construct-signature parameter), not the empty-EAP branch
-                // (instance type), so propagate `None` here.
-                return None;
-            }
-            // Return the name of the first (and typically only) property
-            if let Some(first_prop) = shape.properties.first() {
-                return Some(self.ctx.types.resolve_atom(first_prop.name));
-            }
-        }
-
-        Some(String::new()) // Default: empty (instance type is props)
-    }
-
-    /// Extract the concrete props type from a class component's construct signature
-    /// by substituting explicit JSX type arguments for the type parameters.
-    ///
-    /// Called when a JSX element carries explicit type arguments with the correct
-    /// arity, e.g. `<MyComp<Prop> a={10} b={20} />`.  The standard
-    /// `get_class_component_props_type` path uses constraint/default substitution
-    /// (or attribute-driven inference), which ignores the explicit type args.  This
-    /// method performs the substitution directly so that the caller receives the
-    /// correctly-instantiated props type and can emit TS2322 when attribute values
-    /// don't match.
-    ///
-    /// Returns `None` when the component type lacks construct signatures or the
-    /// signatures don't have the right structure for direct substitution.
-    pub(super) fn get_jsx_class_props_with_explicit_type_args(
-        &mut self,
-        component_type: TypeId,
-        explicit_type_args: &[TypeId],
-    ) -> Option<TypeId> {
-        let sigs = crate::query_boundaries::common::construct_signatures_for_type(
-            self.ctx.types,
-            component_type,
-        )?;
-        if sigs.is_empty() {
-            return None;
-        }
-
-        // Pick the single concrete constructor signature (same logic as
-        // `get_class_component_props_type`).
-        let sig = if sigs.len() == 1 {
-            sigs.into_iter().next()?
-        } else {
-            let with_props: Vec<_> = sigs.into_iter().filter(|s| !s.params.is_empty()).collect();
-            if with_props.len() == 1 {
-                with_props.into_iter().next()?
-            } else {
-                return None;
-            }
-        };
-
-        if sig.type_params.is_empty() {
-            // Non-generic class: explicit type args are irrelevant; use the first
-            // parameter directly.
-            return sig
-                .params
-                .first()
-                .map(|p| self.evaluate_type_with_env(p.type_id));
-        }
-
-        // Only substitute when the arity matches (count validation already ran).
-        if explicit_type_args.len() > sig.type_params.len() {
-            return None;
-        }
-
-        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
-            self.ctx.types,
-            &sig.type_params,
-            explicit_type_args,
-        );
-
-        // Substitute into the instance type to get the concrete props via the
-        // standard ElementAttributesProperty / `props` member path.
-        let instantiated_return = crate::query_boundaries::common::instantiate_type(
-            self.ctx.types,
-            sig.return_type,
-            &substitution,
-        );
-        let instance_type = self.evaluate_type_with_env(instantiated_return);
-
-        // Obtain the ElementAttributesProperty name (same logic as the parent fn).
-        let prop_name = self.get_element_attributes_property_name_with_check(None);
-
-        let props_type = match prop_name {
-            None => {
-                // No JSX namespace or fallback: use the `props` member or first param.
-                self.get_jsx_namespace_type()?;
-                use crate::query_boundaries::common::PropertyAccessResult;
-                match self.resolve_property_access_with_env(instance_type, "props") {
-                    PropertyAccessResult::Success { type_id, .. } => type_id,
-                    _ => {
-                        // Fall back to the explicitly-instantiated first param type.
-                        let instantiated_param = sig.params.first().map(|p| {
-                            crate::query_boundaries::common::instantiate_type(
-                                self.ctx.types,
-                                p.type_id,
-                                &substitution,
-                            )
-                        })?;
-                        self.evaluate_type_with_env(instantiated_param)
-                    }
-                }
-            }
-            Some(ref name) if name.is_empty() => {
-                // Empty ElementAttributesProperty: use instantiated first param.
-                let instantiated_param = sig.params.first().map(|p| {
-                    crate::query_boundaries::common::instantiate_type(
-                        self.ctx.types,
-                        p.type_id,
-                        &substitution,
-                    )
-                })?;
-                self.evaluate_type_with_env(instantiated_param)
-            }
-            Some(ref name) => {
-                use crate::query_boundaries::common::PropertyAccessResult;
-                match self.resolve_property_access_with_env(instance_type, name) {
-                    PropertyAccessResult::Success { type_id, .. } => type_id,
-                    _ => return None,
-                }
-            }
-        };
-
-        let evaluated = self.evaluate_type_with_env(props_type);
-        if evaluated == TypeId::ANY || evaluated == TypeId::ERROR || evaluated == TypeId::UNKNOWN {
-            return None;
-        }
-        Some(evaluated)
     }
 }

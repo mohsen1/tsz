@@ -5,6 +5,7 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
+use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     /// Logical argument list for a call-shaped expression.
@@ -191,7 +192,7 @@ impl<'a> CheckerState<'a> {
                     || arg_type == widened_actual_type;
                 let mismatches_expected = expected_type != TypeId::ERROR
                     && expected_type != TypeId::UNKNOWN
-                    && !self.is_assignable_to(arg_type, expected_type);
+                    && !self.diagnostic_relation_boolean_guard(arg_type, expected_type);
 
                 if matches_actual {
                     actual_matches.push(arg_idx);
@@ -286,7 +287,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             saw_expected = true;
-            if self.is_assignable_to(first_arg_type, expected_type) {
+            if self.diagnostic_relation_boolean_guard(first_arg_type, expected_type) {
                 return false;
             }
         }
@@ -372,7 +373,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !self.is_assignable_to(source_prop_type, target_prop_type) {
+            if !self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type) {
                 return self
                     .literal_argument_mismatch_anchor(prop_value_idx, target_prop_type)
                     .or(Some(prop_name_idx));
@@ -406,7 +407,7 @@ impl<'a> CheckerState<'a> {
             _ => return None,
         };
         let arr = self.ctx.arena.get_literal_expr(arg_node)?.clone();
-        let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             param_type,
             self.ctx.compiler_options.no_implicit_any,
@@ -444,7 +445,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !self.is_assignable_to(elem_type, target_element_type) {
+            if !self.diagnostic_relation_boolean_guard(elem_type, target_element_type) {
                 return Some(elem_idx);
             }
         }

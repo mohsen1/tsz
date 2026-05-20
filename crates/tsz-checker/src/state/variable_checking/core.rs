@@ -3,7 +3,10 @@
 //! For-in / for-of loop variable checking is in `for_loop.rs`.
 
 use crate::computation::complex::is_contextually_sensitive;
-use crate::context::{PendingImplicitAnyKind, PendingImplicitAnyVar, TypingRequest};
+use crate::context::{
+    PendingImplicitAnyKind, PendingImplicitAnyVar, TypingRequest,
+    speculation::DiagnosticSpeculationSnapshot,
+};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
@@ -35,6 +38,73 @@ impl<'a> CheckerState<'a> {
             );
         }
         false
+    }
+
+    fn bare_type_alias_annotation_declared_type(
+        &mut self,
+        annotation_idx: NodeIndex,
+        resolved_type: TypeId,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(annotation_idx)?;
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        if type_ref.type_arguments.is_some() {
+            return None;
+        }
+        let crate::symbol_resolver::TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return None;
+        };
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+            return None;
+        }
+        // Suppress when the alias body has explicit type arguments
+        // (e.g. `type B = A<X>;`). tsc unfolds such aliases at TS2739
+        // source display to `A<X>`, so storing the bare alias would lose
+        // the unfold target. Bare-reference bodies (`type B = A;` where
+        // `A` carries defaults) keep the alias name.
+        let body_has_explicit_type_args = symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                return false;
+            };
+            let Some(body_node) = self.ctx.arena.get(alias.type_node) else {
+                return false;
+            };
+            if body_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                return false;
+            }
+            self.ctx
+                .arena
+                .get_type_ref(body_node)
+                .is_some_and(|body_ref| body_ref.type_arguments.is_some())
+        });
+        if body_has_explicit_type_args {
+            return None;
+        }
+        let resolves_to_application =
+            crate::query_boundaries::common::application_info(self.ctx.types, resolved_type)
+                .is_some();
+        let resolves_to_named_object =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_type)
+                .and_then(|shape| shape.symbol)
+                .and_then(|target_sym| self.ctx.binder.get_symbol(target_sym))
+                .is_some_and(|target_symbol| {
+                    target_symbol.has_any_flags(
+                        tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::INTERFACE,
+                    )
+                });
+        if !resolves_to_application && !resolves_to_named_object {
+            return None;
+        }
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        Some(self.ctx.types.lazy(def_id))
     }
 
     fn initializer_supports_binding_pattern_context(
@@ -483,6 +553,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        self.check_await_expression(decl_idx);
+
         // TS1155: Check if const declarations must be initialized
         // Skip check for ambient declarations (e.g., declare const x;)
         // Skip when file has real syntax errors — the parse error is sufficient.
@@ -785,6 +857,13 @@ impl<'a> CheckerState<'a> {
                 checker.check_type_for_missing_names_skip_top_level_ref(var_decl.type_annotation);
                 checker.check_type_for_parameter_properties(var_decl.type_annotation);
                 let type_id = checker.get_type_from_type_node(var_decl.type_annotation);
+                let type_id = if var_decl.initializer.is_none() {
+                    checker
+                        .bare_type_alias_annotation_declared_type(var_decl.type_annotation, type_id)
+                        .unwrap_or(type_id)
+                } else {
+                    type_id
+                };
                 // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'.
                 // When the annotation is invalid, fall back to the catch-variable default
                 // (any/unknown) so the catch body sees the same type tsc uses, preventing
@@ -995,6 +1074,42 @@ impl<'a> CheckerState<'a> {
                     {
                         let init_start = init_node.pos;
                         let init_end = init_node.end;
+                        let object_literal_method_name_spans: Vec<(u32, u32)> = if init_node.kind
+                            == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        {
+                            checker
+                                .ctx
+                                .arena
+                                .get_literal_expr(init_node)
+                                .map(|literal| {
+                                    literal
+                                        .elements
+                                        .nodes
+                                        .iter()
+                                        .filter_map(|&element_idx| {
+                                            let element_node =
+                                                checker.ctx.arena.get(element_idx)?;
+                                            if element_node.kind
+                                                != syntax_kind_ext::METHOD_DECLARATION
+                                            {
+                                                return None;
+                                            }
+                                            let method =
+                                                checker.ctx.arena.get_method_decl(element_node)?;
+                                            let name_node = checker.ctx.arena.get(method.name)?;
+                                            if name_node.kind
+                                                == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                                            {
+                                                return None;
+                                            }
+                                            Some((name_node.pos, name_node.end))
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        };
                         checker.ctx.diagnostics.retain(|diag| {
                             diag.code
                                 == crate::diagnostics::diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
@@ -1032,8 +1147,20 @@ impl<'a> CheckerState<'a> {
                                 // `var x: T = new T()` reports both the
                                 // annotation and value-position lookups when `T`
                                 // is unresolved.
-                                || diag.code
+                                || (diag.code
                                     == crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                                    && !object_literal_method_name_spans
+                                        .iter()
+                                        .any(|&(start, end)| diag.start >= start && diag.start < end))
+                                // TS2322 diagnostics from the pre-contextual
+                                // assignment check can be stale for object
+                                // literal methods: contextual method typing may
+                                // supply the function shape that makes the final
+                                // object assignable. The contextual check below
+                                // re-emits real assignment failures.
+                                || (diag.code
+                                    == crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                                    && object_literal_method_name_spans.is_empty())
                                 // TS2538: "Type 'X' cannot be used as an index
                                 // type" is a structural error about the index
                                 // expression's shape; it doesn't depend on the
@@ -1051,7 +1178,8 @@ impl<'a> CheckerState<'a> {
                         });
                         checker.ctx.rebuild_emitted_diagnostics_from_current();
                     }
-                    let init_snap = checker.ctx.snapshot_diagnostics();
+                    let init_snap = DiagnosticSpeculationSnapshot::new(&checker.ctx);
+                    let init_diagnostics_len = init_snap.snapshot().diagnostics_len;
                     checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
                     let mut init_type =
                         checker.get_type_of_node_with_request(var_decl.initializer, &request);
@@ -1080,7 +1208,7 @@ impl<'a> CheckerState<'a> {
                             .node_types
                             .insert(var_decl.initializer.0, init_type);
                     }
-                    let (init_type_for_relation, remapped_mapped_initializer) = if checker
+                    let (mut init_type_for_relation, remapped_mapped_initializer) = if checker
                         .ctx
                         .arena
                         .get(var_decl.initializer)
@@ -1102,20 +1230,45 @@ impl<'a> CheckerState<'a> {
                     } else {
                         (checker.resolve_lazy_type(init_type), false)
                     };
+                    let jsdoc_new_expression_relation = jsdoc_declared_type.is_some()
+                        && var_decl.type_annotation.is_none()
+                        && checker
+                            .ctx
+                            .arena
+                            .get(var_decl.initializer)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION);
+                    if jsdoc_new_expression_relation {
+                        let raw_init_snap = DiagnosticSpeculationSnapshot::new(&checker.ctx);
+                        // Preserve the contextual cache entry. The raw probe below
+                        // runs with TypingRequest::NONE and repopulates node_types
+                        // with a non-contextual initializer type.
+                        let saved_initializer_node_type =
+                            checker.ctx.node_types.get(&var_decl.initializer.0).copied();
+                        checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
+                        let raw_init_type = checker.get_type_of_node_with_request(
+                            var_decl.initializer,
+                            &TypingRequest::NONE,
+                        );
+                        raw_init_snap.rollback(&mut checker.ctx.diagnostic_state());
+                        if let Some(saved) = saved_initializer_node_type {
+                            checker.ctx.node_types.insert(var_decl.initializer.0, saved);
+                        } else {
+                            checker.ctx.node_types.remove(&var_decl.initializer.0);
+                        }
+                        init_type_for_relation = checker.resolve_lazy_type(raw_init_type);
+                    }
                     if let Some(branch_ranges) = conditional_branch_ranges {
                         // Preserve non-assignability diagnostics from the branch expressions
                         // (e.g. TS2352/TS2873), but drop premature TS2322s produced while
                         // contextually typing the individual branches. The outer variable
                         // declaration check should report the canonical whole-expression error.
-                        checker
-                            .ctx
-                            .rollback_diagnostics_filtered(&init_snap, |diag| {
-                                let in_branch = branch_ranges
-                                    .iter()
-                                    .flatten()
-                                    .any(|(start, end)| diag.start >= *start && diag.start < *end);
-                                !(in_branch && diag.code == 2322)
-                            });
+                        init_snap.rollback_filtered(&mut checker.ctx.diagnostic_state(), |diag| {
+                            let in_branch = branch_ranges
+                                .iter()
+                                .flatten()
+                                .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                            !(in_branch && diag.code == 2322)
+                        });
                     }
                     let function_initializer_body_has_error = checker
                         .ctx
@@ -1138,24 +1291,22 @@ impl<'a> CheckerState<'a> {
                                 // type). When it did, the outer assignment-level
                                 // TS2322 is redundant.
                                 return Some(
-                                    checker.ctx.diagnostics[init_snap.diagnostics_len..]
-                                        .iter()
-                                        .any(|diag| {
+                                    checker.ctx.diagnostics[init_diagnostics_len..].iter().any(
+                                        |diag| {
                                             diag.start >= body_node.pos
                                                 && diag.start < body_node.end
                                                 && matches!(diag.code, 2322 | 2339)
-                                        }),
+                                        },
+                                    ),
                                 );
                             }
-                            Some(
-                                checker.ctx.diagnostics[init_snap.diagnostics_len..]
-                                    .iter()
-                                    .any(|diag| {
-                                        diag.start >= body_node.pos
-                                            && diag.start < body_node.end
-                                            && matches!(diag.code, 2322 | 2339)
-                                    }),
-                            )
+                            Some(checker.ctx.diagnostics[init_diagnostics_len..].iter().any(
+                                |diag| {
+                                    diag.start >= body_node.pos
+                                        && diag.start < body_node.end
+                                        && matches!(diag.code, 2322 | 2339)
+                                },
+                            ))
                         })
                         .unwrap_or(false);
                     // Check assignability (skip for 'any' since anything is assignable to any,
@@ -1293,9 +1444,7 @@ impl<'a> CheckerState<'a> {
                                     // Function initializer return elaboration emitted the canonical
                                     // nested TS2322 for a mismatching returned literal/expression.
                                 } else {
-                                    // Run excess property check first for object literal
-                                    // initializers. In tsc, TS2353 (excess property) takes
-                                    // priority over TS2741/TS2322 (missing property).
+                                    // TS2353 (excess property) takes priority over TS2741/TS2322.
                                     let diags_before = checker.ctx.diagnostics.len();
                                     checker.check_object_literal_excess_properties(
                                         checked_init_type,
@@ -1331,7 +1480,18 @@ impl<'a> CheckerState<'a> {
                                             // assigned to a concrete callable target.
                                             // (e.g., (cb: (x: string, ...rest: T) => void) => void
                                             //   vs (cb: (...args: never) => void) => void)
-                                            if !checker
+                                            if jsdoc_new_expression_relation
+                                                && !checker.is_assignable_to(
+                                                    checked_init_type,
+                                                    declared_type,
+                                                )
+                                            {
+                                                checker.error_type_not_assignable_generic_at(
+                                                    checked_init_type,
+                                                    declared_type,
+                                                    decl_idx,
+                                                );
+                                            } else if !checker
                                                 .type_contains_invalid_mapped_key_type(declared_type)
                                             {
                                                 checker.ctx.skip_callable_type_param_suppression.set(true);
@@ -1515,10 +1675,12 @@ impl<'a> CheckerState<'a> {
                     {
                         return literal_type;
                     }
-                    // `const k = Symbol()` — infer unique symbol type.
-                    // In TypeScript, const declarations initialized with Symbol() get
+                    // `const k = Symbol()` / `const k = Symbol.for(...)` — infer
+                    // unique symbol type. In TypeScript, unannotated const
+                    // declarations initialized with global symbol factory calls get
                     // a unique symbol type (typeof k), not the general `symbol` type.
-                    if checker.is_symbol_call_initializer(var_decl.initializer)
+                    if (checker.is_symbol_call_initializer(var_decl.initializer)
+                        || checker.is_symbol_for_call_initializer(var_decl.initializer))
                         && let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx)
                     {
                         return checker
@@ -1628,7 +1790,8 @@ impl<'a> CheckerState<'a> {
             // If it was, any ERROR in the cache is from earlier resolution (e.g., use-before-def),
             // not from circular detection during this declaration's initializer processing.
             let sym_already_cached = self.ctx.symbol_types.contains_key(&sym_id);
-            let var_decl_snap = self.ctx.snapshot_diagnostics();
+            let var_decl_snap =
+                crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
             let mut final_type = compute_final_type(self);
             // Check if get_type_of_symbol cached ERROR specifically DURING compute_final_type.
             // This happens when the initializer (directly or indirectly) references the variable,
@@ -1730,20 +1893,39 @@ impl<'a> CheckerState<'a> {
             // the constructor/value type, so overwriting would corrupt the cached interface
             // type. Value-position resolution (`new Error()`) is handled separately by
             // `get_type_of_identifier` which has its own merged-symbol path.
+            //
+            // EXCEPT: For merged type-alias+variable symbols (e.g.,
+            // `const X = {...} as const; type X = typeof X[keyof typeof X]`),
+            // `symbol_types[X]` must hold the TYPE ALIAS body type (the result of
+            // evaluating the alias), not the VALUE type of the const declaration.
+            // Type-position references (`const d: X = 0`) must resolve to the alias
+            // body type; value-position `typeof X` resolution is handled separately
+            // through `merged_value_types` in `get_type_from_type_query`.
             {
-                let is_merged_interface = self.ctx.binder.get_symbol(sym_id).is_some_and(|s| {
-                    s.flags & tsz_binder::symbol_flags::INTERFACE != 0
-                        && s.flags
-                            & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
-                                | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
-                            != 0
-                });
+                let (is_merged_named_type_with_variable, is_canonical_value_declaration) = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map(|s| {
+                        let merged = (s.flags & tsz_binder::symbol_flags::INTERFACE != 0
+                            || s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+                            && s.flags
+                                & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                                    | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+                                != 0;
+                        let canonical = s.value_declaration == decl_idx;
+                        (merged, canonical)
+                    })
+                    .unwrap_or((false, false));
                 // For var redeclarations, do NOT overwrite the symbol type.
                 // The first declaration's type is canonical. Overwriting with a
                 // subsequent declaration's inferred type can corrupt recursive
                 // type resolution chains (e.g., `typeof k` indexers resolve to
                 // `any` after the symbol type is overwritten by a redeclaration).
-                if !is_merged_interface && (!is_redeclaration || is_js_require_binding) {
+                if !is_merged_named_type_with_variable
+                    && (is_canonical_value_declaration || is_js_require_binding)
+                    && (!is_redeclaration || is_js_require_binding)
+                {
                     // Augment callable types with expando properties before caching.
                     if let Some(ref name) = var_name {
                         final_type =
@@ -2015,7 +2197,7 @@ impl<'a> CheckerState<'a> {
                 && !is_direct_deferred_initializer
             {
                 self.suppress_circular_initializer_relation_diagnostics(
-                    &var_decl_snap,
+                    var_decl_snap,
                     var_decl.initializer,
                 );
                 final_type = TypeId::ANY;

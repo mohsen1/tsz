@@ -18,6 +18,174 @@
 
 use tsz_checker::diagnostics as crate_diag;
 
+#[test]
+fn in_operator_narrows_mapped_union_member_property_type() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type ReplaceKeys<U, T, Y> = {
+  [K in keyof U]: K extends T
+    ? K extends keyof Y
+      ? Y[K]
+      : never
+    : U[K]
+};
+
+interface NodeA { type: 'A'; name: string }
+interface NodeB { type: 'B'; id: number }
+
+type Nodes = NodeA | NodeB;
+type Replaced = ReplaceKeys<Nodes, 'name', { name: number }>;
+
+declare const r: Replaced;
+
+if ('name' in r) {
+  const name: number = r.name;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected mapped-union `in` narrowing to preserve `name: number`, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_narrows_renamed_mapped_union_member_property_type() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type Rewrite<UnionType, SelectedKey, Overrides> = {
+  [Field in keyof UnionType]: Field extends SelectedKey
+    ? Field extends keyof Overrides
+      ? Overrides[Field]
+      : never
+    : UnionType[Field]
+};
+
+type Left = { kind: 'left'; label: string };
+type Right = { kind: 'right'; count: number };
+
+type Rewritten = Rewrite<Left | Right, 'label', { label: boolean }>;
+
+declare const item: Rewritten;
+
+if ('label' in item) {
+  const label: boolean = item.label;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected renamed mapped-union `in` narrowing to preserve `label: boolean`, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_false_branch_excludes_required_mapped_union_property() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type ReplaceKeys<U, T, Y> = {
+  [K in keyof U]: K extends T
+    ? K extends keyof Y
+      ? Y[K]
+      : never
+    : U[K]
+};
+
+interface NodeA { type: 'A'; name: string }
+interface NodeB { type: 'B'; id: number }
+
+type Replaced = ReplaceKeys<NodeA | NodeB, 'name', { name: number }>;
+
+declare const r: Replaced;
+
+if ('name' in r) {
+  const name: number = r.name;
+} else {
+  const id: number = r.id;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected mapped-union `in` false branch to exclude the required property member, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_narrows_literal_key_mapped_type_union_member() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type Bag<Keys extends string> = { [Key in Keys]: number };
+
+function read(x: Bag<"a" | "b"> | { c: string }) {
+  if ("a" in x) {
+    const a: number = x.a;
+    const b: number = x.b;
+  } else {
+    const c: string = x.c;
+  }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected literal-key mapped type union member to narrow via `in`, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_narrows_renamed_literal_key_mapped_type_union_member() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type Slots<Names extends string> = { [Slot in Names]: boolean };
+
+function read(x: Slots<"primary" | "secondary"> | { fallback: string }) {
+  if ("primary" in x) {
+    const primary: boolean = x.primary;
+    const secondary: boolean = x.secondary;
+  } else {
+    const fallback: string = x.fallback;
+  }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected renamed literal-key mapped type union member to narrow via `in`, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_does_not_distribute_direct_concrete_keyof_union_mapped_type() {
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(
+        r#"
+type Left = { left: string };
+type Right = { right: number };
+
+type Direct = { [Key in keyof (Left | Right)]: boolean };
+
+declare const direct: Direct;
+
+if ('left' in direct) {
+  const left: boolean = direct.left;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic.code == 2322
+            && diagnostic
+                .message_text
+                .contains("Type 'unknown' is not assignable")),
+        "Expected direct concrete `keyof` union mapped type to narrow `left` as unknown, got {diagnostics:#?}"
+    );
+}
+
 fn in_rhs_assignability_diagnostic_count(diagnostics: &[crate_diag::Diagnostic]) -> usize {
     diagnostics
         .iter()
@@ -262,6 +430,69 @@ function f<T>(x: T) {
 }
 
 #[test]
+fn in_operator_reports_ts2322_for_generic_union_rhs() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+function f<T>(x: T | { a: string }) {
+  "k" in x;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type '")
+                && message.contains("' is not assignable to type 'object'.")
+                && message.contains("T")
+                && message.contains("{ a: string; }")
+        }),
+        "Expected TS2322 for generic union `in` RHS, got {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2638),
+        "Expected no TS2638 for generic union `in` RHS, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_false_branch_generic_union_reports_ts2322_not_ts2638() {
+    // Mirrors the conditional builder pattern from
+    // conditionalTypeDoesntSpinForever.ts without copying the full fixture.
+    // The false branch of `&&` can have a flow type like
+    // `T | (T & Record<"a", unknown>)`; tsc still reports the nested `in`
+    // operand via TS2322 rather than TS2638.
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type Builder<T> =
+  T extends { a: any, b: any } ? {} : {
+    has: (k: string | number | symbol) => k is keyof T
+  };
+
+const f = <T>(x: T): Builder<T> =>
+  ("a" in x && "b" in x ? {} : {
+    has: (k: string | number | symbol) => k in x
+  }) as Builder<T>;
+"#,
+    );
+
+    let in_rhs_object_assignability = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2322 && message.contains("'T'") && message.contains("'object'")
+        })
+        .count();
+    assert_eq!(
+        in_rhs_object_assignability, 2,
+        "Expected TS2322 for the condition RHS and nested false-branch RHS, got {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2638),
+        "Expected no TS2638 for false-branch generic union RHS, got {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn in_operator_reports_ts2638_for_truthiness_guarded_generic_rhs() {
     let diagnostics = tsz_checker::test_utils::check_source_code_messages(
         r#"
@@ -335,5 +566,23 @@ function genericCase<T>(x: T) {
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2339),
         "Expected property accesses to use the `in`-narrowed record shape, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_keeps_unknown_property_after_explicit_null_check() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+function test(x: unknown) {
+  if (typeof x === "object" && x !== null && "foo" in x) {
+    const val = x.foo;
+  }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected explicit null check plus `in` narrowing to expose `foo`, got {diagnostics:#?}"
     );
 }

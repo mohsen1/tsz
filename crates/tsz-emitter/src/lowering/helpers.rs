@@ -4,7 +4,9 @@
 //! binding pattern analysis, and this-capture computation.
 
 use super::*;
+use crate::emitter::JsxEmit;
 use crate::transforms::emit_utils;
+use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> LoweringPass<'a> {
     // =========================================================================
@@ -39,6 +41,194 @@ impl<'a> LoweringPass<'a> {
         // don't have the `export` keyword directly.
         if self.commonjs_mode {
             self.collect_re_exported_names(&source.statements);
+            self.collect_all_export_aliases_in_order(&source.statements);
+        }
+    }
+
+    /// Walk source-order statements once and record every export alias
+    /// attached to a local **enum** binding so the emitter can fold every
+    /// alias into the enum's IIFE tail.
+    ///
+    /// Only enums are recorded here today: the enum IIFE printer chains
+    /// every alias (`exports.EE = exports.E = E = {}`), so pre-populating
+    /// `iife_exported_bindings` for those aliases correctly suppresses the
+    /// stand-alone `exports.X = E;` lines that the re-export handler would
+    /// otherwise emit. Namespaces are intentionally skipped because the
+    /// namespace IIFE printer still folds only one alias, so recording every
+    /// namespace alias would over-suppress the trailing
+    /// `exports.secondAlias = m;` lines that tsz needs to keep.
+    fn collect_all_export_aliases_in_order(&mut self, statements: &tsz_parser::parser::NodeList) {
+        let mut foldable_locals: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+        for &stmt_idx in &statements.nodes {
+            let Some(node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let foldable_enum_idx = if node.kind == syntax_kind_ext::ENUM_DECLARATION {
+                Some(stmt_idx)
+            } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.export_decl_wraps_foldable_enum(node)
+            } else {
+                None
+            };
+            if let Some(enum_idx) = foldable_enum_idx
+                && let Some(enum_node) = self.arena.get(enum_idx)
+                && let Some(enum_decl) = self.arena.get_enum(enum_node)
+                && !self.arena.is_declare(&enum_decl.modifiers)
+                && !self.has_const_modifier(&enum_decl.modifiers)
+                && let Some(local) = self.get_identifier_text_ref(enum_decl.name)
+            {
+                foldable_locals.insert(local.to_string());
+            }
+        }
+
+        if foldable_locals.is_empty() {
+            return;
+        }
+
+        self.collect_foldable_export_aliases(statements, &foldable_locals);
+    }
+
+    /// Return the inner `EnumData` and its `NodeIndex` when `export_decl_node`
+    /// is a non-default, non-type-only `EXPORT_DECLARATION` wrapping a
+    /// non-ambient, non-`const` enum (`export enum E { ... }`). Returns the
+    /// inner enum node index so callers can resolve names through the same
+    /// arena path the rest of lowering uses.
+    fn export_decl_wraps_foldable_enum(
+        &self,
+        export_decl_node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        let export_decl = self.arena.get_export_decl(export_decl_node)?;
+        if export_decl.module_specifier.is_some()
+            || export_decl.is_type_only
+            || export_decl.is_default_export
+        {
+            return None;
+        }
+        let inner_node = self.arena.get(export_decl.export_clause)?;
+        if inner_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+            return None;
+        }
+        let enum_decl = self.arena.get_enum(inner_node)?;
+        if self.arena.is_declare(&enum_decl.modifiers)
+            || self.has_const_modifier(&enum_decl.modifiers)
+        {
+            return None;
+        }
+        Some(export_decl.export_clause)
+    }
+
+    fn collect_foldable_export_aliases(
+        &mut self,
+        statements: &tsz_parser::parser::NodeList,
+        foldable_locals: &rustc_hash::FxHashSet<String>,
+    ) {
+        for &stmt_idx in &statements.nodes {
+            let Some(node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            match node.kind {
+                k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                    let Some(enum_decl) = self.arena.get_enum(node) else {
+                        continue;
+                    };
+                    if self.arena.is_declare(&enum_decl.modifiers) {
+                        continue;
+                    }
+                    if !self
+                        .arena
+                        .has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
+                    {
+                        continue;
+                    }
+                    if let Some(name_id) = self.get_identifier_id(enum_decl.name)
+                        && let Some(local_name) = self.get_identifier_text_ref(enum_decl.name)
+                    {
+                        let entry = self
+                            .all_export_aliases_in_order
+                            .entry(local_name.to_string())
+                            .or_default();
+                        if !entry.contains(&name_id) {
+                            entry.push(name_id);
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                    let Some(export_decl) = self.arena.get_export_decl(node) else {
+                        continue;
+                    };
+                    if export_decl.is_type_only {
+                        continue;
+                    }
+                    if let Some(inner_enum_idx) = self.export_decl_wraps_foldable_enum(node) {
+                        if let Some(inner_node) = self.arena.get(inner_enum_idx)
+                            && let Some(enum_decl) = self.arena.get_enum(inner_node)
+                            && let Some(name_id) = self.get_identifier_id(enum_decl.name)
+                            && let Some(local_name) = self.get_identifier_text_ref(enum_decl.name)
+                        {
+                            let entry = self
+                                .all_export_aliases_in_order
+                                .entry(local_name.to_string())
+                                .or_default();
+                            if !entry.contains(&name_id) {
+                                entry.push(name_id);
+                            }
+                        }
+                        continue;
+                    }
+                    if export_decl.module_specifier.is_some() {
+                        continue;
+                    }
+                    let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                        continue;
+                    };
+                    let Some(named) = self.arena.get_named_imports(clause_node) else {
+                        continue;
+                    };
+                    for &spec_idx in &named.elements.nodes {
+                        let Some(spec_node) = self.arena.get(spec_idx) else {
+                            continue;
+                        };
+                        let Some(spec) = self.arena.get_specifier(spec_node) else {
+                            continue;
+                        };
+                        if spec.is_type_only {
+                            continue;
+                        }
+                        // Local name is property_name when aliased, otherwise name.
+                        let local_name_idx = if spec.property_name.is_some() {
+                            spec.property_name
+                        } else {
+                            spec.name
+                        };
+                        let Some(local_name) = self
+                            .get_identifier_text_ref(local_name_idx)
+                            .map(str::to_string)
+                        else {
+                            continue;
+                        };
+                        // Only record this alias when `local_name` actually
+                        // names a foldable enum/namespace — `export { x as y }`
+                        // for a `const x` must still emit the regular
+                        // `exports.y = x;` line, not be folded into a
+                        // (non-existent) IIFE tail.
+                        if !foldable_locals.contains(&local_name) {
+                            continue;
+                        }
+                        let Some(export_name_id) = self.get_identifier_id(spec.name) else {
+                            continue;
+                        };
+                        let entry = self
+                            .all_export_aliases_in_order
+                            .entry(local_name)
+                            .or_default();
+                        if !entry.contains(&export_name_id) {
+                            entry.push(export_name_id);
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -82,10 +272,40 @@ impl<'a> LoweringPass<'a> {
                     spec.name
                 };
                 if let Some(name) = self.get_identifier_text_ref(local_name_idx) {
-                    self.re_exported_names.insert(name.to_string());
+                    let local_name = name.to_string();
+                    self.re_exported_names.insert(local_name.clone());
+                    if let Some(export_name_id) = self.get_identifier_id(spec.name) {
+                        self.re_exported_export_names
+                            .entry(local_name)
+                            .or_default()
+                            .push(export_name_id);
+                    }
                 }
             }
         }
+    }
+
+    /// Every CommonJS export alias attached to `local_name` in source order,
+    /// falling back to `[fallback_name]` when nothing has been recorded.
+    pub(super) fn commonjs_export_names_for_local(
+        &self,
+        local_name: Option<&str>,
+        fallback_name: IdentifierId,
+    ) -> Arc<[IdentifierId]> {
+        if let Some(local_name) = local_name {
+            if let Some(all_aliases) = self.all_export_aliases_in_order.get(local_name)
+                && !all_aliases.is_empty()
+            {
+                return Arc::from(all_aliases.clone());
+            }
+            if let Some(re_exports) = self.re_exported_export_names.get(local_name)
+                && !re_exports.is_empty()
+            {
+                return Arc::from(re_exports.clone());
+            }
+        }
+
+        Arc::from(vec![fallback_name])
     }
 
     pub(super) const fn is_commonjs(&self) -> bool {
@@ -184,10 +404,13 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Mark helpers needed for async generator functions (async function*).
-    pub(super) const fn mark_async_generator_helpers(&mut self) {
+    pub(super) fn mark_async_generator_helpers(&mut self) {
         let helpers = self.transforms.helpers_mut();
-        helpers.await_helper = true;
-        helpers.async_generator = true;
+        helpers.mark_await_helper();
+        helpers.mark_async_generator();
+        if self.ctx.target_es5 {
+            helpers.generator = true;
+        }
     }
 
     pub(super) fn mark_class_helpers(
@@ -229,20 +452,26 @@ impl<'a> LoweringPass<'a> {
             let helpers = self.transforms.helpers_mut();
             // Check ordering before setting flags: if Set was never registered
             // and this class has Set-first ordering, mark it
-            if set_first
-                && !helpers.class_private_field_set
-                && !helpers.class_private_field_set_before_get
-            {
+            if set_first && !helpers.class_private_field_get && !helpers.class_private_field_set {
                 helpers.class_private_field_set_before_get = true;
             }
-            if needs_get {
-                helpers.class_private_field_get = true;
-            }
-            if needs_set {
-                helpers.class_private_field_set = true;
+            if set_first {
+                if needs_set {
+                    helpers.mark_class_private_field_set();
+                }
+                if needs_get {
+                    helpers.mark_class_private_field_get();
+                }
+            } else {
+                if needs_get {
+                    helpers.mark_class_private_field_get();
+                }
+                if needs_set {
+                    helpers.mark_class_private_field_set();
+                }
             }
             if needs_in {
-                helpers.class_private_field_in = true;
+                helpers.mark_class_private_field_in();
             }
         }
     }
@@ -404,6 +633,11 @@ impl<'a> LoweringPass<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
+            if self.ctx.options.legacy_decorators
+                && self.member_decorator_expressions_have_private_field_read(member_node)
+            {
+                return true;
+            }
             // Static blocks: scan the block itself (its pos..end covers all statements)
             if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 if self.subtree_has_private_field_read(member_idx) {
@@ -434,6 +668,11 @@ impl<'a> LoweringPass<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
+            if self.ctx.options.legacy_decorators
+                && self.member_decorator_expressions_have_private_field_write(member_node)
+            {
+                return true;
+            }
             // Static blocks: scan the block itself
             if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 if self.subtree_has_private_field_write(member_idx) {
@@ -464,6 +703,11 @@ impl<'a> LoweringPass<'a> {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
+            if self.ctx.options.legacy_decorators
+                && self.member_decorator_expressions_have_private_in_expression(member_node)
+            {
+                return true;
+            }
             if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 if self.subtree_has_private_in_expression(member_idx) {
                     return true;
@@ -482,6 +726,107 @@ impl<'a> LoweringPass<'a> {
             }
         }
         false
+    }
+
+    fn member_decorator_expressions_have_private_field_read(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.member_decorator_expressions_match(member_node, |this, expr| {
+            this.subtree_has_private_field_read(expr)
+        })
+    }
+
+    fn member_decorator_expressions_have_private_field_write(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.member_decorator_expressions_match(member_node, |this, expr| {
+            this.subtree_has_private_field_write(expr)
+        })
+    }
+
+    fn member_decorator_expressions_have_private_in_expression(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.member_decorator_expressions_match(member_node, |this, expr| {
+            this.subtree_has_private_in_expression(expr)
+        })
+    }
+
+    fn member_decorator_expressions_match(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+        predicate: impl Fn(&Self, NodeIndex) -> bool,
+    ) -> bool {
+        let (modifiers, parameters): (
+            Option<&tsz_parser::parser::NodeList>,
+            Option<&tsz_parser::parser::NodeList>,
+        ) = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method) = self.arena.get_method_decl(member_node) else {
+                    return false;
+                };
+                (method.modifiers.as_ref(), Some(&method.parameters))
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop) = self.arena.get_property_decl(member_node) else {
+                    return false;
+                };
+                (prop.modifiers.as_ref(), None)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let Some(accessor) = self.arena.get_accessor(member_node) else {
+                    return false;
+                };
+                (accessor.modifiers.as_ref(), None)
+            }
+            _ => return false,
+        };
+
+        if let Some(modifiers) = modifiers
+            && self.decorator_expressions_match(&modifiers.nodes, &predicate)
+        {
+            return true;
+        }
+
+        if let Some(parameters) = parameters {
+            for &param_idx in &parameters.nodes {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if let Some(modifiers) = param.modifiers.as_ref()
+                    && self.decorator_expressions_match(&modifiers.nodes, &predicate)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn decorator_expressions_match(
+        &self,
+        modifiers: &[NodeIndex],
+        predicate: &impl Fn(&Self, NodeIndex) -> bool,
+    ) -> bool {
+        modifiers.iter().copied().any(|mod_idx| {
+            let Some(mod_node) = self.arena.get(mod_idx) else {
+                return false;
+            };
+            if mod_node.kind != syntax_kind_ext::DECORATOR {
+                return false;
+            }
+            let Some(decorator) = self.arena.get_decorator(mod_node) else {
+                return false;
+            };
+            predicate(self, decorator.expression)
+        })
     }
 
     /// Scan a subtree for `#field in obj` expressions.
@@ -535,7 +880,9 @@ impl<'a> LoweringPass<'a> {
                     let Some(bin) = self.arena.get_binary_expr(n) else {
                         continue;
                     };
-                    if !tsz_solver::is_assignment_operator(bin.operator_token) {
+                    if !tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    ) {
                         continue;
                     }
                     let left = self.unwrap_parens_and_types(bin.left);
@@ -659,7 +1006,9 @@ impl<'a> LoweringPass<'a> {
                 }
                 if n.kind == syntax_kind_ext::BINARY_EXPRESSION
                     && let Some(bin) = self.arena.get_binary_expr(n)
-                    && tsz_solver::is_assignment_operator(bin.operator_token)
+                    && tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    )
                 {
                     let left = self.unwrap_parens(bin.left);
                     if self.is_private_field_access(left) {
@@ -690,7 +1039,9 @@ impl<'a> LoweringPass<'a> {
                 // Check for binary expressions with private field on LHS
                 if n.kind == syntax_kind_ext::BINARY_EXPRESSION
                     && let Some(bin) = self.arena.get_binary_expr(n)
-                    && tsz_solver::is_assignment_operator(bin.operator_token)
+                    && tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    )
                 {
                     let left = self.unwrap_parens(bin.left);
                     if self.is_private_field_access(left) {
@@ -723,7 +1074,9 @@ impl<'a> LoweringPass<'a> {
                 // skip those — they're already handled.
                 if n.kind == syntax_kind_ext::BINARY_EXPRESSION
                     && let Some(bin) = self.arena.get_binary_expr(n)
-                    && !tsz_solver::is_assignment_operator(bin.operator_token)
+                    && !tsz_solver::operations::compound_assignment::is_assignment_operator(
+                        bin.operator_token,
+                    )
                 {
                     // Check if either side has a private field access
                     let left = self.unwrap_parens(bin.left);
@@ -790,7 +1143,11 @@ impl<'a> LoweringPass<'a> {
         false
     }
 
-    fn has_class_member_modifier(&self, modifiers: &Option<NodeList>, modifier: u16) -> bool {
+    pub(super) fn has_class_member_modifier(
+        &self,
+        modifiers: &Option<NodeList>,
+        modifier: u16,
+    ) -> bool {
         let Some(mods) = modifiers else {
             return false;
         };
@@ -1191,79 +1548,77 @@ impl<'a> LoweringPass<'a> {
     }
 
     pub(super) fn resolve_class_expr_binding_name(&self, class_idx: NodeIndex) -> Option<&str> {
-        let ext = self.arena.get_extended(class_idx)?;
-        let parent_idx = ext.parent;
-        if parent_idx.is_none() {
-            return None;
-        }
-        let parent_node = self.arena.get(parent_idx)?;
-        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-            return None;
+        let mut current = class_idx;
+        let mut hops = 0;
+
+        while hops < 8 {
+            let parent_idx = self.arena.get_extended(current)?.parent;
+            if parent_idx.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+
+            match parent_node.kind {
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    let paren = self.arena.get_parenthesized(parent_node)?;
+                    if paren.expression != current {
+                        return None;
+                    }
+                    current = parent_idx;
+                    hops += 1;
+                }
+                syntax_kind_ext::TYPE_ASSERTION
+                | syntax_kind_ext::AS_EXPRESSION
+                | syntax_kind_ext::SATISFIES_EXPRESSION => {
+                    let assertion = self.arena.get_type_assertion(parent_node)?;
+                    if assertion.expression != current {
+                        return None;
+                    }
+                    current = parent_idx;
+                    hops += 1;
+                }
+                syntax_kind_ext::NON_NULL_EXPRESSION => {
+                    let non_null = self.arena.get_unary_expr_ex(parent_node)?;
+                    if non_null.expression != current {
+                        return None;
+                    }
+                    current = parent_idx;
+                    hops += 1;
+                }
+                syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let decl = self.arena.get_variable_declaration(parent_node)?;
+                    if decl.initializer != current {
+                        return None;
+                    }
+                    return self
+                        .get_identifier_text_ref(decl.name)
+                        .filter(|name| !name.is_empty());
+                }
+                syntax_kind_ext::PARAMETER => {
+                    let param = self.arena.get_parameter(parent_node)?;
+                    if param.initializer != current {
+                        return None;
+                    }
+                    return self
+                        .get_identifier_text_ref(param.name)
+                        .filter(|name| !name.is_empty());
+                }
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let binary = self.arena.get_binary_expr(parent_node)?;
+                    if binary.right != current
+                        || binary.operator_token != SyntaxKind::EqualsToken as u16
+                    {
+                        return None;
+                    }
+                    return self
+                        .get_identifier_text_ref(binary.left)
+                        .filter(|name| !name.is_empty());
+                }
+                _ => return None,
+            }
         }
 
-        let decl = self.arena.get_variable_declaration(parent_node)?;
-        self.get_identifier_text_ref(decl.name)
-            .filter(|name| !name.is_empty())
-    }
-
-    pub(super) fn class_expr_static_comma_needs_set_function_name(
-        &self,
-        class_idx: NodeIndex,
-        class: &tsz_parser::parser::node::ClassData,
-    ) -> bool {
-        if class.name.is_some() || self.resolve_class_expr_binding_name(class_idx).is_none() {
-            return false;
-        }
-
-        let needs_private_field_lowering = self.ctx.needs_es2022_lowering;
-        let target_needs_field_lowering =
-            self.ctx.needs_es2022_lowering || !self.ctx.options.use_define_for_class_fields;
-        #[allow(clippy::nonminimal_bool)]
-        let has_static_field_comma_expr = target_needs_field_lowering
-            && class.members.nodes.iter().any(|&member_idx| {
-                self.arena.get(member_idx).is_some_and(|member| {
-                    member.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                        && self.arena.get_property_decl(member).is_some_and(|prop| {
-                            self.arena.is_static(&prop.modifiers)
-                                && !self
-                                    .arena
-                                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                                && !self
-                                    .arena
-                                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                                && !(needs_private_field_lowering
-                                    && is_private_identifier(self.arena, prop.name))
-                        })
-                })
-            });
-        let has_static_block_comma_expr = self.ctx.needs_es2022_lowering
-            && class.members.nodes.iter().any(|&member_idx| {
-                self.arena.get(member_idx).is_some_and(|member| {
-                    member.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
-                })
-            });
-        // Static *private* fields are lowered into `_C_x = { value: void 0 }`
-        // entries inside the same comma wrapper, so they count as static
-        // state for the naming-helper decision even though
-        // `has_static_field_comma_expr` skips them above (they go through the
-        // private-field lowering path, not the static-field path).
-        let has_static_private_member = needs_private_field_lowering
-            && class.members.nodes.iter().any(|&member_idx| {
-                self.arena.get(member_idx).is_some_and(|member| {
-                    member.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                        && self.arena.get_property_decl(member).is_some_and(|prop| {
-                            self.arena.is_static(&prop.modifiers)
-                                && is_private_identifier(self.arena, prop.name)
-                        })
-                })
-            });
-        // tsc only emits `__setFunctionName` when the comma wrapper carries
-        // *static* state (a static field initializer, a static private
-        // field, or a static block). Pure instance-private comma forms
-        // — e.g. `(_a = class { #x; }, _C_x = new WeakMap(), _a)` — keep
-        // the engine's automatic assignment-based naming and do not need
-        // the helper.
-        has_static_field_comma_expr || has_static_block_comma_expr || has_static_private_member
+        None
     }
 
     pub(super) fn get_module_root_name(&self, name_idx: NodeIndex) -> Option<IdentifierId> {
@@ -1447,6 +1802,9 @@ impl<'a> LoweringPass<'a> {
         if self.ctx.options.module_detection_force {
             return true;
         }
+        if self.jsx_automatic_runtime_makes_module() {
+            return true;
+        }
         // Node16/NodeNext resolved to ESM: file is definitively a module
         if self.ctx.options.resolved_node_module_to_esm {
             return true;
@@ -1527,7 +1885,87 @@ impl<'a> LoweringPass<'a> {
                 }
             }
         }
+        if matches!(
+            self.ctx.options.module,
+            ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System
+        ) && self.source_has_dynamic_import_call(statements)
+        {
+            return true;
+        }
+        if self.contains_import_meta(statements) {
+            return true;
+        }
         false
+    }
+
+    fn source_has_dynamic_import_call(&self, statements: &NodeList) -> bool {
+        let mut stack: Vec<NodeIndex> = statements.nodes.clone();
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.arena.get_call_expr(node)
+                && let Some(expr_node) = self.arena.get(call.expression)
+                && expr_node.kind == SyntaxKind::ImportKeyword as u16
+            {
+                return true;
+            }
+            for child in self.arena.get_children(idx) {
+                stack.push(child);
+            }
+        }
+        false
+    }
+
+    fn contains_import_meta(&self, statements: &NodeList) -> bool {
+        let mut stack: Vec<NodeIndex> = statements.nodes.clone();
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(node)
+                && let Some(expr_node) = self.arena.get(access.expression)
+                && expr_node.kind == SyntaxKind::ImportKeyword as u16
+                && self
+                    .arena
+                    .get(access.name_or_argument)
+                    .and_then(|name_node| self.arena.get_identifier(name_node))
+                    .is_some_and(|ident| ident.escaped_text.as_str() == "meta")
+            {
+                return true;
+            }
+            for child in self.arena.get_children(idx) {
+                stack.push(child);
+            }
+        }
+        false
+    }
+
+    fn jsx_automatic_runtime_makes_module(&self) -> bool {
+        if self.ctx.options.module_detection_legacy {
+            return false;
+        }
+        if !matches!(
+            self.ctx.options.jsx,
+            JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
+        ) {
+            return false;
+        }
+        (0..self.arena.len()).any(|idx| {
+            self.arena.get(NodeIndex(idx as u32)).is_some_and(|node| {
+                node.kind == syntax_kind_ext::JSX_ELEMENT
+                    || node.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                    || node.kind == syntax_kind_ext::JSX_FRAGMENT
+            })
+        })
     }
 
     pub(super) fn contains_export_assignment(&self, statements: &NodeList) -> bool {
@@ -1552,7 +1990,7 @@ impl<'a> LoweringPass<'a> {
                 || node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             {
                 if let Some(import_decl) = self.arena.get_import_decl(node) {
-                    if !self.import_has_runtime_dependency(import_decl) {
+                    if !self.import_should_schedule_runtime_dependency(node, import_decl) {
                         continue;
                     }
                     if let Some(text) =
@@ -1577,6 +2015,23 @@ impl<'a> LoweringPass<'a> {
                 {
                     deps.push(text);
                 }
+            }
+        }
+
+        if self.jsx_automatic_runtime_makes_module() {
+            let source = self
+                .ctx
+                .options
+                .jsx_import_source
+                .as_deref()
+                .unwrap_or("react");
+            let runtime = if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
+                format!("{source}/jsx-dev-runtime")
+            } else {
+                format!("{source}/jsx-runtime")
+            };
+            if !deps.contains(&runtime) {
+                deps.push(runtime);
             }
         }
 
@@ -1643,6 +2098,85 @@ impl<'a> LoweringPass<'a> {
         }
 
         false
+    }
+
+    pub(super) fn import_should_schedule_runtime_dependency(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        import_decl: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        if !self.import_has_runtime_dependency(import_decl) {
+            return false;
+        }
+
+        let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+            return true;
+        };
+        if clause_node.kind != syntax_kind_ext::IMPORT_CLAUSE {
+            return true;
+        }
+
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return true;
+        };
+        if clause.is_type_only {
+            return false;
+        }
+        if self.ctx.options.verbatim_module_syntax {
+            return true;
+        }
+        if self.import_clause_is_empty_named_import(clause) {
+            return false;
+        }
+        if self.import_clause_is_namespace_only(clause)
+            && self.import_references_type_only_export_equals_module(import_decl)
+        {
+            return false;
+        }
+
+        self.import_has_value_usage_after_node(node, clause)
+    }
+
+    fn import_clause_is_namespace_only(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .is_some_and(|named| named.name.is_some() && named.elements.nodes.is_empty())
+    }
+
+    fn import_clause_is_empty_named_import(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .is_some_and(|named| named.name.is_none() && named.elements.nodes.is_empty())
+    }
+
+    fn import_references_type_only_export_equals_module(
+        &self,
+        import_decl: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let Some(module_node) = self.arena.get(import_decl.module_specifier) else {
+            return false;
+        };
+        let Some(lit) = self.arena.get_literal(module_node) else {
+            return false;
+        };
+        self.ctx
+            .options
+            .type_only_export_equals_modules
+            .contains(lit.text.as_str())
     }
 
     pub(super) fn import_equals_has_external_module(&self, module_specifier: NodeIndex) -> bool {
@@ -1715,219 +2249,6 @@ impl<'a> LoweringPass<'a> {
         }
 
         false
-    }
-
-    /// Compute the capture variable name for `_this` in a given scope.
-    /// Keep trying TypeScript's `_this`, `_this_1`, `_this_2`, ... pattern until
-    /// the generated name does not collide with a binding in the same scope.
-    pub(super) fn compute_this_capture_name(&self, body_idx: NodeIndex) -> Arc<str> {
-        self.compute_this_capture_name_with_params(body_idx, None)
-    }
-
-    /// Compute capture name, also checking function parameters for collision.
-    pub(super) fn compute_this_capture_name_with_params(
-        &self,
-        body_idx: NodeIndex,
-        params: Option<&NodeList>,
-    ) -> Arc<str> {
-        let mut suffix = 0usize;
-        loop {
-            let candidate = if suffix == 0 {
-                "_this".to_string()
-            } else {
-                format!("_this_{suffix}")
-            };
-            if !self.scope_has_name(body_idx, &candidate)
-                && !self.params_have_name(params, &candidate)
-            {
-                return Arc::from(candidate);
-            }
-            suffix += 1;
-        }
-    }
-
-    /// Check if any parameter in the list has the given name.
-    pub(super) fn params_have_name(&self, params: Option<&NodeList>, name: &str) -> bool {
-        let Some(params) = params else {
-            return false;
-        };
-        for &param_idx in &params.nodes {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                continue;
-            };
-            if let Some(param) = self.arena.get_parameter(param_node)
-                && self.get_identifier_text_ref(param.name) == Some(name)
-            {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Check if a function body (block or source file) contains a variable
-    /// declaration or parameter with the given name at its direct scope level.
-    pub(super) fn scope_has_name(&self, body_idx: NodeIndex, name: &str) -> bool {
-        let Some(node) = self.arena.get(body_idx) else {
-            return false;
-        };
-
-        // Get statements from block or source file
-        let statements = if let Some(block) = self.arena.get_block(node) {
-            &block.statements
-        } else if let Some(sf) = self.arena.get_source_file(node) {
-            &sf.statements
-        } else {
-            return false;
-        };
-
-        // Check each statement for variable declarations with the given name
-        for &stmt_idx in &statements.nodes {
-            let Some(stmt) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                // VariableStatement → VariableData.declarations contains a VariableDeclarationList
-                if let Some(var_stmt_data) = self.arena.get_variable(stmt) {
-                    for &decl_list_idx in &var_stmt_data.declarations.nodes {
-                        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                            continue;
-                        };
-                        // VariableDeclarationList → VariableData.declarations contains VariableDeclarations
-                        if let Some(decl_list_data) = self.arena.get_variable(decl_list_node) {
-                            for &decl_idx in &decl_list_data.declarations.nodes {
-                                let Some(decl_node) = self.arena.get(decl_idx) else {
-                                    continue;
-                                };
-                                if let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                                    && self.get_identifier_text_ref(decl.name) == Some(name)
-                                {
-                                    return true;
-                                }
-                            }
-                        }
-                        // Also handle VariableDeclaration directly (in case it's not nested)
-                        if let Some(decl) = self.arena.get_variable_declaration(decl_list_node)
-                            && self.get_identifier_text_ref(decl.name) == Some(name)
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-            // Also check function declarations (their name occupies the scope)
-            if stmt.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                && let Some(func) = self.arena.get_function(stmt)
-                && self.get_identifier_text_ref(func.name) == Some(name)
-            {
-                return true;
-            }
-        }
-
-        false
-    }
-    /// Infer the function name for a class expression used in named evaluation.
-    /// Looks at the source text context to find the assignment target name.
-    /// Returns the name string for `__setFunctionName(_classThis, name)`.
-    pub(super) fn infer_class_expression_function_name(
-        &self,
-        _class_idx: tsz_parser::parser::NodeIndex,
-        class_node: &tsz_parser::parser::node::Node,
-    ) -> Option<String> {
-        let text: &str = self.arena.source_files.iter().find_map(|sf| {
-            if (class_node.pos as usize) < sf.text.len() {
-                Some(sf.text.as_ref())
-            } else {
-                None
-            }
-        })?;
-        let class_pos = class_node.pos as usize;
-
-        // Look backwards from the class expression to find the assignment context.
-        // We need to scan backwards past decorators (@dec), parentheses, and whitespace.
-        let before = &text[..class_pos.min(text.len())];
-        // Skip backwards past decorators: `@identifier(args)` patterns and `(` grouping
-        let mut scan = before.trim_end();
-        loop {
-            let prev = scan;
-            scan = scan.trim_end();
-            // Skip past `@identifier(...)` or `@identifier` decorator
-            if scan.ends_with(')') {
-                // Find matching `(`
-                let mut depth = 1;
-                let mut p = scan.len() - 2;
-                while p > 0 && depth > 0 {
-                    match scan.as_bytes()[p] {
-                        b')' => depth += 1,
-                        b'(' => depth -= 1,
-                        _ => {}
-                    }
-                    if depth > 0 {
-                        p -= 1;
-                    }
-                }
-                scan = scan[..p].trim_end();
-            }
-            // Skip past `@identifier`
-            if let Some(at_pos) = scan.rfind('@') {
-                let ident = scan[at_pos + 1..].trim();
-                if !ident.is_empty()
-                    && ident
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$')
-                {
-                    scan = scan[..at_pos].trim_end();
-                }
-            }
-            // Skip opening parentheses
-            while scan.ends_with('(') {
-                scan = scan[..scan.len() - 1].trim_end();
-            }
-            if scan == prev {
-                break;
-            }
-        }
-        let trimmed = scan;
-
-        // Check for `export default` pattern
-        if let Some(prefix) = trimmed.strip_suffix("default")
-            && prefix.trim_end().ends_with("export")
-        {
-            return Some("default".to_string());
-        }
-
-        // Check for `export =` pattern → empty name
-        if let Some(prefix) = trimmed.strip_suffix('=')
-            && prefix.trim_end().ends_with("export")
-        {
-            return Some(String::new());
-        }
-
-        // Check for assignment patterns: `NAME =`, `NAME ||=`, `NAME &&=`, `NAME ??=`
-        // Scan backwards past `=`, `||=`, `&&=`, `??=`
-        let assignment_stripped =
-            if trimmed.ends_with("||=") || trimmed.ends_with("&&=") || trimmed.ends_with("??=") {
-                trimmed[..trimmed.len() - 3].trim_end()
-            } else if trimmed.ends_with('=') && !trimmed.ends_with("==") {
-                trimmed[..trimmed.len() - 1].trim_end()
-            } else {
-                return None;
-            };
-
-        // Extract the identifier before the assignment
-        let ident_end = assignment_stripped.len();
-        let ident_start = assignment_stripped
-            .rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '$')
-            .map(|p| p + 1)
-            .unwrap_or(0);
-        let name = &assignment_stripped[ident_start..ident_end];
-        if !name.is_empty() && name.as_bytes()[0].is_ascii_alphabetic()
-            || name.starts_with('_')
-            || name.starts_with('$')
-        {
-            Some(name.to_string())
-        } else {
-            None
-        }
     }
 }
 

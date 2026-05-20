@@ -1,0 +1,213 @@
+---
+title: Install tsz
+browser_title: Install — tsz
+description: Install the tsz TypeScript compiler on macOS, Linux, or Windows with a single command.
+layout: layouts/base.njk
+# The script lives at /install (no extension) so `curl tsz.dev/install | sh`
+# is the canonical URL. Filesystems can't host a file and a sibling directory
+# with the same name, so the rendered page sits one step away.
+permalink: /install.html
+---
+
+<style>
+  .install-page { max-width: 760px; margin: 0 auto; padding: 2.5rem 1.25rem 5rem; }
+  .install-page h1 { font-size: 2rem; margin: 0 0 2rem; }
+  .install-warning {
+    color: var(--text-secondary, #59636e);
+    margin: 0 0 2.5rem;
+    line-height: 1.5;
+  }
+  .install-warning strong { color: var(--text, #1f2328); }
+  .install-page section { margin: 2.25rem 0; }
+  .install-page h2 { font-size: 1.15rem; margin: 0 0 .5rem; letter-spacing: .01em; }
+  .install-page h2 .platform-icon { display: inline-block; width: 1.1em; height: 1.1em; vertical-align: -.18em; margin-right: .4em; opacity: .9; }
+  .install-page pre {
+    position: relative;
+    background: var(--bg-code, #f0f2f5);
+    color: var(--text, #1f2328);
+    padding: 1rem 3rem 1rem 1rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-subtle, #e8ecf0);
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .9rem;
+    line-height: 1.5;
+    margin: .25rem 0 0;
+  }
+  .install-page pre code { background: transparent; padding: 0; color: inherit; }
+  .install-page .copy-btn {
+    position: absolute; top: .5rem; right: .5rem;
+    background: var(--bg, #fff);
+    color: var(--text-secondary, #59636e);
+    border: 1px solid var(--border, #d1d9e0);
+    border-radius: 4px;
+    padding: .25rem .5rem;
+    font-size: .75rem;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .install-page .copy-btn:hover { background: var(--bg-subtle, #f6f8fa); color: var(--text, #1f2328); }
+  .install-page .copy-btn.copied { color: #56d364; border-color: #56d364; }
+  .install-page details { margin-top: 1rem; }
+  .install-page details summary { cursor: pointer; color: var(--muted, #8b949e); font-size: .9rem; }
+  .install-page .verify { color: var(--text-secondary, #59636e); margin-top: 2.5rem; }
+  .install-page .verify code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .install-page ul { line-height: 1.7; padding-left: 1.25rem; }
+  .install-page a { color: var(--link, #0969da); }
+  .install-page .targets-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .25rem .75rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85rem; list-style: none; padding: 0; }
+  .install-page .targets-list li:before { content: "▸ "; color: var(--muted, #8b949e); }
+  @media (prefers-color-scheme: dark) {
+    .install-page pre {
+      background: var(--bg-code, #1c2128);
+      border-color: var(--border, #30363d);
+    }
+    .install-page .copy-btn {
+      background: var(--bg-code, #1c2128);
+      border-color: var(--border, #30363d);
+    }
+    .install-page .copy-btn:hover {
+      background: var(--bg-subtle, #161b22);
+    }
+  }
+</style>
+
+<div class="install-page">
+  <h1>Install <span style="font-family: ui-monospace, monospace;">tsz</span></h1>
+
+  <div class="install-warning">
+    <strong>Pre-release software.</strong>
+    <span style="font-family: ui-monospace, monospace;">tsz</span> is under active development and is <em>not</em> yet a drop-in replacement for <code>tsc</code>.
+    Diagnostics, inference, and emit may differ from TypeScript today.
+    We publish a daily <code>latest</code> PGO-optimized build, and the default installer tries that first when one is available for your target.
+    Try it for experimentation; do not rely on it for production type-checking.
+    Bug reports welcome at
+    <a href="https://github.com/mohsen1/tsz/issues">github.com/mohsen1/tsz/issues</a>.
+  </div>
+
+  <!-- UNIX_INSTALLATION_BEGIN -->
+  <section>
+    <h2>macOS &amp; Linux</h2>
+    <pre><button type="button" class="copy-btn" data-copy-target="install-unix" aria-live="polite">Copy</button><code id="install-unix">curl -fsSL https://tsz.dev/install | sh</code></pre>
+  </section>
+  <!-- UNIX_INSTALLATION_END -->
+
+  <!-- WINDOWS_INSTALLATION_BEGIN -->
+  <section>
+    <h2>Windows (PowerShell)</h2>
+    <pre><button type="button" class="copy-btn" data-copy-target="install-windows" aria-live="polite">Copy</button><code id="install-windows">irm https://tsz.dev/install.ps1 | iex</code></pre>
+  </section>
+  <!-- WINDOWS_INSTALLATION_END -->
+
+  <section>
+    <h2>From Cargo</h2>
+    <pre><button type="button" class="copy-btn" data-copy-target="install-cargo" aria-live="polite">Copy</button><code id="install-cargo">cargo install --git https://github.com/mohsen1/tsz tsz-cli</code></pre>
+  </section>
+
+  <div class="verify">
+    Verify your install: <code>tsz --version</code>
+  </div>
+
+  <section>
+    <h2>Options</h2>
+    <p>The installer accepts flags passed after <code>--</code>:</p>
+    <pre><code>curl -fsSL https://tsz.dev/install | sh -s -- --version v0.1.9 --dir ~/bin</code></pre>
+    <ul>
+      <li><code>--version &lt;tag&gt;</code> — install a specific release (default: <code>latest</code>)</li>
+      <li><code>--dir &lt;path&gt;</code> — override install directory (default: <code>~/.local/bin</code>, falling back to <code>~/bin</code> or <code>/usr/local/bin</code>)</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Supported targets</h2>
+    <ul class="targets-list">
+      <li>x86_64-unknown-linux-gnu</li>
+      <li>aarch64-unknown-linux-gnu</li>
+      <li>x86_64-unknown-linux-musl</li>
+      <li>aarch64-unknown-linux-musl</li>
+      <li>x86_64-apple-darwin</li>
+      <li>aarch64-apple-darwin</li>
+      <li>x86_64-pc-windows-msvc</li>
+    </ul>
+  </section>
+
+  <details>
+    <summary>What does the installer do?</summary>
+    <p>The script detects your OS &amp; architecture, fetches the matching release asset from
+    <a href="https://github.com/mohsen1/tsz/releases">GitHub Releases</a>, verifies the tarball,
+    and drops <code>tsz</code> (and <code>tsz-lsp</code> when included in the selected asset) into a directory on your <code>$PATH</code>.
+    It does not touch system files or require <code>sudo</code> unless you point <code>--dir</code> at a privileged location.</p>
+    <p>If you'd rather audit it first:</p>
+    <pre><code>curl -fsSL https://tsz.dev/install -o install.sh
+less install.sh
+sh install.sh</code></pre>
+  </details>
+</div>
+
+<script>
+  function copyInstallCommandWithSelection(text) {
+    const input = document.createElement('textarea');
+    input.value = text;
+    input.setAttribute('readonly', '');
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.select();
+
+    try {
+      return document.execCommand('copy');
+    } finally {
+      input.remove();
+    }
+  }
+
+  async function copyInstallCommand(text) {
+    // execCommand must run directly inside the user click activation. If the
+    // async Clipboard API is attempted first and gets denied, browsers may no
+    // longer allow the fallback to copy.
+    if (copyInstallCommandWithSelection(text)) {
+      return;
+    }
+
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    throw new Error('clipboard unavailable');
+  }
+
+  function showCopyState(btn, text, className) {
+    const original = btn.dataset.copyLabel || btn.textContent;
+    btn.dataset.copyLabel = original;
+    btn.textContent = text;
+    btn.classList.remove('copied');
+    btn.classList.add(className);
+    window.clearTimeout(btn._copyResetTimer);
+    btn._copyResetTimer = window.setTimeout(() => {
+      btn.textContent = original;
+      btn.classList.remove('copied');
+    }, 1500);
+  }
+
+  function selectInstallCommand(target) {
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  document.querySelectorAll('.copy-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const target = document.getElementById(btn.dataset.copyTarget);
+      if (!target) return;
+      try {
+        await copyInstallCommand(target.textContent.trim());
+        showCopyState(btn, 'Copied', 'copied');
+      } catch (e) {
+        selectInstallCommand(target);
+        showCopyState(btn, 'Selected', 'copied');
+      }
+    });
+  });
+</script>

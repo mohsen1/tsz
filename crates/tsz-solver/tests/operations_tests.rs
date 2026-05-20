@@ -1,12 +1,38 @@
 //! Tests for type operations.
 
 use super::*;
-use crate::CompatChecker;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
+use crate::relations::compat::CompatChecker;
 use crate::types::{CallableShape, MappedType, TypeData, Visibility};
+
+/// Build a `<param_name>(arg_name: param_name): param_name` identity `FunctionShape`.
+/// Reused across multiple tests that verify unconstrained-T inference behavior.
+fn make_identity_shape(interner: &TypeInterner, param_name: &str, arg_name: &str) -> FunctionShape {
+    let t_param = TypeParamInfo {
+        name: interner.intern_string(param_name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+    FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string(arg_name)),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    }
+}
 
 #[test]
 fn test_call_simple_function() {
@@ -36,6 +62,51 @@ fn test_call_simple_function() {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::STRING),
         _ => panic!("Expected success, got {result:?}"),
     }
+}
+
+#[test]
+fn call_evaluator_cache_statistics_account_for_contextual_sensitivity() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let empty = evaluator.cache_statistics();
+    assert_eq!(empty.contextual_sensitivity_entries, 0);
+    assert_eq!(empty.estimated_size_bytes(), 0);
+
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert!(evaluator.is_contextually_sensitive(func));
+    let populated = evaluator.cache_statistics();
+    assert_eq!(populated.contextual_sensitivity_entries, 1);
+    assert!(
+        populated.estimated_size_bytes() > empty.estimated_size_bytes(),
+        "populated call evaluator cache should report nonzero estimated residency"
+    );
+
+    assert!(evaluator.is_contextually_sensitive(func));
+    let repeated = evaluator.cache_statistics();
+    assert_eq!(
+        repeated.contextual_sensitivity_entries,
+        populated.contextual_sensitivity_entries
+    );
+    assert_eq!(
+        repeated.estimated_size_bytes(),
+        populated.estimated_size_bytes()
+    );
 }
 
 #[test]
@@ -531,6 +602,76 @@ fn test_generic_call_widens_fresh_object_union_inferred_type() {
     assert!(
         saw_right_shape,
         "Expected widened right object member in inferred union"
+    );
+}
+
+fn type_union_members(interner: &TypeInterner, type_id: TypeId) -> Vec<TypeId> {
+    match interner.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => interner.type_list(list_id).to_vec(),
+        _ => vec![type_id],
+    }
+}
+
+#[test]
+fn object_spread_property_merge_later_required_overrides() {
+    let interner = TypeInterner::new();
+    let prop_name = interner.intern_string("value");
+    let earlier = PropertyInfo::readonly(prop_name, TypeId::STRING);
+    let mut spread = PropertyInfo::new(prop_name, TypeId::NUMBER);
+    spread.declaration_order = 42;
+
+    let merged = merge_object_spread_property(&interner, false, Some(&earlier), &spread);
+
+    assert_eq!(merged.type_id, TypeId::NUMBER);
+    assert_eq!(merged.write_type, TypeId::NUMBER);
+    assert!(!merged.optional);
+    assert!(!merged.readonly);
+    assert_eq!(merged.declaration_order, 42);
+}
+
+#[test]
+fn object_spread_property_merge_optional_later_unions_without_undefined_when_inexact() {
+    let interner = TypeInterner::new();
+    let prop_name = interner.intern_string("value");
+    let earlier = PropertyInfo::new(prop_name, TypeId::STRING);
+    let optional_number = interner.union2(TypeId::NUMBER, TypeId::UNDEFINED);
+    let spread = PropertyInfo::opt(prop_name, optional_number);
+
+    let merged = merge_object_spread_property(&interner, false, Some(&earlier), &spread);
+    let members = type_union_members(&interner, merged.type_id);
+
+    assert!(
+        !merged.optional,
+        "earlier required property keeps merge required"
+    );
+    assert!(members.contains(&TypeId::STRING));
+    assert!(members.contains(&TypeId::NUMBER));
+    assert!(
+        !members.contains(&TypeId::UNDEFINED),
+        "inexact optional spread merge should remove undefined from the later optional contribution"
+    );
+}
+
+#[test]
+fn object_spread_property_merge_optional_later_preserves_undefined_when_exact() {
+    let interner = TypeInterner::new();
+    let prop_name = interner.intern_string("value");
+    let earlier = PropertyInfo::new(prop_name, TypeId::STRING);
+    let optional_number = interner.union2(TypeId::NUMBER, TypeId::UNDEFINED);
+    let spread = PropertyInfo::opt(prop_name, optional_number);
+
+    let merged = merge_object_spread_property(&interner, true, Some(&earlier), &spread);
+    let members = type_union_members(&interner, merged.type_id);
+
+    assert!(
+        !merged.optional,
+        "earlier required property keeps merge required"
+    );
+    assert!(members.contains(&TypeId::STRING));
+    assert!(members.contains(&TypeId::NUMBER));
+    assert!(
+        members.contains(&TypeId::UNDEFINED),
+        "exact optional spread merge should preserve undefined in the later optional contribution"
     );
 }
 
@@ -3334,36 +3475,137 @@ fn test_generic_call_resets_fixed_union_member_cache() {
 }
 
 #[test]
-fn test_infer_generic_function_identity_widens_non_const_literal() {
+fn test_infer_generic_function_identity_preserves_unconstrained_scalar_literal() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
-    let t_param = TypeParamInfo {
-        name: interner.intern_string("T"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param));
-
-    let func = FunctionShape {
-        type_params: vec![t_param],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: t_type,
-            optional: false,
-            rest: false,
-        }],
-        this_type: None,
-        return_type: t_type,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    };
-
     let hello = interner.literal_string("hello");
-    let result = infer_generic_function(&interner, &mut subtype, &func, &[hello]);
-    assert_eq!(result, TypeId::STRING);
+    let result = infer_generic_function(
+        &interner,
+        &mut subtype,
+        &make_identity_shape(&interner, "T", "x"),
+        &[hello],
+    );
+    assert_eq!(result, hello);
+
+    // Different param name proves the rule is structural, not name-specific.
+    let world = interner.literal_string("world");
+    let result2 = infer_generic_function(
+        &interner,
+        &mut subtype,
+        &make_identity_shape(&interner, "U", "value"),
+        &[world],
+    );
+    assert_eq!(result2, world);
+}
+
+/// When a fresh object literal `{ x: 1 }` is passed to `identity<T>(x: T): T` with
+/// unconstrained T, tsc infers T = `{ x: number }` (widened), not `{ x: 1 }`.
+/// This mirrors tsc's `getWidenedType` behavior in inference resolution.
+#[test]
+fn test_identity_widens_fresh_object_literal_properties_for_unconstrained_t() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Case 1: { x: 1 } passed to identity<T>(x: T): T → T = { x: number }
+    let prop_x = interner.intern_string("x");
+    let lit_1 = interner.literal_number(1.0);
+    let obj_x1 = interner.object_fresh(vec![PropertyInfo::new(prop_x, lit_1)]);
+    let ret = infer_generic_function(
+        &interner,
+        &mut checker,
+        &make_identity_shape(&interner, "T", "x"),
+        &[obj_x1],
+    );
+    let shape = match interner.lookup(ret) {
+        Some(TypeData::Object(s)) | Some(TypeData::ObjectWithIndex(s)) => interner.object_shape(s),
+        other => panic!("Expected object return type, got {other:?}"),
+    };
+    assert_eq!(shape.properties.len(), 1);
+    assert_eq!(
+        shape.properties[0].type_id,
+        TypeId::NUMBER,
+        "Property 'x' should be widened to number"
+    );
+    assert!(
+        !shape
+            .flags
+            .contains(crate::types::ObjectFlags::FRESH_LITERAL),
+        "FRESH_LITERAL should be stripped from widened result"
+    );
+
+    // Case 2: { alpha: false } passed to wrap<U>(v: U): U → U = { alpha: boolean }
+    // Different param name, property name, and value type — proves rule is structural.
+    let prop_alpha = interner.intern_string("alpha");
+    let obj_alpha_false =
+        interner.object_fresh(vec![PropertyInfo::new(prop_alpha, TypeId::BOOLEAN_FALSE)]);
+    let ret2 = infer_generic_function(
+        &interner,
+        &mut checker,
+        &make_identity_shape(&interner, "U", "v"),
+        &[obj_alpha_false],
+    );
+    let shape2 = match interner.lookup(ret2) {
+        Some(TypeData::Object(s)) | Some(TypeData::ObjectWithIndex(s)) => interner.object_shape(s),
+        other => panic!("Expected object return type, got {other:?}"),
+    };
+    assert_eq!(
+        shape2.properties[0].type_id,
+        TypeId::BOOLEAN,
+        "Property 'alpha' should be widened to boolean"
+    );
+
+    // Case 3: multi-property object { name: "hi", count: 42 } → { name: string, count: number }
+    let prop_name = interner.intern_string("name");
+    let prop_count = interner.intern_string("count");
+    let lit_hi = interner.literal_string("hi");
+    let lit_42 = interner.literal_number(42.0);
+    let obj_multi = interner.object_fresh(vec![
+        PropertyInfo::new(prop_name, lit_hi),
+        PropertyInfo::new(prop_count, lit_42),
+    ]);
+    let ret3 = infer_generic_function(
+        &interner,
+        &mut checker,
+        &make_identity_shape(&interner, "K", "input"),
+        &[obj_multi],
+    );
+    let shape3 = match interner.lookup(ret3) {
+        Some(TypeData::Object(s)) | Some(TypeData::ObjectWithIndex(s)) => interner.object_shape(s),
+        other => panic!("Expected object return type, got {other:?}"),
+    };
+    let by_name: std::collections::HashMap<_, _> = shape3
+        .properties
+        .iter()
+        .map(|p| (interner.resolve_atom(p.name), p.type_id))
+        .collect();
+    assert_eq!(
+        by_name["name"],
+        TypeId::STRING,
+        "Property 'name' should be widened to string"
+    );
+    assert_eq!(
+        by_name["count"],
+        TypeId::NUMBER,
+        "Property 'count' should be widened to number"
+    );
+}
+
+/// Scalar literals stay literal for unconstrained T (tsc: `identity(1)` -> T = 1).
+#[test]
+fn test_identity_preserves_scalar_literals_for_unconstrained_t() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    for (param_name, arg_name) in [("T", "x"), ("U", "value"), ("R", "item")] {
+        let func = make_identity_shape(&interner, param_name, arg_name);
+        let n = interner.literal_number(5.0);
+        let result = infer_generic_function(&interner, &mut checker, &func, &[n]);
+        assert_eq!(
+            result, n,
+            "{param_name}: literal number 5 should stay literal"
+        );
+    }
 }
 
 #[test]
@@ -6116,8 +6358,7 @@ fn test_infer_generic_tuple_element() {
 }
 
 #[test]
-#[ignore = "pre-existing regression: upstream changes altered tuple rest inference"]
-fn test_infer_generic_tuple_rest_elements() {
+fn test_infer_generic_tuple_rest_elements_rejects_heterogeneous_candidates() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -6175,13 +6416,13 @@ fn test_infer_generic_tuple_rest_elements() {
         },
     ]);
     let result = infer_generic_function(&interner, &mut subtype, &func, &[tuple_arg]);
-    let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
-    assert_eq!(result, expected);
+    // Current tsc keeps the first direct rest candidate and rejects the later
+    // heterogeneous element rather than inferring a union.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
-#[ignore = "pre-existing regression: heterogeneous rest parameter inference now returns ERROR instead of union"]
-fn test_infer_generic_tuple_rest_parameter() {
+fn test_infer_generic_tuple_rest_parameter_rejects_heterogeneous_candidates() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -6229,13 +6470,13 @@ fn test_infer_generic_tuple_rest_parameter() {
         &func,
         &[TypeId::NUMBER, TypeId::STRING],
     );
-    // tsc infers T as number | string (union of candidates) and the call succeeds.
-    assert_ne!(result, TypeId::ERROR, "Expected union result, not ERROR");
+    // Current tsc keeps the first direct rest candidate and rejects the later
+    // heterogeneous argument rather than inferring a union.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
-#[ignore = "pre-existing regression: upstream changes altered tuple rest inference"]
-fn test_infer_generic_tuple_rest_from_rest_argument() {
+fn test_infer_generic_tuple_rest_from_rest_argument_rejects_heterogeneous_candidates() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -6295,8 +6536,9 @@ fn test_infer_generic_tuple_rest_from_rest_argument() {
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[tuple_arg]);
-    let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
-    assert_eq!(result, expected);
+    // Current tsc keeps the first direct tuple-rest candidate and rejects the
+    // later heterogeneous rest argument rather than inferring a union.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -7077,8 +7319,7 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
 // Same reasoning as above - required properties don't infer from index signatures.
 
 #[test]
-#[ignore = "pre-existing regression: upstream changes altered union source inference"]
-fn test_infer_generic_union_source() {
+fn test_infer_generic_union_source_rejects_heterogeneous_property_candidates() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -7121,8 +7362,9 @@ fn test_infer_generic_union_source() {
 
     let union_arg = interner.union(vec![boxed_number, boxed_string]);
     let result = infer_generic_function(&interner, &mut subtype, &func, &[union_arg]);
-    let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
-    assert_eq!(result, expected);
+    // Current tsc uses the first union member as the inference source for this
+    // direct object parameter and rejects the later incompatible member.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -7258,8 +7500,7 @@ fn test_infer_generic_optional_union_target_with_null() {
 }
 
 #[test]
-#[ignore = "pre-existing regression: heterogeneous rest parameter inference now returns ERROR instead of union"]
-fn test_infer_generic_rest_parameters() {
+fn test_infer_generic_rest_parameters_rejects_heterogeneous_candidates() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -7293,8 +7534,9 @@ fn test_infer_generic_rest_parameters() {
         &func,
         &[TypeId::NUMBER, TypeId::STRING],
     );
-    // tsc infers T as string | number (union of candidates) and the call succeeds.
-    assert_ne!(result, TypeId::ERROR, "Expected union result, not ERROR");
+    // Current tsc keeps the first direct rest candidate and rejects the later
+    // heterogeneous argument rather than inferring a union.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -7947,11 +8189,10 @@ fn test_rest_param_spreading_homogeneous_args() {
     assert_eq!(result, TypeId::NUMBER);
 }
 
-/// Test rest parameter type spreading with heterogeneous arguments creates union
+/// Heterogeneous direct rest arguments keep first-candidate inference and fail.
 /// function foo<T>(...args: T[]): T with mixed-type args
 #[test]
-#[ignore = "pre-existing regression: heterogeneous rest parameter inference now returns ERROR instead of union"]
-fn test_rest_param_spreading_heterogeneous_args() {
+fn test_rest_param_spreading_rejects_heterogeneous_args() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -7979,15 +8220,15 @@ fn test_rest_param_spreading_heterogeneous_args() {
         is_method: false,
     };
 
-    // tsc infers T as string | number | boolean (union of all candidates)
-    // and the call succeeds.
+    // Current tsc keeps the first direct rest candidate and rejects the later
+    // heterogeneous arguments rather than inferring a union.
     let result = infer_generic_function(
         &interner,
         &mut subtype,
         &func,
         &[TypeId::NUMBER, TypeId::STRING, TypeId::BOOLEAN],
     );
-    assert_ne!(result, TypeId::ERROR, "Expected union result, not ERROR");
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -9771,7 +10012,7 @@ fn test_is_arithmetic_operand_mixed_union_invalid() {
 /// does not exist on type 'any[]'".
 #[test]
 fn test_property_access_array_push_with_env_resolver() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
     use crate::types::TypeParamInfo;
 
     let interner = TypeInterner::new();
@@ -10031,7 +10272,7 @@ fn test_array_push_instantiates_intersection_array_base_parameter() {
 
 #[test]
 fn test_array_push_uses_symbol_params_when_array_base_params_missing() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
     use crate::types::{ObjectShape, SymbolRef};
 
     let interner = TypeInterner::new();
@@ -10111,7 +10352,7 @@ fn test_array_push_uses_symbol_params_when_array_base_params_missing() {
 /// it should resolve to the array method, not map through the template.
 #[test]
 fn test_array_mapped_type_method_resolution() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -10732,7 +10973,7 @@ fn test_union_call_tuple_rest_combines_to_never() {
 /// argument unification to capture T = Bacon.
 #[test]
 fn test_infer_application_to_mapped_type_direct_arg_unification() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -11918,52 +12159,21 @@ fn test_trivial_identity_preserves_literal_with_contextual_type() {
     }
 }
 
-/// Tests that without a contextual type, the identity fast path widens literals.
-/// `identity('ELSE')` without context should infer T = string (normal widening).
+/// Tests that without a contextual type, the identity fast path still preserves
+/// scalar literal arguments: `identity('ELSE')` should infer T = "ELSE".
 #[test]
-fn test_trivial_identity_widens_literal_without_contextual_type() {
+fn test_trivial_identity_preserves_unconstrained_literal_without_contextual_type() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
-    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
 
     let lit_else = interner.literal_string("ELSE");
-
-    let t_param = TypeParamInfo {
-        name: interner.intern_string("T"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let t_type = interner.type_param(t_param);
-    let identity = interner.function(FunctionShape {
-        type_params: vec![t_param],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("x")),
-            type_id: t_type,
-            optional: false,
-            rest: false,
-        }],
-        this_type: None,
-        return_type: t_type,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
-
-    // Call identity("ELSE") WITHOUT contextual type
-    let result = evaluator.resolve_call(identity, &[lit_else]);
-
-    match result {
-        CallResult::Success(ret) => {
-            // Without contextual type, the literal should be widened to string
-            assert_eq!(
-                ret,
-                TypeId::STRING,
-                "identity('ELSE') without context should widen to string"
-            );
-        }
-        other => panic!("Expected success for identity call without context, got {other:?}"),
-    }
+    let result = infer_generic_function(
+        &interner,
+        &mut checker,
+        &make_identity_shape(&interner, "T", "x"),
+        &[lit_else],
+    );
+    assert_eq!(result, lit_else);
 }
 
 /// Test that a union of a single-overload function and a multi-overload callable

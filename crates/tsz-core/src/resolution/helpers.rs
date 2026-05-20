@@ -32,15 +32,12 @@ pub(crate) fn cached_is_file(path: &Path) -> bool {
     })
 }
 
-/// Reset the per-thread file-existence cache. Long-lived hosts (LSP,
-/// `--watch`) should call this between compilation cycles to drop stale
-/// entries when the user edits files on disk. Note: only clears the
-/// caller's thread-local cache; rayon worker threads keep their own,
-/// which is fine for read-mostly resolution but means a long-lived host
-/// that wants strict freshness should pin work to a single thread when
-/// resolving (or skip the cache entirely).
-#[allow(dead_code)]
-pub fn clear_file_exists_cache() {
+/// Reset the caller thread's file-existence cache.
+///
+/// Long-lived hosts should use `ModuleResolver::clear_cache` between
+/// compilation cycles. That public reset path calls this helper for the
+/// current thread; rayon worker threads keep their own cache entries.
+pub(crate) fn clear_file_exists_cache() {
     FILE_EXISTS.with(|cache| cache.borrow_mut().clear());
 }
 
@@ -594,16 +591,11 @@ pub(crate) fn declaration_substitution_for_main(path: &Path) -> Option<PathBuf> 
 /// Simplified package.json structure for resolution
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)] // Fields deserialized from JSON; not all read directly
 pub(crate) struct PackageJson {
     #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string_field")]
-    pub version: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub main: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_field")]
-    pub module: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string_field")]
     pub types: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_string_field")]

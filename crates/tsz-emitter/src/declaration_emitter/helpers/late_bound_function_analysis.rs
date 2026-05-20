@@ -107,18 +107,82 @@ impl<'a> DeclarationEmitter<'a> {
         )
     }
 
-    fn late_bound_synthetic_member_name(index: usize) -> String {
-        if index < 26 {
-            format!("_{}", (b'a' + index as u8) as char)
-        } else {
-            format!("_a{}", index - 25)
-        }
-    }
-
     fn should_emit_late_bound_export_alias(property_name_text: &str) -> bool {
         Self::is_unquoted_property_name(property_name_text)
             && !tsz_solver::utils::is_numeric_literal_name(property_name_text)
             && Self::is_late_bound_reserved_binding_name(property_name_text)
+    }
+
+    fn is_late_bound_contextual_keyword_property_name(text: &str) -> bool {
+        matches!(
+            text,
+            "abstract"
+                | "as"
+                | "asserts"
+                | "any"
+                | "async"
+                | "await"
+                | "boolean"
+                | "constructor"
+                | "declare"
+                | "get"
+                | "infer"
+                | "is"
+                | "keyof"
+                | "module"
+                | "namespace"
+                | "never"
+                | "readonly"
+                | "require"
+                | "number"
+                | "object"
+                | "set"
+                | "string"
+                | "symbol"
+                | "type"
+                | "undefined"
+                | "unique"
+                | "unknown"
+                | "from"
+                | "global"
+                | "bigint"
+                | "of"
+        )
+    }
+
+    fn late_bound_synthetic_member_name(index: usize) -> String {
+        let mut counter = index;
+        if counter >= 8 {
+            counter += 1;
+        }
+        if counter >= 13 {
+            counter += 1;
+        }
+
+        if counter < 26 {
+            format!("_{}", (b'a' + counter as u8) as char)
+        } else {
+            format!("_{}", counter - 26)
+        }
+    }
+
+    fn js_late_bound_synthetic_member_name(
+        property_name_text: &str,
+        reserved_member_names: &mut FxHashSet<String>,
+    ) -> String {
+        let base = format!("_{property_name_text}");
+        if reserved_member_names.insert(base.clone()) {
+            return base;
+        }
+
+        let mut suffix = 1usize;
+        loop {
+            let candidate = format!("{base}_{suffix}");
+            if reserved_member_names.insert(candidate.clone()) {
+                return candidate;
+            }
+            suffix += 1;
+        }
     }
 
     fn resolved_const_late_bound_assignment_key(
@@ -570,6 +634,19 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Returns true when `initializer` is the kind of node
+    /// `emit_function_initializer_call_signature` can synthesize a call
+    /// signature for — that is, a function expression or arrow function.
+    /// Used by the late-bound expando-function path to bail out
+    /// **before** any partial output is written, so non-function
+    /// initializers do not leak a broken `: {` into the .d.ts.
+    fn initializer_is_function_like_for_late_bound(&self, initializer: NodeIndex) -> bool {
+        self.arena.get(initializer).is_some_and(|node| {
+            node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+        })
+    }
+
     pub(in crate::declaration_emitter) fn collect_ts_late_bound_assignment_members(
         &self,
         root_name_idx: NodeIndex,
@@ -596,6 +673,9 @@ impl<'a> DeclarationEmitter<'a> {
         let mut members = Vec::new();
         let declared_members = self.declared_late_bound_namespace_member_names(&root_name);
         for &stmt_idx in &source_file.statements.nodes {
+            if self.source_is_js_file && self.js_class_static_member_stmts.contains(&stmt_idx) {
+                continue;
+            }
             self.collect_late_bound_assignment_members_from_node(
                 stmt_idx,
                 &root_name,
@@ -662,6 +742,19 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> bool {
         let members = self.collect_ts_late_bound_assignment_members(decl_name);
         if members.is_empty() {
+            return false;
+        }
+
+        // The `: {` and the call signature were previously written before
+        // checking whether the initializer is actually a function; for
+        // non-function initializers (array literals, object literals, etc.)
+        // `emit_function_initializer_call_signature` then returned false
+        // and the caller fell through to a different branch — but the
+        // partial `: {\n    ` was already in the output, producing invalid
+        // TypeScript like `declare var t: {\n    : number[];`. Probe the
+        // initializer shape first and bail out before any writes when the
+        // late-bound function pattern does not apply.
+        if !self.initializer_is_function_like_for_late_bound(initializer) {
             return false;
         }
 
@@ -755,6 +848,23 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    fn generate_unique_namespace_member_name(
+        &self,
+        base: &str,
+        reserved_member_names: &FxHashSet<String>,
+    ) -> String {
+        let mut i = 1usize;
+        loop {
+            let candidate = format!("{base}_{i}");
+            if !self.reserved_names.contains(&candidate)
+                && !reserved_member_names.contains(&candidate)
+            {
+                return candidate;
+            }
+            i += 1;
+        }
+    }
+
     pub(in crate::declaration_emitter) fn emit_ts_late_bound_function_namespace_from_members(
         &mut self,
         name_idx: NodeIndex,
@@ -794,33 +904,63 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(" {");
         self.write_line();
         self.increase_indent();
-        let has_export_aliases = namespace_members
-            .iter()
-            .any(|member| member.namespace_member_name.is_none());
         let mut export_aliases: Vec<(String, String)> = Vec::new();
         let mut reserved_member_names: FxHashSet<String> = namespace_members
             .iter()
             .filter_map(|member| member.namespace_member_name.clone())
             .collect();
+        // Direct-named members get `export let`/`export var` when any sibling uses a
+        // reserved-word alias — so all accessible properties remain visible as `foo.prop`.
+        // This applies to both JS and TS emit paths.
+        let has_aliased_members = namespace_members
+            .iter()
+            .any(|member| member.namespace_member_name.is_none());
         let mut synthetic_member_count = 0usize;
+        let mut emitted_keyword_export_alias = false;
         for member in namespace_members {
+            let mut export_alias = None;
             let namespace_member_name = if let Some(namespace_member_name) =
                 member.namespace_member_name.as_deref()
             {
-                namespace_member_name.to_string()
+                if self.source_is_js_file
+                    && (self.reserved_names.contains(namespace_member_name)
+                        || emitted_keyword_export_alias
+                            && !Self::is_late_bound_contextual_keyword_property_name(
+                                namespace_member_name,
+                            ))
+                {
+                    let synthetic_name = self.generate_unique_namespace_member_name(
+                        namespace_member_name,
+                        &reserved_member_names,
+                    );
+                    reserved_member_names.insert(synthetic_name.clone());
+                    export_alias =
+                        Some((synthetic_name.clone(), namespace_member_name.to_string()));
+                    synthetic_name
+                } else {
+                    namespace_member_name.to_string()
+                }
             } else {
-                let synthetic_name = loop {
-                    let candidate = Self::late_bound_synthetic_member_name(synthetic_member_count);
-                    synthetic_member_count += 1;
-                    if reserved_member_names.insert(candidate.clone()) {
-                        break candidate;
+                let synthetic_name = if self.source_is_js_file {
+                    Self::js_late_bound_synthetic_member_name(
+                        &member.property_name_text,
+                        &mut reserved_member_names,
+                    )
+                } else {
+                    loop {
+                        let candidate =
+                            Self::late_bound_synthetic_member_name(synthetic_member_count);
+                        synthetic_member_count += 1;
+                        if reserved_member_names.insert(candidate.clone()) {
+                            break candidate;
+                        }
                     }
                 };
-                export_aliases.push((synthetic_name.clone(), member.property_name_text.clone()));
+                export_alias = Some((synthetic_name.clone(), member.property_name_text.clone()));
                 synthetic_name
             };
             self.write_indent();
-            if has_export_aliases && member.namespace_member_name.is_some() {
+            if has_aliased_members && export_alias.is_none() {
                 self.write("export ");
             }
             if self.source_is_js_file {
@@ -833,13 +973,33 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(&member.type_text);
             self.write(";");
             self.write_line();
+            if let Some((local_name, exported_name)) = export_alias {
+                if self.source_is_js_file {
+                    self.write_indent();
+                    self.write("export { ");
+                    self.write(&local_name);
+                    self.write(" as ");
+                    self.write(&exported_name);
+                    self.write(" };");
+                    self.write_line();
+                } else {
+                    export_aliases.push((local_name, exported_name));
+                }
+                emitted_keyword_export_alias |=
+                    Self::is_late_bound_reserved_binding_name(&member.property_name_text);
+            }
         }
-        for (local_name, exported_name) in export_aliases {
+        if !export_aliases.is_empty() {
             self.write_indent();
             self.write("export { ");
-            self.write(&local_name);
-            self.write(" as ");
-            self.write(&exported_name);
+            for (idx, (local_name, exported_name)) in export_aliases.iter().enumerate() {
+                if idx > 0 {
+                    self.write(", ");
+                }
+                self.write(local_name);
+                self.write(" as ");
+                self.write(exported_name);
+            }
             self.write(" };");
             self.write_line();
         }

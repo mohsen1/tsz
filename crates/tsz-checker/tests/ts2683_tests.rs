@@ -3,39 +3,21 @@
 //! (not arrow) without a `this:` parameter annotation.
 
 use tsz_binder::BinderState;
+use tsz_checker::test_utils::check_with_options_code_messages;
 use tsz_checker::{CheckerOptions, CheckerState};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    check_with_options_code_messages(
+        source,
         CheckerOptions {
             strict: true,
             strict_null_checks: true,
             no_implicit_this: true,
             ..CheckerOptions::default()
         },
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    )
 }
 
 fn has_error(source: &str, code: u32) -> bool {
@@ -453,5 +435,84 @@ class Foo {
     assert!(
         diags.iter().any(|d| d.0 == 2683),
         "Expected nested function in class method to emit TS2683, got: {diags:?}"
+    );
+}
+
+// =========================================================================
+// Mixin / class-inside-function `this` tests (issue #6644)
+// =========================================================================
+
+#[test]
+fn class_property_initializer_inside_function_no_ts2683() {
+    // Class owns `this` in property initializers; outer function is not a receiver.
+    let src = r#"
+function make() {
+    return class {
+        name = "hello";
+        tag = this.name;
+    };
+}
+"#;
+    let diags = get_diagnostics(src);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "Expected class property initializer `this` to suppress TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn mixin_constrained_generic_base_no_ts2683() {
+    // Mixin: class extends constrained generic base; `this` is the class instance.
+    let src = r#"
+type Ctor<T> = new (...args: any[]) => T;
+function Tagged<TBase extends Ctor<{ name: string }>>(Base: TBase) {
+    return class extends Base {
+        tag = `tagged-${this.name}`;
+    };
+}
+"#;
+    let diags = get_diagnostics(src);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "Expected mixin class property initializer to suppress TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn mixin_renamed_type_param_no_ts2683() {
+    // Same mixin pattern with differently-named type parameter — fix must be structural.
+    let src = r#"
+type Ctor<K> = new (...args: any[]) => K;
+function Stamped<Base extends Ctor<{ id: number }>>(B: Base) {
+    return class extends B {
+        stamp = this.id;
+    };
+}
+"#;
+    let diags = get_diagnostics(src);
+    assert!(
+        !diags.iter().any(|d| d.0 == 2683),
+        "Expected mixin with renamed type param to suppress TS2683, got: {diags:?}"
+    );
+}
+
+#[test]
+fn nested_function_inside_class_inside_function_still_emits_ts2683() {
+    // Nested regular function inside a class creates its own `this` binding.
+    let src = r#"
+function outer() {
+    return class {
+        method() {
+            function inner() {
+                return this;
+            }
+        }
+    };
+}
+"#;
+    let diags = get_diagnostics(src);
+    assert!(
+        diags.iter().any(|d| d.0 == 2683),
+        "Expected nested function inside class inside function to emit TS2683, got: {diags:?}"
     );
 }

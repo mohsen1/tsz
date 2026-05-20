@@ -23,25 +23,14 @@
 //! requires the comprehensive default-target lib graph and the
 //! implements-clause path; that is exercised as a conformance test.
 
-use std::sync::Arc;
-
-use tsz_binder::{BinderState, lib_loader::LibFile};
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn load_lib_files(names: &[&str]) -> Vec<Arc<LibFile>> {
-    tsz_checker::test_utils::load_compiled_lib_files(names)
-}
 
 fn check_with_iterable_libs(source: &str) -> Vec<Diagnostic> {
     // The minimum set required to make `IteratorResult<T>`,
     // `Promise<T>`, and `AsyncIterator<T, ...>` resolvable.
-    let lib_files = load_lib_files(&[
+    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(&[
         "lib.es5.d.ts",
         "lib.es2015.core.d.ts",
         "lib.es2015.collection.d.ts",
@@ -57,44 +46,16 @@ fn check_with_iterable_libs(source: &str) -> Vec<Diagnostic> {
         "lib.es2018.asyncgenerator.d.ts",
     ]);
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    assert!(
-        parser.get_diagnostics().is_empty(),
-        "Parse errors: {:?}",
-        parser.get_diagnostics()
-    );
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
         CheckerOptions {
             target: ScriptTarget::ESNext,
             module: ModuleKind::CommonJS,
             ..CheckerOptions::default()
         },
-    );
-
-    if !lib_files.is_empty() {
-        let lib_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| CheckerLibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+        &lib_files,
+    )
 }
 
 fn semantic_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {

@@ -4,6 +4,7 @@
 use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
+use crate::state_checking::readonly::ReadonlyAssignmentDiagnostic;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -57,18 +58,20 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return false;
         };
-        let Some(member_name) = self
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        if self
             .ctx
             .arena
             .get_identifier_at(access.name_or_argument)
-            .map(|ident| ident.escaped_text.as_str())
-        else {
+            .is_none()
+        {
             return false;
         };
-        let prefix = format!("Member '{member_name}' implicitly has an '");
         self.ctx.diagnostics.iter().any(|diag| {
             diag.code == diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
-                && diag.message_text.starts_with(&prefix)
+                && diag.start == name_node.pos
         })
     }
 
@@ -890,21 +893,19 @@ impl<'a> CheckerState<'a> {
             self.ctx.node_types.or_insert(right_idx.0, right_raw);
         }
 
-        let declared_flat_array_assignment =
-            self.flat_array_declared_assignment_types(left_idx, right_idx);
         let declared_recursive_tuple_assignment =
             self.recursive_tuple_declared_assignment_types(left_idx, right_idx);
-        let (compat_source_type, compat_target_type, flat_array_any_target_accepted) =
-            if let Some((source_declared, target_declared)) = declared_flat_array_assignment {
-                self.store_evaluated_flat_array_assignment_alias(source_declared);
-                self.store_evaluated_flat_array_assignment_alias(target_declared);
+        let declared_alias_application_assignment =
+            self.declared_same_alias_application_assignment_types(left_idx, right_idx);
+        let (compat_source_type, compat_target_type, declared_application_any_target_accepted) =
+            if let Some((source_declared, target_declared)) = declared_recursive_tuple_assignment {
+                (source_declared, target_declared, false)
+            } else if let Some((source_declared, target_declared)) =
+                declared_alias_application_assignment
+            {
                 let accepts_any_target =
                     self.declared_application_any_target_accepts(source_declared, target_declared);
                 (source_declared, target_declared, accepts_any_target)
-            } else if let Some((source_declared, target_declared)) =
-                declared_recursive_tuple_assignment
-            {
-                (source_declared, target_declared, false)
             } else {
                 (right_type, left_type, false)
             };
@@ -945,20 +946,18 @@ impl<'a> CheckerState<'a> {
             self.check_rest_element_initializer(left_idx);
         }
 
-        // Check readonly — emit TS2540/TS2542 if the target is readonly.
-        // tsc suppresses TS2322 for readonly named properties (TS2540) but
-        // still emits TS2322 alongside readonly index signatures (TS2542).
-        let is_readonly_target = if !is_const {
+        // tsc suppresses TS2322 alongside TS2540 (readonly named property writes)
+        // and emits it alongside TS2542 (readonly index signature writes). The
+        // distinction is structural — a fixed readonly tuple element like
+        // `arr[0]` is a named property even though it uses element-access
+        // syntax — so we rely on the diagnostic kind returned by
+        // `check_readonly_assignment` rather than on the syntax of `left_idx`.
+        let readonly_diag = if !is_const {
             self.check_readonly_assignment(left_idx, expr_idx)
         } else {
-            false
+            ReadonlyAssignmentDiagnostic::None
         };
-        // Only suppress assignability for named property readonly (TS2540).
-        // For element access (index signatures, TS2542), tsc still checks type compatibility.
-        let left_node = self.ctx.arena.get(left_idx);
-        let is_element_access =
-            left_node.is_some_and(|n| n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION);
-        let suppress_for_readonly = is_readonly_target && !is_element_access;
+        let suppress_for_readonly = readonly_diag.suppresses_type_mismatch();
 
         if !is_const && self.error_top_level_js_this_computed_element_assignment(left_idx) {
             return right_type;
@@ -979,7 +978,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            if flat_array_any_target_accepted {
+            if declared_application_any_target_accepted {
                 check_assignability = false;
             }
 
@@ -1876,32 +1875,6 @@ impl<'a> CheckerState<'a> {
         self.assignment_target_declared_type(sym_id)
     }
 
-    fn flat_array_declared_assignment_types(
-        &mut self,
-        left_idx: NodeIndex,
-        right_idx: NodeIndex,
-    ) -> Option<(TypeId, TypeId)> {
-        let target_declared = self.assignment_identifier_declared_type(left_idx)?;
-        let source_declared = self.assignment_identifier_declared_type(right_idx)?;
-
-        let (target_base, target_args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, target_declared)?;
-        let (source_base, source_args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, source_declared)?;
-        if target_base != source_base || target_args.len() != source_args.len() {
-            return None;
-        }
-
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target_base)?;
-        let def = self.ctx.definition_store.get(def_id)?;
-        let name = self.ctx.types.resolve_atom_ref(def.name);
-        if name.as_ref() != "FlatArray" {
-            return None;
-        }
-
-        Some((source_declared, target_declared))
-    }
-
     fn recursive_tuple_declared_assignment_types(
         &mut self,
         left_idx: NodeIndex,
@@ -1921,7 +1894,7 @@ impl<'a> CheckerState<'a> {
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target_base)?;
         let def = self.ctx.definition_store.get(def_id)?;
         let name = self.ctx.types.resolve_atom_ref(def.name);
-        if name.as_ref() != "TupleOf" {
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || name.as_ref() != "TupleOf" {
             return None;
         }
 
@@ -1929,6 +1902,31 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::contains_type_parameters(self.ctx.types, *arg)
         });
         if !has_type_parameter_arg || target_args == source_args {
+            return None;
+        }
+
+        Some((source_declared, target_declared))
+    }
+
+    fn declared_same_alias_application_assignment_types(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<(TypeId, TypeId)> {
+        let target_declared = self.assignment_identifier_declared_type(left_idx)?;
+        let source_declared = self.assignment_identifier_declared_type(right_idx)?;
+
+        let (target_base, target_args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target_declared)?;
+        let (source_base, source_args) =
+            crate::query_boundaries::common::application_info(self.ctx.types, source_declared)?;
+        if target_base != source_base || target_args.len() != source_args.len() {
+            return None;
+        }
+
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target_base)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
             return None;
         }
 
@@ -1957,12 +1955,5 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .zip(target_args.iter())
                 .all(|(source_arg, target_arg)| target_arg.is_any() || source_arg == target_arg)
-    }
-
-    fn store_evaluated_flat_array_assignment_alias(&mut self, alias_type: TypeId) {
-        let evaluated = self.evaluate_type_with_env(alias_type);
-        if evaluated != alias_type && evaluated != TypeId::ERROR {
-            self.ctx.types.store_display_alias(evaluated, alias_type);
-        }
     }
 }

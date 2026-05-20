@@ -1315,6 +1315,13 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(value_only) = value_only_candidate.get() {
+            // A VALUE-only local does not occupy the type namespace; fall back
+            // to the lib TYPE symbol recorded during merge.
+            if !ignore_libs
+                && let Some(&lib_type_sym_id) = self.ctx.binder.lib_type_namespace.get(name)
+            {
+                return TypeSymbolResolution::Type(lib_type_sym_id);
+            }
             return TypeSymbolResolution::ValueOnly(value_only);
         }
 
@@ -1416,6 +1423,10 @@ impl<'a> CheckerState<'a> {
         &self,
         name: &str,
     ) -> Option<tsz_solver::def::DefId> {
+        if !name.contains('.') && self.ctx.type_parameter_scope.contains_key(name) {
+            return None;
+        }
+
         if is_compiler_managed_type(name) {
             return None;
         }
@@ -1549,9 +1560,15 @@ impl<'a> CheckerState<'a> {
                     .get_symbol_with_libs(resolved_sym, &lib_binders)
             })
             .map_or(canonical_name, |symbol| symbol.escaped_name.as_str());
-        let def_id = self
-            .ctx
-            .get_or_create_def_id_for_symbol_name(resolved_sym, expected_name);
+        let def_id = if self.ctx.has_lib_loaded()
+            && self.ctx.symbol_is_from_actual_or_cloned_lib(resolved_sym)
+        {
+            self.ctx
+                .get_canonical_lib_def_id(expected_name, resolved_sym)
+        } else {
+            self.ctx
+                .get_or_create_def_id_for_symbol_name(resolved_sym, expected_name)
+        };
         self.ctx
             .lowering_entity_name_resolution_cache
             .borrow_mut()
@@ -1622,13 +1639,7 @@ impl<'a> CheckerState<'a> {
                     matches!(ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
                         && self
                             .ctx
-                            .binder
-                            .file_locals
-                            .get(ident.escaped_text.as_str())
-                            .is_some_and(|sym_id| {
-                                !self.ctx.symbol_is_from_actual_lib(sym_id)
-                                    && self.symbol_has_declared_type_meaning(sym_id)
-                            });
+                            .file_local_type_shadow_for_lib_name(ident.escaped_text.as_str());
                 if !shadows_compiler_managed_type {
                     return None;
                 }
@@ -1638,7 +1649,41 @@ impl<'a> CheckerState<'a> {
                     self.resolve_identifier_symbol_in_type_position(idx)
             {
                 let lib_binders = self.get_lib_binders();
-                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                if let Some(alias_symbol) =
+                    self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                    && alias_symbol.has_any_flags(symbol_flags::ALIAS)
+                    && alias_symbol.is_type_only
+                    && let Some(module_name) = alias_symbol.import_module.as_ref()
+                    && let Some(import_name) = alias_symbol.import_name.as_deref()
+                {
+                    let source_file_idx = self
+                        .ctx
+                        .resolve_symbol_file_index(sym_id)
+                        .unwrap_or(self.ctx.current_file_idx);
+                    if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
+                        module_name,
+                        import_name,
+                        Some(source_file_idx),
+                    ) {
+                        let target_has_type = self
+                            .get_cross_file_symbol(target_sym_id)
+                            .or_else(|| {
+                                self.ctx
+                                    .binder
+                                    .get_symbol_with_libs(target_sym_id, &lib_binders)
+                            })
+                            .is_some_and(|target_symbol| {
+                                target_symbol.has_any_flags(symbol_flags::TYPE)
+                            });
+                        if target_has_type {
+                            return Some(target_sym_id.0);
+                        }
+                    }
+                }
+                if let Some(symbol) = self
+                    .get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+                {
                     if symbol.escaped_name != ident.escaped_text {
                         return self
                             .resolve_entity_name_text_to_def_id_for_lowering(
@@ -1656,9 +1701,12 @@ impl<'a> CheckerState<'a> {
                             self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                             && target_sym_id != sym_id
                             && self
-                                .ctx
-                                .binder
-                                .get_symbol_with_libs(target_sym_id, &lib_binders)
+                                .get_cross_file_symbol(target_sym_id)
+                                .or_else(|| {
+                                    self.ctx
+                                        .binder
+                                        .get_symbol_with_libs(target_sym_id, &lib_binders)
+                                })
                                 .is_some_and(|target_symbol| {
                                     target_symbol.has_any_flags(symbol_flags::TYPE)
                                 })
@@ -1797,6 +1845,20 @@ impl<'a> CheckerState<'a> {
                 if let Some(node) = self.ctx.arena.get(node_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(node)
                 {
+                    // A same-arena NodeIndex may resolve to a namespace-local type
+                    // whose bare name collides with a lib global (`Promise`, etc.).
+                    // Only canonicalize to the lib DefId when the resolved symbol
+                    // itself is from a lib context.
+                    if !self
+                        .ctx
+                        .file_local_type_shadow_for_lib_name(&ident.escaped_text)
+                        && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                            || self.ctx.symbol_is_from_lib(sym_id))
+                        && let Some(def_id) =
+                            self.resolve_actual_lib_name_to_def_id_for_lowering(&ident.escaped_text)
+                    {
+                        return def_id;
+                    }
                     let expected_name = if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
                         symbol.escaped_name.clone()
                     } else {

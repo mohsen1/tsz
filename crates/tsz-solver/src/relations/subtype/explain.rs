@@ -10,8 +10,8 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::data::get_object_symbol;
 use crate::types::{
-    FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo,
-    TupleElement, TypeId, Visibility,
+    CallSignature, CallableShape, FunctionShape, IntrinsicKind, LiteralValue, ObjectShape,
+    ObjectShapeId, PropertyInfo, TupleElement, TypeId, Visibility,
 };
 use crate::utils;
 use crate::visitor::is_type_parameter;
@@ -193,6 +193,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
+        // `S[T1]` vs `S[T2]` where T1/T2 are distinct type parameters:
+        // surface the tsc-parity TS2322 + TS5075 elaboration chain. Done
+        // before any resolution/evaluation so the user-written types
+        // appear verbatim and the IndexAccess shape isn't collapsed by
+        // evaluate_type into an opaque defer. This is the defense-in-depth
+        // path; in the common checker pipeline the inputs are evaluated
+        // before reaching here and the same elaboration is surfaced from
+        // the checker boundary.
+        if let Some(reason) = self.explain_index_access_distinct_type_param_keys(source, target) {
+            return Some(reason);
+        }
+
         // Resolve lazy types (interfaces, type aliases) to their structural forms.
         // Without this, interface types (TypeData::Lazy) won't match the object_shape_id
         // check below, causing TS2322 instead of TS2741/TS2739/TS2740.
@@ -518,11 +530,57 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.explain_function_failure(&s_fn, &t_fn);
         }
 
-        // Callable target with properties: when assigning to a callable type that has
-        // additional properties (e.g., `{ (): string; prop: number }`), check for missing
-        // properties from the source. This produces TS2741/TS2739 instead of generic TS2322.
         if let Some(t_callable_id) = callable_shape_id(self.interner, resolved_target) {
             let t_callable = self.interner.callable_shape(t_callable_id);
+            let source_intersection_members =
+                crate::type_queries::data::get_intersection_members(self.interner, resolved_source);
+            let prefer_property_failure = !t_callable.properties.is_empty()
+                && !self.callable_properties_are_only_function_members(&t_callable.properties);
+            if !prefer_property_failure && !t_callable.call_signatures.is_empty() {
+                if let Some(s_fn_id) = function_shape_id(self.interner, resolved_source) {
+                    let s_fn = self.interner.function_shape(s_fn_id);
+                    if let Some(reason) =
+                        self.explain_function_to_callable_failure(&s_fn, &t_callable)
+                    {
+                        return Some(reason);
+                    }
+                }
+
+                if let Some(s_callable_id) = callable_shape_id(self.interner, resolved_source) {
+                    let s_callable = self.interner.callable_shape(s_callable_id);
+                    if let Some(reason) = self
+                        .explain_callable_to_callable_signature_failure(&s_callable, &t_callable)
+                    {
+                        return Some(reason);
+                    }
+                }
+
+                if let Some(members) = &source_intersection_members {
+                    for member in members.iter() {
+                        if let Some(s_fn_id) = function_shape_id(self.interner, *member) {
+                            let s_fn = self.interner.function_shape(s_fn_id);
+                            if let Some(reason) =
+                                self.explain_function_to_callable_failure(&s_fn, &t_callable)
+                            {
+                                return Some(reason);
+                            }
+                        }
+                        if let Some(s_callable_id) = callable_shape_id(self.interner, *member) {
+                            let s_callable = self.interner.callable_shape(s_callable_id);
+                            if let Some(reason) = self
+                                .explain_callable_to_callable_signature_failure(
+                                    &s_callable,
+                                    &t_callable,
+                                )
+                            {
+                                return Some(reason);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Emit TS2741/TS2739 for missing properties instead of generic TS2322.
             if !t_callable.properties.is_empty() {
                 let source_props: Vec<PropertyInfo> = if let Some(s_callable_id) =
                     callable_shape_id(self.interner, resolved_source)
@@ -533,6 +591,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .clone()
                 } else if let Some(s_shape_id) = object_shape_id(self.interner, resolved_source) {
                     self.interner.object_shape(s_shape_id).properties.clone()
+                } else if source_intersection_members.is_some() {
+                    match crate::objects::collect_properties(
+                        resolved_source,
+                        self.interner,
+                        self.resolver,
+                    ) {
+                        crate::objects::PropertyCollectionResult::Properties {
+                            properties, ..
+                        } => properties,
+                        _ => vec![],
+                    }
                 } else {
                     vec![]
                 };
@@ -631,6 +700,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(members) = union_list_id(self.interner, resolved_target) {
             let members = self.interner.type_list(members);
+            let application_shaped_comparison = application_id(self.interner, source).is_some()
+                || application_id(self.interner, target).is_some();
+            let source_members = union_list_id(self.interner, resolved_source)
+                .map(|list_id| self.interner.type_list(list_id).as_ref().to_vec())
+                .unwrap_or_else(|| vec![resolved_source]);
+            for &member in members.iter() {
+                if self.check_subtype(resolved_source, member).is_true() {
+                    continue;
+                }
+                for &source_member in &source_members {
+                    if self.check_subtype(source_member, member).is_true() {
+                        continue;
+                    }
+                    let member_reason = self.explain_failure_guarded(source_member, member);
+                    let missing_property = match member_reason {
+                        Some(SubtypeFailureReason::MissingProperty { property_name, .. }) => {
+                            Some(property_name)
+                        }
+                        Some(SubtypeFailureReason::MissingProperties {
+                            property_names, ..
+                        }) => property_names.first().copied(),
+                        _ => None,
+                    };
+                    if let Some(property_name) = missing_property {
+                        if application_shaped_comparison {
+                            return Some(SubtypeFailureReason::MissingProperty {
+                                property_name,
+                                source_type: source,
+                                target_type: target,
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
             return Some(SubtypeFailureReason::NoUnionMemberMatches {
                 source_type: source,
                 target_union_members: members.as_ref().to_vec(),
@@ -691,6 +795,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             source_type: source,
             target_type: target,
         })
+    }
+
+    /// Detect `S[T1]` vs `S[T2]` where T1/T2 are distinct type parameters
+    /// and the object types resolve to the same underlying shape. Returns
+    /// the failure reason that elaborates the TS2322 + TS5075 chain.
+    ///
+    /// Independent of identifier names by construction: operates over
+    /// TypeId shapes, not surface text. Two object halves are accepted
+    /// as "the same object" when they share a TypeId, share their
+    /// resolved Lazy unwrap, or when `source <: target` holds — the
+    /// elaboration is the right shape whenever the source object is
+    /// assignable to the target object, even if `target <: source`
+    /// does not also hold.
+    fn explain_index_access_distinct_type_param_keys(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        let (s_obj, s_idx) = crate::visitor::index_access_parts(self.interner, source)?;
+        let (t_obj, t_idx) = crate::visitor::index_access_parts(self.interner, target)?;
+        let same_object = s_obj == t_obj
+            || self.resolve_lazy_type(s_obj) == self.resolve_lazy_type(t_obj)
+            || self.check_subtype(s_obj, t_obj).is_true();
+        if !same_object {
+            return None;
+        }
+        self.index_access_distinct_type_param_keys_failure_reason(s_idx, t_idx)
     }
 
     /// Explain why an object type assignment failed.
@@ -853,6 +984,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
 
                 // Check optional/required mismatch
+                //
+                // Always emit OptionalPropertyRequired when source is optional and target is
+                // required, regardless of exactOptionalPropertyTypes mode. This matches tsc's
+                // diagnostic priority: the optional-vs-required message ("Property 'x' is
+                // missing in type") takes precedence over a type-level mismatch message.
+                // The main subtype check gates whether the assignment is actually compatible
+                // (e.g., {a?: T} vs {a: T|undefined} passes in standard mode and never
+                // reaches this explain path).
                 if sp.optional && !t_prop.optional {
                     return Some(SubtypeFailureReason::OptionalPropertyRequired {
                         property_name: t_prop.name,
@@ -881,8 +1020,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 if !t_prop.readonly
                     && !sp.readonly
-                    && (sp.write_type != TypeId::NONE && sp.write_type != sp.type_id
-                        || t_prop.write_type != TypeId::NONE && t_prop.write_type != t_prop.type_id)
+                    && (sp.has_split_accessor() || t_prop.has_split_accessor())
                 {
                     let source_write = self.optional_property_write_type(sp);
                     let target_write = self.optional_property_write_type(t_prop);
@@ -1143,8 +1281,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 if !t_prop.readonly
                     && !sp.readonly
-                    && (sp.write_type != TypeId::NONE && sp.write_type != sp.type_id
-                        || t_prop.write_type != TypeId::NONE && t_prop.write_type != t_prop.type_id)
+                    && (sp.has_split_accessor() || t_prop.has_split_accessor())
                 {
                     let source_write = self.optional_property_write_type(sp);
                     let target_write = self.optional_property_write_type(t_prop);
@@ -1396,10 +1533,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let (s_effective, t_effective) = self.effective_param_type_pair(s_param, t_param);
             // Check parameter compatibility (contravariant in strict mode, bivariant in legacy)
             if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method_or_ctor) {
+                let inner_reason = self.explain_failure(t_effective, s_effective).map(Box::new);
                 return Some(SubtypeFailureReason::ParameterTypeMismatch {
                     param_index: i,
                     source_param: s_effective,
                     target_param: t_effective,
+                    inner_reason,
                 });
             }
         }
@@ -1412,10 +1551,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if let Some((param_index, source_param)) =
                     self.first_top_rest_unassignable_source_param(&source.params)
                 {
+                    let inner_reason = self
+                        .explain_failure(rest_elem_type, source_param)
+                        .map(Box::new);
                     return Some(SubtypeFailureReason::ParameterTypeMismatch {
                         param_index,
                         source_param,
                         target_param: rest_elem_type,
+                        inner_reason,
                     });
                 }
                 return None;
@@ -1428,10 +1571,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     rest_elem_type,
                     is_method_or_ctor,
                 ) {
+                    let inner_reason = self
+                        .explain_failure(rest_elem_type, s_param.type_id)
+                        .map(Box::new);
                     return Some(SubtypeFailureReason::ParameterTypeMismatch {
                         param_index: i,
                         source_param: s_param.type_id,
                         target_param: rest_elem_type,
+                        inner_reason,
                     });
                 }
             }
@@ -1444,10 +1591,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     rest_elem_type,
                     is_method_or_ctor,
                 ) {
+                    let inner_reason = self
+                        .explain_failure(rest_elem_type, s_rest_elem)
+                        .map(Box::new);
                     return Some(SubtypeFailureReason::ParameterTypeMismatch {
                         param_index: source_fixed_count,
                         source_param: s_rest_elem,
                         target_param: rest_elem_type,
+                        inner_reason,
                     });
                 }
             }
@@ -1462,16 +1613,89 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 for i in source_fixed_count..target_fixed_count {
                     let t_param = &target.params[i];
                     if !self.are_parameters_compatible(rest_elem_type, t_param.type_id) {
+                        let inner_reason = self
+                            .explain_failure(t_param.type_id, rest_elem_type)
+                            .map(Box::new);
                         return Some(SubtypeFailureReason::ParameterTypeMismatch {
                             param_index: i,
                             source_param: rest_elem_type,
                             target_param: t_param.type_id,
+                            inner_reason,
                         });
                     }
                 }
             }
         }
 
+        None
+    }
+
+    fn function_shape_from_call_signature(
+        signature: &CallSignature,
+        is_constructor: bool,
+    ) -> FunctionShape {
+        FunctionShape {
+            params: signature.params.clone(),
+            this_type: signature.this_type,
+            return_type: signature.return_type,
+            type_params: signature.type_params.clone(),
+            type_predicate: signature.type_predicate,
+            is_constructor,
+            is_method: signature.is_method,
+        }
+    }
+
+    fn explain_function_to_callable_failure(
+        &mut self,
+        source: &FunctionShape,
+        target: &CallableShape,
+    ) -> Option<SubtypeFailureReason> {
+        for target_signature in &target.call_signatures {
+            let target_function = Self::function_shape_from_call_signature(target_signature, false);
+            if !self
+                .check_function_subtype(source, &target_function)
+                .is_true()
+            {
+                return self.explain_function_failure(source, &target_function);
+            }
+        }
+        None
+    }
+
+    fn callable_properties_are_only_function_members(&self, properties: &[PropertyInfo]) -> bool {
+        properties.iter().all(|property| {
+            matches!(
+                self.interner.resolve_atom(property.name).as_str(),
+                "apply" | "bind" | "call" | "length" | "name" | "prototype"
+            )
+        })
+    }
+
+    fn explain_callable_to_callable_signature_failure(
+        &mut self,
+        source: &CallableShape,
+        target: &CallableShape,
+    ) -> Option<SubtypeFailureReason> {
+        for target_signature in &target.call_signatures {
+            let mut matching_source = None;
+            for source_signature in &source.call_signatures {
+                if self
+                    .check_call_signature_subtype(source_signature, target_signature)
+                    .is_true()
+                {
+                    matching_source = Some(source_signature);
+                    break;
+                }
+            }
+            if matching_source.is_none() {
+                let source_signature = source.call_signatures.first()?;
+                let source_function =
+                    Self::function_shape_from_call_signature(source_signature, false);
+                let target_function =
+                    Self::function_shape_from_call_signature(target_signature, false);
+                return self.explain_function_failure(&source_function, &target_function);
+            }
+        }
         None
     }
 

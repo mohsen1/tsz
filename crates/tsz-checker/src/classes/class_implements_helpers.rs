@@ -630,4 +630,45 @@ impl<'a> CheckerState<'a> {
             current_heritage = next_heritage;
         }
     }
+
+    /// Collect names of members declared directly by `class_data` that
+    /// satisfy an inherited abstract member contract.
+    ///
+    /// A constructor parameter property (`constructor(public foo: T)`)
+    /// declares and initializes the instance property `foo`, so it satisfies
+    /// `abstract foo: T` from a base class regardless of visibility modifier.
+    /// Visibility mismatches between the abstract member and the parameter
+    /// property are reported separately (TS2415/TS2611/TS2612); they are not
+    /// the absence-of-implementation diagnostic that TS2515/TS2654 tracks.
+    pub(crate) fn collect_concrete_member_names_for_abstract_impl(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        for &member_idx in &class_data.members.nodes {
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::CONSTRUCTOR {
+                let Some(ctor) = self.ctx.arena.get_constructor(node) else {
+                    continue;
+                };
+                for &param_idx in &ctor.parameters.nodes {
+                    if let Some(param_node) = self.ctx.arena.get(param_idx)
+                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        && self.has_parameter_property_modifier(&param.modifiers)
+                        && let Some(name) = self.get_property_name(param.name)
+                    {
+                        names.insert(name);
+                    }
+                }
+            } else if !self.member_is_abstract(member_idx)
+                && let Some(name_idx) = self.get_member_name_node(node)
+                && let Some(name) = self.get_property_name(name_idx)
+            {
+                names.insert(name);
+            }
+        }
+        names
+    }
 }

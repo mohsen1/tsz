@@ -15,10 +15,150 @@ use super::assignability::{
     is_builtin_wrapper_name, is_object_prototype_method,
     is_object_prototype_method_for_array_target, is_primitive_type_name,
 };
+mod nested_application_property_mismatch;
 mod type_mismatch;
 impl<'a> CheckerState<'a> {
-    fn is_object_intrinsic_for_missing_properties(&self, type_id: TypeId) -> bool {
-        query_utils::is_object_intrinsic_type(self.ctx.types, type_id)
+    /// Resolve the parameter name at `param_index` in the first call
+    /// signature of `callable_ty` (if any). Used to render TS2328
+    /// "Types of parameters '_' and '_' are incompatible." messages.
+    fn callable_param_name_at(&self, callable_ty: TypeId, param_index: usize) -> Option<String> {
+        let shape = crate::query_boundaries::common::get_callable_shape_for_type(
+            self.ctx.types,
+            callable_ty,
+        )?;
+        let atom = shape
+            .call_signatures
+            .first()
+            .and_then(|sig| sig.params.get(param_index).and_then(|p| p.name))?;
+        Some(self.ctx.types.resolve_atom(atom))
+    }
+
+    fn callable_type_after_display_evaluation(&mut self, ty: TypeId) -> Option<TypeId> {
+        if crate::query_boundaries::common::is_callable_type(self.ctx.types, ty) {
+            return Some(ty);
+        }
+        let evaluated = self.evaluate_type_with_resolution(ty);
+        if evaluated != TypeId::ERROR
+            && crate::query_boundaries::common::is_callable_type(self.ctx.types, evaluated)
+        {
+            return Some(evaluated);
+        }
+        let evaluated = self.evaluate_type_for_assignability(ty);
+        if evaluated != TypeId::ERROR
+            && crate::query_boundaries::common::is_callable_type(self.ctx.types, evaluated)
+        {
+            return Some(evaluated);
+        }
+        let evaluated = crate::query_boundaries::common::evaluate_type(self.ctx.types, ty);
+        (evaluated != TypeId::ERROR
+            && crate::query_boundaries::common::is_callable_type(self.ctx.types, evaluated))
+        .then_some(evaluated)
+    }
+
+    fn strict_callback_param_display_type(&mut self, ty: TypeId) -> TypeId {
+        self.callable_type_after_display_evaluation(ty)
+            .unwrap_or(ty)
+    }
+
+    fn strict_callback_outer_display_type(
+        &mut self,
+        ty: TypeId,
+        param_index: usize,
+    ) -> Option<TypeId> {
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
+            && param_index < shape.params.len()
+        {
+            let mut shape = (*shape).clone();
+            shape.params[param_index].type_id =
+                self.strict_callback_param_display_type(shape.params[param_index].type_id);
+            return Some(self.ctx.types.factory().function(shape));
+        }
+
+        let shape = crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)?;
+        if !shape.construct_signatures.is_empty()
+            || shape.call_signatures.len() != 1
+            || param_index >= shape.call_signatures[0].params.len()
+        {
+            return None;
+        }
+        let mut sig = shape.call_signatures[0].clone();
+        sig.params[param_index].type_id =
+            self.strict_callback_param_display_type(sig.params[param_index].type_id);
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .function(tsz_solver::FunctionShape {
+                    type_params: sig.type_params,
+                    params: sig.params,
+                    this_type: sig.this_type,
+                    return_type: sig.return_type,
+                    type_predicate: sig.type_predicate,
+                    is_constructor: false,
+                    is_method: sig.is_method,
+                }),
+        )
+    }
+
+    fn strict_callback_assignment_display_pair(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        param_index: usize,
+    ) -> Option<(String, String)> {
+        let source_display = self.strict_callback_outer_display_type(source, param_index)?;
+        let target_display = self.strict_callback_outer_display_type(target, param_index)?;
+        Some((
+            self.format_assignability_type_for_message(source_display, target_display),
+            self.format_assignability_type_for_message(target_display, source_display),
+        ))
+    }
+
+    fn strict_callback_single_call_signature(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<tsz_solver::CallSignature> {
+        let ty = self.callable_type_after_display_evaluation(ty)?;
+        if let Some(shape) =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
+        {
+            return Some(tsz_solver::CallSignature {
+                type_params: shape.type_params.clone(),
+                params: shape.params.clone(),
+                this_type: shape.this_type,
+                return_type: shape.return_type,
+                type_predicate: shape.type_predicate,
+                is_method: shape.is_method,
+            });
+        }
+
+        let shape = crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)?;
+        if shape.construct_signatures.is_empty() && shape.call_signatures.len() == 1 {
+            Some(shape.call_signatures[0].clone())
+        } else {
+            None
+        }
+    }
+
+    fn strict_callback_inner_parameter_mismatch_exists(
+        &mut self,
+        source_param: TypeId,
+        target_param: TypeId,
+    ) -> bool {
+        let Some(inner_source) = self.strict_callback_single_call_signature(target_param) else {
+            return false;
+        };
+        let Some(inner_target) = self.strict_callback_single_call_signature(source_param) else {
+            return false;
+        };
+        inner_source
+            .params
+            .iter()
+            .zip(inner_target.params.iter())
+            .any(|(source_param, target_param)| {
+                !self.diagnostic_relation_boolean_guard(target_param.type_id, source_param.type_id)
+            })
     }
 
     fn no_union_member_matches_switch_source_display(
@@ -604,7 +744,7 @@ impl<'a> CheckerState<'a> {
                                 },
                             )
                         } else {
-                            self.format_type_diagnostic(display_source)
+                            self.format_assignability_type_for_message(display_source, target)
                         },
                         if use_structural_source_display {
                             self.format_type_for_diagnostic_role(
@@ -615,7 +755,7 @@ impl<'a> CheckerState<'a> {
                                 },
                             )
                         } else {
-                            self.format_type_diagnostic(target)
+                            self.format_assignability_type_for_message(target, display_source)
                         },
                     )
                 } else {
@@ -624,11 +764,9 @@ impl<'a> CheckerState<'a> {
                         self.format_type_diagnostic(target),
                     )
                 };
-                if let Some(widened) = self.rewrite_standalone_literal_source_for_keyof_display(
-                    &source_str,
-                    &target_str,
-                    target,
-                ) {
+                if let Some(widened) =
+                    self.rewrite_standalone_literal_source_for_keyof_display(display_source, target)
+                {
                     source_str = widened;
                 }
                 if source_str == "unknown" && source != TypeId::UNKNOWN {
@@ -777,100 +915,145 @@ impl<'a> CheckerState<'a> {
                 param_index,
                 source_param,
                 target_param,
+                inner_reason,
             } => {
-                let source_str = self.format_type_for_diagnostic_role(
-                    source,
-                    DiagnosticTypeDisplayRole::AssignmentSource {
-                        target,
-                        anchor_idx: idx,
-                    },
-                );
-                let target_str = self.format_assignability_type_for_message(target, source);
-                let message = format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    &[&source_str, &target_str],
-                );
-                let primary = Diagnostic::error(
-                    file_name.clone(),
-                    start,
-                    length,
-                    message,
-                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                );
-
-                // TS2328 is emitted separately only for top-level direct callable
-                // mismatches whose parameter types are callable and non-generic.
-                let is_callable =
-                    |ty| crate::query_boundaries::common::is_callable_type(self.ctx.types, ty);
+                // For top-level direct-callable mismatches whose param types
+                // are themselves callable and non-generic, tsc treats the
+                // inner contravariant comparison as a callback. When that
+                // inner check fails on the callback's RETURN type, tsc
+                // suppresses the outer "Type X is not assignable to Y"
+                // (TS2322) wrapper and reports the diagnostic directly with
+                // code TS2328 ("Types of parameters '_' and '_' are
+                // incompatible.") — see checker.ts `reportErrorResults`,
+                // which honours `overrideNextErrorInfo` bumped by the
+                // elided `Call_signature_return_types_0_and_1_are_incompatible`
+                // (TS2202) report. When the inner failure is on a
+                // PARAMETER, no elision happens and tsc keeps the TS2322
+                // wrapper.
                 let contains_type_params = |ty| {
                     crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
                 };
-                let source_is_direct_callable = is_callable(source);
-                let target_is_direct_callable = is_callable(target);
-                let source_param_is_callable = is_callable(*source_param);
-                let target_param_is_callable = is_callable(*target_param);
-                let source_param_is_generic = contains_type_params(*source_param);
-                let target_param_is_generic = contains_type_params(*target_param);
+                let strict_callback_case = if depth == 0 {
+                    let source_callable = self.callable_type_after_display_evaluation(source);
+                    let target_callable = self.callable_type_after_display_evaluation(target);
+                    let source_param_callable =
+                        self.callable_type_after_display_evaluation(*source_param);
+                    let target_param_callable =
+                        self.callable_type_after_display_evaluation(*target_param);
+                    source_callable.is_some()
+                        && target_callable.is_some()
+                        && source_param_callable.is_some()
+                        && target_param_callable.is_some()
+                        && !contains_type_params(source_param_callable.unwrap_or(*source_param))
+                        && !contains_type_params(target_param_callable.unwrap_or(*target_param))
+                } else {
+                    false
+                };
+                let inner_failed_on_return = matches!(
+                    inner_reason.as_deref(),
+                    Some(SubtypeFailureReason::ReturnTypeMismatch { .. })
+                );
+                let inner_param_mismatch_exists = inner_failed_on_return
+                    && self.strict_callback_inner_parameter_mismatch_exists(
+                        *source_param,
+                        *target_param,
+                    );
 
-                if depth == 0
-                    && source_is_direct_callable
-                    && target_is_direct_callable
-                    && source_param_is_callable
-                    && target_param_is_callable
-                    && !source_param_is_generic
-                    && !target_param_is_generic
-                {
-                    let source_name = crate::query_boundaries::common::get_callable_shape_for_type(
-                        self.ctx.types,
-                        source,
-                    )
-                    .and_then(|shape| {
-                        shape
-                            .call_signatures
-                            .first()
-                            .and_then(|sig| sig.params.get(*param_index).and_then(|p| p.name))
-                    })
-                    .map(|a| self.ctx.types.resolve_atom(a))
-                    .unwrap_or_else(|| format!("arg{param_index}"));
-
-                    let target_name = crate::query_boundaries::common::get_callable_shape_for_type(
-                        self.ctx.types,
-                        target,
-                    )
-                    .and_then(|shape| {
-                        shape
-                            .call_signatures
-                            .first()
-                            .and_then(|sig| sig.params.get(*param_index).and_then(|p| p.name))
-                    })
-                    .map(|a| self.ctx.types.resolve_atom(a))
-                    .unwrap_or_else(|| format!("arg{param_index}"));
-
+                if strict_callback_case && inner_failed_on_return && !inner_param_mismatch_exists {
+                    let source_name = self
+                        .callable_param_name_at(source, *param_index)
+                        .unwrap_or_else(|| format!("arg{param_index}"));
+                    let target_name = self
+                        .callable_param_name_at(target, *param_index)
+                        .unwrap_or_else(|| format!("arg{param_index}"));
                     let ts2328_message = format_message(
                         diagnostic_messages::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
                         &[&source_name, &target_name],
                     );
-                    let ts2328_diag = Diagnostic::error(
+                    Diagnostic::error(
                         file_name,
                         start,
                         length,
                         ts2328_message,
                         diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
+                    )
+                } else {
+                    let (source_str, target_str) = if strict_callback_case {
+                        self.strict_callback_assignment_display_pair(source, target, *param_index)
+                            .unwrap_or_else(|| {
+                                (
+                                    self.format_type_for_diagnostic_role(
+                                        source,
+                                        DiagnosticTypeDisplayRole::AssignmentSource {
+                                            target,
+                                            anchor_idx: idx,
+                                        },
+                                    ),
+                                    self.format_assignability_type_for_message(target, source),
+                                )
+                            })
+                    } else {
+                        (
+                            self.format_type_for_diagnostic_role(
+                                source,
+                                DiagnosticTypeDisplayRole::AssignmentSource {
+                                    target,
+                                    anchor_idx: idx,
+                                },
+                            ),
+                            self.format_assignability_type_for_message(target, source),
+                        )
+                    };
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
                     );
-                    self.ctx.push_diagnostic(ts2328_diag);
+                    Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    )
                 }
-
-                primary
             }
 
+            SubtypeFailureReason::IndexAccessTypeParameterMismatch {
+                source_param,
+                target_param,
+                target_constraint,
+            } => self.render_index_access_type_parameter_mismatch(
+                source,
+                target,
+                idx,
+                start,
+                length,
+                file_name,
+                *source_param,
+                *target_param,
+                *target_constraint,
+            ),
+
             _ => {
-                let source_str = self.format_type_for_diagnostic_role(
-                    source,
-                    DiagnosticTypeDisplayRole::AssignmentSource {
-                        target,
-                        anchor_idx: idx,
-                    },
-                );
+                // At depth > 0 we are rendering a nested property/element
+                // failure. The outer anchor index no longer points at the
+                // sub-expression whose type is `source`; using the
+                // AssignmentSource role would look up the outer RHS expression
+                // and return the wrong type (e.g. the enclosing class instance
+                // instead of the mismatched property type).  Use the plain
+                // structural formatter instead so the rendered type matches the
+                // solver's `source` TypeId.
+                let source_str = if depth > 0 {
+                    self.format_type_for_assignability_message(source)
+                } else {
+                    self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    )
+                };
                 let mut target_str = self.format_assignability_type_for_message(target, source);
                 if let Some(display) = self
                     .object_literal_property_literal_union_alias_target_display(
@@ -894,6 +1077,97 @@ impl<'a> CheckerState<'a> {
                 )
             }
         }
+    }
+
+    /// Render the TS2322 + TS5075 elaboration chain for two distinct
+    /// type-parameter keys of structurally-identical index accesses.
+    ///
+    /// tsc emits, for `S[T1] = c1 as S[T2]`:
+    ///
+    /// ```text
+    /// error TS2322: Type 'S[T1]' is not assignable to type 'S[T2]'.
+    ///   Type 'T1' is not assignable to type 'T2'.
+    ///     'T1' is assignable to the constraint of type 'T2', but 'T2'
+    ///     could be instantiated with a different subtype of constraint
+    ///     '<constraint>'.
+    /// ```
+    ///
+    /// The structural rule is independent of name choice: the elaboration
+    /// uses whichever surface type parameters the user wrote, and falls
+    /// back to a single-line message when the target parameter is
+    /// unconstrained (no useful TS5075 anchor).
+    #[allow(clippy::too_many_arguments)]
+    fn render_index_access_type_parameter_mismatch(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+        start: u32,
+        length: u32,
+        file_name: String,
+        source_param: TypeId,
+        target_param: TypeId,
+        target_constraint: Option<TypeId>,
+    ) -> Diagnostic {
+        let (source_str, target_str) =
+            self.format_top_level_assignability_message_types_at(source, target, idx);
+        let message = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        let mut diag = Diagnostic::error(
+            file_name.clone(),
+            start,
+            length,
+            message,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+        let source_param_str = self.format_type_diagnostic(source_param);
+        let target_param_str = self.format_type_diagnostic(target_param);
+        let (inner, inner_code) = if source_param_str == target_param_str
+            && !crate::error_reporter::assignability::is_primitive_type_name(&source_param_str)
+            && !crate::error_reporter::assignability::display_is_literal_value(&source_param_str)
+        {
+            (
+                format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
+                    &[&source_param_str, &target_param_str],
+                ),
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
+            )
+        } else {
+            (
+                format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_param_str, &target_param_str],
+                ),
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            )
+        };
+        diag.related_information.push(DiagnosticRelatedInformation {
+            file: file_name.clone(),
+            start,
+            length,
+            message_text: inner,
+            category: DiagnosticCategory::Message,
+            code: inner_code,
+        });
+        if let Some(constraint) = target_constraint {
+            let constraint_str = self.format_type_diagnostic(constraint);
+            let elaboration = format_message(
+                diagnostic_messages::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE,
+                &[&source_param_str, &target_param_str, &constraint_str],
+            );
+            diag.related_information.push(DiagnosticRelatedInformation {
+                file: file_name,
+                start,
+                length,
+                message_text: elaboration,
+                category: DiagnosticCategory::Message,
+                code: diagnostic_codes::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE,
+            });
+        }
+        diag
     }
 
     fn object_literal_property_literal_union_alias_target_display(
@@ -1018,7 +1292,7 @@ impl<'a> CheckerState<'a> {
         let is_source_primitive =
             outer_source_is_primitive || (depth > 0 && inner_source_type_is_primitive);
         if is_source_primitive {
-            let tgt_str = self.format_type_diagnostic(target_type);
+            let tgt_str = self.recursive_non_generic_alias_body_name(target_type);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&display_src_str, &tgt_str],
@@ -1448,19 +1722,22 @@ impl<'a> CheckerState<'a> {
             // the application form `A<X1, X2, ...>` rather than the wrapper
             // alias name `B`. See `compiler/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
             // line 91. Falls through to the role formatter for any other shape.
-            let src_str =
-                if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-                    self.format_type_diagnostic(unfolded)
-                } else {
-                    self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource {
-                            target,
-                            anchor_idx: idx,
-                        },
-                    )
-                };
-            let tgt_str = self.format_assignability_type_for_message(target, source);
+            let src_str = if let Some(display) =
+                self.ts2739_alias_of_application_source_display_text(source)
+            {
+                display
+            } else {
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                )
+            };
+            let tgt_str = self
+                .checked_js_global_element_access_fallback_target_display(idx)
+                .unwrap_or_else(|| self.format_assignability_type_for_message(target, source));
             let prop_list: Vec<String> = all_missing
                 .iter()
                 .take(4)
@@ -1600,6 +1877,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        if depth == 0
+            && let Some(display) =
+                self.checked_js_global_element_access_fallback_target_display(idx)
+        {
+            tgt_str_qualified = display;
+        }
         let prop_name_display = self.missing_property_name_for_display(property_name, target);
         let message = format_message(
             diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
@@ -1615,14 +1898,9 @@ impl<'a> CheckerState<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    /// For TS2739 source display: when `source` is a non-generic type alias
-    /// (`type B = A<X1, X2, ...>`) whose body is a generic Application of a
-    /// different named type, return the body Application's TypeId so the
-    /// caller can format it as `A<X1, X2, ...>` instead of the wrapper
-    /// alias name `B`. Returns `None` for any other shape (already an
-    /// Application, primitive aliases, generic aliases with their own type
-    /// parameters, aliases of unions/intersections/object literals, etc.),
-    /// leaving normal formatting in charge.
+    /// For TS2739 source display, unfold wrapper aliases like
+    /// `type B = A<X>` to the body application `A<X>`. Other shapes keep
+    /// normal formatting.
     pub(in crate::error_reporter) fn ts2739_alias_of_application_source_display(
         &self,
         source: TypeId,
@@ -1632,31 +1910,56 @@ impl<'a> CheckerState<'a> {
         // - the already-evaluated structural form (find_def_for_type points
         //   back at the alias's definition),
         // - or an `Application(Lazy(DefId), [args...])` when generic.
+        let source_application =
+            crate::query_boundaries::common::application_info(self.ctx.types, source).or_else(
+                || {
+                    let alias = self.ctx.types.get_display_alias(source)?;
+                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                },
+            );
+
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source)
             .or_else(|| self.ctx.definition_store.find_def_for_type(source))
             .or_else(|| {
                 // Application path: peek at the application's base to find
                 // the alias's def_id.
-                let app_id =
-                    crate::query_boundaries::common::application_id(self.ctx.types, source)?;
-                let app = self.ctx.types.type_application(app_id);
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+                let (base, _) = source_application.as_ref()?;
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, *base)
             })?;
         let def = self.ctx.definition_store.get(def_id)?;
         if def.kind != tsz_solver::def::DefKind::TypeAlias {
             return None;
         }
         if def.type_params.is_empty() {
-            // Non-generic wrapper alias path — recover the as-written
-            // Application form via display_alias. This exists only when the
-            // alias's body is a generic Application — for aliases of unions,
-            // intersections, object literals, or bare references, no
-            // display_alias is recorded so the alias name stays.
-            let app_origin = self.ctx.types.get_display_alias(source)?;
+            // Recover the as-written application via display_alias for
+            // evaluated sources, or via the alias body for lazy references.
+            let app_origin = self
+                .ctx
+                .types
+                .get_display_alias(source)
+                .filter(|&alias| {
+                    crate::query_boundaries::common::application_id(self.ctx.types, alias).is_some()
+                })
+                .or(def.body)?;
             let app_id =
                 crate::query_boundaries::common::application_id(self.ctx.types, app_origin)?;
             let app = self.ctx.types.type_application(app_id);
             if app.args.is_empty() {
+                return None;
+            }
+            let app_base_def_id =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)?;
+            if !self
+                .ctx
+                .definition_store
+                .get(app_base_def_id)
+                .is_some_and(|def| {
+                    matches!(
+                        def.kind,
+                        tsz_solver::def::DefKind::TypeAlias | tsz_solver::def::DefKind::Interface
+                    )
+                })
+            {
                 return None;
             }
             return Some(app_origin);
@@ -1681,16 +1984,14 @@ impl<'a> CheckerState<'a> {
         }
         // Substitute the wrapper's type-params with the source application's
         // args so the displayed application reflects the call-site instantiation.
-        let source_app_id =
-            crate::query_boundaries::common::application_id(self.ctx.types, source)?;
-        let source_app = self.ctx.types.type_application(source_app_id);
-        if source_app.args.len() != def.type_params.len() {
+        let (_, source_args) = source_application?;
+        if source_args.len() != def.type_params.len() {
             return None;
         }
         let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
             self.ctx.types,
             &def.type_params,
-            &source_app.args,
+            &source_args,
         );
         let body_args: Vec<TypeId> = body_app
             .args
@@ -1732,7 +2033,7 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type)
         {
             let src_str = self.format_type_diagnostic(source_type);
-            let tgt_str = self.format_type_diagnostic(target_type);
+            let tgt_str = self.recursive_non_generic_alias_body_name(target_type);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],
@@ -2150,15 +2451,14 @@ impl<'a> CheckerState<'a> {
                 let widened_source = self.widen_type_for_display(source_type);
                 self.format_type_diagnostic(widened_source)
             };
-            let tgt_str = self
-                .property_declaring_type_name(target_type, filtered_names[0])
-                .unwrap_or_else(|| {
-                    if depth == 0 {
-                        self.format_assignability_type_for_message(target, source)
-                    } else {
-                        self.format_type_diagnostic(target_type)
-                    }
-                });
+            let tgt_str = if depth == 0 {
+                self.checked_js_global_element_access_fallback_target_display(idx)
+                    .or_else(|| self.property_declaring_type_name(target_type, filtered_names[0]))
+                    .unwrap_or_else(|| self.format_assignability_type_for_message(target, source))
+            } else {
+                self.property_declaring_type_name(target_type, filtered_names[0])
+                    .unwrap_or_else(|| self.format_type_diagnostic(target_type))
+            };
             let message = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &src_str, &tgt_str],
@@ -2197,8 +2497,10 @@ impl<'a> CheckerState<'a> {
             // displayed as `NumberTo<number>` in the missing-properties source.
             if source_type_is_object {
                 "{}".to_string()
-            } else if let Some(unfolded) = self.ts2739_alias_of_application_source_display(source) {
-                self.format_type_diagnostic(unfolded)
+            } else if let Some(display) =
+                self.ts2739_alias_of_application_source_display_text(source)
+            {
+                display
             } else {
                 self.format_type_for_diagnostic_role(
                     source,
@@ -2212,7 +2514,8 @@ impl<'a> CheckerState<'a> {
             self.format_type_diagnostic(self.widen_type_for_display(display_source))
         };
         let tgt_str = if depth == 0 {
-            self.format_assignability_type_for_message(target, source)
+            self.checked_js_global_element_access_fallback_target_display(idx)
+                .unwrap_or_else(|| self.format_assignability_type_for_message(target, source))
         } else {
             self.format_type_diagnostic(target_type)
         };
@@ -2384,142 +2687,6 @@ impl<'a> CheckerState<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn render_property_type_mismatch(
-        &mut self,
-        reason: &tsz_solver::SubtypeFailureReason,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-        depth: u32,
-        start: u32,
-        length: u32,
-        file_name: String,
-        property_name: tsz_common::interner::Atom,
-        source_property_type: TypeId,
-        target_property_type: TypeId,
-        nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
-    ) -> Diagnostic {
-        let target_property_type = if self.should_strip_nullish_for_property_display(target) {
-            self.strip_nullish_for_assignability_display(target_property_type, source_property_type)
-                .unwrap_or(target_property_type)
-        } else {
-            target_property_type
-        };
-
-        if depth == 0 {
-            let (source_str, target_str) =
-                self.format_top_level_assignability_message_types_at(source, target, idx);
-            // Drill into a nested LiteralTypeMismatch only when the outer
-            // source/target are themselves literal-shaped. When they are
-            // object types we keep the outer "Type 'A' is not assignable to
-            // type 'B'" + "Types of property 'X' are incompatible" hierarchy
-            // to match tsc and to avoid replacing a binding-anchored message
-            // with a leaf message that hides the structural context
-            // (typeSatisfaction_vacuousIntersectionOfContextualTypes).
-            // Evaluate before querying the shape: a Lazy/Application type
-            // (e.g. a generic instantiation `Foo<Bar>`) returns `None` from
-            // `object_shape_for_type` even when its evaluated form is an
-            // object, which would let the nested LiteralTypeMismatch leak
-            // through and replace the binding-anchored message. Mirror the
-            // pattern used elsewhere in this codebase
-            // (`target_preserves_literal_surface`,
-            // `target_has_literal_typed_properties`).
-            let outer_is_structural = {
-                let eval_source = self.evaluate_type_for_assignability(source);
-                let eval_target = self.evaluate_type_for_assignability(target);
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, eval_source)
-                    .is_some()
-                    || crate::query_boundaries::common::object_shape_for_type(
-                        self.ctx.types,
-                        eval_target,
-                    )
-                    .is_some()
-            };
-            if !outer_is_structural
-                && let Some(tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }) =
-                    nested_reason
-            {
-                let is_typed_array_display = |display: &str| {
-                    display.starts_with("Int8Array<")
-                        || display.starts_with("Uint8Array<")
-                        || display.starts_with("Uint8ClampedArray<")
-                        || display.starts_with("Int16Array<")
-                        || display.starts_with("Uint16Array<")
-                        || display.starts_with("Int32Array<")
-                        || display.starts_with("Uint32Array<")
-                        || display.starts_with("Float32Array<")
-                        || display.starts_with("Float64Array<")
-                        || display.starts_with("BigInt64Array<")
-                        || display.starts_with("BigUint64Array<")
-                };
-                if !(is_typed_array_display(&source_str) && is_typed_array_display(&target_str)) {
-                    return self.render_failure_reason(
-                        nested_reason.expect("checked above"),
-                        source_property_type,
-                        target_property_type,
-                        idx,
-                        depth,
-                    );
-                }
-            }
-            let base = format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&source_str, &target_str],
-            );
-            let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-            let detail = format_message(
-                diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
-                &[&prop_name],
-            );
-            let mut diag = Diagnostic::error(
-                file_name.clone(),
-                start,
-                length,
-                base,
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            );
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: file_name,
-                start,
-                length,
-                message_text: detail,
-                category: DiagnosticCategory::Message,
-                code: reason.diagnostic_code(),
-            });
-            return diag;
-        }
-
-        let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-        let message = format_message(
-            diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
-            &[&prop_name],
-        );
-        let mut diag =
-            Diagnostic::error(file_name, start, length, message, reason.diagnostic_code());
-
-        if let Some(nested) = nested_reason
-            && depth < 5
-        {
-            let nested_diag = self.render_failure_reason(
-                nested,
-                source_property_type,
-                target_property_type,
-                idx,
-                depth + 1,
-            );
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: nested_diag.file,
-                start: nested_diag.start,
-                length: nested_diag.length,
-                message_text: nested_diag.message_text,
-                category: DiagnosticCategory::Message,
-                code: nested_diag.code,
-            });
-        }
-        diag
-    }
-
-    #[allow(clippy::too_many_arguments)]
     fn render_optional_property_required(
         &mut self,
         _reason: &tsz_solver::SubtypeFailureReason,
@@ -2543,7 +2710,9 @@ impl<'a> CheckerState<'a> {
             let source_str = self
                 .private_identifier_missing_source_base_display(source, property_name)
                 .unwrap_or_else(|| self.format_type_diagnostic(source));
-            let target_str = self.format_type_diagnostic(target);
+            let target_str = self
+                .checked_js_global_element_access_fallback_target_display(idx)
+                .unwrap_or_else(|| self.format_type_diagnostic(target));
             let detail = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &source_str, &target_str],
@@ -2569,7 +2738,9 @@ impl<'a> CheckerState<'a> {
             let source_str = self
                 .private_identifier_missing_source_base_display(source, property_name)
                 .unwrap_or_else(|| self.format_type_diagnostic(source));
-            let target_str = self.format_type_diagnostic(target);
+            let target_str = self
+                .checked_js_global_element_access_fallback_target_display(idx)
+                .unwrap_or_else(|| self.format_type_diagnostic(target));
             let message = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &source_str, &target_str],

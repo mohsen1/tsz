@@ -663,6 +663,132 @@ fn mixin_expression_accessor_over_property_reports_ts2611_without_never_base() {
 }
 
 #[test]
+fn mixin_extends_parameter_shadowing_abstract_class_no_ts2653() {
+    let source = r#"
+        abstract class Base {
+            abstract method(): void;
+        }
+
+        type GConstructor<T = {}> = new (...args: any[]) => T;
+
+        function Timestamped<TBase extends GConstructor>(Base: TBase) {
+            return class extends Base {
+                timestamp = 1;
+            };
+        }
+
+        class User {
+            name = "";
+        }
+
+        const TimestampedUser = Timestamped(User);
+    "#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Shadowing mixin parameter should hide outer abstract class in extends, got: {diags:?}",
+    );
+}
+
+#[test]
+fn generic_mixin_explicit_type_arg_substitutes_return_class_method_param() {
+    let source = r#"
+        type Constructor<T = {}> = new (...args: any[]) => T;
+
+        function WithValue<TBase extends Constructor, T>(Base: TBase) {
+            return class extends Base {
+                value!: T;
+                setValue(v: T) { this.value = v; }
+            };
+        }
+
+        class User {
+            constructor(public name: string) {}
+        }
+
+        const WithNumber = WithValue<typeof User, number>(User);
+        const instance = new WithNumber("Alice");
+        instance.setValue(42);
+    "#;
+    let diags = check_strict(source);
+    assert!(
+        !has_code(&diags, 2345),
+        "Explicit mixin type argument should substitute returned class method parameter, got: {diags:?}",
+    );
+}
+
+#[test]
+fn class_expression_extending_abstract_class_still_emits_ts2653() {
+    let source = r#"
+        abstract class Base {
+            abstract method(): void;
+        }
+
+        const Derived = class extends Base {};
+    "#;
+    let diags = check_strict(source);
+    assert!(
+        count_code(&diags, 2653) == 1,
+        "Class expression extending abstract class without implementation should emit exactly one TS2653, got: {:?}",
+        codes(&diags),
+    );
+}
+
+#[test]
+fn ts2416_reported_for_class_property_against_weak_type_interface() {
+    let source = r#"
+        interface IHandler {
+            callback: { onClick?: () => void; onHover?: () => void };
+        }
+        class BadHandler implements IHandler {
+            callback: string = "";
+        }
+    "#;
+    let diags = check_default(source);
+    assert!(
+        has_code(&diags, 2416),
+        "TS2416 must be reported when class property type is incompatible with base (even for weak target), got: {:?}",
+        codes(&diags)
+    );
+}
+
+#[test]
+fn ts2416_reported_for_class_property_against_weak_type_interface_renamed() {
+    let source = r#"
+        interface IConfig {
+            opts: { timeout?: number; retries?: number };
+        }
+        class BadConfig implements IConfig {
+            opts: boolean = false;
+        }
+    "#;
+    let diags = check_default(source);
+    assert!(
+        has_code(&diags, 2416),
+        "TS2416 must be reported when class property is incompatible with weak interface property, got: {:?}",
+        codes(&diags)
+    );
+}
+
+#[test]
+fn ts2416_not_reported_for_compatible_class_property_against_weak_type_interface() {
+    let source = r#"
+        interface IHandler {
+            callback?: { onClick?: () => void };
+        }
+        class GoodHandler implements IHandler {
+            callback = { onClick: () => {} };
+        }
+    "#;
+    let diags = check_default(source);
+    assert!(
+        !has_code(&diags, 2416),
+        "Compatible class property should not emit TS2416, got: {:?}",
+        codes(&diags)
+    );
+}
+
+#[test]
 fn mixin_expression_auto_accessor_over_auto_accessor_has_no_ts2611() {
     let source = r#"
         function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {

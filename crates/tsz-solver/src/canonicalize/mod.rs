@@ -32,7 +32,7 @@
 //! assert_eq!(canon_a, canon_b); // Same structure = same TypeId
 //! ```
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::def::DefKind;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
@@ -42,7 +42,17 @@ use crate::types::{
     ConditionalType, IndexSignature, ObjectShapeId, TemplateSpan, TupleElement, TypeData, TypeId,
 };
 use rustc_hash::FxHashMap;
+use std::mem::size_of;
 use tsz_common::interner::Atom;
+
+/// Operation-local cache accounting for `Canonicalizer`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CanonicalizerCacheStatistics {
+    /// Entries memoizing input `TypeId` to canonical `TypeId`.
+    pub cache_entries: usize,
+    /// Approximate heap and struct residency owned by the canonicalizer.
+    pub estimated_size_bytes: usize,
+}
 
 /// Canonicalizer for structural type identity.
 ///
@@ -76,6 +86,29 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             cache: FxHashMap::default(),
             guard: RecursionGuard::with_profile(RecursionProfile::SubtypeCheck),
         }
+    }
+
+    /// Return cache entry and residency accounting for this operation.
+    pub fn cache_statistics(&self) -> CanonicalizerCacheStatistics {
+        CanonicalizerCacheStatistics {
+            cache_entries: self.cache.len(),
+            estimated_size_bytes: self.estimated_size_bytes(),
+        }
+    }
+
+    /// Estimate memory retained by this operation-local canonicalizer.
+    pub fn estimated_size_bytes(&self) -> usize {
+        let param_stack_bytes = self.param_stack.capacity() * size_of::<Vec<Atom>>()
+            + self
+                .param_stack
+                .iter()
+                .map(|scope| scope.capacity() * size_of::<Atom>())
+                .sum::<usize>();
+
+        size_of::<Self>()
+            + self.def_stack.capacity() * size_of::<DefId>()
+            + param_stack_bytes
+            + self.cache.capacity() * size_of::<(TypeId, TypeId)>()
     }
 
     /// Canonicalize a type to its structural form.

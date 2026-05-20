@@ -27,6 +27,13 @@ fn collect_codes(source: &str) -> Vec<u32> {
         .collect()
 }
 
+fn collect_relevant_diagnostics(source: &str) -> Vec<(u32, String)> {
+    diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect()
+}
+
 #[test]
 fn promise_like_callback_pattern_rejects_mismatched_args() {
     // T appears only inside a non-method callback nested inside a method.
@@ -118,5 +125,100 @@ b = a;
     assert!(
         !codes.contains(&2322),
         "Wrap<T> wrapping a bivariant C<T> must stay bivariant, got {codes:?}"
+    );
+}
+
+#[test]
+fn indexed_access_bivariance_hack_stays_bivariant() {
+    // Regression guard for the React-style event handler pattern:
+    // extracting a method through indexed access strips the method shape, so
+    // variance collection must leave the method parameter independent and let
+    // structural function bivariance handle assignment.
+    let codes = collect_codes(
+        r#"
+type EventHandler<E> = { bivarianceHack(event: E): void }["bivarianceHack"];
+interface Foo { x: any; }
+interface Bar { x: any; y: any; }
+
+declare var fooHandler: EventHandler<Foo>;
+declare var barHandler: EventHandler<Bar>;
+fooHandler = barHandler;
+barHandler = fooHandler;
+"#,
+    );
+    assert!(
+        !codes.contains(&2322),
+        "indexed-access bivarianceHack handlers should be bivariant, got {codes:?}"
+    );
+}
+
+#[test]
+fn wrapper_of_indexed_access_bivariance_hack_stays_bivariant() {
+    // The wrapper path exercises variance propagation through the extracted
+    // callable alias instead of only direct assignment of the alias itself.
+    let codes = collect_codes(
+        r#"
+type EventHandler<E> = { bivarianceHack(event: E): void }["bivarianceHack"];
+interface Props<T> { onEvent: EventHandler<T>; }
+interface Foo { x: any; }
+interface Bar { x: any; y: any; }
+
+declare var fooProps: Props<Foo>;
+declare var barProps: Props<Bar>;
+fooProps = barProps;
+barProps = fooProps;
+"#,
+    );
+    assert!(
+        !codes.contains(&2322),
+        "wrappers around indexed-access bivarianceHack handlers should stay bivariant, got {codes:?}"
+    );
+}
+
+#[test]
+fn callback_alias_application_is_checked_as_callable_parameter() {
+    let diags = collect_relevant_diagnostics(
+        r#"
+type Fn<T> = (x: T) => T;
+
+declare let source: (cb: Fn<string>) => void;
+declare let target: (cb: Fn<number>) => void;
+target = source;
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "callback alias applications should produce the outer TS2322 wrapper, got {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2328),
+        "evaluated callback alias applications must not leak top-level TS2328, got {diags:#?}"
+    );
+}
+
+#[test]
+fn callback_interface_application_is_checked_as_callable_parameter() {
+    let diags = collect_relevant_diagnostics(
+        r#"
+interface Fn<T> {
+    (x: T): T;
+}
+
+declare let source: (cb: Fn<string>) => void;
+declare let target: (cb: Fn<number>) => void;
+target = source;
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("(cb: Fn<string>) => void")
+                && message.contains("(cb: Fn<number>) => void")
+        }),
+        "diagnostic should preserve declared callable interface applications on the outer wrapper, got {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2328),
+        "evaluated callback interface applications must not leak top-level TS2328, got {diags:#?}"
     );
 }

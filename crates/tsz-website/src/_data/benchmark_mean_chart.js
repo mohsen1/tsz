@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { REQUIRED_PROJECT_ROWS } from "../../../../scripts/bench/project-rows.mjs";
+import { fmt } from "./loc.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
@@ -27,6 +29,32 @@ function hasSuccessfulTiming(row) {
     Number.isFinite(row?.tsgo_ms) &&
     row.tsgo_ms > 0
   );
+}
+
+const TINY_BENCHMARK_MAX_LINES = 200;
+const PROJECT_BENCHMARK_NAMES = new Set(REQUIRED_PROJECT_ROWS);
+const SINGLE_FILE_BENCHMARK_PREFIXES = [
+  "utility-types/",
+  "ts-toolbelt/",
+  "ts-essentials/",
+];
+
+function isTinyBenchmark(row) {
+  const size = Number(row?.lines);
+  return Number.isFinite(size) && size < TINY_BENCHMARK_MAX_LINES;
+}
+
+function isProjectBenchmark(row) {
+  return PROJECT_BENCHMARK_NAMES.has(String(row?.name || ""));
+}
+
+function isSingleFileBenchmark(row) {
+  const name = String(row?.name || "");
+  return SINGLE_FILE_BENCHMARK_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
+function isMicroBenchmark(row) {
+  return !isProjectBenchmark(row) && (!isTinyBenchmark(row) || isSingleFileBenchmark(row));
 }
 
 function loadBenchmarks() {
@@ -58,10 +86,6 @@ function loadBenchmarks() {
   if (snapshot?.results?.length) return sanitizeLegacyBenchmarkResults(snapshot);
 
   return [];
-}
-
-function format(n) {
-  return Number(n).toLocaleString("en-US");
 }
 
 function formatDurationMs(value) {
@@ -102,7 +126,7 @@ function renderMeanChart(results) {
     return "";
   }
 
-  const valid = results.filter((r) => hasSuccessfulTiming(r));
+  const valid = results.filter((r) => isMicroBenchmark(r) && hasSuccessfulTiming(r));
   if (!valid.length) {
     return "";
   }
@@ -115,7 +139,7 @@ function renderMeanChart(results) {
   const speedupLabel = formatSpeedupLabel(tszTotal, tsgoTotal);
 
   return `<section class="benchmark-mean-card">
-  <p class="bench-category-desc">Sum across ${format(valid.length)} successful <a href="/benchmarks/">benchmark cases</a>.</p>
+  <p class="bench-category-desc">Sum across ${fmt(valid.length)} successful <a href="/benchmarks/micro/">micro benchmark cases</a>.</p>
   <div class="bench-bars">
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsz</span>

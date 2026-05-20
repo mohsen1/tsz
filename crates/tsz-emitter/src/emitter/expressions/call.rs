@@ -1,5 +1,6 @@
 use super::super::Printer;
 use crate::transforms::private_fields_es5::get_private_field_name;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -8,6 +9,32 @@ impl<'a> Printer<'a> {
         let Some(call) = self.arena.get_call_expr(node) else {
             return;
         };
+
+        if let Some(index_alias) = self.scoped_static_super_index_alias.as_ref().cloned()
+            && let Some(expr_node) = self.arena.get(call.expression)
+            && expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+            && let Some(base) = self.arena.get(access.expression)
+            && base.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.write(&index_alias);
+            self.write("(");
+            self.emit(access.name_or_argument);
+            self.write(")");
+            if self.scoped_static_super_index_value_access {
+                self.write(".value");
+            }
+            self.write(".call(");
+            self.emit_scoped_static_super_receiver();
+            if let Some(ref args) = call.arguments {
+                for &arg_idx in &args.nodes {
+                    self.write(", ");
+                    self.emit(arg_idx);
+                }
+            }
+            self.write(")");
+            return;
+        }
 
         if let Some(base_alias) = self.scoped_static_super_base_alias.as_ref().cloned()
             && let Some(expr_node) = self.arena.get(call.expression)
@@ -56,6 +83,27 @@ impl<'a> Printer<'a> {
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
                 if self.scoped_static_super_direct_access {
+                    if let Some(index_alias) =
+                        self.scoped_static_super_index_alias.as_ref().cloned()
+                    {
+                        self.write(&index_alias);
+                        self.write("(");
+                        self.emit(access.name_or_argument);
+                        self.write(")");
+                        if self.scoped_static_super_index_value_access {
+                            self.write(".value");
+                        }
+                        self.write(".call(");
+                        self.emit_scoped_static_super_receiver();
+                        if let Some(ref args) = call.arguments {
+                            for &arg_idx in &args.nodes {
+                                self.write(", ");
+                                self.emit(arg_idx);
+                            }
+                        }
+                        self.write(")");
+                        return;
+                    }
                     self.write(&base_alias);
                     self.write("[");
                     self.emit(access.name_or_argument);
@@ -177,7 +225,8 @@ impl<'a> Printer<'a> {
                 && let Some(base) = self.arena.get(access.expression)
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
-                self.write("_super.prototype.");
+                self.emit_es5_super_property_base();
+                self.write(".");
                 self.emit(access.name_or_argument);
                 self.write(".call(");
                 if self.ctx.arrow_state.this_capture_depth > 0 {
@@ -199,7 +248,8 @@ impl<'a> Printer<'a> {
                 && let Some(base) = self.arena.get(access.expression)
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
-                self.write("_super.prototype[");
+                self.emit_es5_super_property_base();
+                self.write("[");
                 self.emit(access.name_or_argument);
                 self.write("].call(");
                 if self.ctx.arrow_state.this_capture_depth > 0 {
@@ -254,6 +304,22 @@ impl<'a> Printer<'a> {
             self.write(")");
             self.emit_call_arguments(node, call.arguments.as_ref());
             return;
+        }
+
+        if let Some(expr_node) = self.arena.get(call.expression)
+            && expr_node.kind == SyntaxKind::ImportKeyword as u16
+        {
+            match self.ctx.original_module_kind {
+                Some(ModuleKind::System) => {
+                    self.emit_system_dynamic_import_call(node, call.arguments.as_ref());
+                    return;
+                }
+                Some(ModuleKind::AMD | ModuleKind::UMD) => {
+                    self.emit_amd_or_umd_dynamic_import_call(call.arguments.as_ref());
+                    return;
+                }
+                _ => {}
+            }
         }
 
         // CJS dynamic import: `import("mod")` → `Promise.resolve().then(() => __importStar(require("mod")))`
@@ -384,6 +450,15 @@ impl<'a> Printer<'a> {
             }
         }
 
+        if !self.ctx.options.target.supports_es2020()
+            && self.emit_parenthesized_optional_access_call_expression(
+                call.expression,
+                &call.arguments,
+            )
+        {
+            return;
+        }
+
         // Signal access position so `(new a)()` keeps parens (vs `new a()`).
         let prev = self.paren_in_access_position;
         let prev_call = self.paren_is_direct_call_callee;
@@ -420,10 +495,10 @@ impl<'a> Printer<'a> {
             if let Some(first_arg) = valid_args.first()
                 && let Some(arg_node) = self.arena.get(*first_arg)
             {
-                // Use node.end of the call expression to approximate '(' position
-                // Actually, we need to find the '(' position more carefully
-                let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
-                self.emit_call_leading_argument_comments(paren_pos, arg_node.pos);
+                let open_paren_pos = self
+                    .find_call_open_paren_position(node, Some(args))
+                    .unwrap_or(node.pos);
+                self.emit_call_leading_argument_comments(open_paren_pos, arg_node.pos);
             }
             self.emit_comma_separated(&valid_args);
             if let Some(last_arg) = valid_args.last()
@@ -441,6 +516,361 @@ impl<'a> Printer<'a> {
         // Map the closing `)` to its source position
         self.map_closing_paren(node);
         self.write(")");
+    }
+
+    fn emit_parenthesized_optional_access_call_expression(
+        &mut self,
+        callee: NodeIndex,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        let unwrapped = self.unwrap_paren_and_type_assertion(callee);
+        if unwrapped == callee {
+            return false;
+        }
+        let Some(access_node) = self.arena.get(unwrapped).copied() else {
+            return false;
+        };
+        if access_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && access_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.arena.get_access_expr(&access_node) else {
+            return false;
+        };
+        let access_expression = access.expression;
+        let access_name_or_argument = access.name_or_argument;
+        let access_question_dot_token = access.question_dot_token;
+        if !access_node.is_optional_chain()
+            && !access_question_dot_token
+            && !self.expression_is_optional_chain_continuation(access_expression)
+        {
+            return false;
+        }
+
+        if self.emit_parenthesized_optional_receiver_tail_call(
+            access_node.kind,
+            access_expression,
+            access_name_or_argument,
+            access_question_dot_token,
+            args,
+        ) {
+            return true;
+        }
+        if self.emit_parenthesized_optional_receiver_access_tail_call(
+            access_node.kind,
+            access_expression,
+            access_name_or_argument,
+            access_question_dot_token,
+            args,
+        ) {
+            return true;
+        }
+
+        if !access_question_dot_token {
+            return false;
+        }
+
+        let receiver_temp = if self.is_simple_nullish_expression(access_expression) {
+            None
+        } else {
+            Some(self.make_unique_name_hoisted())
+        };
+
+        self.write("(");
+        if let Some(temp) = receiver_temp.as_deref() {
+            self.write("(");
+            self.write(temp);
+            self.write(" = ");
+            self.emit(access_expression);
+            self.write(") === null || ");
+            self.write(temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(temp);
+        } else {
+            self.emit(access_expression);
+            self.write(" === null || ");
+            self.emit(access_expression);
+            self.write(" === void 0 ? void 0 : ");
+            self.emit(access_expression);
+        }
+        self.emit_access_suffix(access_node.kind, access_name_or_argument);
+        self.write(").call(");
+        if let Some(temp) = receiver_temp.as_deref() {
+            self.write(temp);
+        } else {
+            self.emit(access_expression);
+        }
+        self.emit_optional_call_tail_arguments(args.as_ref());
+        true
+    }
+
+    fn emit_parenthesized_optional_receiver_tail_call(
+        &mut self,
+        access_kind: u16,
+        access_expression: NodeIndex,
+        access_name_or_argument: NodeIndex,
+        access_question_dot_token: bool,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        if access_question_dot_token {
+            return false;
+        }
+        let Some(receiver_node) = self.arena.get(access_expression).copied() else {
+            return false;
+        };
+        if receiver_node.kind != syntax_kind_ext::CALL_EXPRESSION
+            || !self.expression_is_optional_chain_continuation(access_expression)
+        {
+            return false;
+        }
+        let Some(receiver_call) = self.arena.get_call_expr(&receiver_node).cloned() else {
+            return false;
+        };
+        let Some(receiver_access_node) = self.arena.get(receiver_call.expression).copied() else {
+            return false;
+        };
+        if receiver_access_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && receiver_access_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(receiver_access) = self.arena.get_access_expr(&receiver_access_node) else {
+            return false;
+        };
+        let receiver_base_expression = receiver_access.expression;
+        let receiver_name_or_argument = receiver_access.name_or_argument;
+        if !receiver_access.question_dot_token {
+            return false;
+        }
+
+        self.write("(");
+        let receiver_temp;
+        if self.is_simple_nullish_expression(receiver_base_expression) {
+            receiver_temp = self.make_unique_name_hoisted();
+            self.emit(receiver_base_expression);
+            self.write(" === null || ");
+            self.emit(receiver_base_expression);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+        } else {
+            let base_temp = self.make_unique_name_hoisted();
+            receiver_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+            self.write(") === null || ");
+            self.write(&base_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.write(&base_temp);
+        }
+        self.emit_access_suffix(receiver_access_node.kind, receiver_name_or_argument);
+        self.emit_call_arguments(&receiver_node, receiver_call.arguments.as_ref());
+        self.write(")");
+        self.emit_access_suffix(access_kind, access_name_or_argument);
+        self.write(").call(");
+        self.write(&receiver_temp);
+        self.emit_optional_call_tail_arguments(args.as_ref());
+        true
+    }
+
+    fn emit_parenthesized_optional_receiver_access_tail_call(
+        &mut self,
+        access_kind: u16,
+        access_expression: NodeIndex,
+        access_name_or_argument: NodeIndex,
+        access_question_dot_token: bool,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        if access_question_dot_token {
+            return false;
+        }
+        let Some(receiver_access_node) = self.arena.get(access_expression).copied() else {
+            return false;
+        };
+        if receiver_access_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && receiver_access_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(receiver_access) = self.arena.get_access_expr(&receiver_access_node) else {
+            return false;
+        };
+        if !receiver_access.question_dot_token {
+            return false;
+        }
+
+        let receiver_base_expression = receiver_access.expression;
+        let receiver_name_or_argument = receiver_access.name_or_argument;
+
+        self.write("(");
+        let receiver_temp;
+        if self.is_simple_nullish_expression(receiver_base_expression) {
+            receiver_temp = self.make_unique_name_hoisted();
+            self.emit(receiver_base_expression);
+            self.write(" === null || ");
+            self.emit(receiver_base_expression);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+        } else {
+            let base_temp = self.make_unique_name_hoisted();
+            receiver_temp = self.make_unique_name_hoisted();
+            self.write("(");
+            self.write(&base_temp);
+            self.write(" = ");
+            self.emit(receiver_base_expression);
+            self.write(") === null || ");
+            self.write(&base_temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write("(");
+            self.write(&receiver_temp);
+            self.write(" = ");
+            self.write(&base_temp);
+        }
+        self.emit_access_suffix(receiver_access_node.kind, receiver_name_or_argument);
+        self.write(")");
+        self.emit_access_suffix(access_kind, access_name_or_argument);
+        self.write(").call(");
+        self.write(&receiver_temp);
+        self.emit_optional_call_tail_arguments(args.as_ref());
+        true
+    }
+
+    fn emit_access_suffix(&mut self, kind: u16, name_or_argument: NodeIndex) {
+        if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.write(".");
+            self.emit_property_name_without_import_substitution(name_or_argument);
+        } else {
+            self.write("[");
+            self.emit(name_or_argument);
+            self.write("]");
+        }
+    }
+
+    fn emit_system_dynamic_import_call(
+        &mut self,
+        node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) {
+        self.write("context_1.import");
+        self.emit_call_arguments(node, args);
+    }
+
+    fn emit_amd_or_umd_dynamic_import_call(&mut self, args: Option<&tsz_parser::parser::NodeList>) {
+        let first_arg = self.first_dynamic_import_argument(args);
+        let needs_temp = first_arg.is_some_and(|arg| !self.dynamic_import_arg_is_string_like(arg));
+        let temp = needs_temp.then(|| self.make_unique_name_hoisted());
+
+        if let Some(temp_name) = temp.as_deref() {
+            self.write(temp_name);
+            self.write(" = ");
+            if self.ctx.options.rewrite_relative_import_extensions {
+                if let Some(first) = first_arg {
+                    self.emit_rewrite_helper_call(first);
+                }
+            } else if let Some(first) = first_arg {
+                self.emit(first);
+            }
+            self.write(", ");
+        }
+
+        if matches!(self.ctx.original_module_kind, Some(ModuleKind::UMD)) {
+            self.write("__syncRequire ? ");
+            self.emit_dynamic_import_commonjs_branch(first_arg, temp.as_deref());
+            self.write(" : ");
+        }
+        self.emit_dynamic_import_amd_branch(first_arg, temp.as_deref());
+    }
+
+    fn first_dynamic_import_argument(
+        &self,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) -> Option<NodeIndex> {
+        args.and_then(|args| {
+            args.nodes
+                .iter()
+                .copied()
+                .find(|&idx| self.call_argument_should_emit(idx))
+        })
+    }
+
+    fn dynamic_import_arg_is_string_like(&self, arg: NodeIndex) -> bool {
+        self.arena.get(arg).is_some_and(|node| {
+            node.kind == SyntaxKind::StringLiteral as u16
+                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || node.end <= node.pos
+        })
+    }
+
+    fn emit_dynamic_import_commonjs_branch(
+        &mut self,
+        first_arg: Option<NodeIndex>,
+        temp: Option<&str>,
+    ) {
+        if self.ctx.target_es5 {
+            self.write("Promise.resolve().then(function () { return ");
+            self.write_helper("__importStar");
+            self.write("(require(");
+            self.emit_dynamic_import_require_specifier(first_arg, temp);
+            self.write(")); })");
+        } else {
+            self.write("Promise.resolve().then(() => ");
+            self.write_helper("__importStar");
+            self.write("(require(");
+            self.emit_dynamic_import_require_specifier(first_arg, temp);
+            self.write(")))");
+        }
+    }
+
+    fn emit_dynamic_import_amd_branch(&mut self, first_arg: Option<NodeIndex>, temp: Option<&str>) {
+        let id = self.next_dynamic_import_promise_id;
+        self.next_dynamic_import_promise_id += 1;
+        let resolve = format!("resolve_{id}");
+        let reject = format!("reject_{id}");
+
+        if self.ctx.target_es5 {
+            self.write("new Promise(function (");
+        } else {
+            self.write("new Promise((");
+        }
+        self.write(&resolve);
+        self.write(", ");
+        self.write(&reject);
+        if self.ctx.target_es5 {
+            self.write(") { require([");
+        } else {
+            self.write(") => { require([");
+        }
+        self.emit_dynamic_import_require_specifier(first_arg, temp);
+        self.write("], ");
+        self.write(&resolve);
+        self.write(", ");
+        self.write(&reject);
+        self.write("); }).then(");
+        self.write_helper("__importStar");
+        self.write(")");
+    }
+
+    fn emit_dynamic_import_require_specifier(
+        &mut self,
+        first_arg: Option<NodeIndex>,
+        temp: Option<&str>,
+    ) {
+        if let Some(temp) = temp {
+            self.write(temp);
+        } else if let Some(first) = first_arg {
+            self.emit_maybe_rewritten_module_specifier_arg(first);
+        }
     }
 
     fn emit_erased_object_literal_access_call(
@@ -526,8 +956,10 @@ impl<'a> Printer<'a> {
             if let Some(first_arg) = valid_args.first()
                 && let Some(arg_node) = self.arena.get(*first_arg)
             {
-                let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
-                self.emit_call_leading_argument_comments(paren_pos, arg_node.pos);
+                let open_paren_pos = self
+                    .find_call_open_paren_position(node, Some(args))
+                    .unwrap_or(node.pos);
+                self.emit_call_leading_argument_comments(open_paren_pos, arg_node.pos);
             }
             self.emit_comma_separated(&valid_args);
             if let Some(last_arg) = valid_args.last()
@@ -801,6 +1233,32 @@ impl<'a> Printer<'a> {
         self.write(")");
     }
 
+    fn expression_is_optional_chain_continuation(&self, expression: NodeIndex) -> bool {
+        let expression = self.unwrap_paren_and_type_assertion(expression);
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.arena.get_access_expr(node).is_some_and(|access| {
+                    node.is_optional_chain()
+                        || access.question_dot_token
+                        || self.expression_is_optional_chain_continuation(access.expression)
+                })
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                node.is_optional_chain()
+                    || self.arena.get_call_expr(node).is_some_and(|call| {
+                        self.expression_is_optional_chain_continuation(call.expression)
+                    })
+            }
+            _ => false,
+        }
+    }
+
     const fn is_optional_chain(&self, node: &Node) -> bool {
         node.is_optional_chain()
     }
@@ -824,7 +1282,19 @@ impl<'a> Printer<'a> {
         let Some(callee_node) = self.arena.get(callee) else {
             return false;
         };
-        let Some(open_paren) = self.find_call_open_paren_position(call_node, args) else {
+        // The `(` we want is the one that opens the call's argument list,
+        // which is *after* the callee. If the callee is itself a
+        // parenthesized expression — `(foo.m as any)?.()` — then
+        // `find_call_open_paren_position`'s naive "first `(` between
+        // call_node.pos and call_node.end" lands on the *callee's*
+        // open paren, not the argument-list `(`. The backward scan for
+        // `?.` from that wrong position finds nothing and the optional-
+        // call token is silently dropped, producing `foo.m()` instead of
+        // `foo.m?.()`. Pin the search start to right after the callee.
+        let scan_start = std::cmp::min(callee_node.end as usize, source.len());
+        let Some(open_paren) =
+            self.find_call_open_paren_position_after(call_node, args, scan_start as u32)
+        else {
             return false;
         };
 
@@ -891,15 +1361,37 @@ impl<'a> Printer<'a> {
         call_node: &Node,
         args: Option<&tsz_parser::parser::NodeList>,
     ) -> Option<u32> {
+        let start_after = self
+            .arena
+            .get_call_expr(call_node)
+            .and_then(|call| self.arena.get(call.expression))
+            .map_or(call_node.pos, |callee| callee.end);
+        self.find_call_open_paren_position_after(call_node, args, start_after)
+    }
+
+    /// Variant of `find_call_open_paren_position` that begins the search
+    /// at an explicit offset, used by `has_optional_call_token` to skip
+    /// past a parenthesized or type-asserted callee whose own `(` would
+    /// otherwise be returned. The offset is clamped to the call node's
+    /// end and to the source length.
+    fn find_call_open_paren_position_after(
+        &self,
+        call_node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+        start_after: u32,
+    ) -> Option<u32> {
         let text = self.source_text_for_map()?;
         let bytes = text.as_bytes();
-        let start = std::cmp::min(call_node.pos as usize, bytes.len());
+        let start = std::cmp::min(start_after as usize, bytes.len());
         let mut end = std::cmp::min(call_node.end as usize, bytes.len());
         if let Some(args) = args
             && let Some(first) = args.nodes.first()
             && let Some(first_node) = self.arena.get(*first)
         {
             end = std::cmp::min(first_node.pos as usize, end);
+        }
+        if start >= end {
+            return None;
         }
         (start..end)
             .position(|i| bytes[i] == b'(')
@@ -1201,22 +1693,6 @@ impl<'a> Printer<'a> {
         }
 
         self.emit(expr);
-    }
-
-    /// Find the position of the opening parenthesis in a call expression.
-    /// Scans forward from `start_pos` looking for '(' before `arg_pos`.
-    fn find_open_paren_position(&self, start_pos: u32, arg_pos: u32) -> u32 {
-        let Some(text) = self.source_text else {
-            return start_pos;
-        };
-        let bytes = text.as_bytes();
-        let start = start_pos as usize;
-        let end = std::cmp::min(arg_pos as usize, bytes.len());
-
-        if let Some(offset) = (start..end).position(|i| bytes[i] == b'(') {
-            return (start + offset) as u32;
-        }
-        start_pos
     }
 
     /// Unwrap parenthesized expressions and type assertions/satisfies to find
