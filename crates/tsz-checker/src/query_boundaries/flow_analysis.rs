@@ -44,7 +44,7 @@ pub(crate) fn type_has_typeof_result(
     type_id: TypeId,
     typeof_result: &str,
 ) -> bool {
-    let mut narrowing = tsz_solver::NarrowingContext::new(db);
+    let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
     if let Some(environment) = env {
         narrowing = narrowing.with_resolver(environment);
     }
@@ -69,7 +69,7 @@ pub(crate) fn cases_exhaust_type(
         return false;
     }
 
-    let mut narrowing = tsz_solver::NarrowingContext::new(db);
+    let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
     if let Some(environment) = env {
         narrowing = narrowing.with_resolver(environment);
     }

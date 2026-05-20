@@ -110,12 +110,12 @@ pub(crate) fn apply_flow_observation(
         }
 
         FlowObservation::OptionalChainNonNullish | FlowObservation::NonNullish => {
-            tsz_solver::remove_nullish(db, base_type)
+            tsz_solver::narrowing::remove_nullish(db, base_type)
         }
 
         FlowObservation::TruthyNarrow { is_true_branch } => {
             if *is_true_branch {
-                tsz_solver::remove_nullish(db, base_type)
+                tsz_solver::narrowing::remove_nullish(db, base_type)
             } else {
                 // Falsy branch: keep only falsy constituents.
                 // The caller should use NarrowingContext::narrow_to_falsy for
@@ -163,7 +163,7 @@ fn narrow_with_default_policy(
     {
         return element_type;
     }
-    tsz_solver::remove_undefined(db, element_type)
+    tsz_solver::narrowing::remove_undefined(db, element_type)
 }
 
 /// Apply optional-chain non-nullish narrowing through the boundary.
@@ -298,13 +298,13 @@ pub(crate) fn widen_null_undefined_to_any(
 /// Apply non-null assertion (`x!`) narrowing through the solver.
 /// Removes `null` and `undefined` from the type.
 pub(crate) fn narrow_non_null_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::remove_nullish(db, type_id)
+    tsz_solver::narrowing::remove_nullish(db, type_id)
 }
 
 /// Remove nullish types for iteration contexts (for-in/for-of).
 /// The iterable expression should not be null/undefined.
 pub(crate) fn remove_nullish_for_iteration(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::remove_nullish(db, type_id)
+    tsz_solver::narrowing::remove_nullish(db, type_id)
 }
 
 /// Add `undefined` to a type for indexed access in destructuring contexts.

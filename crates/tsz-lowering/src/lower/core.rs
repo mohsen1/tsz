@@ -1442,7 +1442,7 @@ impl<'a> TypeLowering<'a> {
                 && type_id != TypeId::ANY
                 && type_id != TypeId::UNKNOWN
                 && type_id != TypeId::ERROR
-                && !tsz_solver::type_contains_undefined(self.interner, type_id)
+                && !tsz_solver::narrowing::type_contains_undefined(self.interner, type_id)
             {
                 self.interner.union2(type_id, TypeId::UNDEFINED)
             } else {

@@ -42,7 +42,7 @@ pub mod judge {
     //! Re-exports from `relations::judge` for convenience.
     pub use crate::relations::judge::*;
 }
-mod narrowing;
+pub mod narrowing;
 pub mod objects;
 pub mod operations;
 pub mod recursion;
@@ -239,13 +239,6 @@ pub use diagnostics::{
 pub(crate) use evaluation::evaluate::{
     TypeEvaluator, evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
     evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_with_request,
-};
-pub use narrowing::{
-    CachedPropertyType, DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext,
-    NarrowingResult, NullishFilter, OptionalPropertyChainKey, TypeGuard, TypeofKind,
-    find_discriminants, is_definitely_nullish, is_nullish_type, narrow_by_discriminant,
-    narrow_by_typeof, remove_nullish, remove_nullish_query, remove_undefined, split_nullish_type,
-    type_contains_undefined,
 };
 #[cfg(test)]
 pub(crate) use operations::compound_assignment::{
