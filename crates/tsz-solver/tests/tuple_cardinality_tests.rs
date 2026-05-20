@@ -20,8 +20,10 @@
 //! probe shapes.
 
 use super::*;
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-use crate::intern::{MAX_TUPLE_LENGTH, MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS, TypeInterner};
+use crate::instantiation::instantiate::{
+    MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS, TypeSubstitution, instantiate_type,
+};
+use crate::intern::{MAX_TUPLE_LENGTH, TypeInterner};
 use crate::types::{TupleElement, TypeData, TypeParamInfo};
 
 fn tuple_element(type_id: TypeId, rest: bool) -> TupleElement {

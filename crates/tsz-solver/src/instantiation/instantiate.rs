@@ -77,7 +77,7 @@ fn canonical_subst_for(substitution: &TypeSubstitution) -> CanonicalSubst {
 
 /// Maximum depth for recursive type instantiation.
 pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
-const MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS: usize = 8192;
+pub(crate) const MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS: usize = 8192;
 
 /// A substitution map from type parameter names to concrete types.
 #[derive(Clone, Debug, Default)]
