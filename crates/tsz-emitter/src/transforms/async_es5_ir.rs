@@ -62,6 +62,8 @@ use tsz_parser::parser::syntax_kind_ext;
 
 #[path = "async_es5_ir_bindings.rs"]
 mod bindings;
+#[path = "async_es5_ir_condition_await.rs"]
+mod condition_await;
 #[path = "async_es5_ir_discovery.rs"]
 mod discovery;
 #[path = "async_es5_ir_loop_control.rs"]
@@ -71,7 +73,6 @@ mod state;
 #[path = "async_es5_ir_try_region.rs"]
 mod try_region;
 
-use loop_control::AsyncLoopControlTargets;
 pub use state::AsyncTransformState;
 use state::{
     ForInAssignmentTarget, ForInSuspendedElementIndex, ForInSuspendedObject,
@@ -3763,153 +3764,6 @@ impl<'a> AsyncES5Transformer<'a> {
             });
         }
         *current_label = end_label.expect("end label must be available after if lowering");
-    }
-
-    /// Process a while statement inside an async function body.
-    ///
-    /// `await` in the body must be lifted into generator cases before the loop
-    /// body is emitted. A raw `while` statement around `await` would otherwise
-    /// leave invalid `await` syntax inside the ES5 generator callback.
-    fn process_while_statement_in_async(
-        &mut self,
-        idx: NodeIndex,
-        cases: &mut Vec<IRGeneratorCase>,
-        current_statements: &mut Vec<IRNode>,
-        current_label: &mut u32,
-    ) {
-        let Some(node) = self.arena.get(idx) else {
-            return;
-        };
-        let Some(loop_data) = self.arena.get_loop(node) else {
-            return;
-        };
-
-        let condition_has_await = self.contains_await_recursive(loop_data.condition);
-        let body_has_await = self.contains_await_recursive(loop_data.statement);
-
-        if !body_has_await || condition_has_await {
-            current_statements.push(self.statement_to_ir(idx));
-            return;
-        }
-
-        // Correctness: the loop entry must be its own case, otherwise a
-        // `break-to-loop` from the body re-enters the prefix statements
-        // and re-executes them every iteration — an infinite-loop bug
-        // when the prefix initializes the loop variable.
-        Self::flush_preceding_case_for_new_label(
-            cases,
-            current_statements,
-            current_label,
-            &mut self.state,
-        );
-
-        let loop_label = *current_label;
-        let exit_placeholder = self.next_loop_exit_placeholder();
-        let condition = self.expression_to_ir(loop_data.condition);
-
-        current_statements.push(IRNode::IfBreak {
-            condition: Box::new(Self::negated_condition(condition)),
-            target_label: exit_placeholder,
-        });
-
-        self.process_block_or_statement_in_async(
-            loop_data.statement,
-            cases,
-            current_statements,
-            current_label,
-        );
-
-        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
-            IRNode::GeneratorOp {
-                opcode: opcodes::BREAK,
-                value: Some(Box::new(IRNode::NumericLiteral(
-                    loop_label.to_string().into(),
-                ))),
-                comment: Some("break".to_string().into()),
-            },
-        ))));
-
-        cases.push(IRGeneratorCase {
-            label: *current_label,
-            statements: std::mem::take(current_statements),
-        });
-
-        let exit_label = self.state.next_label();
-        Self::patch_if_break_target(cases, exit_placeholder, exit_label);
-        *current_label = exit_label;
-    }
-
-    /// Process a do-while statement inside an async function body.
-    ///
-    /// When the body suspends and the condition does not, the state machine must
-    /// enter through the body case first. Emitting a raw `do` statement would
-    /// leave `await` syntax inside the ES5 generator callback.
-    fn process_do_while_statement_in_async(
-        &mut self,
-        idx: NodeIndex,
-        cases: &mut Vec<IRGeneratorCase>,
-        current_statements: &mut Vec<IRNode>,
-        current_label: &mut u32,
-    ) {
-        let Some(node) = self.arena.get(idx) else {
-            return;
-        };
-        let Some(loop_data) = self.arena.get_loop(node) else {
-            return;
-        };
-
-        let condition_has_await = self.contains_await_recursive(loop_data.condition);
-        let body_has_await = self.contains_await_recursive(loop_data.statement);
-
-        if !body_has_await || condition_has_await {
-            current_statements.push(self.statement_to_ir(idx));
-            return;
-        }
-
-        let loop_label = *current_label;
-        let exit_placeholder = self.next_loop_exit_placeholder();
-        let has_loop_continue = self.contains_unlabeled_loop_local_continue(loop_data.statement);
-        let continue_placeholder = if has_loop_continue {
-            self.next_loop_exit_placeholder()
-        } else {
-            loop_label
-        };
-        let loop_control = AsyncLoopControlTargets {
-            break_label: exit_placeholder,
-            continue_label: continue_placeholder,
-        };
-
-        self.process_loop_body_statement_in_async(
-            loop_data.statement,
-            cases,
-            current_statements,
-            current_label,
-            loop_control,
-        );
-
-        let condition_label = has_loop_continue.then(|| {
-            let label = self.state.next_label();
-            current_statements.push(Self::generator_label_assignment(label));
-            label
-        });
-        let condition = self.expression_to_ir(loop_data.condition);
-        current_statements.push(IRNode::IfBreak {
-            condition: Box::new(Self::negated_condition(condition)),
-            target_label: exit_placeholder,
-        });
-        current_statements.push(Self::generator_break_statement(loop_label));
-
-        cases.push(IRGeneratorCase {
-            label: *current_label,
-            statements: std::mem::take(current_statements),
-        });
-
-        let exit_label = self.state.next_label();
-        Self::patch_if_break_target(cases, exit_placeholder, exit_label);
-        if let Some(condition_label) = condition_label {
-            Self::patch_if_break_target(cases, continue_placeholder, condition_label);
-        }
-        *current_label = exit_label;
     }
 
     fn process_captured_for_statement_in_async(
