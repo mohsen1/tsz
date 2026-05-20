@@ -2813,6 +2813,10 @@ mod overlap_tests;
 mod intersection_optional_subtype_tests;
 
 #[cfg(test)]
+#[path = "../../../tests/intrinsic_object_tests.rs"]
+mod intrinsic_object_tests;
+
+#[cfg(test)]
 mod with_identity_check_mode_tests {
     use super::*;
     use crate::TypeInterner;

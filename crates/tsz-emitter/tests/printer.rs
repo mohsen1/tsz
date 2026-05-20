@@ -3168,3 +3168,114 @@ console.log(missingCurliesWithArrow.actual);
         "Hardcoded missingCurliesWithArrow fixture output must not be emitted.\nOutput:\n{output}"
     );
 }
+
+/// Regression: when a System module already has a runtime import from
+/// `"tslib"` (e.g. a side-effect `import "tslib";`), the wrapper-tslib
+/// injection used to skip *both* the dep insertion *and* the helper
+/// `Assign(tslib_1)` setter action. That left `tslib_1` hoisted but never
+/// assigned, so `tslib_1.__decorate(...)` referenced an unassigned binding.
+///
+/// The structural rule: dep insertion is guarded against duplicates, but the
+/// helper `Assign("tslib_1")` is injected whenever no source-supplied
+/// `Assign` already exists for `"tslib"`. The companion case — a namespace
+/// import like `import * as TSLib from "tslib"` — must NOT add the helper
+/// `Assign("tslib_1")` because `commonjs_tslib_import_binding` will be
+/// updated to the user binding (`TSLib`), so helper calls resolve through
+/// that binding without a separate `tslib_1` setter.
+#[test]
+fn system_side_effect_tslib_import_still_assigns_helper_setter() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "import \"tslib\";\ndeclare var dec: any;\n@dec export class A {}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::System,
+        import_helpers: true,
+        no_emit_helpers: true,
+        legacy_decorators: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let register_line = output
+        .lines()
+        .find(|line| line.contains("System.register(["))
+        .unwrap_or("");
+    let tslib_count = register_line.matches("\"tslib\"").count();
+    assert_eq!(
+        tslib_count, 1,
+        "System.register deps must list `\"tslib\"` exactly once when the source already imports from it.\nDeps line: {register_line}\nFull output:\n{output}"
+    );
+    assert!(
+        output.contains("var tslib_1"),
+        "Helper namespace binding `tslib_1` must be hoisted when no user `Assign` exists for `\"tslib\"`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("tslib_1 = tslib_1_1;"),
+        "Setter body must assign `tslib_1 = <setter-param>;` so `tslib_1.__decorate` is defined at execute time.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("tslib_1.__decorate"),
+        "Decorator call must use the helper namespace binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_namespace_tslib_import_uses_user_binding_for_helpers() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    // `import * as TSLib from "tslib"` registers `Assign("TSLib")` for the
+    // `"tslib"` dep, so the helper Assign should NOT be added — helper calls
+    // resolve through `TSLib.__decorate` because
+    // `commonjs_tslib_import_binding` is updated to the user binding.
+    let source = "import * as TSLib from \"tslib\";\ndeclare var dec: any;\n@dec export class A {}\nexport const u = TSLib;\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::System,
+        import_helpers: true,
+        no_emit_helpers: true,
+        legacy_decorators: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let register_line = output
+        .lines()
+        .find(|line| line.contains("System.register(["))
+        .unwrap_or("");
+    assert_eq!(
+        register_line.matches("\"tslib\"").count(),
+        1,
+        "Single `\"tslib\"` dep entry.\nDeps line: {register_line}\nFull output:\n{output}"
+    );
+    assert!(
+        output.contains("TSLib.__decorate"),
+        "Helper calls must resolve through the user binding `TSLib`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("tslib_1 = "),
+        "No redundant helper-binding setter line when the user already provides a binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var tslib_1"),
+        "No redundant helper-binding hoist when the user already provides a binding.\nOutput:\n{output}"
+    );
+}

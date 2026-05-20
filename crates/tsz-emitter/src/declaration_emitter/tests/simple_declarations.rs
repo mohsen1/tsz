@@ -2639,6 +2639,10 @@ export function inJs(l) {
         "Expected the JSDoc typedef alias to still be emitted: {output}"
     );
     assert!(
+        !output.contains("@typedef"),
+        "Did not expect source-only typedef comment to be duplicated before the function: {output}"
+    );
+    assert!(
         !output.contains("@type {IFn}"),
         "Did not expect implementation-only @type comment in declaration output: {output}"
     );
@@ -2695,6 +2699,39 @@ export function inJs(cb, value) {
     assert!(
         output.contains("export type IFn2 = (cb: (x: number) => string, value: number) => void;"),
         "Expected emitted typedef alias to preserve nested function parameter type: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_type_alias_signature_filters_renamed_typedef_comment() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {<Value>(input : Value) => Value} Mapper
+ */
+
+/** @type {Mapper} */
+export function mapValue(value) {
+  return value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function mapValue<Value>(input: Value): Value;"),
+        "Expected renamed JSDoc function alias to emit as a function signature: {output}"
+    );
+    assert!(
+        output.contains("export type Mapper = <Value>(input: Value) => Value;"),
+        "Expected renamed typedef alias to still be emitted: {output}"
+    );
+    assert!(
+        !output.contains("@typedef"),
+        "Did not expect renamed source-only typedef comment to be duplicated: {output}"
+    );
+    assert!(
+        !output.contains("@type {Mapper}"),
+        "Did not expect renamed implementation-only @type comment in declaration output: {output}"
     );
 }
 

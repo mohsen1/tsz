@@ -8,6 +8,7 @@ import {
   PROJECT_ROWS_BY_NAME,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
+import { subsystemForCode } from "../../../../scripts/ci/diagnostic-subsystems.mjs";
 import { fmt } from "./loc.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
@@ -207,24 +208,6 @@ function firstPresent(...values) {
   return null;
 }
 
-const DIAGNOSTIC_SUBSYSTEM_RULES = [
-  ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
-  ["syntax-parser-jsdoc", new Set(["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"])],
-  ["module-symbol-resolution", new Set(["TS2304", "TS2305", "TS2306", "TS2307", "TS2451", "TS2503", "TS2580", "TS2583", "TS2664", "TS2665", "TS2666", "TS2694"])],
-  ["relations-assignability", new Set(["TS2322", "TS2345", "TS2352", "TS2394", "TS2416", "TS2420", "TS2430", "TS2559", "TS2740", "TS2741", "TS2769"])],
-  ["evaluation-inference-instantiation", new Set(["TS2313", "TS2314", "TS2315", "TS2344", "TS2558", "TS2589", "TS2590", "TS2615", "TS7022"])],
-  ["keyspace-property-indexed", new Set(["TS2339", "TS2353", "TS2536", "TS2537", "TS2538", "TS2540", "TS4111", "TS7053"])],
-  ["flow-narrowing", new Set(["TS2367", "TS2677", "TS2774", "TS18047", "TS18048"])],
-  ["class-this-accessor", new Set(["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"])],
-  ["emit-dts-nameability", new Set(["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"])],
-];
-
-function subsystemForDiagnosticCode(code) {
-  for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
-    if (codes.has(code)) return subsystem;
-  }
-  return "unclassified diagnostic";
-}
 
 function diagnosticSubsystemsFromDeltas(deltas) {
   const groups = new Map();
@@ -232,7 +215,7 @@ function diagnosticSubsystemsFromDeltas(deltas) {
     const codes = [...String(line || "").matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
     const lineCodes = codes.length ? codes : ["uncoded"];
     for (const code of lineCodes) {
-      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForDiagnosticCode(code);
+      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
       if (!groups.has(subsystem)) {
         groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
       }

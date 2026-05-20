@@ -228,7 +228,7 @@ impl<'a> HoverProvider<'a> {
         let documentation_text = self.extract_plain_documentation(&raw_documentation);
 
         // 9. Build response
-        let mut contents = Vec::new();
+        let mut contents = Vec::with_capacity(if formatted_doc.is_some() { 2 } else { 1 });
 
         // Code block for the signature
         contents.push(format!("```typescript\n{display_string}\n```"));
@@ -1545,7 +1545,7 @@ impl<'a> HoverProvider<'a> {
         use tsz_binder::symbol_flags as sf;
         use tsz_parser::modifier_flags as mf;
 
-        let mut modifiers = Vec::new();
+        let mut modifiers = Vec::with_capacity(8);
 
         if symbol.is_exported || symbol.flags & sf::EXPORT_VALUE != 0 {
             modifiers.push("export");

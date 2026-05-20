@@ -860,7 +860,7 @@ impl ProjectFile {
             ..Default::default()
         };
 
-        let query_cache = tsz_solver::QueryCache::new(&self.type_interner);
+        let query_cache = tsz_solver::construction::QueryCache::new(&self.type_interner);
 
         let mut checker = match (self.type_cache.take(), &self.definition_store) {
             (Some(cache), Some(def_store)) => CheckerState::with_cache_and_shared_def_store(

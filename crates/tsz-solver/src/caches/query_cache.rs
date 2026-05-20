@@ -4,7 +4,7 @@
 //! relation, property, and element access queries. This is the concrete
 //! database implementation used by the checker at runtime.
 
-use crate::caches::db::{QueryDatabase, SolverOverflowFlags, TypeDatabase};
+use crate::caches::db::{QueryDatabase, SolverOverflowFlags, TypeDatabase, TypePredicateCache};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_trace;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
@@ -848,6 +848,33 @@ impl SolverOverflowFlags for QueryCache<'_> {
     }
 }
 
+impl TypePredicateCache for QueryCache<'_> {
+    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_this_type_cached(type_id)
+    }
+
+    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
+        self.interner.set_contains_this_type_cache(type_id, result);
+    }
+
+    fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_infer_types_cached(type_id)
+    }
+
+    fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_contains_infer_types_cache(type_id, result);
+    }
+
+    fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_type_query_cached(type_id)
+    }
+
+    fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
+        self.interner.set_contains_type_query_cache(type_id, result);
+    }
+}
+
 impl TypeDatabase for QueryCache<'_> {
     fn intern(&self, key: TypeData) -> TypeId {
         self.interner.intern(key)
@@ -1197,31 +1224,6 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         self.interner.is_evaluation_fuel_exhausted()
-    }
-
-    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_this_type_cached(type_id)
-    }
-
-    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
-        self.interner.set_contains_this_type_cache(type_id, result);
-    }
-
-    fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_infer_types_cached(type_id)
-    }
-
-    fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_infer_types_cache(type_id, result);
-    }
-
-    fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_type_query_cached(type_id)
-    }
-
-    fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
-        self.interner.set_contains_type_query_cache(type_id, result);
     }
 
     fn exact_optional_property_types(&self) -> bool {

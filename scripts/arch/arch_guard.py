@@ -280,9 +280,9 @@ LINE_LIMIT_CHECKS = [
         },
     ),
     (
-        "Checker computation boundary: type-computation monoliths must stay below 3169 LOC (#8226)",
+        "Checker computation boundary: type-computation monoliths must stay below 3100 LOC (#8226)",
         ROOT / "crates" / "tsz-checker" / "src" / "types" / "computation",
-        3169,
+        3100,
     ),
 ]
 
@@ -357,7 +357,7 @@ TRAIT_METHOD_COUNT_CHECKS = [
         "Solver boundary: TypeDatabase method count (#8205)",
         ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
         "TypeDatabase",
-        96,
+        90,
     ),
 ]
 
@@ -494,7 +494,7 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
             "relations",
             "widening",
         ),
-        125,
+        124,
     ),
 ]
 
@@ -510,7 +510,19 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        3401,
+        3398,
+    ),
+]
+
+# Pin root-level lint allowance entries in the query-boundary module map. #8225
+# tracks turning this layer from migration quarantine into narrower APIs, and
+# broad module-level allowances are part of that quarantine debt. The cap should
+# ratchet down as modules no longer need blanket suppressions.
+QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS = [
+    (
+        "Checker query boundary: module-level lint allowances must not grow (#8225)",
+        ROOT / "crates" / "tsz-checker" / "src" / "query_boundaries" / "mod.rs",
+        104,
     ),
 ]
 
@@ -625,6 +637,16 @@ REGEX_LINE_COUNT_CHECKS = [
         0,
     ),
     (
+        "Solver relation boundary: legacy relation flag bridge surface (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src"],
+        re.compile(
+            r"\b(?:from_checker_flags_u16|from_legacy_u8|to_legacy_u8|"
+            r"subtype_cache_config_from_legacy_flags|"
+            r"assignability_cache_config_from_legacy_flags)\b"
+        ),
+        0,
+    ),
+    (
         "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
         [
             ROOT
@@ -714,7 +736,7 @@ REGEX_LINE_COUNT_CHECKS = [
             ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs",
         ],
         re.compile(r"\bfn\s+is_(?:subtype_of|assignable_to)_with_flags\s*\("),
-        2,
+        0,
     ),
 ]
 
@@ -1331,6 +1353,54 @@ def scan_query_boundary_common_reference_count(
             f"query_boundaries: {len(matching_lines)} (cap {max_references}; "
             f"bump cap intentionally, or route the new site through a narrower "
             f"request-shaped boundary - #8225)"
+        )
+        return hits
+    return []
+
+
+_QUERY_BOUNDARY_ALLOWANCE_TOKEN_PATTERN = re.compile(
+    r"\b(?:dead_code|private_interfaces|clippy::[A-Za-z0-9_]+)\b"
+)
+
+
+def scan_query_boundary_module_allowance_count(
+    file_path: pathlib.Path,
+    max_allowances: int,
+) -> list[str]:
+    """Count root-level lint allowance entries in `query_boundaries/mod.rs`.
+
+    The module map historically carried broad `#[allow(...)]` blocks for many
+    boundary modules. Existing suppressions are tolerated as migration debt, but
+    new blanket entries should be scoped to the item that needs them or ratchet
+    this cap intentionally.
+    """
+    try:
+        text = file_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+
+    matches: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        stripped = line.lstrip()
+        if stripped.startswith("//"):
+            continue
+        for match in _QUERY_BOUNDARY_ALLOWANCE_TOKEN_PATTERN.finditer(line):
+            matches.append((line_no, match.group(0)))
+
+    if len(matches) > max_allowances:
+        try:
+            rel_path = file_path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel_path = str(file_path)
+        hits = [
+            f"query_boundaries module lint allowance #{i + 1}: "
+            f"{rel_path}:{line_no} {name}"
+            for i, (line_no, name) in enumerate(matches)
+        ]
+        hits.append(
+            f"total query_boundaries module-level lint allowance entries: "
+            f"{len(matches)} (cap {max_allowances}; scope the allowance to the "
+            f"item that needs it or intentionally bump the #8225 cap)"
         )
         return hits
     return []
@@ -2713,6 +2783,16 @@ def main() -> int:
         hits = scan_query_boundary_common_reference_count(
             search_roots, exclude_path_prefixes, max_references
         )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
+        file_path,
+        max_allowances,
+    ) in QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS:
+        hits = scan_query_boundary_module_allowance_count(file_path, max_allowances)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

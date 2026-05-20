@@ -724,10 +724,11 @@ pub(super) fn collect_diagnostics(
                     );
                 }
 
-                // Map resolved path to file index
-                // NOTE: Only mark as resolved if there's NO error. When there's a resolution
-                // error (TS2307, etc.), the module should NOT be in resolved_module_specifiers
-                // so that the checker will emit the appropriate error.
+                // Map resolved path to file index.
+                // Only mark as resolved when there is no error. When there is a
+                // resolution error (TS2307, TS6263, etc.) the module should NOT
+                // be in resolved_module_specifiers so that the checker emits the
+                // appropriate diagnostic without triggering additional member checks.
                 if outcome.error.is_none() {
                     if let Some(ref resolved_path) = outcome.resolved_path {
                         resolved_module_specifiers.insert((file_idx, specifier.clone()));
@@ -5450,7 +5451,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         program
             .type_interner
             .set_exact_optional_property_types(resolved.checker.exact_optional_property_types);
-        let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+        let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
         let mut checker = CheckerState::with_options(
             &program.files[0].arena,
             &rebuilt_binder,

@@ -72,7 +72,7 @@ impl<'a> CodeActionProvider<'a> {
         }
 
         // 7. Build TextEdits
-        let mut edits = Vec::new();
+        let mut edits = Vec::with_capacity(usage_refs.len() + 1);
 
         // 7a. One edit per reference to replace with initializer text
         for &ref_idx in &usage_refs {

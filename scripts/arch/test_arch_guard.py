@@ -327,7 +327,7 @@ class ArchGuardCheckerComputationFileSizeBoundaryTests(unittest.TestCase):
             name, base, limit = entry[0], entry[1], entry[2]
             if name == (
                 "Checker computation boundary: type-computation monoliths "
-                "must stay below 3169 LOC (#8226)"
+                "must stay below 3100 LOC (#8226)"
             ):
                 return base, limit
         self.fail(
@@ -337,7 +337,7 @@ class ArchGuardCheckerComputationFileSizeBoundaryTests(unittest.TestCase):
 
     def test_rule_exists_with_expected_limit(self):
         base, limit = self._computation_file_size_check()
-        self.assertEqual(limit, 3169)
+        self.assertEqual(limit, 3100)
         self.assertTrue(
             str(base).endswith("crates/tsz-checker/src/types/computation")
         )
@@ -1518,6 +1518,66 @@ class ArchGuardQueryBoundaryCommonReferenceTests(unittest.TestCase):
             name, search_roots, exclude_path_prefixes, max_references = entry
             hits = self.arch_guard.scan_query_boundary_common_reference_count(
                 search_roots, exclude_path_prefixes, max_references
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
+class ArchGuardQueryBoundaryModuleAllowanceTests(unittest.TestCase):
+    """Cover the #8225 ratchet for broad query-boundary module allowances."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_file(self, content: str) -> pathlib.Path:
+        tmp = tempfile.mkdtemp()
+        path = pathlib.Path(tmp) / "crates/tsz-checker/src/query_boundaries/mod.rs"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_flags_allowance_entries_above_cap(self):
+        path = self._make_file(
+            "#[allow(dead_code, clippy::missing_const_for_fn)]\n"
+            "pub(crate) mod foo;\n"
+            "#[allow(clippy::manual_map)]\n"
+            "pub(crate) mod bar;\n"
+        )
+
+        hits = self.arch_guard.scan_query_boundary_module_allowance_count(path, 2)
+
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("dead_code", hits[0])
+        self.assertIn("clippy::missing_const_for_fn", hits[1])
+        self.assertIn("clippy::manual_map", hits[2])
+        self.assertIn("module-level lint allowance entries", hits[3])
+
+    def test_ignores_comment_lines_and_passes_at_cap(self):
+        path = self._make_file(
+            "// #[allow(dead_code, clippy::manual_map)]\n"
+            "#[allow(dead_code)]\n"
+            "pub(crate) mod foo;\n"
+        )
+
+        hits = self.arch_guard.scan_query_boundary_module_allowance_count(path, 1)
+
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_check_is_registered(self):
+        names = [
+            entry[0]
+            for entry in self.arch_guard.QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS
+        ]
+        self.assertTrue(any("#8225" in name for name in names))
+
+    def test_real_count_passes_at_pinned_cap(self):
+        for entry in self.arch_guard.QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS:
+            name, file_path, max_allowances = entry
+            hits = self.arch_guard.scan_query_boundary_module_allowance_count(
+                file_path, max_allowances
             )
             self.assertEqual(
                 hits,
@@ -2748,7 +2808,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("total matching lines: 2", hits[2])
 
     def test_flags_legacy_relation_bridge_call_surface(self):
-        pattern, _max_lines = self._check_by_name("#8207")
+        pattern, _max_lines = self._check_by_name("legacy packed relation flag bridges")
         root = self._make_tree(
             {
                 "crates/tsz-solver/src/types.rs": (
@@ -2766,7 +2826,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("total matching lines: 4", hits[4])
 
     def test_legacy_relation_bridge_guard_ignores_text_only_mentions(self):
-        pattern, _max_lines = self._check_by_name("#8207")
+        pattern, _max_lines = self._check_by_name("legacy packed relation flag bridges")
         root = self._make_tree(
             {
                 "crates/tsz-solver/src/types.rs": (
@@ -2850,6 +2910,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("db.rs:2", hits[1])
         self.assertIn("query_cache.rs:1", hits[2])
         self.assertIn("total matching lines: 3", hits[3])
+        self.assertEqual(max_lines, 0)
 
     def test_flags_checker_migration_with_parent_cache_callsite(self):
         pattern, _max_lines = self._check_by_name("with_parent_cache_attributed")
@@ -2901,6 +2962,30 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
         self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
         self.assertIn("lib.rs:1", hits[0])
+
+    def test_flags_legacy_relation_flag_bridge_surface(self):
+        pattern, _max_lines = self._check_by_name("legacy relation flag bridge surface")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/types.rs": (
+                    "RelationCacheConfig::from_checker_flags_u16(flags);\n"
+                    "CachedAnyMode::from_legacy_u8(raw);\n"
+                    "mode.to_legacy_u8();\n"
+                    "// CachedAnyMode::from_legacy_u8(commented);\n"
+                ),
+                "crates/tsz-solver/src/caches/query_cache.rs": (
+                    "subtype_cache_config_from_legacy_flags(flags);\n"
+                    "assignability_cache_config_from_legacy_flags(flags);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 6, f"unexpected hits: {hits!r}")
+        self.assertIn("query_cache.rs:1", hits[0])
+        self.assertIn("query_cache.rs:2", hits[1])
+        self.assertIn("types.rs:1", hits[2])
+        self.assertIn("types.rs:2", hits[3])
+        self.assertIn("types.rs:3", hits[4])
 
     def test_scan_regex_line_count_accepts_file_roots(self):
         pattern, _max_lines = self._check_by_name(

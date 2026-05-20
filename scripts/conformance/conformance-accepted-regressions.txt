@@ -21,7 +21,6 @@ TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts
 TypeScript/tests/cases/compiler/interfaceWithMultipleDeclarations.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
-TypeScript/tests/cases/compiler/jsxComplexSignatureHasApplicabilityError.tsx
 TypeScript/tests/cases/compiler/jsxElementType.tsx
 TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx
 TypeScript/tests/cases/compiler/mappedTypeInferenceFromApparentType.ts
@@ -45,7 +44,6 @@ TypeScript/tests/cases/conformance/esDecorators/esDecorators-preservesThis.ts
 TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals2.ts
 TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsTypedefAndLatebound.ts
 TypeScript/tests/cases/conformance/node/esmModuleExports2.ts
-TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts
 TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts

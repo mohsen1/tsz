@@ -802,6 +802,26 @@ fn lexical_normalize_slash(path: &str) -> String {
     out
 }
 
+/// Probe the filename index for an arbitrary-extension declaration file.
+/// `path` is the full path to split at the last dot (e.g. `/proj/Button.svelte`
+/// → looks up `/proj/Button.d.svelte.ts`). Returns the index entry when found.
+fn probe_arbitrary_ext_decl(
+    path: &str,
+    buf: &mut String,
+    filename_idx: &FileNameIndex,
+) -> Option<usize> {
+    let (stem_base, ext) = path.rsplit_once('.')?;
+    if ext.is_empty() || ext.contains('/') || is_recognized_inner_module_ext(ext) {
+        return None;
+    }
+    buf.clear();
+    buf.push_str(stem_base);
+    buf.push_str(".d.");
+    buf.push_str(ext);
+    buf.push_str(".ts");
+    filename_idx.get(buf).copied()
+}
+
 /// Probe the filename index with every spelling a TypeScript/JavaScript
 /// specifier could plausibly address. Mirrors the matching rules encoded
 /// by `register_canonical_forms`:
@@ -911,19 +931,8 @@ pub fn resolve_specifier_via_file_index(
         // `/proj/component.d.html.ts`). Additive — only fires when the standard
         // TS fan-out above missed and the specifier carries a non-TS/JS/JSON
         // trailing extension.
-        if let Some((stem_base, ext)) = base.rsplit_once('.')
-            && !ext.is_empty()
-            && !ext.contains('/')
-            && !is_recognized_inner_module_ext(ext)
-        {
-            buf.clear();
-            buf.push_str(stem_base);
-            buf.push_str(".d.");
-            buf.push_str(ext);
-            buf.push_str(".ts");
-            if let Some(&idx) = filename_idx.get(&buf) {
-                return Some(idx);
-            }
+        if let Some(idx) = probe_arbitrary_ext_decl(&base, &mut buf, filename_idx) {
+            return Some(idx);
         }
     }
 
@@ -975,6 +984,13 @@ pub fn probe_file_name_index(specifier: &str, filename_idx: &FileNameIndex) -> O
         if let Some(&idx) = filename_idx.get(&buf) {
             return Some(idx);
         }
+    }
+
+    // Arbitrary-extension declaration file probe: `packages/ui/Button.svelte` →
+    // `packages/ui/Button.d.svelte.ts`. Mirrors the same probe in
+    // `resolve_specifier_via_file_index` for bare project-relative paths.
+    if let Some(idx) = probe_arbitrary_ext_decl(&spec_norm, &mut buf, filename_idx) {
+        return Some(idx);
     }
 
     if !stem.is_empty() {

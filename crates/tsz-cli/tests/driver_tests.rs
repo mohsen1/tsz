@@ -5706,7 +5706,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
     let file = &program.files[0];
     let binder = tsz::parallel::create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = CheckerState::new(
         &file.arena,
         &binder,
@@ -6576,7 +6576,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     let mut binder = BinderState::new();
     binder.bind_source_file_with_libs(&arena, root, &lib_files);
 
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = CheckerState::new(
         &arena,
         &binder,
@@ -20209,7 +20209,7 @@ function process(image) {
     let program = tsz::parallel::compile_files_with_libs(files, &lib_paths);
     let file = &program.files[0];
     let binder = tsz::parallel::create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = CheckerState::new(
         &file.arena,
         &binder,

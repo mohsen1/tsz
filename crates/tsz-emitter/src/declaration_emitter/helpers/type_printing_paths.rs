@@ -1024,6 +1024,10 @@ impl<'a> DeclarationEmitter<'a> {
     ///
     /// Converts "../utils.ts" -> "../utils"
     pub(crate) fn strip_ts_extensions(&self, path: &str) -> String {
+        if let Some((base, ext)) = Self::arbitrary_extension_declaration_user_parts(path) {
+            return format!("{base}.{ext}");
+        }
+
         // Remove TypeScript and JavaScript source/declaration extensions.
         for ext in [
             ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".tsx", ".ts", ".mts", ".cts", ".jsx", ".js",
@@ -1034,6 +1038,25 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         path.to_string()
+    }
+
+    fn arbitrary_extension_declaration_user_parts(path: &str) -> Option<(&str, &str)> {
+        let stem = path.strip_suffix(".ts")?;
+        let (base, ext) = stem.rsplit_once(".d.")?;
+        if base.is_empty() || ext.is_empty() || ext.contains('/') || ext.contains('.') {
+            return None;
+        }
+        if Self::is_recognized_inner_module_ext(ext) {
+            return None;
+        }
+        Some((base, ext))
+    }
+
+    fn is_recognized_inner_module_ext(ext: &str) -> bool {
+        matches!(
+            ext,
+            "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" | "json" | "d"
+        )
     }
 
     pub(in crate::declaration_emitter) fn normalized_source_path(
