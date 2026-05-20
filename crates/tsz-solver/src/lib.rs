@@ -249,12 +249,6 @@ pub(crate) use operations::compound_assignment::{
 pub(crate) use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
 };
-pub use relations::relation_queries::{
-    AssignabilityFailureAnalysis, RelationContext, RelationKind, RelationPolicy,
-    RelationQueryInputs, RelationResult, analyze_assignability_failure_with_resolver,
-    are_type_params_assignable, check_application_variance, query_relation,
-    query_relation_with_overrides, query_relation_with_resolver,
-};
 pub use relations::subtype::{
     AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
     are_types_structurally_identical, is_subtype_of, reset_subtype_thread_local_state,

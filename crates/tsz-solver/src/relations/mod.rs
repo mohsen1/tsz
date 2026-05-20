@@ -3,6 +3,6 @@ pub(crate) mod compat_overrides;
 pub mod freshness;
 pub(crate) mod judge;
 pub mod lawyer;
-pub(crate) mod relation_queries;
+pub mod relation_queries;
 pub(crate) mod subtype;
 pub mod variance;
