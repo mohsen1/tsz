@@ -1730,16 +1730,21 @@ impl<'a> AstToIr<'a> {
             .expect("NodeIndex must be valid in arena");
         // Array and Object literals use LiteralExprData (elements = properties)
         if let Some(obj) = self.arena.get_literal_expr(node) {
-            // Check if ES5 computed property lowering is needed
-            let needs_es5_lowering = obj.elements.nodes.iter().any(|&elem_idx| {
+            let has_spread = obj.elements.nodes.iter().any(|&elem_idx| {
+                crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
+            });
+            if has_spread {
+                return IRNode::ASTRef(idx);
+            }
+
+            let needs_computed_es5_lowering = obj.elements.nodes.iter().any(|&elem_idx| {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
-                    || crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
                     || self.arena.get(elem_idx).is_some_and(|n| {
                         n.kind == syntax_kind_ext::GET_ACCESSOR
                             || n.kind == syntax_kind_ext::SET_ACCESSOR
                     })
             });
-            if needs_es5_lowering {
+            if needs_computed_es5_lowering {
                 return self.lower_object_literal_es5(&obj.elements.nodes);
             }
 
@@ -1784,7 +1789,6 @@ impl<'a> AstToIr<'a> {
             .iter()
             .position(|&elem_idx| {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
-                    || crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
                     || self.arena.get(elem_idx).is_some_and(|n| {
                         n.kind == syntax_kind_ext::GET_ACCESSOR
                             || n.kind == syntax_kind_ext::SET_ACCESSOR
