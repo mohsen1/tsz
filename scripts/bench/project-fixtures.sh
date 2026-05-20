@@ -24,6 +24,8 @@ TSZ_COMPILE_GUARD_REQUIRED_ROWS=(
   "ts-essentials-project"
   "rxjs-project"
   "type-fest-project"
+  "vite-vanilla-ts-app"
+  "nextjs-fresh-app"
 )
 
 TSZ_COMPILE_GUARD_CANARY_ROWS=(
