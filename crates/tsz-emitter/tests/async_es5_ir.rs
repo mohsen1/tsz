@@ -19,6 +19,198 @@ fn transform_and_print(source: &str) -> String {
     }
 }
 
+// Structural rule: when an async ES5 function contains a try statement where
+// any region (try, catch, finally) suspends on `await`, the generator state
+// machine must emit a 4-tuple `_a.trys.push([start, catch, finally, end])`
+// where each absent slot is sparse, allocate region boundary labels
+// just-in-time so resume labels stay sequential within each region, bind the
+// caught exception via `_a.sent()`, and route breaks from both try and catch
+// through the same shared exit target (finally or end).
+
+#[test]
+fn try_catch_finally_with_await_in_each_block_lowers_to_sequential_state_machine() {
+    let output = transform_and_print(
+        "async function f() { try { await a(); } catch { await b(); } finally { await c(); } }",
+    );
+
+    assert!(
+        output.contains("_a.trys.push([0, 2, 4, 6]);"),
+        "trys.push should reserve the four region labels in start/catch/finally/end order so the runtime can dispatch throws and breaks correctly.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 0:") && output.contains("return [4 /*yield*/, a()];"),
+        "Try body yield must live at the start label that trys.push references.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 1:") && output.contains("return [3 /*break*/, 4];"),
+        "Try-body resume must come immediately after start and break to the finally label.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [4 /*yield*/, b()];"),
+        "Catch body must start at the catch label and emit its yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 3:") && output.contains("return [3 /*break*/, 4];"),
+        "Catch-body resume must come immediately after the catch label and break to the finally label.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 4: return [4 /*yield*/, c()];"),
+        "Finally body must start at the finally label and emit its yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 5:") && output.contains("return [7 /*endfinally*/];"),
+        "Finally-body resume must end the region with endfinally.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 6: return [2 /*return*/];"),
+        "End label must finalize the function.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_a[1]"),
+        "Catch should bind through _a.sent(), never raw element access on _a.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn try_catch_finally_bound_exception_uses_sent_for_catch_binding() {
+    let output = transform_and_print(
+        "async function f() { try { await a(); } catch (e) { await b(e); } finally { await c(); } }",
+    );
+
+    assert!(
+        output.contains("e = _a.sent();"),
+        "Bound catch must capture the exception via `_a.sent()`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn try_catch_finally_uses_user_chosen_catch_binding_name() {
+    // The catch binding name flows through unchanged — the fix must be
+    // structural, not keyed on the spelling `e`.
+    let output = transform_and_print(
+        "async function f() { try { await a(); } catch (err) { await b(err); } finally { await c(); } }",
+    );
+
+    assert!(
+        output.contains("err = _a.sent();"),
+        "Catch binding spelled `err` must round-trip through the `_a.sent()` capture.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("e = _a.sent();"),
+        "No phantom `e` binding should appear when the user named the variable `err`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn try_finally_without_catch_in_async_keeps_sparse_catch_slot() {
+    let output =
+        transform_and_print("async function f() { try { await a(); } finally { await c(); } }");
+
+    assert!(
+        output.contains("_a.trys.push([0, , 2, 4]);"),
+        "Try-finally without a catch must emit the sparse catch slot.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 1:") && output.contains("return [3 /*break*/, 2];"),
+        "Try-body break must target the finally label when no catch is present.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [4 /*yield*/, c()];"),
+        "Finally body must start at the allocated finally label.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 4: return [2 /*return*/];"),
+        "End label must come after the finally body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn try_catch_without_finally_in_async_keeps_sparse_finally_slot() {
+    let output =
+        transform_and_print("async function f() { try { await a(); } catch (e) { await b(e); } }");
+
+    assert!(
+        output.contains("_a.trys.push([0, 2, , 4]);"),
+        "Try-catch without a finally must emit the sparse finally slot.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 1:") && output.contains("return [3 /*break*/, 4];"),
+        "Try-body break must target the end label when no finally is present.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("e = _a.sent();"),
+        "Bound catch must bind the exception via `_a.sent()`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 3:") && output.contains("return [3 /*break*/, 4];"),
+        "Catch-body resume must break to the end label when no finally is present.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 4: return [2 /*return*/];"),
+        "End label must come right after the catch body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn try_with_await_only_in_try_body_still_threads_through_finally() {
+    let output = transform_and_print(
+        "async function f() { try { await a(); } catch (e) { e; } finally { c(); } }",
+    );
+
+    assert!(
+        output.contains("_a.trys.push([0, 2, 3, 4]);"),
+        "When catch and finally are sync, their labels still occupy distinct slots after the try-body resume.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("e = _a.sent();") && output.contains("e;"),
+        "Bound catch with no await still uses `_a.sent()`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [7 /*endfinally*/];"),
+        "Finally must end with endfinally even if its body is sync.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_try_in_async_uses_distinct_placeholder_regions() {
+    let output = transform_and_print(
+        "async function f() { try { try { await a(); } catch { await b(); } } finally { await c(); } }",
+    );
+
+    assert!(
+        output.contains("_a.trys.push([0, , 5, 7]);"),
+        "Outer try-finally must reserve start=0, finally=5, end=7 after all inner labels.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.trys.push([0, 2, , 4]);"),
+        "Inner try-catch must reserve start=0, catch=2, end=4 — independent of the outer region's placeholders.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 5: return [4 /*yield*/, c()];"),
+        "Outer finally body must yield at its allocated label.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 7: return [2 /*return*/];"),
+        "Outer end label must follow the finally body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_try_block_without_handler_emits_inline_body() {
+    // A try with no catch and no finally is structurally equivalent to its
+    // body; no trys.push entry should be emitted.
+    let output = transform_and_print("async function f() { try { await a(); } }");
+
+    assert!(
+        !output.contains("_a.trys.push"),
+        "A handler-less try should not produce a trys.push entry.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, a()];"),
+        "The body of a handler-less try must still emit the yield.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn test_class_declaration_in_async_body_uses_structured_es5_assignment() {
     let output =
