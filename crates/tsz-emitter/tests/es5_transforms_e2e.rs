@@ -38,6 +38,29 @@ fn emit_es5_with_module(source: &str, module: ModuleKind) -> String {
     lower_and_print(&parser.arena, root, opts).code
 }
 
+#[test]
+fn accessor_return_type_asserted_object_spread_uses_assign() {
+    let output = emit_es5_with_module(
+        "declare const props: WizardStepProps;\n\
+         export class Wizard {\n\
+             get steps() {\n\
+                 return { wizard: this, ...props } as WizardStepProps;\n\
+             }\n\
+         }\n\
+         export interface WizardStepProps { wizard?: Wizard; }\n",
+        ModuleKind::CommonJS,
+    );
+
+    assert!(
+        output.contains("return __assign({ wizard: this }, props);"),
+        "ES5 class accessor object spread should delegate to object-spread lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return (_a = { wizard: this },"),
+        "Object spread must not be treated as computed-property comma lowering.\nOutput:\n{output}"
+    );
+}
+
 fn emit_es5_with_comments(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
