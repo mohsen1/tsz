@@ -550,7 +550,7 @@ impl TypeInterner {
             for prefix in &combinations {
                 for choice in &choices {
                     let mut combined = Vec::with_capacity(prefix.len() + 1);
-                    combined.extend(prefix.iter().cloned());
+                    combined.extend_from_slice(prefix);
                     combined.push(choice.clone());
                     next.push(combined);
                 }
