@@ -3717,6 +3717,189 @@ fn test_object_with_index_satisfies_numeric_property_number_index() {
     assert!(!checker.is_subtype_of(source, target));
 }
 
+// =============================================================================
+// Recursion-identity tests for conditional alias Applications (Bug B fix)
+//
+// Structural rule: when same-base Application types whose base is a conditional
+// type alias are compared, def_guard cycle detection must engage. After the guard
+// sees the same (DefId, DefId) pair a second time it returns compatible (cycle
+// detected), matching tsc's getRecursionIdentity behavior for deeply recursive
+// conditional types such as RequiredDeep<T>, DeepReadonly<T>, and NestedRecord<K,V>.
+// =============================================================================
+
+/// Build a recursive conditional alias application and verify that the
+/// subtype check terminates (does not hang or overflow) and returns a
+/// non-False result, matching tsc's coinductive treatment of recursive
+/// conditional aliases.
+///
+/// Models a type family similar to:
+///   `type Wrap<T> = T extends object ? { inner: Wrap<T> } : T`
+///
+/// Two Applications of the same conditional alias base should terminate via
+/// the `def_guard` cycle detector rather than recursing indefinitely.
+#[test]
+fn test_same_base_conditional_alias_check_terminates() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    // DefId for the conditional alias "Wrap"
+    let wrap_def = DefId(9001);
+
+    // Type parameter T
+    let t_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_info);
+
+    // Body: T extends object ? { inner: Wrap<T> } : T
+    // (represented as a Conditional whose true branch is a placeholder)
+    // For the test we use a simple recursive conditional body
+    let lazy_wrap = interner.lazy(wrap_def);
+    let app_of_t = interner.application(lazy_wrap, vec![t_type]);
+
+    let prop_inner = interner.intern_string("inner");
+    let true_branch = interner.object(vec![PropertyInfo::new(prop_inner, app_of_t)]);
+
+    let cond_body = interner.conditional(ConditionalType {
+        check_type: t_type,
+        extends_type: TypeId::OBJECT,
+        true_type: true_branch,
+        false_type: t_type,
+        is_distributive: false,
+    });
+
+    env.insert_def_with_params(wrap_def, cond_body, vec![t_info]);
+    env.insert_def_kind(wrap_def, crate::def::DefKind::TypeAlias);
+
+    let base = interner.lazy(wrap_def);
+    let app_string = interner.application(base, vec![TypeId::STRING]);
+    let app_number = interner.application(base, vec![TypeId::NUMBER]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    // The check must terminate (not hang). The result is either True/CycleDetected
+    // (cycle guard fired, compatible assumed) or False (structurally incompatible
+    // before cycle). Either is acceptable — what matters is termination.
+    let result = checker.check_subtype(app_string, app_string);
+    // Same application is always a subtype of itself
+    assert!(
+        result.is_true(),
+        "Wrap<string> should be a subtype of itself"
+    );
+
+    let result2 = checker.check_subtype(app_string, app_number);
+    assert!(
+        result2.is_false(),
+        "Wrap<string> should not be a subtype of Wrap<number>; recursion identity must not hide different args"
+    );
+}
+
+/// Verify that two Applications of the same conditional alias with identical
+/// args are recognized as compatible (cycle detected) even when the alias
+/// body is deeply recursive.
+///
+/// Models `RequiredDeep<T>` / `DeepReadonly<T>` patterns where
+/// `Alias<X>` compared against itself should always be compatible.
+/// Tests name variants (K and X) to prove the fix is not name-dependent.
+#[test]
+fn test_conditional_alias_self_comparison_is_compatible() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    // DefId for alias "DeepReq"
+    let alias_def = DefId(9002);
+
+    let k_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.type_param(k_info);
+
+    // Body: K extends string ? { v: DeepReq<K> } : never
+    let lazy_alias = interner.lazy(alias_def);
+    let recursive_app = interner.application(lazy_alias, vec![k_type]);
+
+    let prop_v = interner.intern_string("v");
+    let true_br = interner.object(vec![PropertyInfo::new(prop_v, recursive_app)]);
+
+    let body = interner.conditional(ConditionalType {
+        check_type: k_type,
+        extends_type: TypeId::STRING,
+        true_type: true_br,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    env.insert_def_with_params(alias_def, body, vec![k_info]);
+    env.insert_def_kind(alias_def, crate::def::DefKind::TypeAlias);
+
+    let base = interner.lazy(alias_def);
+    let app1 = interner.application(base, vec![TypeId::STRING]);
+    let app2 = interner.application(base, vec![TypeId::STRING]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    // Two Applications of the same conditional alias with the same arg
+    // must be found compatible (tsc's recursion identity: assume related on cycle).
+    let result = checker.check_subtype(app1, app2);
+    assert!(
+        result.is_true(),
+        "DeepReq<string> <: DeepReq<string> should be compatible (recursion identity)"
+    );
+}
+
+/// Same test with type parameter named "X" instead of "K" to prove the fix
+/// is structural (not name-dependent), per the anti-hardcoding directive (§25).
+#[test]
+fn test_conditional_alias_self_comparison_is_compatible_renamed_param() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let alias_def = DefId(9003);
+
+    let x_info = TypeParamInfo {
+        name: interner.intern_string("X"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let x_type = interner.type_param(x_info);
+
+    let lazy_alias = interner.lazy(alias_def);
+    let recursive_app = interner.application(lazy_alias, vec![x_type]);
+
+    let prop_v = interner.intern_string("value");
+    let true_br = interner.object(vec![PropertyInfo::new(prop_v, recursive_app)]);
+
+    let body = interner.conditional(ConditionalType {
+        check_type: x_type,
+        extends_type: TypeId::STRING,
+        true_type: true_br,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    env.insert_def_with_params(alias_def, body, vec![x_info]);
+    env.insert_def_kind(alias_def, crate::def::DefKind::TypeAlias);
+
+    let base = interner.lazy(alias_def);
+    let app1 = interner.application(base, vec![TypeId::NUMBER]);
+    let app2 = interner.application(base, vec![TypeId::NUMBER]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    let result = checker.check_subtype(app1, app2);
+    assert!(
+        result.is_true(),
+        "DeepReq<number> <: DeepReq<number> (X-named param) should be compatible"
+    );
+}
+
 #[test]
 fn test_object_with_index_noncanonical_numeric_property_fails() {
     let interner = TypeInterner::new();

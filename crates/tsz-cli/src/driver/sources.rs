@@ -957,7 +957,7 @@ pub(super) fn read_source_files(
                             next_discovery_order += 1;
                             pending.push_back(canonical);
                         }
-                    } else if !invalid_mode {
+                    } else if !invalid_mode && !options.no_check {
                         type_reference_errors.push((
                             path.clone(),
                             type_name.clone(),

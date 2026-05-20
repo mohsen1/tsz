@@ -77,18 +77,12 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             if func.type_annotation.is_some() {
-                if let Some(type_text) =
-                    self.source_slice_from_arena(source_arena, func.type_annotation)
-                    && self.source_return_type_annotation_is_reusable(
-                        source_arena,
-                        func.type_annotation,
-                    )
+                if let Some(type_text) = self.source_type_annotation_text_for_declaration_reuse(
+                    source_arena,
+                    func.type_annotation,
+                ) && self
+                    .source_return_type_annotation_is_reusable(source_arena, func.type_annotation)
                 {
-                    let type_text = type_text
-                        .trim_end()
-                        .trim_end_matches(';')
-                        .trim_end()
-                        .to_string();
                     if call.type_arguments.is_none()
                         && self.source_return_type_mentions_type_parameter(
                             source_arena,
@@ -192,6 +186,50 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    pub(in crate::declaration_emitter) fn source_type_annotation_text_for_declaration_reuse(
+        &self,
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        let type_node = source_arena.get(type_idx)?;
+        if type_node.kind == syntax_kind_ext::INTERSECTION_TYPE
+            && let Some(intersection) = source_arena.get_composite_type(type_node)
+        {
+            let mut parts = Vec::with_capacity(intersection.types.nodes.len());
+            for member_idx in intersection.types.nodes.iter().copied() {
+                parts.push(self.source_type_annotation_part_text_for_declaration_reuse(
+                    source_arena,
+                    member_idx,
+                )?);
+            }
+            return Some(parts.join(" & "));
+        }
+
+        self.source_type_annotation_part_text_for_declaration_reuse(source_arena, type_idx)
+    }
+
+    pub(in crate::declaration_emitter) fn source_type_annotation_part_text_for_declaration_reuse(
+        &self,
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        let type_node = source_arena.get(type_idx)?;
+        if type_node.kind == syntax_kind_ext::TYPE_LITERAL
+            && let Some(type_text) = self.emit_type_node_text_from_arena(source_arena, type_idx)
+        {
+            return Some(type_text.trim().to_string());
+        }
+
+        self.source_slice_from_arena(source_arena, type_idx)
+            .map(|type_text| {
+                type_text
+                    .trim_end()
+                    .trim_end_matches(';')
+                    .trim_end()
+                    .to_string()
+            })
     }
 
     pub(in crate::declaration_emitter) fn callable_function_from_symbol_decl<'b>(

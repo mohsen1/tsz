@@ -124,6 +124,11 @@ assert.deepEqual(
 
 const benchRunnerScript = readRepoFile("scripts/bench/bench-vs-tsgo.sh");
 const benchRows = extractBenchRunnerRows(benchRunnerScript);
+assert.doesNotMatch(
+  benchRunnerScript,
+  /\[ "\$name" != "nextjs" \] && \[ "\$name" != "large-ts-repo" \]/,
+  "Next.js benchmark rows must collect the tsc oracle before they can be green",
+);
 const compileCanaryGatedBenchmarkRows = sortedUnique(
   [...benchRunnerScript.matchAll(
     /run_[a-z0-9_]+_project_benchmarks\(\)\s*\{([\s\S]*?)\n\}/g,

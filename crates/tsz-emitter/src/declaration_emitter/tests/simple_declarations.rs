@@ -1473,6 +1473,36 @@ function p() { return Promise.resolve(); }
 }
 
 #[test]
+fn test_jsdoc_nested_object_binding_params_and_promise_star() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+class Y {
+    /**
+     * @param {Object} error
+     * @param {string?} error.reason
+     * @param {Object} error.suberr
+     * @param {string?} error.suberr.reason
+     * @param {string?} error.suberr.code
+     * @returns {Promise.<*>}
+     */
+    async cancel({reason, suberr}) {}
+}
+"#,
+    );
+
+    for expected in [
+        "reason: string | null;",
+        "suberr: {\n            reason: string | null;\n            code: string | null;\n        };",
+        "): Promise<any>;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "Expected nested JSDoc parameter output `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
 fn test_js_trailing_jsdoc_type_aliases_are_emitted() {
     let source = r#"
 export {};
@@ -8162,12 +8192,52 @@ foo.default = 2;
     );
 
     assert!(
-        output.contains("declare namespace foo {\n    let x: number;"),
-        "Expected ordinary expando property to emit as an ambient namespace member: {output}"
+        output.contains("declare namespace foo {\n    export let x: number;"),
+        "Expected direct expando property to get export let when a reserved-word sibling requires aliasing: {output}"
     );
     assert!(
         output.contains("let _default: number;\n    export { _default as default };"),
         "Expected reserved expando property to use local alias plus export specifier: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_expando_function_member_exported_when_alias_sibling_present() {
+    let output = emit_js_dts(
+        r#"
+function bar() {}
+bar.greet = function(name) { return name; };
+bar.default = 42;
+"#,
+    );
+
+    assert!(
+        output.contains("export function greet"),
+        "Expected function-valued expando member to get export when a reserved-word sibling requires aliasing: {output}"
+    );
+    assert!(
+        output.contains("let _default: number;\n    export { _default as default };"),
+        "Expected reserved-word alias emission for default: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_expando_contextual_keyword_member_exported_when_alias_sibling_present() {
+    let output = emit_js_dts(
+        r#"
+function baz() {}
+baz.get = 1;
+baz.default = 2;
+"#,
+    );
+
+    assert!(
+        output.contains("export let get: number;"),
+        "Expected contextual-keyword property to get export let when reserved-word sibling requires aliasing: {output}"
+    );
+    assert!(
+        output.contains("let _default: number;\n    export { _default as default };"),
+        "Expected reserved-word alias emission for default: {output}"
     );
 }
 
