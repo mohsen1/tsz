@@ -1786,20 +1786,10 @@ impl<'a> Printer<'a> {
                 self.es5_super_home_is_static = false;
             }
             if has_extends && !extends_null {
-                // ES2015+ synthesized derived-class constructors must use rest/spread
-                // syntax; tsc emits `constructor(...args){ super(...args); }` for
-                // ES2015+ and `constructor(){ super(...arguments); }` for ES5.
-                if self.ctx.target_es5 {
-                    self.write("constructor() {");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write("super(...arguments);");
-                } else {
-                    self.write("constructor(...args) {");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write("super(...args);");
-                }
+                self.write("constructor() {");
+                self.write_line();
+                self.increase_indent();
+                self.write("super(...arguments);");
                 self.write_line();
             } else {
                 self.write("constructor() {");
