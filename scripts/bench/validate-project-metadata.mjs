@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { PROJECT_ROW_DEFINITIONS, REQUIRED_PROJECT_ROWS, COMPILE_GUARD_REQUIRED_ROWS, COMPILE_CANARY_PROJECT_ROWS, COMPILE_GUARD_CANARY_PROJECT_ROWS } from "./project-rows.mjs";
 import { GENERATOR_SCRIPTS_PREFIX } from "./fixture-provenance.mjs";
@@ -19,6 +20,7 @@ export const REQUIRED_METADATA_FIELDS = [
 const allowedGuardSets = new Set(["required", "canary", null]);
 const allowedBenchmarkSets = new Set(["required", "canary"]);
 const allowedCategories = new Set(["external", "generated"]);
+const repoRootUrl = new URL("../../", import.meta.url);
 
 const pinCouplings = [
   {
@@ -230,14 +232,16 @@ export function validateProjectMetadata({
     }
 
     if (row.generated_by === undefined) continue;
-    if (
+    const generatedByPathIsInvalid =
       typeof row.generated_by !== "string" ||
       !row.generated_by.startsWith(GENERATOR_SCRIPTS_PREFIX) ||
-      !row.generated_by.endsWith(".mjs")
-    ) {
+      !row.generated_by.endsWith(".mjs");
+    if (generatedByPathIsInvalid) {
       failures.push(
         `${row.name}: generated_by must point to a ${GENERATOR_SCRIPTS_PREFIX}*.mjs generator script`,
       );
+    } else if (!existsSync(new URL(row.generated_by, repoRootUrl))) {
+      failures.push(`${row.name}: generated_by script does not exist: ${row.generated_by}`);
     }
   }
 
