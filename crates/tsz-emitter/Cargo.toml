@@ -187,6 +187,10 @@ name = "arrow_parameter_prologue_tests"
 path = "tests/arrow_parameter_prologue_tests.rs"
 
 [[test]]
+name = "function_parameter_native_prologue_tests"
+path = "tests/function_parameter_native_prologue_tests.rs"
+
+[[test]]
 name = "while_loop_body_capture_tests"
 path = "tests/while_loop_body_capture_tests.rs"
 
