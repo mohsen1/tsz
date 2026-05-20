@@ -88,6 +88,10 @@ export function readSurfaceData() {
   };
 }
 
+export function rowRequiresFixtureSource(def) {
+  return def.repo !== undefined || def.ref !== undefined || def.generated_by !== undefined;
+}
+
 export function computeCoverage(surfaces) {
   const {
     benchRunnerRows,
@@ -115,7 +119,7 @@ export function computeCoverage(surfaces) {
     const name = def.name;
     const isTracked = allTracked.has(name);
     const isRequired = requiredSet.has(name);
-    const hasPinnedSource = def.repo !== undefined || def.ref !== undefined;
+    const requiresFixtureSource = rowRequiresFixtureSource(def);
 
     if (isTracked && !BENCH_RUNNER_EXCLUDED_ROWS.has(name) && !benchRunnerSet.has(name)) {
       drift.push(`${name}: present in project-rows.mjs but missing from scripts/bench/bench-vs-tsgo.sh`);
@@ -126,8 +130,8 @@ export function computeCoverage(surfaces) {
     if (isTracked && !COMPILE_GUARD_EXCLUDED_ROWS.has(name) && !compileGuardFallbackSet.has(name)) {
       drift.push(`${name}: present in project-rows.mjs but missing from project-fixtures.sh compile-guard fallback rows`);
     }
-    if (hasPinnedSource && !fixtureSourceSet.has(name)) {
-      drift.push(`${name}: has repo/ref pin in project-rows.mjs but missing from scripts/bench/project-fixtures.sh`);
+    if (requiresFixtureSource && !fixtureSourceSet.has(name)) {
+      drift.push(`${name}: has fixture source metadata in project-rows.mjs but missing from scripts/bench/project-fixtures.sh`);
     }
     if (isTracked && !compatCorpusSet.has(name)) {
       const setLabel = isRequired ? "required" : "canary";
@@ -163,7 +167,7 @@ export function computeCoverage(surfaces) {
 
   const rows = rowDefinitions.map((def) => {
     const name = def.name;
-    const hasPinnedSource = def.repo !== undefined || def.ref !== undefined;
+    const requiresFixtureSource = rowRequiresFixtureSource(def);
     return {
       name,
       benchmarkSet: def.benchmark_set ?? "—",
@@ -180,7 +184,7 @@ export function computeCoverage(surfaces) {
         : (COMPILE_GUARD_EXCLUDED_ROWS.has(name) ? "—" : "✗"),
       inFixtureSource: fixtureSourceSet.has(name)
         ? "✓"
-        : (hasPinnedSource ? "✗" : "—"),
+        : (requiresFixtureSource ? "✗" : "—"),
       inCompatCorpus: compatCorpusSet.has(name) ? "✓" : "✗",
     };
   });
