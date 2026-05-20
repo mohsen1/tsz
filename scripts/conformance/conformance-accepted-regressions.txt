@@ -2,9 +2,6 @@
 # Add a test path here (one per line) to allow it to fail in CI without
 # blocking the aggregate gate. Remove the entry once the regression is fixed.
 # Format: TypeScript/tests/cases/<subpath>.ts (one path per line, comments with #)
-TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts
-TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts
-TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts
 TypeScript/tests/cases/compiler/computedPropertyBindingElementDeclarationNoCrash1.ts
 TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts
 TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
@@ -26,7 +23,6 @@ TypeScript/tests/cases/compiler/jsxElementType.tsx
 TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx
 TypeScript/tests/cases/compiler/mappedTypeInferenceFromApparentType.ts
 TypeScript/tests/cases/compiler/noExcessiveStackDepthError.ts
-TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
 TypeScript/tests/cases/compiler/recursiveReverseMappedType.ts
 TypeScript/tests/cases/compiler/relationComplexityError.ts
@@ -52,5 +48,4 @@ TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes6.ts
 TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints2.ts
 TypeScript/tests/cases/conformance/types/mapped/mappedTypes6.ts
 TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts
-TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts
 TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference1.ts
