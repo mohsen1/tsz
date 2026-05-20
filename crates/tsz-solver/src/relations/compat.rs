@@ -3,6 +3,7 @@
 use crate::caches::db::QueryDatabase;
 use crate::construction::TypeDatabase;
 use crate::diagnostics::SubtypeFailureReason;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
 use crate::operations::AssignabilityChecker;
 use crate::relations::lawyer::AnyPropagationRules;
 use crate::relations::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
@@ -1835,8 +1836,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let mut target_template = t_mapped.template;
         let source_param = self.interner.type_param(s_mapped.type_param);
         let target_key_substitution =
-            crate::TypeSubstitution::single(t_mapped.type_param.name, source_param);
-        target_template = crate::instantiate_type_cached(
+            TypeSubstitution::single(t_mapped.type_param.name, source_param);
+        target_template = instantiate_type_cached(
             self.interner,
             self.query_db,
             target_template,
