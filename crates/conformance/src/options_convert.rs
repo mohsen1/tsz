@@ -108,7 +108,7 @@ pub fn has_unsupported_server_options(directives: &HashMap<String, String>) -> b
 /// The conformance test source tree uses files like `es2015.d.ts`, `es2015.core.d.ts`, etc.
 /// When only `target` is specified (no `lib`), the server needs the full set of lib names
 /// that the CLI would resolve via tsconfig.json reference-following.
-fn default_libs_for_target(target: &str) -> Option<Vec<&'static str>> {
+pub(crate) fn default_libs_for_target(target: &str) -> Option<Vec<&'static str>> {
     let first = target
         .split(',')
         .next()
@@ -600,7 +600,6 @@ fn default_libs_for_target(target: &str) -> Option<Vec<&'static str>> {
             "esnext.regexp",
             "esnext.string",
             "esnext.symbol",
-            "esnext.typedarrays",
         ],
         _ => return None,
     })
