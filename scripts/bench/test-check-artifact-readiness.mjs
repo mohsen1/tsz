@@ -40,12 +40,13 @@ function makeCompatibility(state) {
     exit_class: state === "green" ? "exit success" : state === "red" ? "nonzero exit" : "exit success",
     first_failure_class: state === "green" ? null : "some failure",
     owner_track: null,
+    semantic_owner_family: "recursive type evaluation pressure",
     phase: "check",
     last_successful_phase: "check",
     diagnostic_status: state === "green" ? "none" : state === "yellow" ? "diagnostic mismatch" : "none",
     diagnostic_deltas: [],
     diagnostic_subsystems: [],
-    known_blockers: [],
+    known_blockers: state === "green" ? [] : ["recursive alias instantiation"],
     reduced_repro_path: null,
     repro: {
       tsconfig_path: null,
@@ -210,6 +211,13 @@ withTempDir((dir) => {
   // Red rows are present but not missing — script exits 0 (all rows present)
   assert.equal(result.status, 0, `red row present in artifact should still exit 0, got:\n${result.stderr}`);
   assert.match(result.stdout, /❌.*red.*\| 1/i, "should show 1 red row");
+  assert.match(result.stdout, /Phase.*Blocker family/, "should include phase and blocker family columns");
+  assert.match(result.stdout, /some failure/, "should name the first failure class for red rows");
+  assert.match(
+    result.stdout,
+    /recursive type evaluation pressure/,
+    "should name the semantic owner family for red rows",
+  );
 });
 console.log("✅ red row present in artifact exits 0 (not missing)");
 
@@ -225,6 +233,7 @@ withTempDir((dir) => {
   const result = run(file);
   assert.equal(result.status, 0, `yellow row should exit 0, got:\n${result.stderr}`);
   assert.match(result.stdout, /⚠️.*yellow.*\| 1/i, "should show 1 yellow row");
+  assert.match(result.stdout, /some failure/, "should name the first failure class for yellow rows");
 });
 console.log("✅ yellow row present exits 0");
 
@@ -257,6 +266,13 @@ withTempDir((dir) => {
   assert.equal(parsed.green, REQUIRED_PROJECT_ROWS.length, "JSON output should show all green");
   assert.ok(Array.isArray(parsed.rows), "JSON output should have rows array");
   assert.equal(parsed.rows.length, REQUIRED_PROJECT_ROWS.length, "rows array should have all required rows");
+  assert.equal(parsed.rows[0].phase, "check", "JSON rows should report phase reached");
+  assert.equal(
+    parsed.rows[0].owner_family,
+    "recursive type evaluation pressure",
+    "JSON rows should report semantic owner family",
+  );
+  assert.deepEqual(parsed.rows[0].known_blockers, [], "green JSON rows should preserve known blocker list");
   // markdown goes to stderr, not stdout
   assert.match(result.stderr, /Benchmark artifact readiness/i, "markdown report should be on stderr with --json");
 });
