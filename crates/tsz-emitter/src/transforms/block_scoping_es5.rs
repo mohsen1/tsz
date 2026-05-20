@@ -83,6 +83,18 @@ impl BlockScopeState {
         self.function_scope_marks.pop();
     }
 
+    /// Temporarily mark the current scope as a function/script scope.
+    ///
+    /// ES5 loop-capture lowering emits the original loop body inside a synthetic
+    /// `_loop_N` function without rebuilding the AST. The body statements should
+    /// therefore use function-level `var` collision rules while being printed.
+    pub fn replace_current_function_scope_mark(&mut self, is_function_scope: bool) -> Option<bool> {
+        let mark = self.function_scope_marks.last_mut()?;
+        let previous = *mark;
+        *mark = is_function_scope;
+        Some(previous)
+    }
+
     /// Register a variable declaration in the current scope
     /// Returns the name to emit (may be renamed if shadowing)
     pub fn register_variable(&mut self, original_name: &str) -> String {

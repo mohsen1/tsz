@@ -259,6 +259,37 @@ fn new_target_es5_explicit_constructor_checks_field_initializers() {
 }
 
 #[test]
+fn captured_for_of_class_declaration_keeps_function_local_name() {
+    let output = emit_es5(
+        "const classesByRow: Record<string, object> = {};\n\
+         for (const row of ['1', '2', '3', '4', '5']) {\n\
+             class RowClass {\n\
+                 row = row;\n\
+                 static factory = () => new RowClass();\n\
+             }\n\
+             classesByRow[row] = RowClass;\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("var RowClass = (function () {"),
+        "Class declarations inside loop-capture functions should keep their function-local binding name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("RowClass.factory = function () { return new RowClass(); };"),
+        "Static field initializers should refer to the class binding used by the IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("classesByRow[row] = RowClass;"),
+        "Loop body references should use the same class binding name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("RowClass_1"),
+        "Loop-captured class declarations should not synthesize a block-scope suffix inside the generated function.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn new_target_es5_private_field_initializers_capture_default_constructor() {
     let output = emit_es5(
         "class C {\n\

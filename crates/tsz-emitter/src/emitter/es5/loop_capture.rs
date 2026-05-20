@@ -458,7 +458,16 @@ impl<'a> Printer<'a> {
         let prev_lexical_block_missing_initializer_function_depth =
             self.lexical_block_missing_initializer_function_depth;
         self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
+        let previous_function_scope_mark = self
+            .ctx
+            .block_scope_state
+            .replace_current_function_scope_mark(true);
         self.emit_loop_body_for_iife(body_idx, body_info, captured_vars, _init_vars);
+        if let Some(previous_function_scope_mark) = previous_function_scope_mark {
+            self.ctx
+                .block_scope_state
+                .replace_current_function_scope_mark(previous_function_scope_mark);
+        }
         self.lexical_block_missing_initializer_function_depth =
             prev_lexical_block_missing_initializer_function_depth;
 
