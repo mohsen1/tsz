@@ -3,10 +3,11 @@
 //! Handles TypeScript's index access types: `T[K]`
 //! Including property access, array indexing, and tuple indexing.
 
+use crate::TypeDatabase;
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type, instantiate_type_preserving_meta_cached,
 };
-use crate::objects::{PropertyCollectionResult, collect_properties};
+use crate::objects::{ApparentMemberKind, PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, MappedType,
@@ -18,7 +19,6 @@ use crate::visitor::{
     TypeVisitor, array_element_type, intersection_list_id, keyof_inner_type, literal_number,
     tuple_list_id, union_list_id,
 };
-use crate::{ApparentMemberKind, TypeDatabase};
 
 use super::super::evaluate::{
     ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN, ARRAY_METHODS_RETURN_NUMBER,
