@@ -6,7 +6,8 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::{NodeIndex, ParserState};
-use tsz_solver::{TypeId, TypeInterner};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeInterner;
 
 fn parse_and_bind(
     name: &str,

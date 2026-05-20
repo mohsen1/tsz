@@ -6,11 +6,12 @@ use tsz_binder::BinderState;
 use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::computation::CompatChecker;
+use tsz_solver::construction::TypeInterner;
 use tsz_solver::def::resolver::TypeResolver;
 use tsz_solver::def::{DefId, DefinitionStore};
 use tsz_solver::{
-    FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, SymbolRef, TypeId, TypeInterner,
-    TypeParamInfo, Visibility,
+    FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, SymbolRef, TypeId, TypeParamInfo,
+    Visibility,
 };
 
 /// Read a checker source path. If the path is a directory, concatenate all .rs files.

@@ -729,7 +729,7 @@ pub fn run_js_grammar_pass(
     if statements.is_empty() {
         return Vec::new();
     }
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
     checker.check_js_grammar_statements(&statements);
     checker.ctx.diagnostics
@@ -761,7 +761,7 @@ pub fn run_isolated_declarations_pass(
     if statements.is_empty() {
         return Vec::new();
     }
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
     checker.check_isolated_declarations(&statements);
     checker.check_isolated_decl_class_expressions(&statements);

@@ -238,7 +238,8 @@ pub(crate) fn is_literal_permissive_object_context(type_id: TypeId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::{PropertyInfo, TupleElement, TypeInterner};
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{PropertyInfo, TupleElement};
 
     fn fresh_object(db: &TypeInterner, name: &str, ty: TypeId) -> TypeId {
         db.object_fresh(vec![PropertyInfo::new(db.intern_string(name), ty)])

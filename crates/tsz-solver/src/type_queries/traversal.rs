@@ -650,7 +650,7 @@ pub fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
     use crate::types::SymbolRef;
 
     struct ExemptApplicationHost {

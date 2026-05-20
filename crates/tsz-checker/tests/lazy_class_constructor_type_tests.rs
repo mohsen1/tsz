@@ -16,8 +16,9 @@ use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
 use tsz_checker::test_utils::check_source_diagnostics;
 use tsz_parser::parser::ParserState;
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeInterner;
 use tsz_solver::type_queries::get_callable_shape;
-use tsz_solver::{TypeId, TypeInterner};
 
 fn check_source(source: &str) -> Vec<Diagnostic> {
     check_source_diagnostics(source)

@@ -1,5 +1,5 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::inference::infer::InferenceContext;
 use crate::relations::compat::CompatChecker;
 use crate::{TupleElement, infer_generic_function};

@@ -29580,7 +29580,7 @@ fn test_iterator_for_of_number_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const num: number = 42;
@@ -29626,7 +29626,7 @@ fn test_iterator_for_of_array_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const arr: number[] = [1, 2, 3];
@@ -29672,7 +29672,7 @@ fn test_iterator_for_of_string_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const str: string = "hello";
@@ -29718,7 +29718,7 @@ fn test_iterator_spread_number_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const num: number = 42;
@@ -29762,7 +29762,7 @@ fn test_iterator_spread_array_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const arr1: number[] = [1, 2, 3];
@@ -29806,7 +29806,7 @@ fn test_iterator_spread_in_call_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 function foo(a: number, b: number): void {}
@@ -29851,7 +29851,7 @@ fn test_iterator_for_of_boolean_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const b: boolean = true;
@@ -29897,7 +29897,7 @@ fn test_iterator_for_of_tuple_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const tuple: [number, string, boolean] = [1, "hello", true];
@@ -29943,7 +29943,7 @@ fn test_iterator_array_destructuring_number_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const num: number = 42;
@@ -29987,7 +29987,7 @@ fn test_iterator_array_destructuring_array_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const arr: number[] = [1, 2, 3];
@@ -30035,7 +30035,7 @@ fn test_array_destructuring_number_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const num: number = 42;
@@ -30079,7 +30079,7 @@ fn test_array_destructuring_boolean_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const flag: boolean = true;
@@ -30123,7 +30123,7 @@ fn test_array_destructuring_object_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const obj = { a: 1, b: 2 };
@@ -30167,7 +30167,7 @@ fn test_array_destructuring_array_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const arr: number[] = [1, 2, 3];
@@ -30211,7 +30211,7 @@ fn test_array_destructuring_string_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const str: string = "hello";
@@ -30257,7 +30257,7 @@ fn test_array_destructuring_union_non_iterable_emits_ts2488() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const val: string | number = "hello";
@@ -30302,7 +30302,7 @@ fn test_array_destructuring_tuple_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const tuple: [number, string] = [1, "hello"];
@@ -30346,7 +30346,7 @@ fn test_array_destructuring_nested_pattern_iterability() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const num: number = 42;
@@ -30399,7 +30399,7 @@ fn test_async_iterator_for_await_of_number_emits_ts2495_without_asynciter_lib() 
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 async function test() {
@@ -30445,7 +30445,7 @@ fn test_async_iterator_for_await_of_array_no_error() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 async function test() {
@@ -30491,7 +30491,7 @@ fn test_async_iterator_for_await_of_boolean_emits_ts2495_without_asynciter_lib()
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 async function test() {
@@ -30540,7 +30540,7 @@ fn test_async_iterator_for_await_of_object_emits_ts2495_without_asynciter_lib() 
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 async function test() {
@@ -30590,7 +30590,7 @@ fn test_required_param_after_optional_ts1016() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 function foo(a?: number, b: string) {
@@ -30642,7 +30642,7 @@ fn test_required_param_after_optional_arrow_ts1016() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 const fn = (a?: number, b: string) => a;
@@ -30692,7 +30692,7 @@ fn test_required_param_after_optional_method_ts1016() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 class Foo {
@@ -30746,7 +30746,7 @@ fn test_required_param_after_optional_constructor_ts1016() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 class Foo {
@@ -30798,7 +30798,7 @@ fn test_no_ts1016_for_proper_parameter_order() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 function foo(a: number, b?: string, c?: boolean) {
@@ -30850,7 +30850,7 @@ fn test_no_ts1016_for_param_with_default_after_optional() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 function foo(a?: number, b: string = "default") {
@@ -30902,7 +30902,7 @@ fn test_no_ts1016_for_rest_param_after_optional() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 function foo(a?: number, ...rest: string[]) {
@@ -30954,7 +30954,7 @@ fn test_multiple_required_params_after_optional_ts1016() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 function foo(a?: number, b: string, c: boolean) {
@@ -31009,7 +31009,7 @@ function foo(a?: number, b: string, c: boolean) {
 fn test_contextual_typing_destructuring_param_object() {
     use crate::binder::BinderState;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 type Handler = (item: { x: number, y: string }) => void;
@@ -31061,7 +31061,7 @@ const handler: Handler = ({ x, y }) => {
 fn test_contextual_typing_destructuring_param_array() {
     use crate::binder::BinderState;
     use crate::checker::state::CheckerState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     let source = r#"
 type Handler = (item: [number, string]) => void;
@@ -33182,7 +33182,7 @@ fn test_ts2502_repro_circular_var() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33216,7 +33216,7 @@ fn test_ts2451_global_redeclaration() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33245,7 +33245,7 @@ fn test_ts2313_simple_circular_type_alias() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33277,7 +33277,7 @@ fn test_ts2313_indirect_circular_type_alias() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33309,7 +33309,7 @@ fn test_ts2310_circular_interface_inheritance() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33372,7 +33372,7 @@ fn test_ts1194_export_in_non_ambient_namespace() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33407,7 +33407,7 @@ fn test_ts1194_no_error_in_ambient_namespace() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33442,7 +33442,7 @@ fn test_ts1194_no_error_in_dts_file() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33479,7 +33479,7 @@ fn test_ts1194_no_error_nested_in_declare_namespace() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33517,7 +33517,7 @@ fn test_ts1194_no_error_in_block_within_namespace() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33568,7 +33568,7 @@ fn test_reverse_mapped_type_preserves_optional_modifier() {
     crate::test_fixtures::merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33620,7 +33620,7 @@ fn test_reverse_mapped_type_removes_added_readonly() {
     crate::test_fixtures::merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -33669,7 +33669,7 @@ fn test_reverse_mapped_type_validate_preserves_optional() {
     crate::test_fixtures::merge_shared_lib_symbols(&mut binder);
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = crate::checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,

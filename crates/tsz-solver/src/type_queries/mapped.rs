@@ -1521,8 +1521,8 @@ pub fn expand_mapped_type_to_properties(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
     use crate::caches::db::QueryDatabase;
+    use crate::construction::TypeInterner;
     use crate::types::TypeParamInfo;
 
     #[test]

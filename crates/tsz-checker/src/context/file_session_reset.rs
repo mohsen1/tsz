@@ -505,7 +505,7 @@ mod tests {
     use crate::recovery::RecoveryReason;
     use tsz_binder::BinderState;
     use tsz_parser::parser::{NodeArena, NodeIndex};
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     fn fresh_ctx<'a>(
         arena: &'a NodeArena,

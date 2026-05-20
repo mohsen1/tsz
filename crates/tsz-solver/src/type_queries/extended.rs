@@ -1495,7 +1495,7 @@ mod tests {
 
     #[test]
     fn branded_primitive_intersections_are_valid_index_types() {
-        let interner = crate::TypeInterner::new();
+        let interner = crate::construction::TypeInterner::new();
         let brand = interner.object(vec![]);
 
         let branded_string = interner.intersection(vec![TypeId::STRING, brand]);
@@ -1513,7 +1513,7 @@ mod tests {
 
     #[test]
     fn object_only_intersections_remain_invalid_index_types() {
-        let interner = crate::TypeInterner::new();
+        let interner = crate::construction::TypeInterner::new();
         let left = interner.object(vec![]);
         let right = interner.object(vec![]);
         let object_intersection = interner.intersection(vec![left, right]);
@@ -1671,7 +1671,7 @@ mod tests {
     /// resolve to `Literal(Boolean)` and must widen to BOOLEAN.
     #[test]
     fn widen_literal_to_primitive_widens_boolean_intrinsics() {
-        let interner = crate::TypeInterner::new();
+        let interner = crate::construction::TypeInterner::new();
         assert_eq!(
             widen_literal_to_primitive(&interner, TypeId::BOOLEAN_TRUE),
             TypeId::BOOLEAN

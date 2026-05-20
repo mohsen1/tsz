@@ -1673,7 +1673,7 @@ mod tests {
     use std::sync::Arc;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     fn first_argument_for_call(checker: &CheckerState<'_>, callee_name: &str) -> NodeIndex {
         checker

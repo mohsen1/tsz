@@ -2539,7 +2539,7 @@ mod tests {
             module: ModuleKind::CommonJS,
             ..Default::default()
         };
-        let interner = tsz_solver::TypeInterner::new();
+        let interner = tsz_solver::construction::TypeInterner::new();
         let mut checker = CheckerState::new(
             all_arenas[entry_idx].as_ref(),
             all_binders[entry_idx].as_ref(),

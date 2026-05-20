@@ -13,7 +13,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Bind `lib_*.mts` and `main.mts` together, with module specifiers wired so
 /// `./lib.mjs` resolves to lib.mts and `./main.mjs` resolves to main.mts.

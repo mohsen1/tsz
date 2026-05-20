@@ -15,7 +15,7 @@ use tsz::parallel::{
 };
 use tsz::parser::ParserState;
 use tsz_checker::diagnostics::DiagnosticCategory;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 use super::options::{module_kind_from_u8, target_kind_from_u8};
 use super::source_file::TsSourceFile;

@@ -1191,7 +1191,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
     use crate::types::{CallSignature, CallableShape, FunctionShape, PropertyInfo};
 
     fn structural_function_interface(interner: &TypeInterner) -> TypeId {

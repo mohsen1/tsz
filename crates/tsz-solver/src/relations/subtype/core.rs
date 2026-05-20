@@ -2824,7 +2824,7 @@ mod intrinsic_object_tests;
 #[cfg(test)]
 mod with_identity_check_mode_tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
 
     #[test]
     fn restores_flags_after_closure() {

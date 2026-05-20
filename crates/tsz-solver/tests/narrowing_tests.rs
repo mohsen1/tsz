@@ -1,6 +1,6 @@
 use super::*;
-use crate::TypeInterner;
 use crate::construction::TypeDatabase;
+use crate::construction::TypeInterner;
 use crate::def::resolver::TypeResolver;
 use crate::types::SymbolRef;
 

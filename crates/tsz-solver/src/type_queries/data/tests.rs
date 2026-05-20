@@ -1,5 +1,5 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::types::{CallSignature, CallableShape, ParamInfo, TypeId, TypeParamInfo};
 
 fn make_callable_with_construct_sig(

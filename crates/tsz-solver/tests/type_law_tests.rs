@@ -10,9 +10,10 @@
 //! - **Top**: T ≤ any (any is the top type)
 //! - **Bottom**: never ≤ T (never is the bottom type)
 
+use crate::construction::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{SymbolRef, TypeId, Visibility};
-use crate::{FunctionShape, ParamInfo, PropertyInfo, TupleElement, TypeInterner};
+use crate::{FunctionShape, ParamInfo, PropertyInfo, TupleElement};
 
 // =============================================================================
 // Reflexivity Tests (T ≤ T)

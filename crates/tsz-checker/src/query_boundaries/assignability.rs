@@ -1476,7 +1476,8 @@ pub(crate) fn check_application_variance_assignability<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::{IndexSignature, TypeInterner};
+    use tsz_solver::IndexSignature;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn target_property_index_uses_first_atom_match() {

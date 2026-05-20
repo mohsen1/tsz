@@ -8,7 +8,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 use super::{DeclarationEmitter, ImportPlan, SourceMapState};
 

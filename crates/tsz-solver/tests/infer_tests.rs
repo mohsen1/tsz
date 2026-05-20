@@ -1,5 +1,5 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 use crate::inference::infer::{InferenceContext, InferenceError};
 use crate::relations::compat::CompatChecker;

@@ -1047,7 +1047,8 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod tests {
     use super::JsExportSurface;
-    use tsz_solver::{PropertyInfo, TypeId, TypeInterner, Visibility};
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
     fn prop(db: &TypeInterner, name: &str, declaration_order: u32) -> PropertyInfo {
         PropertyInfo {

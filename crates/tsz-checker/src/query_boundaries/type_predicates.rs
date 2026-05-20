@@ -83,7 +83,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn top_level_error_or_error_union_member_detects_error_shapes() {
