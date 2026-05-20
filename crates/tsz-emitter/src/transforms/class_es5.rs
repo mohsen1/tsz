@@ -543,10 +543,12 @@ impl<'a> ClassES5Emitter<'a> {
         if !self.externally_hoisted_decls.is_empty()
             && let IRNode::ES5ClassIIFE {
                 ref mut weakmap_decls,
+                ref mut computed_prop_temp_decls,
                 ..
             } = ir
         {
             weakmap_decls.retain(|decl| !self.externally_hoisted_decls.contains(decl));
+            computed_prop_temp_decls.retain(|decl| !self.externally_hoisted_decls.contains(decl));
         }
 
         // Inject leading comment from the main emitter's comment system.

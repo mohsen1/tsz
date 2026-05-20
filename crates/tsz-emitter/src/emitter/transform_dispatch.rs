@@ -920,7 +920,7 @@ impl<'a> Printer<'a> {
         {
             let class_name = self.get_identifier_text_idx(class_data.name);
             let externally_hoisted_decls =
-                self.es5_computed_auto_accessor_hoisted_decls(class_node, &class_name);
+                self.es5_class_externally_hoisted_decls(class_node, &class_name);
             if !externally_hoisted_decls.is_empty() {
                 for decl in &externally_hoisted_decls {
                     if !self.hoisted_assignment_temps.contains(decl) {
