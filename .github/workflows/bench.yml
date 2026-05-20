@@ -589,12 +589,42 @@ jobs:
 
             [[ -n "$cloudbuild_id" ]] || return 1
             storage_cp "gs://tsz-ci_cloudbuild/artifacts-${cloudbuild_id}.json" "$manifest_file" || return 1
-            node - "$manifest_file" "$target_sha" > "$manifest_paths" <<'NODE'
+            if ! node - "$manifest_file" "$target_sha" > "$manifest_paths" <<'NODE'
           const fs = require("node:fs");
 
           const [manifestPath, targetSha] = process.argv.slice(2);
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-          const entries = Array.isArray(manifest) ? manifest : (manifest.location ? [manifest] : (manifest.artifacts || manifest.results || []));
+          const rawManifest = fs.readFileSync(manifestPath, "utf8").trim();
+          const parseManifest = (raw) => {
+            if (!raw) return [];
+            try {
+              return JSON.parse(raw);
+            } catch (jsonError) {
+              return raw.split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line, index) => {
+                  try {
+                    return JSON.parse(line);
+                  } catch (lineError) {
+                    lineError.message = `Could not parse Cloud Build artifact manifest line ${index + 1}: ${lineError.message}`;
+                    throw lineError;
+                  }
+                });
+            }
+          };
+          const collectEntries = (manifest) => {
+            const queue = Array.isArray(manifest) ? [...manifest] : [manifest];
+            const entries = [];
+            for (const entry of queue) {
+              if (!entry || typeof entry !== "object") continue;
+              if (entry.location) entries.push(entry);
+              for (const key of ["artifacts", "results", "objects", "files"]) {
+                if (Array.isArray(entry[key])) queue.push(...entry[key]);
+              }
+            }
+            return entries;
+          };
+          const entries = collectEntries(parseManifest(rawManifest));
           const locationOf = (entry) => String(entry.location || "").split("#", 1)[0];
           const findLocation = (suffixes) => {
             for (const suffix of suffixes) {
@@ -608,12 +638,16 @@ jobs:
             `bench-prep/${targetSha}/bench-prep.env`,
             "/bench-prep/latest/bench-prep.env",
             "bench-prep/latest/bench-prep.env",
+            "/bench-prep.env",
+            "bench-prep.env",
           ]);
           const tar = findLocation([
             `/bench-prep/${targetSha}/bench-prep.tar`,
             `bench-prep/${targetSha}/bench-prep.tar`,
             "/bench-prep/latest/bench-prep.tar",
             "bench-prep/latest/bench-prep.tar",
+            "/bench-prep.tar",
+            "bench-prep.tar",
           ]);
           if (!env || !tar) {
             console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
@@ -622,8 +656,12 @@ jobs:
           console.log(`manifest_env=${JSON.stringify(env)}`);
           console.log(`manifest_tar=${JSON.stringify(tar)}`);
           NODE
+            then
+              return 1
+            fi
             # shellcheck disable=SC1090
             source "$manifest_paths"
+            [[ -n "${manifest_env:-}" && -n "${manifest_tar:-}" ]] || return 1
             storage_cp "$manifest_env" bench-prep.env && storage_cp "$manifest_tar" bench-prep.tar
           }
           cloudbuild_status() {
@@ -703,12 +741,42 @@ jobs:
 
             [[ -n "$cloudbuild_id" ]] || return 1
             storage_cp "gs://tsz-ci_cloudbuild/artifacts-${cloudbuild_id}.json" "$manifest_file" || return 1
-            node - "$manifest_file" "$target_sha" > "$manifest_paths" <<'NODE'
+            if ! node - "$manifest_file" "$target_sha" > "$manifest_paths" <<'NODE'
           const fs = require("node:fs");
 
           const [manifestPath, targetSha] = process.argv.slice(2);
-          const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-          const entries = Array.isArray(manifest) ? manifest : (manifest.location ? [manifest] : (manifest.artifacts || manifest.results || []));
+          const rawManifest = fs.readFileSync(manifestPath, "utf8").trim();
+          const parseManifest = (raw) => {
+            if (!raw) return [];
+            try {
+              return JSON.parse(raw);
+            } catch (jsonError) {
+              return raw.split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line, index) => {
+                  try {
+                    return JSON.parse(line);
+                  } catch (lineError) {
+                    lineError.message = `Could not parse Cloud Build artifact manifest line ${index + 1}: ${lineError.message}`;
+                    throw lineError;
+                  }
+                });
+            }
+          };
+          const collectEntries = (manifest) => {
+            const queue = Array.isArray(manifest) ? [...manifest] : [manifest];
+            const entries = [];
+            for (const entry of queue) {
+              if (!entry || typeof entry !== "object") continue;
+              if (entry.location) entries.push(entry);
+              for (const key of ["artifacts", "results", "objects", "files"]) {
+                if (Array.isArray(entry[key])) queue.push(...entry[key]);
+              }
+            }
+            return entries;
+          };
+          const entries = collectEntries(parseManifest(rawManifest));
           const locationOf = (entry) => String(entry.location || "").split("#", 1)[0];
           const findLocation = (suffixes) => {
             for (const suffix of suffixes) {
@@ -722,12 +790,16 @@ jobs:
             `bench-prep/${targetSha}/bench-prep.env`,
             "/bench-prep/latest/bench-prep.env",
             "bench-prep/latest/bench-prep.env",
+            "/bench-prep.env",
+            "bench-prep.env",
           ]);
           const tar = findLocation([
             `/bench-prep/${targetSha}/bench-prep.tar`,
             `bench-prep/${targetSha}/bench-prep.tar`,
             "/bench-prep/latest/bench-prep.tar",
             "bench-prep/latest/bench-prep.tar",
+            "/bench-prep.tar",
+            "bench-prep.tar",
           ]);
           if (!env || !tar) {
             console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
@@ -736,8 +808,12 @@ jobs:
           console.log(`manifest_env=${JSON.stringify(env)}`);
           console.log(`manifest_tar=${JSON.stringify(tar)}`);
           NODE
+            then
+              return 1
+            fi
             # shellcheck disable=SC1090
             source "$manifest_paths"
+            [[ -n "${manifest_env:-}" && -n "${manifest_tar:-}" ]] || return 1
             storage_cp "$manifest_env" bench-prep.env && storage_cp "$manifest_tar" bench-prep.tar
           }
           cloudbuild_status() {
@@ -1080,7 +1156,6 @@ jobs:
           TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
           MAIN_SHA="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
           TARGET_SHA="${BENCH_TARGET_SHA:-${GITHUB_SHA}}"
-          EVENT_NAME="${{ github.event_name }}"
 
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
             "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
