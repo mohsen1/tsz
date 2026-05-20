@@ -568,35 +568,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         result
     }
 
-    /// Apply compiler flags from a packed u16 bitmask.
-    ///
-    /// This unpacks the flags used by `RelationCacheKey` and applies them to the checker.
-    /// The bit layout matches the cache key definition in types.rs:
-    /// - bit 0: `strict_null_checks`
-    /// - bit 1: `strict_function_types`
-    /// - bit 2: `exact_optional_property_types`
-    /// - bit 3: `no_unchecked_indexed_access`
-    /// - bit 4: `disable_method_bivariance`
-    /// - bit 5: `allow_void_return`
-    /// - bit 6: `allow_bivariant_rest`
-    /// - bit 7: `allow_bivariant_param_count`
-    /// - bit 15: `strict_readonly_identity`
-    pub(crate) const fn apply_flags(mut self, flags: u16) -> Self {
-        self.strict_null_checks = (flags & (1 << 0)) != 0;
-        self.strict_function_types = (flags & (1 << 1)) != 0;
-        self.exact_optional_property_types = (flags & (1 << 2)) != 0;
-        self.no_unchecked_indexed_access = (flags & (1 << 3)) != 0;
-        self.disable_method_bivariance = (flags & (1 << 4)) != 0;
-        self.allow_void_return = (flags & (1 << 5)) != 0;
-        self.allow_bivariant_rest = (flags & (1 << 6)) != 0;
-        self.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
-        self.strict_readonly_identity = (flags & (1 << 15)) != 0;
-        self.erase_generics = (flags & crate::RelationCacheKey::FLAG_NO_ERASE_GENERICS) == 0;
-        self.allow_erased_generic_signature_retry =
-            (flags & crate::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY) != 0;
-        self
-    }
-
     pub(crate) fn resolve_lazy_type(&self, type_id: TypeId) -> TypeId {
         if let Some(def_id) = lazy_def_id(self.interner, type_id) {
             self.resolver

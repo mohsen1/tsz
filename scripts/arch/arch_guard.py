@@ -712,6 +712,15 @@ REGEX_LINE_COUNT_CHECKS = [
         0,
     ),
     (
+        "Solver relation boundary: relation engines avoid packed apply_flags (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "relations"],
+        re.compile(
+            r"\bfn\s+apply_flags\s*\([^)]*\bflags\s*:\s*u16"
+            r"|\.\s*apply_flags\s*\(\s*policy\.flags\s*\)"
+        ),
+        0,
+    ),
+    (
         "Solver relation boundary: query cache uses relation facade (#8207)",
         [ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs"],
         re.compile(r"\b(?:configured_compat_checker|configured_subtype_checker)\s*\("),
