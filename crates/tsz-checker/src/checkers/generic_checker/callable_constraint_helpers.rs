@@ -210,45 +210,6 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::is_template_literal_type(self.ctx.types, index)
     }
 
-    /// Check if a constraint is (or expands to) a union where every member has call or
-    /// construct signatures.
-    ///
-    /// Application types like `ComponentType<any>` store union members as Application nodes
-    /// in the database — neither the Application nor its unevaluated members satisfy
-    /// `is_callable_type`. This helper evaluates the input lazily (only when
-    /// `union_members` finds no direct union) and then evaluates each member individually,
-    /// so `ComponentType<any>` is recognised as a callable constraint.
-    pub(super) fn constraint_union_members_all_callable(&mut self, type_id: TypeId) -> bool {
-        let db = self.ctx.types.as_type_database();
-        let members = match crate::query_boundaries::common::union_members(db, type_id) {
-            Some(m) if !m.is_empty() => m,
-            Some(_) => return false,
-            None => {
-                let evaluated = self.evaluate_type_for_assignability(type_id);
-                let db = self.ctx.types.as_type_database();
-                match crate::query_boundaries::common::union_members(db, evaluated) {
-                    Some(m) if !m.is_empty() => m,
-                    _ => return false,
-                }
-            }
-        };
-        for &m in &members {
-            let db = self.ctx.types.as_type_database();
-            if query::is_callable_type(db, m) {
-                continue;
-            }
-            let m_eval = self.evaluate_type_for_assignability(m);
-            let db = self.ctx.types.as_type_database();
-            if query::is_callable_type(db, m_eval)
-                || query::callable_shape_for_type(db, m_eval).is_some()
-            {
-                continue;
-            }
-            return false;
-        }
-        true
-    }
-
     pub(super) fn emit_invalid_remapped_mapped_template_index_constraint_error(
         &mut self,
         type_arg: TypeId,
@@ -260,7 +221,7 @@ impl<'a> CheckerState<'a> {
         let db = self.ctx.types.as_type_database();
         let constraint_is_callable = query::is_callable_type(db, constraint_resolved)
             || query::is_callable_type(db, constraint_evaluated)
-            || self.constraint_union_members_all_callable(constraint_evaluated)
+            || query::constraint_expands_to_callable_union(db, constraint_evaluated)
             || self.is_function_constraint(constraint)
             || self.is_function_constraint(constraint_resolved);
         if !constraint_is_callable || !self.invalid_remapped_mapped_template_index_access(type_arg)

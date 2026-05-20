@@ -316,6 +316,18 @@ fn callable_type_satisfies_application_callable_union_constraint_no_ts2344() {
 }
 
 #[test]
+fn construct_only_type_satisfies_application_callable_union_constraint_no_ts2344() {
+    let codes = check_source_codes(&with_component_prelude(
+        "type Result = RequiresComponent<ComponentClass<any>>;",
+    ));
+    assert_no_code!(
+        codes,
+        2344,
+        "ComponentClass<any> satisfies ComponentType<any> through construct signatures."
+    );
+}
+
+#[test]
 fn intersection_non_callable_with_type_param_against_application_callable_union_ts2344() {
     // `AnyComponent & C` is an intersection with a type parameter — C is already
     // constrained to `ComponentType<any>`, so no TS2344 at the declaration site.
@@ -372,5 +384,25 @@ type Result = RequiresRenderable<MyFn>;
         codes,
         2344,
         "callable type satisfying renamed Application-callable-union must NOT emit TS2344."
+    );
+}
+
+#[test]
+fn construct_only_type_satisfies_renamed_application_callable_union_no_ts2344() {
+    let codes = check_source_codes(
+        r#"
+interface Ctor<P> { new(props: P): object; }
+interface Fn<P> { (props: P): any; }
+type Renderable<P> = Ctor<P> | Fn<P>;
+type RequiresRenderable<R extends Renderable<any>> = { r: R };
+
+interface MyCtor { new (props: any): object; }
+type Result = RequiresRenderable<MyCtor>;
+"#,
+    );
+    assert_no_code!(
+        codes,
+        2344,
+        "construct-only type satisfying renamed Application-callable-union must NOT emit TS2344."
     );
 }

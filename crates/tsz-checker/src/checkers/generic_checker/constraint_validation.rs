@@ -310,9 +310,11 @@ impl<'a> CheckerState<'a> {
                     let constraint_is_callable = query::is_callable_type(
                         self.ctx.types.as_type_database(),
                         constraint_resolved,
+                    ) || query::constraint_expands_to_callable_union(
+                        self.ctx.types.as_type_database(),
+                        constraint_resolved,
                     ) || self
-                        .constraint_union_members_all_callable(constraint_resolved)
-                        || self.is_function_constraint(param.constraint.unwrap_or(TypeId::NEVER));
+                        .is_function_constraint(param.constraint.unwrap_or(TypeId::NEVER));
                     let generic_indexed_type_arg = self.generic_indexed_access_subject(type_arg);
                     let keep_eager_check = constraint_is_callable
                         && generic_indexed_type_arg.is_some()
@@ -667,7 +669,8 @@ impl<'a> CheckerState<'a> {
 
                                 let constraint_is_callable =
                                     query::is_callable_type(db, constraint_resolved)
-                                        || self.constraint_union_members_all_callable(
+                                        || query::constraint_expands_to_callable_union(
+                                            db,
                                             constraint_resolved,
                                         );
                                 if !constraint_is_callable {
@@ -821,12 +824,14 @@ impl<'a> CheckerState<'a> {
                                 // tsc reports TS2344 in this case because callability
                                 // is not provable at definition time.
                                 let constraint_resolved = self.resolve_lazy_type(constraint);
-                                let constraint_is_callable = query::is_callable_type(
-                                    self.ctx.types.as_type_database(),
-                                    constraint_resolved,
-                                ) || self
-                                    .constraint_union_members_all_callable(constraint_resolved)
-                                    || self.is_function_constraint(
+                                let constraint_is_callable =
+                                    query::is_callable_type(
+                                        self.ctx.types.as_type_database(),
+                                        constraint_resolved,
+                                    ) || query::constraint_expands_to_callable_union(
+                                        self.ctx.types.as_type_database(),
+                                        constraint_resolved,
+                                    ) || self.is_function_constraint(
                                         param.constraint.unwrap_or(TypeId::NEVER),
                                     );
                                 let generic_indexed_type_arg =
@@ -875,7 +880,10 @@ impl<'a> CheckerState<'a> {
                             // because 'Boat' is concrete and all its values are callable.
                             let constraint_is_callable =
                                 query::is_callable_type(db, inst_constraint)
-                                    || self.constraint_union_members_all_callable(inst_constraint)
+                                    || query::constraint_expands_to_callable_union(
+                                        db,
+                                        inst_constraint,
+                                    )
                                     || self.is_function_constraint(original_constraint);
                             if constraint_is_callable
                                 && generic_indexed_type_arg.is_some()
@@ -1129,7 +1137,8 @@ impl<'a> CheckerState<'a> {
                                 let constraint_is_callable =
                                     query::is_callable_type(db, constraint_resolved)
                                         || query::is_callable_type(db, constraint_evaluated)
-                                        || self.constraint_union_members_all_callable(
+                                        || query::constraint_expands_to_callable_union(
+                                            db,
                                             constraint_evaluated,
                                         )
                                         || self.is_function_constraint(constraint)
