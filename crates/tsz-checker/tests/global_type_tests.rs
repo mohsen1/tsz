@@ -13,7 +13,7 @@ use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::test_utils::load_compiled_lib_files;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Check source with `@noLib` semantics (no lib symbols merged, no
 /// `lib_contexts` on the checker). Routes through the shared

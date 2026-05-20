@@ -976,7 +976,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// borrow conflicts: this borrows `interner` (immutable) while the caller
     /// needs `self.subtype` (mutable) for constraint comparison.
     fn collect_constraint_pairs(
-        interner: &dyn crate::TypeDatabase,
+        interner: &dyn crate::construction::TypeDatabase,
         a_shape_id: crate::types::ObjectShapeId,
         b_shape_id: crate::types::ObjectShapeId,
     ) -> Vec<(TypeId, TypeId)> {
@@ -1044,7 +1044,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Collect type parameter constraint pairs from two Callable types' signatures.
     fn collect_callable_constraint_pairs(
-        interner: &dyn crate::TypeDatabase,
+        interner: &dyn crate::construction::TypeDatabase,
         a_cid: crate::types::CallableShapeId,
         b_cid: crate::types::CallableShapeId,
     ) -> Vec<(TypeId, TypeId)> {
@@ -1087,7 +1087,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Collect type parameter constraint pairs from two Function types.
     fn collect_function_constraint_pairs(
-        interner: &dyn crate::TypeDatabase,
+        interner: &dyn crate::construction::TypeDatabase,
         a_fid: crate::types::FunctionShapeId,
         b_fid: crate::types::FunctionShapeId,
     ) -> Vec<(TypeId, TypeId)> {

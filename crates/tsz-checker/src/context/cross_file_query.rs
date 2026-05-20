@@ -560,8 +560,9 @@ mod tests {
     use crate::context::{CheckerContext, CheckerOptions};
     use tsz_binder::{BinderState, SymbolId};
     use tsz_parser::parser::{NodeArena, NodeIndex, ParserState};
+    use tsz_solver::TypeId;
+    use tsz_solver::construction::TypeInterner;
     use tsz_solver::def::DefinitionStore;
-    use tsz_solver::{TypeId, TypeInterner};
 
     fn shared_context<'a>(
         arena: &'a NodeArena,

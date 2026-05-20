@@ -919,8 +919,33 @@ impl<'a> Printer<'a> {
         if is_accessor {
             self.write("accessor ");
         }
-        for &decl_list_idx in &var_stmt.declarations.nodes {
-            self.emit(decl_list_idx);
+        let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
+        let arrow_comment_scan_end = self
+            .source_text
+            .map_or(effective_end, |text| text.len() as u32);
+        let last_concise_arrow_comment_range = self
+            .variable_statement_last_concise_arrow_comment_range(
+                &var_stmt.declarations,
+                arrow_comment_scan_end,
+            );
+        let last_initializer_has_deferred_arrow_comment =
+            last_concise_arrow_comment_range.is_some();
+        let last_emitted_declaration_end =
+            self.variable_statement_last_emitted_declaration_end(&var_stmt.declarations);
+        if let Some((comment_start, comment_end)) = last_concise_arrow_comment_range {
+            self.with_arrow_concise_body_trailing_comments_deferred(
+                comment_start,
+                comment_end,
+                |this| {
+                    for &decl_list_idx in &var_stmt.declarations.nodes {
+                        this.emit(decl_list_idx);
+                    }
+                },
+            );
+        } else {
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                self.emit(decl_list_idx);
+            }
         }
         let recovered_async_arrow_return = self.recovered_async_arrow_return_name(node);
         let recovered_bare_arrow_return = self.recovered_bare_arrow_return_name(node);
@@ -942,15 +967,14 @@ impl<'a> Printer<'a> {
                 self.consumed_recovered_expression_statement_span =
                     Some((consumed_span.0, consumed_span.1, tail_name));
             }
-            if let Some(last_end) =
-                self.variable_statement_last_emitted_declaration_end(&var_stmt.declarations)
-            {
-                let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
+            if let Some(last_end) = last_emitted_declaration_end {
                 if let Some(semi_after) =
                     self.find_declaration_semicolon_after(last_end, effective_end)
                 {
                     let comment_end = semi_after.saturating_sub(1);
-                    self.emit_comments_in_range(last_end, comment_end, true, false);
+                    if !last_initializer_has_deferred_arrow_comment {
+                        self.emit_comments_in_range(last_end, comment_end, true, false);
+                    }
                 }
             }
             self.map_trailing_semicolon(node);
@@ -966,8 +990,10 @@ impl<'a> Printer<'a> {
         // Use a bounded scan range that excludes erased type annotations.
         // For `var v: { (...); // comment }`, the backward `;` scan must
         // not find semicolons inside the erased type annotation.
-        let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
         self.emit_trailing_comment_after_semicolon_in_range(node.pos, effective_end);
+        if let Some((comment_start, comment_end)) = last_concise_arrow_comment_range {
+            self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
+        }
         self.emit_static_block_await_arrow_recovery_blocks_after_variable_statement(
             &var_stmt.declarations,
         );
@@ -1617,7 +1643,24 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit_expression_in_statement_position(expr_stmt.expression);
+        let expression_trailing_comment_range = self.source_text.and_then(|text| {
+            self.rightmost_concise_arrow_deferred_comment_range(
+                expr_stmt.expression,
+                text.len() as u32,
+            )
+        });
+
+        if let Some((comment_start, comment_end)) = expression_trailing_comment_range {
+            self.with_arrow_concise_body_trailing_comments_deferred(
+                comment_start,
+                comment_end,
+                |this| {
+                    this.emit_expression_in_statement_position(expr_stmt.expression);
+                },
+            );
+        } else {
+            self.emit_expression_in_statement_position(expr_stmt.expression);
+        }
         if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
             self.write_line();
         }
@@ -1632,6 +1675,9 @@ impl<'a> Printer<'a> {
             self.write_semicolon();
         }
         self.emit_trailing_comment_after_semicolon(node);
+        if let Some((comment_start, comment_end)) = expression_trailing_comment_range {
+            self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
+        }
     }
 
     /// Emit an arbitrary expression as a standalone statement expression.

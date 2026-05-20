@@ -25,7 +25,7 @@ fn check_js(source: &str) -> Vec<(u32, String)> {
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = tsz_checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -53,7 +53,7 @@ fn check_js_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, Str
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = tsz_checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -83,7 +83,7 @@ fn check_ts(source: &str) -> Vec<(u32, String)> {
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = tsz_checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -145,7 +145,7 @@ fn check_js_with_lib_files(
         binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
     }
 
-    let types = tsz_solver::TypeInterner::new();
+    let types = tsz_solver::construction::TypeInterner::new();
     let mut checker = tsz_checker::state::CheckerState::new(
         parser.get_arena(),
         &binder,

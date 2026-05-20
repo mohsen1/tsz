@@ -1,5 +1,6 @@
 use super::*;
-use tsz_solver::{CallSignature, CallableShape, FunctionShape, TypeInterner, TypeParamInfo};
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{CallSignature, CallableShape, FunctionShape, TypeParamInfo};
 
 #[test]
 fn classifies_resolution_and_signature_paths() {

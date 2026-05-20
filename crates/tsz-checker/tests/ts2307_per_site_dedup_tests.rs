@@ -11,7 +11,7 @@
 use tsz_binder::BinderState;
 use tsz_checker::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 #[test]
 fn ts2307_dedup_set_is_cleared_at_start_of_each_import_equals_check() {

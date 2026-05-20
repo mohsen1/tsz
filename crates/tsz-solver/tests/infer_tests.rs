@@ -1,9 +1,10 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 use crate::inference::infer::{InferenceContext, InferenceError};
+use crate::relations::compat::CompatChecker;
 use crate::types::LiteralValue;
-use crate::{AssignabilityChecker, CompatChecker, ConditionalType, infer_generic_function};
+use crate::{AssignabilityChecker, ConditionalType, infer_generic_function};
 
 #[test]
 fn test_inference_basic() {

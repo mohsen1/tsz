@@ -7,6 +7,7 @@
 //! - Type parameter inference
 
 use super::*;
+use crate::computation::CompatChecker;
 use crate::intern::TypeInterner;
 use crate::types::{FunctionShape, IntrinsicKind, PropertyInfo, TypeData, TypeParamInfo};
 

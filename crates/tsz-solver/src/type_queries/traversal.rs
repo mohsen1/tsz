@@ -6,10 +6,12 @@
 //! and diagnostic property name collection — without directly matching on
 //! `TypeData` variants.
 
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::TypeResolver;
 use crate::type_queries::data::{get_callable_shape, get_object_shape};
 use crate::types::{IntrinsicKind, TemplateSpan, TypeData, TypeId};
-use crate::{TypeDatabase, TypeResolver, TypeSubstitution, instantiate_type};
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
@@ -648,7 +650,7 @@ pub fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
     use crate::types::SymbolRef;
 
     struct ExemptApplicationHost {
