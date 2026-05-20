@@ -8,7 +8,6 @@ TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 TypeScript/tests/cases/compiler/crossFileOverloadModifierConsistency.ts
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
 TypeScript/tests/cases/compiler/declarationsWithRecursiveInternalTypesProduceUniqueTypeParams.ts
-TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/divideAndConquerIntersections.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts

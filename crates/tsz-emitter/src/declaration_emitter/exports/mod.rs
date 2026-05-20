@@ -1246,6 +1246,9 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&type_text);
+        } else if let Some(type_text) = self.construct_return_new_expression_type_text(expr_idx) {
+            self.write(": ");
+            self.write(&type_text);
         } else if let Some(type_text) = self.preferred_expression_type_text(expr_idx) {
             let type_text = self
                 .expand_imported_indexed_access_type_text(&type_text)

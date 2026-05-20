@@ -587,6 +587,13 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 tsz_solver::type_queries::get_return_type(interner, callee_type)
             }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                let new_expr = self.arena.get_call_expr(node)?;
+                let callee_type = self
+                    .get_node_type_or_names(&[new_expr.expression])
+                    .or_else(|| self.get_type_via_symbol(new_expr.expression))?;
+                tsz_solver::type_queries::construct_return_type_for_type(interner, callee_type)
+            }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 || k == syntax_kind_ext::AWAIT_EXPRESSION =>
             {
