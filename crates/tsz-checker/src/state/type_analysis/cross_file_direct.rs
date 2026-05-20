@@ -7,6 +7,7 @@ use super::cross_file_direct_actual_lib::{
 use super::source_alias_attribution::record_source_alias_rejection_kinds;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_common::perf_counters::{
     CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome,
@@ -894,6 +895,63 @@ impl<'a> CheckerState<'a> {
                     })
             })
         })
+    }
+
+    fn interface_declarations_have_simple_heritage(
+        declarations: &[(NodeIndex, &NodeArena)],
+    ) -> bool {
+        let mut found_heritage = false;
+        declarations.iter().all(|(decl_idx, arena)| {
+            let Some(node) = arena.get(*decl_idx) else {
+                return false;
+            };
+            let Some(interface) = arena.get_interface(node) else {
+                return false;
+            };
+            if interface
+                .type_parameters
+                .as_ref()
+                .is_some_and(|params| !params.nodes.is_empty())
+            {
+                return false;
+            }
+            let Some(heritage_clauses) = interface.heritage_clauses.as_ref() else {
+                return true;
+            };
+
+            heritage_clauses.nodes.iter().copied().all(|clause_idx| {
+                let Some(clause_node) = arena.get(clause_idx) else {
+                    return false;
+                };
+                let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                    return false;
+                };
+                if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                    return false;
+                }
+                heritage.types.nodes.iter().copied().all(|type_idx| {
+                    let Some(type_node) = arena.get(type_idx) else {
+                        return false;
+                    };
+                    let (expr_idx, type_arguments) =
+                        if let Some(expr) = arena.get_expr_type_args(type_node) {
+                            (expr.expression, expr.type_arguments.as_ref())
+                        } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                            let Some(type_ref) = arena.get_type_ref(type_node) else {
+                                return false;
+                            };
+                            (type_ref.type_name, type_ref.type_arguments.as_ref())
+                        } else {
+                            (type_idx, None)
+                        };
+                    if type_arguments.is_some_and(|args| !args.nodes.is_empty()) {
+                        return false;
+                    }
+                    found_heritage = true;
+                    expression_name_text_in_arena(arena, expr_idx).is_some()
+                })
+            })
+        }) && found_heritage
     }
 
     pub(super) fn source_file_type_node_is_scope_independent(
@@ -1849,6 +1907,42 @@ impl<'a> CheckerState<'a> {
             .definition_store
             .register_type_to_def(interface_type, def_id);
         Some((interface_type, params))
+    }
+
+    pub(super) fn direct_cross_file_interface_lowering_with_simple_heritage_for_file(
+        &mut self,
+        sym_id: SymbolId,
+        target_file_idx: Option<usize>,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        let target_file_idx = target_file_idx?;
+        let (direct_type, params, symbol_declarations) = {
+            let symbol_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+            let delegate_binder = self.ctx.binder;
+            if !is_direct_lowering_declaration_arena(symbol_arena) {
+                return None;
+            }
+            let declarations =
+                self.cross_file_interface_declarations(sym_id, delegate_binder, symbol_arena)?;
+            if Self::interface_declarations_have_computed_names(&declarations)
+                || !Self::interface_declarations_have_simple_heritage(&declarations)
+            {
+                return None;
+            }
+
+            let symbol = delegate_binder.get_symbol(sym_id)?;
+            let symbol_declarations = symbol.declarations.clone();
+            let (direct_type, params) = self.direct_cross_file_interface_lowering(
+                sym_id,
+                delegate_binder,
+                symbol_arena,
+                true,
+                false,
+            )?;
+            (direct_type, params, symbol_declarations)
+        };
+        let direct_type = self.merge_cross_file_heritage(&symbol_declarations, sym_id, direct_type);
+        (direct_type != TypeId::UNKNOWN && direct_type != TypeId::ERROR)
+            .then_some((direct_type, params))
     }
 
     pub(super) fn direct_cross_file_interface_member_simple_types(

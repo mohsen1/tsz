@@ -740,6 +740,31 @@ impl<'a> CheckerState<'a> {
             ) {
                 return Some(result);
             }
+            if let Some((direct_type, direct_params)) = self
+                .direct_cross_file_interface_lowering_with_simple_heritage_for_file(
+                    sym_id,
+                    symbol_type_cache_file_idx,
+                )
+            {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx {
+                    self.cache_symbol_arena_or_cross_file_symbol_type(
+                        sym_id,
+                        file_idx,
+                        source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
+                        direct_type,
+                        direct_params.clone(),
+                    );
+                }
+                if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
+                    self.ctx
+                        .lib_delegation_cache
+                        .insert_symbol_type(sym_id, (direct_type, direct_params.clone()));
+                }
+                return Some((direct_type, direct_params));
+            }
+
             let direct_target = if let Some(file_idx) = cross_file_idx {
                 let arena = self.ctx.get_arena_for_file(file_idx as u32);
                 let binder = self

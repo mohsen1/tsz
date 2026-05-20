@@ -6,6 +6,7 @@ use crate::test_utils::load_lib_files;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
 use tsz_common::perf_counters::{CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome};
 use tsz_parser::parser::{ParserState, syntax_kind_ext};
 use tsz_solver::TypeId;
@@ -394,6 +395,113 @@ fn direct_cross_file_interface_lowering_resolves_siblings_in_delegate_file() {
         crate::query_boundaries::common::lazy_def_id(&types, mode_type),
         Some(target_mode_def),
         "source-file direct lowering should resolve sibling type references in the delegate file",
+    );
+}
+
+#[test]
+fn direct_declaration_file_interface_lowering_merges_simple_heritage() {
+    let mut lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+    lib_files.push(Arc::new(LibFile::from_source(
+        "/repo/node_modules/vite/client.d.ts".to_string(),
+        r#"
+                declare interface VitePreloadErrorEvent extends Event {
+                    payload: Error;
+                }
+
+                declare interface WindowEventMap {
+                    "vite:preloadError": VitePreloadErrorEvent;
+                }
+            "#
+        .to_string(),
+    )));
+
+    let mut parser = ParserState::new("src/main.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "src/main.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    let all_arenas = Arc::new(
+        std::iter::once(Arc::clone(&arena))
+            .chain(lib_files.iter().map(|lib| Arc::clone(&lib.arena)))
+            .collect(),
+    );
+    let all_binders = Arc::new(
+        std::iter::once(Arc::clone(&binder))
+            .chain(lib_files.iter().map(|lib| Arc::clone(&lib.binder)))
+            .collect(),
+    );
+    state.ctx.set_all_arenas(all_arenas);
+    state.ctx.set_all_binders(all_binders);
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(2);
+
+    let event_sym = binder
+        .file_locals
+        .get("VitePreloadErrorEvent")
+        .expect("VitePreloadErrorEvent should resolve to an external declaration-file symbol");
+    let delegate_file_idx = lib_files
+        .iter()
+        .position(|lib| lib.file_name.ends_with("node_modules/vite/client.d.ts"))
+        .map(|idx| idx + 1)
+        .expect("Vite client declaration file should be indexed after the source file");
+    let delegate_arena = state.ctx.get_arena_for_file(delegate_file_idx as u32);
+    assert!(super::is_external_package_declaration_file_name(
+        delegate_arena.source_files[0].file_name.as_str(),
+    ));
+    let declarations = state
+        .cross_file_interface_declarations(event_sym, binder.as_ref(), delegate_arena)
+        .expect("VitePreloadErrorEvent declaration should be discoverable");
+    assert!(CheckerState::interface_declarations_have_simple_heritage(
+        &declarations
+    ));
+    assert!(!CheckerState::interface_declarations_have_computed_names(
+        &declarations
+    ));
+
+    let (event_type, params) = state
+        .direct_cross_file_interface_lowering_with_simple_heritage_for_file(
+            event_sym,
+            Some(delegate_file_idx),
+        )
+        .expect("simple declaration-file heritage should lower without a child checker");
+
+    assert!(params.is_empty());
+    let payload_key = types.intern_string("payload");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            event_type,
+            payload_key,
+        )
+        .is_some(),
+        "external declaration-file member should be preserved",
+    );
+    let type_key = types.intern_string("type");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            event_type,
+            type_key,
+        )
+        .is_some(),
+        "simple heritage members from the DOM base interface should be merged",
     );
 }
 
