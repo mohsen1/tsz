@@ -469,6 +469,39 @@ fn direct_source_file_variable_annotation_accepts_same_file_simple_interface() {
 }
 
 #[test]
+fn direct_source_file_variable_annotation_accepts_readonly_array_property() {
+    let (arena, binder, types) = parse_bound_source(
+        r#"
+                interface Leaf { labels: readonly string[]; }
+                const leaf: Leaf = { labels: ["a"] };
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let state = CheckerState { ctx };
+    let leaf_sym = binder.file_locals.get("leaf").expect("leaf symbol");
+
+    let result = state
+        .direct_source_file_variable_annotation_type(
+            leaf_sym,
+            binder.as_ref(),
+            arena.as_ref(),
+            true,
+        )
+        .expect("same-file interface with readonly array property should lower directly");
+
+    assert!(
+        crate::query_boundaries::common::is_lazy_type(&types, result),
+        "variable annotation should preserve the interface lazy type"
+    );
+}
+
+#[test]
 fn direct_source_file_variable_annotation_rejects_type_alias_reference() {
     let (arena, binder, types) = parse_bound_source(
         r#"

@@ -281,6 +281,17 @@ impl<'a> CheckerState<'a> {
             });
         }
 
+        if node.kind == syntax_kind_ext::TYPE_OPERATOR {
+            return self
+                .ctx
+                .arena
+                .get_type_operator(node)
+                .is_some_and(|operator| {
+                    operator.operator == SyntaxKind::ReadonlyKeyword as u16
+                        && self.is_simple_local_interface_fastpath_type(operator.type_node)
+                });
+        }
+
         self.is_simple_local_interface_primitive_type_reference(node)
     }
 
@@ -476,6 +487,74 @@ impl<'a> CheckerState<'a> {
             outcome,
             symbol_name,
             declarations.len(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{CheckerContext, CheckerOptions};
+    use crate::query_boundaries::common::TypeInterner;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    #[test]
+    fn simple_local_interface_fastpath_accepts_readonly_primitive_arrays() {
+        let mut parser = ParserState::new(
+            "fixture.ts".to_string(),
+            r#"
+                interface Leaf {
+                    labels: readonly string[];
+                    key: keyof Leaf;
+                }
+            "#
+            .to_string(),
+        );
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let state = CheckerState { ctx };
+        let leaf_sym = binder.file_locals.get("Leaf").expect("Leaf symbol");
+        let leaf = binder.get_symbol(leaf_sym).expect("Leaf symbol data");
+        let leaf_node = parser
+            .get_arena()
+            .get(leaf.declarations[0])
+            .expect("Leaf declaration node");
+        let interface = parser
+            .get_arena()
+            .get_interface(leaf_node)
+            .expect("Leaf interface");
+        let mut annotations = interface
+            .members
+            .nodes
+            .iter()
+            .copied()
+            .filter_map(|member_idx| {
+                let member_node = parser.get_arena().get(member_idx)?;
+                parser
+                    .get_arena()
+                    .get_signature(member_node)
+                    .map(|sig| sig.type_annotation)
+            });
+        let labels_annotation = annotations.next().expect("labels annotation");
+        let key_annotation = annotations.next().expect("key annotation");
+
+        assert!(
+            state.is_simple_local_interface_fastpath_type(labels_annotation),
+            "readonly primitive arrays should stay on the simple-object fast path",
+        );
+        assert!(
+            !state.is_simple_local_interface_fastpath_type(key_annotation),
+            "non-readonly type operators still need the normal path",
         );
     }
 }

@@ -642,6 +642,14 @@ impl<'a> CheckerState<'a> {
         ) {
             return Some(result);
         }
+        if let Some(result) = self.direct_builtin_lib_variable_annotation_symbol_type(
+            sym_id,
+            delegate_arena_source,
+            delegate_arena,
+            needs_cross_file_delegation,
+        ) {
+            return Some(result);
+        }
 
         if needs_cross_file_delegation
             || delegate_arena_source != CrossArenaSymbolMissSource::SymbolArena
@@ -970,6 +978,15 @@ impl<'a> CheckerState<'a> {
                     Self::source_file_type_node_is_scope_independent(arena, wrapped.type_node)
                 })
             }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                arena.get_type_operator(node).is_some_and(|operator| {
+                    operator.operator == tsz_scanner::SyntaxKind::ReadonlyKeyword as u16
+                        && Self::source_file_type_node_is_scope_independent(
+                            arena,
+                            operator.type_node,
+                        )
+                })
+            }
             _ => false,
         }
     }
@@ -1074,6 +1091,17 @@ impl<'a> CheckerState<'a> {
                         wrapped.type_node,
                         seen_type_names,
                     )
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                arena.get_type_operator(node).is_some_and(|operator| {
+                    operator.operator == tsz_scanner::SyntaxKind::ReadonlyKeyword as u16
+                        && Self::source_file_type_node_is_option_bag_lowerable(
+                            arena,
+                            delegate_binder,
+                            operator.type_node,
+                            seen_type_names,
+                        )
                 })
             }
             _ => false,
