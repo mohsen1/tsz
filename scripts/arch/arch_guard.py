@@ -357,7 +357,7 @@ TRAIT_METHOD_COUNT_CHECKS = [
         "Solver boundary: TypeDatabase method count (#8205)",
         ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
         "TypeDatabase",
-        96,
+        90,
     ),
 ]
 
