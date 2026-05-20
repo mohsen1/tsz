@@ -273,7 +273,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(in crate::declaration_emitter) fn format_property_name_literal_value(
         literal: &tsz_solver::types::LiteralValue,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> String {
         match literal {
             tsz_solver::types::LiteralValue::String(atom) => {

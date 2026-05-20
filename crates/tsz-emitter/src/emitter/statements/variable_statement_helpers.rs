@@ -383,6 +383,36 @@ impl<'a> Printer<'a> {
         last_end
     }
 
+    pub(in crate::emitter) fn variable_statement_last_concise_arrow_comment_range(
+        &self,
+        declarations: &NodeList,
+        scan_end: u32,
+    ) -> Option<(u32, u32)> {
+        let mut comment_range = None;
+        for &decl_list_idx in &declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if !decl.initializer.is_none() {
+                    comment_range = self
+                        .rightmost_concise_arrow_deferred_comment_range(decl.initializer, scan_end);
+                }
+            }
+        }
+
+        comment_range
+    }
+
     pub(in crate::emitter) fn find_declaration_semicolon_after(
         &self,
         start: u32,

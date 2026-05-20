@@ -25,7 +25,7 @@ pub(super) fn simple_or_namespace_member_name(display: &str) -> Option<&str> {
 /// Whether `target` accepts a literal whose widened primitive kind is
 /// `source_primitive` for "literal-of-contextual-type" purposes.
 pub(super) fn target_accepts_literal_primitive_kind(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     target: TypeId,
     source_primitive: TypeId,
 ) -> bool {
@@ -33,7 +33,7 @@ pub(super) fn target_accepts_literal_primitive_kind(
 }
 
 fn target_accepts_literal_primitive_kind_inner(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     target: TypeId,
     source_primitive: TypeId,
     depth: u32,
@@ -73,7 +73,7 @@ fn target_accepts_literal_primitive_kind_inner(
 /// Mirror tsc's literal display policy for TS2322 messages against
 /// `undefined` / `null` targets.
 pub(super) fn literal_display_appropriate_for_undefined_null_target(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     target: TypeId,
     display: &str,
 ) -> bool {

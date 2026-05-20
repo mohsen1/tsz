@@ -121,7 +121,7 @@ pub(super) fn is_object_prototype_method_for_array_target(name: impl AsRef<str>)
 /// This checks if it's an Application type whose base is a callable/function type,
 /// or if it's directly a callable/function type.
 pub(super) fn is_callable_application_type(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
 ) -> bool {
     // Check if it's an application of a callable type
@@ -137,7 +137,7 @@ pub(super) fn is_callable_application_type(
 
 /// Check if a callable/function type has its own signature-level type parameters.
 pub(super) fn has_own_signature_type_params(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
 ) -> bool {
     if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(db, type_id) {

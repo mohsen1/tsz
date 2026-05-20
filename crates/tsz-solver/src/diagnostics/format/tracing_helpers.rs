@@ -17,7 +17,7 @@
 //! );
 //! ```
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::types::TypeId;
 use std::fmt;
 

@@ -8,7 +8,8 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::query_boundaries::common::PropertyAccessResult;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::{TypeId, TypeInterner};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeInterner;
 
 fn symbol_property_type_strings(
     source: &str,

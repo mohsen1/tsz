@@ -2,6 +2,7 @@
 
 use super::visitor::*;
 use super::*;
+use crate::relations::subtype::is_subtype_of;
 
 // =============================================================================
 // TypeKind Tests

@@ -1,4 +1,5 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) fn is_top_level_error_or_error_union_member(
     db: &dyn TypeDatabase,
@@ -82,7 +83,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn top_level_error_or_error_union_member_detects_error_shapes() {

@@ -6,7 +6,7 @@ use tsz_parser::parser::syntax_kind_ext::METHOD_SIGNATURE;
 use tsz_solver::TypeId;
 
 fn overload_method_wrapper_value_type(
-    types: &dyn tsz_solver::QueryDatabase,
+    types: &dyn tsz_solver::construction::QueryDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
     if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(types, type_id)

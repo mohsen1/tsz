@@ -8,7 +8,7 @@ use tsz_binder::BinderState;
 use tsz_checker::{context::CheckerOptions, diagnostics::Diagnostic, state::CheckerState};
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn test_private_brands(source: &str, expected_errors: usize) {
     test_private_brands_with_codes(source, expected_errors, &[2322])

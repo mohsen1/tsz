@@ -15,12 +15,12 @@ use tsz_parser::parser::base::NodeIndex;
 use tsz_parser::parser::node::{IndexSignatureData, NodeArena, SignatureData, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::def::DefId;
 use tsz_solver::types::{
     CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
     ParamInfo, PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypePredicate, Visibility,
 };
-use tsz_solver::{QueryDatabase, TypeDatabase};
 
 /// Maximum number of type lowering operations to prevent infinite loops
 pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
@@ -1442,7 +1442,7 @@ impl<'a> TypeLowering<'a> {
                 && type_id != TypeId::ANY
                 && type_id != TypeId::UNKNOWN
                 && type_id != TypeId::ERROR
-                && !tsz_solver::type_contains_undefined(self.interner, type_id)
+                && !tsz_solver::narrowing::type_contains_undefined(self.interner, type_id)
             {
                 self.interner.union2(type_id, TypeId::UNDEFINED)
             } else {
@@ -2573,7 +2573,7 @@ mod constructor_parity_tests {
     //! field that is not a resolver. These tests fail the build if a future
     //! change drifts one constructor's defaults away from the rest.
     use super::*;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     fn assert_invariant_defaults(lowering: &TypeLowering<'_>) {
         // Caches/shared state must always start fresh.

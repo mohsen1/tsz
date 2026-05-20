@@ -10,7 +10,7 @@ use tsz_parser::NodeIndex;
 use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Helper to set up hover infrastructure and get hover info at a position.
 fn get_hover_at(source: &str, line: u32, col: u32) -> Option<HoverInfo> {
