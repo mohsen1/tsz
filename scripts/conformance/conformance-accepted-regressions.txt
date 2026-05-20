@@ -5,14 +5,13 @@
 TypeScript/tests/cases/compiler/computedPropertyBindingElementDeclarationNoCrash1.ts
 TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts
 TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
-TypeScript/tests/cases/compiler/crossFileOverloadModifierConsistency.ts
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
 TypeScript/tests/cases/compiler/declarationsWithRecursiveInternalTypesProduceUniqueTypeParams.ts
-TypeScript/tests/cases/compiler/divideAndConquerIntersections.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
 TypeScript/tests/cases/compiler/genericIndexedAccessVarianceComparisonResultCorrect.ts
 TypeScript/tests/cases/compiler/inferConditionalConstraintMappedMember.ts
+TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts
 TypeScript/tests/cases/compiler/interfaceWithMultipleDeclarations.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
@@ -22,6 +21,7 @@ TypeScript/tests/cases/compiler/mappedTypeInferenceFromApparentType.ts
 TypeScript/tests/cases/compiler/noExcessiveStackDepthError.ts
 TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
 TypeScript/tests/cases/compiler/recursiveReverseMappedType.ts
+TypeScript/tests/cases/compiler/relationComplexityError.ts
 TypeScript/tests/cases/compiler/reorderProperties.ts
 TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts
 TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypesPerElementOfTupleConstraint.ts
@@ -41,6 +41,7 @@ TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
 TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes6.ts
 TypeScript/tests/cases/conformance/types/mapped/mappedTypeConstraints2.ts
+TypeScript/tests/cases/conformance/types/mapped/mappedTypeRelationships.ts
 TypeScript/tests/cases/conformance/types/mapped/mappedTypes6.ts
 TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts
 TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference1.ts
