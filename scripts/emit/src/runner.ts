@@ -281,6 +281,14 @@ function buildSourceKey(sourceFiles: Array<{ name: string; content: string }>): 
   return sourceFiles.map(f => `${f.name}\n${f.content}`).join('\n////\n');
 }
 
+function readBooleanOption(
+  options: Record<string, unknown>,
+  name: string,
+): boolean | undefined {
+  const value = options[name];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
 function saveCache(): void {
   if (!fs.existsSync(CACHE_DIR)) {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -667,12 +675,20 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const inlineSourceMap = directives.inlinesourcemap === true;
     const downlevelIteration = variant.downleveliteration !== undefined
       ? variant.downleveliteration === 'true'
-      : directives.downleveliteration === true;
-    const noEmitHelpers = directives.noemithelpers === true;
-    const noEmitOnError = directives.noemitonerror === true;
+      : typeof directives.downleveliteration === 'boolean'
+        ? directives.downleveliteration
+        : readBooleanOption(tsconfigOptions, 'downlevelIteration') === true;
+    const noEmitHelpers = typeof directives.noemithelpers === 'boolean'
+      ? directives.noemithelpers
+      : readBooleanOption(tsconfigOptions, 'noEmitHelpers') === true;
+    const noEmitOnError = typeof directives.noemitonerror === 'boolean'
+      ? directives.noemitonerror
+      : readBooleanOption(tsconfigOptions, 'noEmitOnError') === true;
     const importHelpers = variant.importhelpers !== undefined
       ? variant.importhelpers === 'true'
-      : directives.importhelpers === true;
+      : typeof directives.importhelpers === 'boolean'
+        ? directives.importhelpers
+        : readBooleanOption(tsconfigOptions, 'importHelpers') === true;
     const esModuleInterop = variant.esmoduleinterop !== undefined
       ? variant.esmoduleinterop === 'true'
       : directives.esmoduleinterop !== false;
