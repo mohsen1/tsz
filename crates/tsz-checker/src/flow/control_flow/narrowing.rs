@@ -1857,10 +1857,10 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Top-level destructuring alias `const { prop: alias } = target`.
-        if let Some((base, prop_names)) = self.binding_element_property_alias(alias_node) {
-            if self.is_matching_reference(base, target) {
-                return Some((prop_names, literal, false, target));
-            }
+        if let Some((base, prop_names)) = self.binding_element_property_alias(alias_node)
+            && self.is_matching_reference(base, target)
+        {
+            return Some((prop_names, literal, false, target));
         }
 
         None

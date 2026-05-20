@@ -416,10 +416,10 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
         // Case 2: `const { prop: alias } = reference` (top-level destructuring alias).
-        if let Some((base, _)) = self.binding_element_property_alias(expr) {
-            if self.is_matching_reference(base, reference) {
-                return true;
-            }
+        if let Some((base, _)) = self.binding_element_property_alias(expr)
+            && self.is_matching_reference(base, reference)
+        {
+            return true;
         }
         false
     }
