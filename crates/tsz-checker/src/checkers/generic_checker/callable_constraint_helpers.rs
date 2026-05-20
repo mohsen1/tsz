@@ -210,6 +210,44 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::is_template_literal_type(self.ctx.types, index)
     }
 
+    /// Check if a constraint evaluates to a union where every member has call or
+    /// construct signatures.
+    ///
+    /// When a constraint is an Application type like `ComponentType<P>` that expands
+    /// to `ComponentClass<P, any> | FunctionComponent<P>`, each union member is still
+    /// an Application type in the database. This helper evaluates each member before
+    /// checking callability, so `ComponentType<any>` is recognized as a callable
+    /// constraint and triggers TS2344 for non-callable type arguments.
+    pub(super) fn constraint_union_members_all_callable(
+        &mut self,
+        constraint_evaluated: TypeId,
+    ) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let Some(members) =
+            crate::query_boundaries::common::union_members(db, constraint_evaluated)
+        else {
+            return false;
+        };
+        if members.is_empty() {
+            return false;
+        }
+        for &m in &members {
+            let db = self.ctx.types.as_type_database();
+            if query::is_callable_type(db, m) {
+                continue;
+            }
+            let m_eval = self.evaluate_type_for_assignability(m);
+            let db = self.ctx.types.as_type_database();
+            if query::is_callable_type(db, m_eval)
+                || query::callable_shape_for_type(db, m_eval).is_some()
+            {
+                continue;
+            }
+            return false;
+        }
+        true
+    }
+
     pub(super) fn emit_invalid_remapped_mapped_template_index_constraint_error(
         &mut self,
         type_arg: TypeId,
@@ -221,6 +259,7 @@ impl<'a> CheckerState<'a> {
         let db = self.ctx.types.as_type_database();
         let constraint_is_callable = query::is_callable_type(db, constraint_resolved)
             || query::is_callable_type(db, constraint_evaluated)
+            || self.constraint_union_members_all_callable(constraint_evaluated)
             || self.is_function_constraint(constraint)
             || self.is_function_constraint(constraint_resolved);
         if !constraint_is_callable || !self.invalid_remapped_mapped_template_index_access(type_arg)

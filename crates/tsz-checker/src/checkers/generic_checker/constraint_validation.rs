@@ -307,11 +307,14 @@ impl<'a> CheckerState<'a> {
                     // constraint, since base-constraint evaluation can expand the
                     // alias body recursively for helper-heavy libraries.
                     let constraint_resolved = self.resolve_lazy_type(constraint);
+                    let constraint_eval_for_callable =
+                        self.evaluate_type_for_assignability(constraint_resolved);
                     let constraint_is_callable = query::is_callable_type(
                         self.ctx.types.as_type_database(),
                         constraint_resolved,
                     ) || self
-                        .is_function_constraint(param.constraint.unwrap_or(TypeId::NEVER));
+                        .constraint_union_members_all_callable(constraint_eval_for_callable)
+                        || self.is_function_constraint(param.constraint.unwrap_or(TypeId::NEVER));
                     let generic_indexed_type_arg = self.generic_indexed_access_subject(type_arg);
                     let keep_eager_check = constraint_is_callable
                         && generic_indexed_type_arg.is_some()
@@ -664,8 +667,13 @@ impl<'a> CheckerState<'a> {
                                     }
                                 }
 
+                                let constraint_eval_for_callable =
+                                    self.evaluate_type_for_assignability(constraint_resolved);
                                 let constraint_is_callable =
-                                    query::is_callable_type(db, constraint_resolved);
+                                    query::is_callable_type(db, constraint_resolved)
+                                        || self.constraint_union_members_all_callable(
+                                            constraint_eval_for_callable,
+                                        );
                                 if !constraint_is_callable {
                                     continue;
                                 }
@@ -817,12 +825,17 @@ impl<'a> CheckerState<'a> {
                                 // tsc reports TS2344 in this case because callability
                                 // is not provable at definition time.
                                 let constraint_resolved = self.resolve_lazy_type(constraint);
-                                let constraint_is_callable = query::is_callable_type(
-                                    self.ctx.types.as_type_database(),
-                                    constraint_resolved,
-                                ) || self.is_function_constraint(
-                                    param.constraint.unwrap_or(TypeId::NEVER),
-                                );
+                                let constraint_eval_for_callable =
+                                    self.evaluate_type_for_assignability(constraint_resolved);
+                                let constraint_is_callable =
+                                    query::is_callable_type(
+                                        self.ctx.types.as_type_database(),
+                                        constraint_resolved,
+                                    ) || self.constraint_union_members_all_callable(
+                                        constraint_eval_for_callable,
+                                    ) || self.is_function_constraint(
+                                        param.constraint.unwrap_or(TypeId::NEVER),
+                                    );
                                 let generic_indexed_type_arg =
                                     self.generic_indexed_access_subject(type_arg);
                                 let keep_eager_check = constraint_is_callable
@@ -867,8 +880,13 @@ impl<'a> CheckerState<'a> {
                             // `DataFetchFns[T][F]` is not provably callable (T is free).
                             // By contrast, `ReturnType<DataFetchFns['Boat'][F]>` → no TS2344
                             // because 'Boat' is concrete and all its values are callable.
+                            let inst_constraint_eval_for_callable =
+                                self.evaluate_type_for_assignability(inst_constraint);
                             let constraint_is_callable =
                                 query::is_callable_type(db, inst_constraint)
+                                    || self.constraint_union_members_all_callable(
+                                        inst_constraint_eval_for_callable,
+                                    )
                                     || self.is_function_constraint(original_constraint);
                             if constraint_is_callable
                                 && generic_indexed_type_arg.is_some()
@@ -1122,6 +1140,9 @@ impl<'a> CheckerState<'a> {
                                 let constraint_is_callable =
                                     query::is_callable_type(db, constraint_resolved)
                                         || query::is_callable_type(db, constraint_evaluated)
+                                        || self.constraint_union_members_all_callable(
+                                            constraint_evaluated,
+                                        )
                                         || self.is_function_constraint(constraint)
                                         || self.is_function_constraint(constraint_resolved);
                                 // For indexed access types like `T[M]` where T's constraint

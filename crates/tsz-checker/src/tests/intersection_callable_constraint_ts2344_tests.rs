@@ -248,3 +248,129 @@ type R2 = Requires<Wrapped>;
         "TS2589 must not fire for renamed non-callable chain."
     );
 }
+
+// ---------------------------------------------------------------------------
+// 7. Application constraints that evaluate to callable unions (e.g. React's
+//    `ComponentType<P> = ComponentClass<P> | FunctionComponent<P>`).
+//
+// Structural rule: when a type parameter constraint is an Application alias
+// that expands to a union where every member has call or construct signatures,
+// tsz must recognise the constraint as callable and emit TS2344 for
+// non-callable type arguments — regardless of whether the alias name is
+// `ComponentType`, `Renderable`, or any other user-chosen identifier.
+// ---------------------------------------------------------------------------
+
+const COMPONENT_TYPE_PRELUDE: &str = r#"
+interface ComponentClass<P> { new(props: P): object; }
+interface FunctionComponent<P> { (props: P): any; }
+type ComponentType<P> = ComponentClass<P> | FunctionComponent<P>;
+
+interface AnyComponent { displayName?: string; theme?: any }
+type RequiresComponent<C extends ComponentType<any>> = { wrapped: C };
+"#;
+
+fn with_component_prelude(body: &str) -> String {
+    format!("{COMPONENT_TYPE_PRELUDE}\n{body}")
+}
+
+#[test]
+fn non_callable_alias_does_not_satisfy_application_callable_union_constraint_ts2344() {
+    let codes = check_source_codes(&with_component_prelude(
+        "type Result = RequiresComponent<AnyComponent>;",
+    ));
+    assert_code!(
+        codes,
+        2344,
+        "non-callable object type against Application-callable-union constraint must emit TS2344."
+    );
+    assert_no_code!(codes, 2589, "TS2589 must not fire.");
+}
+
+#[test]
+fn non_callable_alias_renamed_does_not_satisfy_application_callable_union_constraint_ts2344() {
+    // Uses a different alias name to prove the fix is not hardcoded to 'AnyComponent'.
+    let codes = check_source_codes(&with_component_prelude(
+        r#"
+type PlainObj = { id: string; label?: string };
+type Result = RequiresComponent<PlainObj>;
+"#,
+    ));
+    assert_code!(
+        codes,
+        2344,
+        "renamed non-callable object against Application-callable-union constraint must emit TS2344."
+    );
+    assert_no_code!(codes, 2589, "TS2589 must not fire.");
+}
+
+#[test]
+fn callable_type_satisfies_application_callable_union_constraint_no_ts2344() {
+    let codes = check_source_codes(&with_component_prelude(
+        "type Result = RequiresComponent<FunctionComponent<any>>;",
+    ));
+    assert_no_code!(
+        codes,
+        2344,
+        "FunctionComponent<any> satisfies ComponentType<any> — must NOT emit TS2344."
+    );
+}
+
+#[test]
+fn intersection_non_callable_with_type_param_against_application_callable_union_ts2344() {
+    // `AnyComponent & C` is an intersection with a type parameter — simulates
+    // the `AnyStyledComponent & C` pattern from the conformance test.
+    let codes = check_source_codes(&with_component_prelude(
+        r#"
+declare function styled<C extends ComponentType<any>>(
+    c: AnyComponent & C
+): void;
+"#,
+    ));
+    assert_no_code!(
+        codes,
+        2344,
+        "type parameter C already constrained to ComponentType<any> — no TS2344 on the declaration."
+    );
+}
+
+#[test]
+fn renamed_application_callable_union_constraint_ts2344() {
+    // Uses an alias name different from `ComponentType` to prove no hardcoding.
+    let codes = check_source_codes(
+        r#"
+interface Ctor<P> { new(props: P): object; }
+interface Fn<P> { (props: P): any; }
+type Renderable<P> = Ctor<P> | Fn<P>;
+
+interface Widget { name: string; }
+type RequiresRenderable<R extends Renderable<any>> = { r: R };
+type Result = RequiresRenderable<Widget>;
+"#,
+    );
+    assert_code!(
+        codes,
+        2344,
+        "non-callable type against renamed Application-callable-union must emit TS2344."
+    );
+    assert_no_code!(codes, 2589, "TS2589 must not fire.");
+}
+
+#[test]
+fn callable_type_satisfies_renamed_application_callable_union_no_ts2344() {
+    let codes = check_source_codes(
+        r#"
+interface Ctor<P> { new(props: P): object; }
+interface Fn<P> { (props: P): any; }
+type Renderable<P> = Ctor<P> | Fn<P>;
+type RequiresRenderable<R extends Renderable<any>> = { r: R };
+
+interface MyFn { (props: any): string; }
+type Result = RequiresRenderable<MyFn>;
+"#,
+    );
+    assert_no_code!(
+        codes,
+        2344,
+        "callable type satisfying renamed Application-callable-union must NOT emit TS2344."
+    );
+}
