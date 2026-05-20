@@ -350,6 +350,10 @@ name = "interface_heritage_display_tests"
 path = "tests/interface_heritage_display_tests.rs"
 
 [[test]]
+name = "ts2430_tests"
+path = "tests/ts2430_tests.rs"
+
+[[test]]
 name = "ts2540_readonly_tests"
 path = "tests/ts2540_readonly_tests.rs"
 

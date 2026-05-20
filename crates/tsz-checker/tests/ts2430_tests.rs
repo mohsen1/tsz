@@ -3,7 +3,7 @@
 //! Verifies correct behavior for interface extension compatibility,
 //! including scope-aware type resolution in ambient modules.
 
-use crate::test_utils::check_source_code_messages as get_diagnostics;
+use tsz_checker::test_utils::check_source_code_messages as get_diagnostics;
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)
