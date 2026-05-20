@@ -582,6 +582,50 @@ jobs:
           storage_cp() {
             timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
           }
+          copy_from_cloudbuild_manifest() {
+            local target_sha="$1"
+            local manifest_file=cloudbuild-artifacts.json
+            local manifest_paths=cloudbuild-artifacts.env
+
+            [[ -n "$cloudbuild_id" ]] || return 1
+            storage_cp "gs://tsz-ci_cloudbuild/artifacts-${cloudbuild_id}.json" "$manifest_file" || return 1
+            node - "$manifest_file" "$target_sha" > "$manifest_paths" <<'NODE'
+          const fs = require("node:fs");
+
+          const [manifestPath, targetSha] = process.argv.slice(2);
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+          const entries = Array.isArray(manifest) ? manifest : (manifest.location ? [manifest] : (manifest.artifacts || manifest.results || []));
+          const locationOf = (entry) => String(entry.location || "").split("#", 1)[0];
+          const findLocation = (suffixes) => {
+            for (const suffix of suffixes) {
+              const match = entries.find((entry) => locationOf(entry).endsWith(suffix));
+              if (match) return locationOf(match);
+            }
+            return "";
+          };
+          const env = findLocation([
+            `/bench-prep/${targetSha}/bench-prep.env`,
+            `bench-prep/${targetSha}/bench-prep.env`,
+            "/bench-prep/latest/bench-prep.env",
+            "bench-prep/latest/bench-prep.env",
+          ]);
+          const tar = findLocation([
+            `/bench-prep/${targetSha}/bench-prep.tar`,
+            `bench-prep/${targetSha}/bench-prep.tar`,
+            "/bench-prep/latest/bench-prep.tar",
+            "bench-prep/latest/bench-prep.tar",
+          ]);
+          if (!env || !tar) {
+            console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
+            process.exit(1);
+          }
+          console.log(`manifest_env=${JSON.stringify(env)}`);
+          console.log(`manifest_tar=${JSON.stringify(tar)}`);
+          NODE
+            # shellcheck disable=SC1090
+            source "$manifest_paths"
+            storage_cp "$manifest_env" bench-prep.env && storage_cp "$manifest_tar" bench-prep.tar
+          }
           cloudbuild_status() {
             local build_id="$1"
             [[ -n "$build_id" ]] || return 0
@@ -613,6 +657,17 @@ jobs:
             fi
 
             status="$(cloudbuild_status "$cloudbuild_id")"
+            if [[ "$status" == "SUCCESS" ]] && copy_from_cloudbuild_manifest "$target_sha"; then
+              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+              manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+              manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+              if [[ "${manifest_target_sha}" == "${target_sha}" &&
+                    "${manifest_pgo_optimized}" == "1" ]]; then
+                exit 0
+              fi
+              echo "Cloud Build manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; waiting for ${target_sha}."
+            fi
             case "$status" in
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
                 echo "Cloud Build benchmark prep ${cloudbuild_id} ended with status ${status}; artifact is unavailable."
@@ -640,6 +695,50 @@ jobs:
 
           storage_cp() {
             timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
+          }
+          copy_from_cloudbuild_manifest() {
+            local target_sha="$1"
+            local manifest_file=cloudbuild-artifacts.json
+            local manifest_paths=cloudbuild-artifacts.env
+
+            [[ -n "$cloudbuild_id" ]] || return 1
+            storage_cp "gs://tsz-ci_cloudbuild/artifacts-${cloudbuild_id}.json" "$manifest_file" || return 1
+            node - "$manifest_file" "$target_sha" > "$manifest_paths" <<'NODE'
+          const fs = require("node:fs");
+
+          const [manifestPath, targetSha] = process.argv.slice(2);
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+          const entries = Array.isArray(manifest) ? manifest : (manifest.location ? [manifest] : (manifest.artifacts || manifest.results || []));
+          const locationOf = (entry) => String(entry.location || "").split("#", 1)[0];
+          const findLocation = (suffixes) => {
+            for (const suffix of suffixes) {
+              const match = entries.find((entry) => locationOf(entry).endsWith(suffix));
+              if (match) return locationOf(match);
+            }
+            return "";
+          };
+          const env = findLocation([
+            `/bench-prep/${targetSha}/bench-prep.env`,
+            `bench-prep/${targetSha}/bench-prep.env`,
+            "/bench-prep/latest/bench-prep.env",
+            "bench-prep/latest/bench-prep.env",
+          ]);
+          const tar = findLocation([
+            `/bench-prep/${targetSha}/bench-prep.tar`,
+            `bench-prep/${targetSha}/bench-prep.tar`,
+            "/bench-prep/latest/bench-prep.tar",
+            "bench-prep/latest/bench-prep.tar",
+          ]);
+          if (!env || !tar) {
+            console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
+            process.exit(1);
+          }
+          console.log(`manifest_env=${JSON.stringify(env)}`);
+          console.log(`manifest_tar=${JSON.stringify(tar)}`);
+          NODE
+            # shellcheck disable=SC1090
+            source "$manifest_paths"
+            storage_cp "$manifest_env" bench-prep.env && storage_cp "$manifest_tar" bench-prep.tar
           }
           cloudbuild_status() {
             local build_id="$1"
@@ -670,6 +769,16 @@ jobs:
             fi
 
             status="$(cloudbuild_status "$cloudbuild_id")"
+            if [[ "$status" == "SUCCESS" ]] && copy_from_cloudbuild_manifest "${{ env.BENCH_TARGET_SHA }}"; then
+              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+              # shellcheck disable=SC1091
+              source bench-prep.env
+              if [[ "${BENCH_TARGET_SHA:-}" == "${{ env.BENCH_TARGET_SHA }}" ]]; then
+                exit 0
+              fi
+              echo "Cloud Build manifest artifact is for ${BENCH_TARGET_SHA:-unknown}; waiting for ${{ env.BENCH_TARGET_SHA }}."
+            fi
             case "$status" in
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
                 echo "Cloud Build benchmark prep ${cloudbuild_id} ended with status ${status}; artifact is unavailable."
