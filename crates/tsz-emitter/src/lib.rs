@@ -17,6 +17,11 @@ pub mod emitter;
 pub mod enums;
 pub mod import_usage;
 pub(crate) mod jsx_pragmas;
+
+/// tsc emits this exact string when recursive DTS expansion reaches its depth limit.
+pub(crate) const ELIDED_ANY: &str = "/*elided*/ any";
+/// tsc stops expanding recursive generic function return types at this depth.
+pub(crate) const MAX_RECURSIVE_EXPANSION: u32 = 10;
 pub mod lowering;
 pub mod output;
 pub mod safe_slice;

@@ -175,7 +175,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         printed.replacen(
             &format!("{property_name}: any;"),
-            &format!("{property_name}: /*elided*/ any;"),
+            &format!("{property_name}: {};", crate::ELIDED_ANY),
             1,
         )
     }

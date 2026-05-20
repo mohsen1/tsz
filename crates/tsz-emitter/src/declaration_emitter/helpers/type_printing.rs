@@ -1038,14 +1038,15 @@ impl<'a> DeclarationEmitter<'a> {
                     Self::single_type_argument_text(type_text, end, type_arg_end)
                 {
                     out.push_str(type_arg);
-                    out.push_str(" | /*elided*/ any");
+                    out.push_str(" | ");
+                    out.push_str(crate::ELIDED_ANY);
                 } else {
-                    out.push_str("/*elided*/ any");
+                    out.push_str(crate::ELIDED_ANY);
                 }
                 i = type_arg_end;
                 continue;
             }
-            out.push_str("/*elided*/ any");
+            out.push_str(crate::ELIDED_ANY);
         }
         out
     }

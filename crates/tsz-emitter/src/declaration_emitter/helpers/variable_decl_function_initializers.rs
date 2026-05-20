@@ -692,7 +692,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) {
         self.emit_function_initializer_signature(func);
         if elide_return {
-            self.write("/*elided*/ any");
+            self.write(crate::ELIDED_ANY);
         } else {
             self.emit_recursive_function_initializer_type(func, true);
         }

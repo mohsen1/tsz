@@ -558,7 +558,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn elide_class_expression_self_name(members: &str, self_name: &str) -> String {
-        Self::replace_class_expression_self_name(members, self_name, "/*elided*/ any")
+        Self::replace_class_expression_self_name(members, self_name, crate::ELIDED_ANY)
     }
 
     fn replace_class_expression_self_name(

@@ -60,6 +60,9 @@ pub struct TypePrinter<'a> {
     /// placeholder reused in the conditional's true/false branches (or anywhere
     /// else, e.g. as a type argument) render as the bare name `T`.
     in_extends_clause: bool,
+    /// Matches tsc's depth limit of 10 for recursive generic function DTS expansion;
+    /// at that depth we emit `/*elided*/ any` instead of expanding further.
+    recursive_expansion_depth: u32,
 }
 
 impl<'a> TypePrinter<'a> {
@@ -81,6 +84,7 @@ impl<'a> TypePrinter<'a> {
             outer_type_param_names: Vec::new(),
             type_param_renames: Vec::new(),
             in_extends_clause: false,
+            recursive_expansion_depth: 0,
         }
     }
 

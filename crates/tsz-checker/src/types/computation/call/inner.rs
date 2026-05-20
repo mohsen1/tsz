@@ -254,6 +254,60 @@ impl<'a> CheckerState<'a> {
         }
 
         if callee_type == TypeId::ERROR {
+            // When an identifier callee is in symbol_resolution_set, ERROR is a circular
+            // placeholder for the symbol being resolved, not a genuine resolution failure.
+            // Preserve the recursive call as App(Lazy(def_id), type_args) for depth-limited
+            // DTS expansion instead of collapsing to any/ERROR.
+            let circular_sym = if self.ctx.symbol_resolution_set.is_empty() {
+                None
+            } else {
+                let is_identifier = self
+                    .ctx
+                    .arena
+                    .get(call.expression)
+                    .map_or(false, |n| n.kind == SyntaxKind::Identifier as u16);
+                if is_identifier {
+                    self.ctx
+                        .binder
+                        .node_symbols
+                        .get(&call.expression.0)
+                        .copied()
+                        .or_else(|| {
+                            self.resolve_identifier_symbol_without_tracking(call.expression)
+                        })
+                        .filter(|&sid| self.ctx.symbol_resolution_set.contains(&sid))
+                } else {
+                    None
+                }
+            };
+
+            if let Some(sym_id) = circular_sym {
+                let type_args: Vec<TypeId> = explicit_call_type_arguments
+                    .as_ref()
+                    .map(|tl| {
+                        tl.nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.collect_call_argument_types_with_context(
+                    args,
+                    |_, _| Some(TypeId::ANY),
+                    false,
+                    None,
+                    CallableContext::none(),
+                );
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                let factory = self.ctx.types.factory();
+                let lazy = factory.lazy(def_id);
+                return if type_args.is_empty() {
+                    lazy
+                } else {
+                    factory.application(lazy, type_args)
+                };
+            }
+
             self.reemit_namespace_value_error_for_call_callee(call.expression);
             // Still evaluate type arguments to catch TS2304 for unresolved type names
             // (e.g., `this.super<T>(0)` where T is undeclared)

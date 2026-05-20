@@ -901,6 +901,29 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         let Some(type_params) = type_params else {
+            // When the lazy def resolves to a generic function type (e.g. a const arrow
+            // function that recurses into itself), the Application represents a deferred
+            // recursive call: App(Lazy(fn_def), type_args). Instantiate the function's
+            // own type params with the application args, then resolve the property on
+            // the instantiated return type instead of on the raw function type.
+            if let Some(func_shape_id) =
+                crate::visitor::function_shape_id(self.interner(), body_type)
+            {
+                let func_shape = self.interner().function_shape(func_shape_id);
+                if !func_shape.type_params.is_empty() && !app.args.is_empty() {
+                    let subst = TypeSubstitution::from_args(
+                        self.interner(),
+                        &func_shape.type_params,
+                        &app.args,
+                    );
+                    let return_type = self.instantiate_type_cached(func_shape.return_type, &subst);
+                    return self.resolve_property_access_inner(
+                        return_type,
+                        prop_name,
+                        Some(prop_atom),
+                    );
+                }
+            }
             // No type params - still rebind polymorphic `this` to the concrete application.
             let resolved_body = if crate::contains_this_type(self.interner(), body_type) {
                 self.substitute_this_type_cached(body_type, app_type)

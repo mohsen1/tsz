@@ -3544,7 +3544,7 @@ impl<'a> DeclarationEmitter<'a> {
             };
             rewritten = rewritten.replacen(
                 &format!("{method_name}(): any;"),
-                &format!("{method_name}(): /*elided*/ any;"),
+                &format!("{method_name}(): {};", crate::ELIDED_ANY),
                 1,
             );
         }
