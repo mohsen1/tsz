@@ -1450,7 +1450,7 @@ fn test_esm_module_exports2_bisect_combinations() {
                 "import Foo = require(\"./exporter.mjs\");\nnew Foo();\n\nimport * as Foo3 from \"./exporter.mjs\";\nnew Foo3();\n",
             ),
         ],
-        opts.clone(),
+        opts,
     );
     let f1f2_ts2351 = f1f2.iter().filter(|(c, _)| *c == 2351).count();
     let f1f3_ts2351 = f1f3.iter().filter(|(c, _)| *c == 2351).count();
@@ -1688,7 +1688,7 @@ fn test_esm_module_exports2_all_forms_emit_ts2351() {
                 "const Foo = require(\"./exporter.mjs\");\nnew Foo();\n",
             ),
         ],
-        opts.clone(),
+        opts,
     );
     assert_eq!(
         d_all.iter().filter(|(c, _)| *c == 2351).count(),
