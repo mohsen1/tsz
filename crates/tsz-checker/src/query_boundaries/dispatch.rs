@@ -18,6 +18,6 @@ pub(crate) fn evaluate_type_with_resolver<R: TypeResolver>(
     resolver: &R,
     type_id: TypeId,
 ) -> TypeId {
-    let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(db, resolver);
+    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
     evaluator.evaluate(type_id)
 }

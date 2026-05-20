@@ -5544,8 +5544,10 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
                 _ => None,
             };
         let _evaluated_target_type = {
-            let mut evaluator =
-                tsz_solver::TypeEvaluator::with_resolver(&program.type_interner, &checker.ctx);
+            let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(
+                &program.type_interner,
+                &checker.ctx,
+            );
             evaluator.evaluate(target_type)
         };
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
