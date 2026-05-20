@@ -361,6 +361,21 @@ pub fn construct_return_type_for_type(db: &dyn TypeDatabase, type_id: TypeId) ->
                 None
             }
         }
+        InstanceTypeKind::Intersection(members) => {
+            let returns = members
+                .into_iter()
+                .filter_map(|member| construct_return_type_for_type(db, member))
+                .collect::<Vec<_>>();
+            (!returns.is_empty()).then(|| crate::utils::intersection_or_single(db, returns))
+        }
+        InstanceTypeKind::Union(members) => {
+            let mut returns = Vec::with_capacity(members.len());
+            for member in members {
+                returns.push(construct_return_type_for_type(db, member)?);
+            }
+            (!returns.is_empty()).then(|| crate::utils::union_or_single(db, returns))
+        }
+        InstanceTypeKind::Readonly(inner) => construct_return_type_for_type(db, inner),
         _ => None,
     }
 }
