@@ -64,6 +64,23 @@ fn expression_statement_arrow_initializer_keeps_trailing_comment_after_semicolon
 }
 
 #[test]
+fn variable_arrow_initializer_does_not_steal_next_leading_comment() {
+    let output = parse_and_emit_strict_es2015(
+        "var f12 = (a: number) :\n  number /*\n    */ => a\n\n// Should be valid.\nvar f13 = (a: number):\n    number => a;\n",
+        "a.ts",
+    );
+
+    assert!(
+        output.contains("var f12 = (a) => a;\n// Should be valid.\nvar f13"),
+        "Variable declaration semicolon should be emitted before the next statement's leading comment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("=> a\n\n// Should be valid.\n;"),
+        "Arrow concise-body printing should not consume the next statement's leading comment before the variable semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn js_satisfies_binary_expression_is_erased() {
     let output = parse_and_emit_strict_es2015("var v = undefined satisfies 1;", "a.js");
     assert_eq!(output.trim_end(), "\"use strict\";\nvar v = undefined;");

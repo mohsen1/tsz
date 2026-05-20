@@ -420,7 +420,10 @@ impl<'a> Printer<'a> {
                 self.pending_block_comment_space = false;
             }
         }
+        let prev_suppress_arrow_trailing = self.suppress_arrow_concise_body_trailing_comments;
+        self.suppress_arrow_concise_body_trailing_comments = true;
         self.emit_expression(decl.initializer);
+        self.suppress_arrow_concise_body_trailing_comments = prev_suppress_arrow_trailing;
     }
 
     fn variable_declaration_has_recovered_empty_initializer(
