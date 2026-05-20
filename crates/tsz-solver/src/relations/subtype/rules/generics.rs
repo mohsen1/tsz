@@ -925,7 +925,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// without requiring concrete expansion. This resolves the base type alias/interface
     /// body and instantiates it with the provided type arguments.
     fn try_resolve_application_body(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
-        use crate::TypeSubstitution;
+        use crate::instantiation::instantiate::TypeSubstitution;
 
         let app = self.interner.type_application(app_id);
 
@@ -960,14 +960,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
         let app_type = self.interner.application(app.base, app.args.clone());
-        let mut instantiated = crate::instantiate_type_cached(
+        let mut instantiated = crate::instantiation::instantiate::instantiate_type_cached(
             self.interner,
             self.query_db,
             effective_body,
             &substitution,
         );
         if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::substitute_this_type_cached(
+            instantiated = crate::instantiation::instantiate::substitute_this_type_cached(
                 self.interner,
                 self.query_db,
                 instantiated,
@@ -1599,7 +1599,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     fn try_expand_mapped_with_constraint(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
-        use crate::{TypeSubstitution, instantiate_type};
+        use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
         let mapped = self.interner.get_mapped(mapped_id);
         if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(param)) = self.interner.lookup(source)
@@ -1644,7 +1644,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Returns None if the application cannot be expanded (missing type params or body).
     ///
     pub(crate) fn try_expand_application(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
-        use crate::TypeSubstitution;
+        use crate::instantiation::instantiate::TypeSubstitution;
 
         let app = self.interner.type_application(app_id);
 
@@ -1721,14 +1721,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
         let app_type = self.interner.application(app.base, app.args.clone());
 
-        let mut instantiated = crate::instantiate_type_cached(
+        let mut instantiated = crate::instantiation::instantiate::instantiate_type_cached(
             self.interner,
             self.query_db,
             effective_body,
             &substitution,
         );
         if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::substitute_this_type_cached(
+            instantiated = crate::instantiation::instantiate::substitute_this_type_cached(
                 self.interner,
                 self.query_db,
                 instantiated,
@@ -1753,9 +1753,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Try to expand a Mapped type to its structural form.
     /// Returns None if the mapped type cannot be expanded (unresolvable constraint).
     pub(crate) fn try_expand_mapped(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
-        use crate::{
-            LiteralValue, MappedModifier, PropertyInfo, TypeSubstitution, instantiate_type,
-        };
+        use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+        use crate::{LiteralValue, MappedModifier, PropertyInfo};
 
         let mapped = self.interner.get_mapped(mapped_id);
 
@@ -2031,7 +2030,7 @@ pub(crate) struct FlattenedMapped {
 /// Returns None if the mapped type isn't in homomorphic form (e.g., has name remapping,
 /// or template isn't `X[K]` where K is the iteration param).
 pub(crate) fn flatten_mapped_chain(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     mapped_id: MappedTypeId,
 ) -> Option<FlattenedMapped> {
     use crate::types::MappedModifier;
@@ -2097,7 +2096,7 @@ pub(crate) fn flatten_mapped_chain(
 /// to mapped types that filter keys via as-clauses, since all properties in the
 /// result type are also properties of T with the same types.
 pub(crate) fn is_filtering_name_type(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     name_type: TypeId,
     mapped: &MappedType,
 ) -> bool {
@@ -2122,7 +2121,7 @@ pub(crate) fn is_filtering_name_type(
 
 /// Check if a type is a type parameter with the given name.
 fn is_type_param_with_name(
-    interner: &dyn crate::TypeDatabase,
+    interner: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
     name: tsz_common::interner::Atom,
 ) -> bool {

@@ -1,13 +1,16 @@
-use tsz_solver::{NullishFilter, PropertyInfo, TypeDatabase, TypeId, TypeResolver};
+use tsz_solver::construction::TypeDatabase;
+use tsz_solver::narrowing::NullishFilter;
+use tsz_solver::relations::subtype::TypeResolver;
+use tsz_solver::{PropertyInfo, TypeId};
 
 /// Re-export of the solver's binary operation result type.
 ///
-/// Wraps `tsz_solver::BinaryOpResult`.
+/// Wraps `tsz_solver::operations::BinaryOpResult`.
 /// This is the result enum returned by binary operation evaluation.
-pub(crate) use tsz_solver::BinaryOpResult;
+pub(crate) use tsz_solver::operations::BinaryOpResult;
 
 pub(crate) fn evaluate_contextual_structure_with(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
     type_id: TypeId,
     evaluate_leaf: &mut dyn FnMut(TypeId) -> TypeId,
 ) -> TypeId {
@@ -15,18 +18,24 @@ pub(crate) fn evaluate_contextual_structure_with(
 }
 
 pub(crate) fn evaluate_plus_chain(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
     operand_types: &[TypeId],
 ) -> Option<TypeId> {
-    tsz_solver::BinaryOpEvaluator::new(db).evaluate_plus_chain(operand_types)
+    tsz_solver::operations::BinaryOpEvaluator::new(db).evaluate_plus_chain(operand_types)
 }
 
-pub(crate) fn is_arithmetic_operand(db: &dyn tsz_solver::QueryDatabase, type_id: TypeId) -> bool {
-    tsz_solver::BinaryOpEvaluator::new(db).is_arithmetic_operand(type_id)
+pub(crate) fn is_arithmetic_operand(
+    db: &dyn tsz_solver::construction::QueryDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::operations::BinaryOpEvaluator::new(db).is_arithmetic_operand(type_id)
 }
 
-pub(crate) fn is_bigint_like(db: &dyn tsz_solver::QueryDatabase, type_id: TypeId) -> bool {
-    tsz_solver::BinaryOpEvaluator::new(db).is_bigint_like(type_id)
+pub(crate) fn is_bigint_like(
+    db: &dyn tsz_solver::construction::QueryDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::operations::BinaryOpEvaluator::new(db).is_bigint_like(type_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,12 +51,12 @@ pub(crate) enum WriteTargetLogicalResult {
 }
 
 pub(crate) fn write_target_logical_result_type(
-    db: &dyn tsz_solver::QueryDatabase,
+    db: &dyn tsz_solver::construction::QueryDatabase,
     operator: WriteTargetLogicalOperator,
     left_type: TypeId,
     right_type: TypeId,
 ) -> Option<WriteTargetLogicalResult> {
-    let ctx = tsz_solver::NarrowingContext::new(db);
+    let ctx = tsz_solver::narrowing::NarrowingContext::new(db);
     let left_result = match operator {
         WriteTargetLogicalOperator::LogicalOr => {
             let truthy_left = ctx.narrow_by_truthiness(left_type);
@@ -123,7 +132,7 @@ pub(crate) fn compute_best_common_type<R: TypeResolver>(
 /// in `remove_subtypes_for_bct` for repeated BCT call sites.
 pub(crate) fn compute_best_common_type_cached<R: TypeResolver>(
     db: &dyn TypeDatabase,
-    query_db: Option<&dyn tsz_solver::QueryDatabase>,
+    query_db: Option<&dyn tsz_solver::construction::QueryDatabase>,
     types: &[TypeId],
     resolver: Option<&R>,
 ) -> TypeId {
@@ -226,10 +235,58 @@ pub(crate) fn is_literal_permissive_object_context(type_id: TypeId) -> bool {
     matches!(type_id, TypeId::UNKNOWN | TypeId::ANY | TypeId::NEVER)
 }
 
+pub(crate) fn generic_application_literal_expected_for_mismatch(
+    db: &dyn TypeDatabase,
+    allow_generic_literal_display: bool,
+    expected: TypeId,
+    argument_types: &[TypeId],
+    initializer_literal_types: &[TypeId],
+) -> Option<TypeId> {
+    if !allow_generic_literal_display {
+        return None;
+    }
+
+    let display_expected = db.get_display_alias(expected).unwrap_or(expected);
+    let (base, type_args) =
+        crate::query_boundaries::common::application_info(db, display_expected)?;
+    if type_args.len() != 1 {
+        return None;
+    }
+
+    let expected_arg = type_args[0];
+    let expected_arg_base = crate::query_boundaries::common::widen_literal_type(db, expected_arg);
+    if !crate::query_boundaries::common::is_primitive_type(db, expected_arg_base) {
+        return None;
+    }
+
+    let mut candidates = Vec::new();
+    for candidate in argument_types
+        .iter()
+        .copied()
+        .chain(initializer_literal_types.iter().copied())
+    {
+        if crate::query_boundaries::common::literal_value(db, candidate).is_some()
+            && crate::query_boundaries::common::widen_literal_type(db, candidate)
+                == expected_arg_base
+            && !candidates.contains(&candidate)
+        {
+            candidates.push(candidate);
+        }
+    }
+
+    if candidates.len() < 2 {
+        return None;
+    }
+
+    let literal_arg = db.union(candidates);
+    Some(db.application(base, vec![literal_arg]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::{PropertyInfo, TupleElement, TypeInterner};
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{PropertyInfo, TupleElement};
 
     fn fresh_object(db: &TypeInterner, name: &str, ty: TypeId) -> TypeId {
         db.object_fresh(vec![PropertyInfo::new(db.intern_string(name), ty)])
@@ -326,6 +383,75 @@ mod tests {
         assert!(!is_literal_permissive_object_context(TypeId::STRING));
         assert!(!is_literal_permissive_object_context(TypeId::NUMBER));
         assert!(!is_literal_permissive_object_context(TypeId::BOOLEAN));
+    }
+
+    #[test]
+    fn generic_application_literal_expected_rebuilds_argument_union() {
+        let db = TypeInterner::new();
+        let first = db.literal_string("first");
+        let second = db.literal_string("second");
+        let expected = db.application(TypeId::STRING, vec![TypeId::STRING]);
+
+        let result = generic_application_literal_expected_for_mismatch(
+            &db,
+            true,
+            expected,
+            &[first],
+            &[second],
+        )
+        .expect("two string literal candidates should rebuild display expectation");
+
+        let (base, args) = tsz_solver::type_queries::get_application_info(&db, result)
+            .expect("result should remain an application");
+        assert_eq!(base, TypeId::STRING);
+        assert_eq!(args.len(), 1);
+        let members = union_members(&db, args[0]);
+        assert_eq!(members.len(), 2);
+        assert!(members.contains(&first));
+        assert!(members.contains(&second));
+    }
+
+    #[test]
+    fn generic_application_literal_expected_uses_display_alias_application() {
+        let db = TypeInterner::new();
+        let first = db.literal_number(1.0);
+        let second = db.literal_number(2.0);
+        let expected = fresh_object(&db, "value", TypeId::NUMBER);
+        let alias_expected = db.application(TypeId::NUMBER, vec![TypeId::NUMBER]);
+        db.store_display_alias(expected, alias_expected);
+
+        let result = generic_application_literal_expected_for_mismatch(
+            &db,
+            true,
+            expected,
+            &[first],
+            &[second],
+        )
+        .expect("display alias application should drive rebuilt expectation");
+
+        let (base, args) = tsz_solver::type_queries::get_application_info(&db, result)
+            .expect("result should remain an application");
+        assert_eq!(base, TypeId::NUMBER);
+        let members = union_members(&db, args[0]);
+        assert!(members.contains(&first));
+        assert!(members.contains(&second));
+    }
+
+    #[test]
+    fn generic_application_literal_expected_rejects_single_unique_candidate() {
+        let db = TypeInterner::new();
+        let first = db.literal_string("first");
+        let expected = db.application(TypeId::STRING, vec![TypeId::STRING]);
+
+        let result = generic_application_literal_expected_for_mismatch(
+            &db,
+            true,
+            expected,
+            &[first],
+            &[first],
+        );
+
+        assert_eq!(result, None);
     }
 
     #[test]

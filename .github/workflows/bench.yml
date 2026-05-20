@@ -884,7 +884,7 @@ jobs:
     name: bench-${{ matrix.label }}
     needs: bench-prep-artifact
     if: needs.bench-prep-artifact.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
@@ -920,105 +920,87 @@ jobs:
           ref: ${{ env.BENCH_TARGET_SHA }}
           fetch-depth: 1
 
-      - name: Restore tools cache
-        id: tools-cache
-        uses: actions/cache@v4
-        with:
-          path: .target-bench/tools
-          key: bench-tools-${{ runner.os }}-hyperfine-${{ env.HYPERFINE_VER }}-${{ hashFiles('scripts/bench/project-fixtures.sh') }}
-
-      - name: Install hyperfine
-        if: steps.tools-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p .target-bench/tools/bin
-          curl -fsSL "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VER}/hyperfine-v${HYPERFINE_VER}-x86_64-unknown-linux-musl.tar.gz" \
-            | tar xz --strip-components=1 -C .target-bench/tools/bin \
-                "hyperfine-v${HYPERFINE_VER}-x86_64-unknown-linux-musl/hyperfine"
-
-      - name: Add tools bin to PATH
-        run: echo "$GITHUB_WORKSPACE/.target-bench/tools/bin" >> "$GITHUB_PATH"
-
-      - name: Restore external fixture cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            .target-bench/external
-            .ci-cache/pnpm-store
-          key: bench-fixtures-${{ matrix.label }}-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh', 'scripts/bench/project-fixtures.sh', 'scripts/bench/project-rows.mjs') }}
-          restore-keys: |
-            bench-fixtures-${{ matrix.label }}-${{ runner.os }}-
-            bench-fixtures-${{ runner.os }}-
-
-      - name: Download benchmark prep artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: bench-prep-ready
-          path: .
-
-      - name: Unpack benchmark prep artifact
+      - id: cloudbuild-submit
+        name: Submit benchmark shard to Cloud Build pool
         shell: bash
         run: |
           set -euo pipefail
 
-          tar -xf bench-prep.tar
-          test -x .target-bench/dist/tsz
-          test -f .target-bench/dist/.bench-pgo-optimized
-
-          # The tarball preserves the binary mtime from bench-prepare. Shard
-          # jobs run after a fresh checkout, so source files can look newer and
-          # make bench-vs-tsgo rebuild the dist binary in every shard.
-          touch .target-bench/dist/tsz
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install pnpm
-        run: |
-          if ! command -v pnpm &>/dev/null; then
-            mkdir -p "$HOME/.npm-global"
-            npm config set prefix "$HOME/.npm-global"
-            npm install -g pnpm --silent
-            echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
+          submit_output="$(gcloud builds submit \
+            --async \
+            --project=tsz-ci \
+            --region=us-central1 \
+            --config=cloudbuild-bench-shard.yaml \
+            --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
+            --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}",_BENCH_SHARD_LABEL="${{ matrix.label }}",_BENCH_SHARD_FILTER="${{ matrix.filter }}" \
+            --format='value(id)' \
+            .)"
+          build_id="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' <<<"$submit_output" | tail -n 1 || true)"
+          if [[ -z "$build_id" ]]; then
+            printf '%s\n' "$submit_output"
+            echo "Cloud Build shard submit did not return a build id." >&2
+            exit 1
           fi
-          pnpm config set store-dir "$PNPM_STORE_DIR"
+          echo "Submitted Cloud Build benchmark shard ${build_id} for ${{ matrix.label }}."
+          echo "build_id=${build_id}" >> "$GITHUB_OUTPUT"
 
-      - name: Bench shard prelude (cleanup + headroom check)
-        shell: bash
-        run: scripts/ci/bench-shard-prelude.sh prelude --label '${{ matrix.label }}'
-
-      - name: Run benchmark shard
+      - name: Wait for Cloud Build shard artifacts
         shell: bash
         run: |
           set -euo pipefail
 
-          export TSZ="$GITHUB_WORKSPACE/.target-bench/dist/tsz"
-          export TSZ_BENCH_SHARD_LABEL='${{ matrix.label }}'
-          export TSZ_BENCH_SHARD_FILTER='${{ matrix.filter }}'
-          if [[ '${{ matrix.label }}' == 'projects' ]]; then
-            export NEXTJS_BENCHMARK_ENABLED=1
-          fi
-          echo "Using prepared benchmark TSZ binary: $TSZ"
+          storage_cp() {
+            timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
+          }
+          cloudbuild_status() {
+            gcloud builds describe "${{ steps.cloudbuild-submit.outputs.build_id }}" \
+              --project=tsz-ci \
+              --region=us-central1 \
+              --format='value(status)' 2>/dev/null || true
+          }
+          download_shard_artifacts() {
+            local prefix="gs://tsz-ci_cloudbuild/bench-shards/${BENCH_TARGET_SHA}/${{ matrix.label }}"
+            storage_cp "${prefix}/bench-status-${{ matrix.label }}.env" "bench-status-${{ matrix.label }}.env" || return 1
+            storage_cp "${prefix}/bench-results-${{ matrix.label }}.json" "bench-results-${{ matrix.label }}.json" || true
+            storage_cp "${prefix}/bench-run-${{ matrix.label }}.log" "bench-run-${{ matrix.label }}.log" || true
+            storage_cp "${prefix}/bench-postmortem-${{ matrix.label }}.log" "bench-postmortem-${{ matrix.label }}.log" || true
+          }
 
-          # Wrap the bench in safe-run.sh so a runaway shard is killed before
-          # the OS OOM-killer reaches the runner agent (issue #7601). 85%
-          # leaves ~15% headroom for the runner agent and sshd; 30s sampling
-          # is plenty for multi-minute shards.
-          scripts/safe-run.sh --limit "${TSZ_BENCH_MEMORY_LIMIT:-85%}" --interval 30 -- \
-            ./scripts/bench/bench-vs-tsgo.sh \
-              --filter '${{ matrix.filter }}' \
-              --json \
-              --json-file "$GITHUB_WORKSPACE/bench-results-${{ matrix.label }}.json" \
-            2>&1 | tee "$GITHUB_WORKSPACE/bench-run-${{ matrix.label }}.log"
+          deadline=$((SECONDS + ${{ matrix.timeout }} * 60))
+          while true; do
+            status="$(cloudbuild_status)"
+            if [[ "$status" == "SUCCESS" ]]; then
+              if ! download_shard_artifacts; then
+                echo "Cloud Build shard succeeded but did not publish a status artifact for ${{ matrix.label }}."
+                exit 1
+              fi
+              # shellcheck disable=SC1091
+              source "bench-status-${{ matrix.label }}.env"
+              if [[ "${BENCH_TARGET_SHA:-}" != "${{ env.BENCH_TARGET_SHA }}" ||
+                    "${BENCH_SHARD_LABEL:-}" != "${{ matrix.label }}" ]]; then
+                echo "Cloud Build shard status metadata did not match this shard."
+                cat "bench-status-${{ matrix.label }}.env"
+                exit 1
+              fi
+              exit "${BENCH_SHARD_STATUS:-1}"
+            fi
+            case "$status" in
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build benchmark shard ${{ steps.cloudbuild-submit.outputs.build_id }} ended with status ${status}."
+                download_shard_artifacts || true
+                exit 1
+                ;;
+            esac
 
-      - name: Capture shard failure diagnostics
-        if: failure()
-        shell: bash
-        run: |
-          scripts/ci/bench-shard-prelude.sh postmortem \
-            --label '${{ matrix.label }}' \
-            --output "$GITHUB_WORKSPACE/bench-postmortem-${{ matrix.label }}.log"
+            if (( SECONDS >= deadline )); then
+              echo "No finished Cloud Build benchmark shard artifact is available for ${{ matrix.label }} after ${{ matrix.timeout }} minutes."
+              [[ -z "$status" ]] || echo "Last Cloud Build benchmark shard status: ${status} (${{ steps.cloudbuild-submit.outputs.build_id }})."
+              exit 1
+            fi
+
+            echo "Waiting for Cloud Build benchmark shard ${{ matrix.label }}..."
+            sleep 30
+          done
 
       - name: Upload benchmark shard artifacts
         if: always()

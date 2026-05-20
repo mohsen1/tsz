@@ -5,9 +5,9 @@
 //! inferring generic type parameters from argument types.
 
 use super::*;
-use crate::CompatChecker;
 use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
 use crate::intern::TypeInterner;
+use crate::relations::compat::CompatChecker;
 use crate::types::{
     FunctionShape, InferencePriority, ParamInfo, PropertyInfo, TupleElement, TypeData,
     TypeParamInfo,

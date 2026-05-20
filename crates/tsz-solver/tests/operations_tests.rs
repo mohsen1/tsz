@@ -1,11 +1,11 @@
 //! Tests for type operations.
 
 use super::*;
-use crate::CompatChecker;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
+use crate::relations::compat::CompatChecker;
 use crate::types::{CallableShape, MappedType, TypeData, Visibility};
 
 /// Build a `<param_name>(arg_name: param_name): param_name` identity `FunctionShape`.
@@ -10012,7 +10012,7 @@ fn test_is_arithmetic_operand_mixed_union_invalid() {
 /// does not exist on type 'any[]'".
 #[test]
 fn test_property_access_array_push_with_env_resolver() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
     use crate::types::TypeParamInfo;
 
     let interner = TypeInterner::new();
@@ -10272,7 +10272,7 @@ fn test_array_push_instantiates_intersection_array_base_parameter() {
 
 #[test]
 fn test_array_push_uses_symbol_params_when_array_base_params_missing() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
     use crate::types::{ObjectShape, SymbolRef};
 
     let interner = TypeInterner::new();
@@ -10352,7 +10352,7 @@ fn test_array_push_uses_symbol_params_when_array_base_params_missing() {
 /// it should resolve to the array method, not map through the template.
 #[test]
 fn test_array_mapped_type_method_resolution() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -10973,7 +10973,7 @@ fn test_union_call_tuple_rest_combines_to_never() {
 /// argument unification to capture T = Bacon.
 #[test]
 fn test_infer_application_to_mapped_type_direct_arg_unification() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 

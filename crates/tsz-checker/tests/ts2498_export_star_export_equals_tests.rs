@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Helper to set up a two-file project and check file `a.ts` which
 /// does `export * as ns from './b'` where `b.ts` has `export = {}`.

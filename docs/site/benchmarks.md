@@ -31,6 +31,8 @@ This keeps mixed-runner results out of the public trend line. Current Cloud
 Build prep artifacts and future Cloud Build timing shards are not comparable to
 the historical runner series until a same-SHA calibration artifact documents the
 speed/noise difference.
+Use `node scripts/bench/calibrate-runner-series.mjs <baseline.json> <candidate.json> [output.json]`
+to produce that calibration report from two same-source benchmark artifacts.
 
 <div class="bench-legend">
   <span class="bench-legend-item"><span class="bench-legend-swatch tsz"></span> tsz (Rust compiler)</span>

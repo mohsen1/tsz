@@ -22,7 +22,7 @@ use tsz_checker::context::LibContext as CheckerLibContext;
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn load_es5_lib_files() -> Vec<Arc<LibFile>> {
     tsz_checker::test_utils::load_compiled_lib_files(&[

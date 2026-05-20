@@ -12,7 +12,7 @@ use tsz_core::binder::BinderState;
 use tsz_core::checker::CheckerOptions;
 use tsz_core::checker::state::CheckerState;
 use tsz_core::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Simple code without complex control flow.
 const SIMPLE_CODE: &str = r#"
