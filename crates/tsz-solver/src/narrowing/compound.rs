@@ -944,11 +944,35 @@ impl<'a> NarrowingContext<'a> {
     }
 
     fn application_base_name_is(&self, base: TypeId, expected: &str) -> bool {
+        // Fast path: compare against the registered canonical base TypeId so
+        // this works even when no resolver is attached (e.g. unit tests that
+        // build only a TypeInterner without a full TypeEnvironment).
+        if expected == "ReadonlyArray"
+            && self
+                .db
+                .as_type_resolver()
+                .get_readonly_array_base_type()
+                .is_some_and(|ra_base| ra_base == base)
+        {
+            return true;
+        }
+
         match self.db.lookup(base) {
-            Some(TypeData::Lazy(def_id)) => self
-                .resolver
-                .and_then(|resolver| resolver.get_def_name(def_id))
-                .is_some_and(|name| self.db.resolve_atom_ref(name).as_ref() == expected),
+            Some(TypeData::Lazy(def_id)) => {
+                // For ReadonlyArray, prefer the reliable builtin-def predicate
+                // over name lookup. Name lookup can return None for stdlib defs
+                // when the resolver is absent or does not index that def.
+                if expected == "ReadonlyArray"
+                    && self
+                        .resolver
+                        .is_some_and(|r| r.is_builtin_readonly_array_def(def_id))
+                {
+                    return true;
+                }
+                self.resolver
+                    .and_then(|resolver| resolver.get_def_name(def_id))
+                    .is_some_and(|name| self.db.resolve_atom_ref(name).as_ref() == expected)
+            }
             Some(TypeData::UnresolvedTypeName(name)) => {
                 self.db.resolve_atom_ref(name).as_ref() == expected
             }

@@ -2147,3 +2147,151 @@ fn test_enum_narrowing_two_names_same_fix() {
         );
     }
 }
+
+// =============================================================================
+// Array.isArray narrowing — ReadonlyArray<T> application form
+//
+// Rule: when Array.isArray(x) is truthy, tsz must narrow any union member
+// that is array-like (including Application(ReadonlyArray, [T]) and
+// ReadonlyType(Array(T))) to itself, and exclude it on the falsy branch.
+// This covers issue #8782.
+// =============================================================================
+
+/// Build a minimal ReadonlyArray<T> application type by registering a dummy
+/// base with `set_readonly_array_base_type` and creating `Application(base, [elem])`.
+fn make_readonly_array_application(interner: &TypeInterner, elem: TypeId) -> TypeId {
+    let base = interner.object(vec![]);
+    interner.set_readonly_array_base_type(base);
+    interner.application(base, vec![elem])
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_application_truthy() {
+    // ReadonlyArray<number> | number → Array.isArray truthy → ReadonlyArray<number>
+    let interner = TypeInterner::new();
+    let ra_num = make_readonly_array_application(&interner, TypeId::NUMBER);
+    let union = interner.union2(ra_num, TypeId::NUMBER);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Positive);
+    assert_eq!(
+        narrowed, ra_num,
+        "Array.isArray truthy on ReadonlyArray<number> | number must yield ReadonlyArray<number>"
+    );
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_application_different_element_type() {
+    // Structural rule is not tied to `number`. Verify with `string` and `boolean`.
+    let interner = TypeInterner::new();
+
+    let ra_str = make_readonly_array_application(&interner, TypeId::STRING);
+    let union_str = interner.union2(ra_str, TypeId::STRING);
+    let ctx = NarrowingContext::new(&interner);
+    let narrowed_str = ctx.narrow_type(union_str, &TypeGuard::Array, GuardSense::Positive);
+    assert_eq!(
+        narrowed_str, ra_str,
+        "Array.isArray truthy on ReadonlyArray<string> | string must yield ReadonlyArray<string>"
+    );
+
+    let ra_bool = make_readonly_array_application(&interner, TypeId::BOOLEAN);
+    let union_bool = interner.union2(ra_bool, TypeId::BOOLEAN);
+    let narrowed_bool = ctx.narrow_type(union_bool, &TypeGuard::Array, GuardSense::Positive);
+    assert_eq!(
+        narrowed_bool, ra_bool,
+        "Array.isArray truthy on ReadonlyArray<boolean> | boolean must yield ReadonlyArray<boolean>"
+    );
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_application_falsy() {
+    // ReadonlyArray<number> | number → !Array.isArray → number
+    let interner = TypeInterner::new();
+    let ra_num = make_readonly_array_application(&interner, TypeId::NUMBER);
+    let union = interner.union2(ra_num, TypeId::NUMBER);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Negative);
+    assert_eq!(
+        narrowed,
+        TypeId::NUMBER,
+        "!Array.isArray on ReadonlyArray<number> | number must yield number"
+    );
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_alone_truthy() {
+    // ReadonlyArray<number> alone → Array.isArray truthy → ReadonlyArray<number>
+    let interner = TypeInterner::new();
+    let ra_num = make_readonly_array_application(&interner, TypeId::NUMBER);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(ra_num, &TypeGuard::Array, GuardSense::Positive);
+    assert_eq!(
+        narrowed, ra_num,
+        "Array.isArray truthy on bare ReadonlyArray<number> must return it unchanged"
+    );
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_alone_falsy() {
+    // ReadonlyArray<number> alone → !Array.isArray → never
+    let interner = TypeInterner::new();
+    let ra_num = make_readonly_array_application(&interner, TypeId::NUMBER);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(ra_num, &TypeGuard::Array, GuardSense::Negative);
+    assert_eq!(
+        narrowed,
+        TypeId::NEVER,
+        "!Array.isArray on bare ReadonlyArray<number> must be never"
+    );
+}
+
+#[test]
+fn array_isarray_narrows_readonly_syntax_array_truthy_regression() {
+    // `readonly number[]` (ReadonlyType(Array(number))) must also narrow correctly.
+    // This form was already handled; test guards against regression.
+    let interner = TypeInterner::new();
+    let ro_num = interner.readonly_array(TypeId::NUMBER);
+    let union = interner.union2(ro_num, TypeId::NUMBER);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Positive);
+    assert_eq!(
+        narrowed, ro_num,
+        "Array.isArray truthy on readonly number[] | number must yield readonly number[]"
+    );
+}
+
+#[test]
+fn array_isarray_mutable_and_readonly_union() {
+    // number[] | ReadonlyArray<string> | boolean → Array.isArray → number[] | ReadonlyArray<string>
+    let interner = TypeInterner::new();
+    let arr_num = interner.array(TypeId::NUMBER);
+    let ra_str = make_readonly_array_application(&interner, TypeId::STRING);
+    let union = interner.union(vec![arr_num, ra_str, TypeId::BOOLEAN]);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Positive);
+    let expected = interner.union2(arr_num, ra_str);
+    assert_eq!(
+        narrowed, expected,
+        "Array.isArray truthy on number[] | ReadonlyArray<string> | boolean must yield number[] | ReadonlyArray<string>"
+    );
+}
+
+#[test]
+fn array_isarray_preserves_mutable_array_unchanged() {
+    // Existing behavior: mutable arrays must still work after the fix.
+    let interner = TypeInterner::new();
+    let arr_num = interner.array(TypeId::NUMBER);
+    let union = interner.union2(arr_num, TypeId::STRING);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Positive);
+    assert_eq!(
+        narrowed, arr_num,
+        "Array.isArray truthy on number[] | string must still yield number[]"
+    );
+}
