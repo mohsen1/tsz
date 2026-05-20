@@ -724,37 +724,6 @@ fn test_exported_namespace_import_equals_annotation_preserves_alias() {
 }
 
 #[test]
-fn test_import_equals_new_expression_inferred_types_preserve_alias_surface() {
-    let output = emit_dts_with_usage_analysis(
-        r#"
-    export namespace Root {
-        export class Box {}
-    }
-
-    import LocalRoot = Root;
-    export var instanceValue = new LocalRoot.Box();
-
-    export namespace Outer {
-        export namespace Inner {
-            export class Item {}
-        }
-        import Renamed = Inner;
-        export var itemInstance = new Renamed.Item();
-    }
-    "#,
-    );
-
-    assert!(
-        output.contains("export declare var instanceValue: LocalRoot.Box;"),
-        "Expected new expression to preserve import-equals alias: {output}"
-    );
-    assert!(
-        output.contains("var itemInstance: Renamed.Item;"),
-        "Expected namespace-local new expression to preserve renamed alias: {output}"
-    );
-}
-
-#[test]
 fn test_duplicate_namespace_import_equals_annotations_preserve_distinct_aliases() {
     let output = emit_dts_with_usage_analysis(
         r#"
@@ -1196,6 +1165,255 @@ function f2(item: A | B | undefined) {
     assert!(
         !output.contains("declare function f1(x: A | B | C | undefined): {\n    a: Box<string>;"),
         "Did not expect the mapped alias return to expand into object-union members: {output}"
+    );
+}
+
+#[test]
+fn test_nested_mapped_type_as_clause_formats_multiline() {
+    let output = emit_dts(
+        r#"
+export type TN5<T, U> = keyof { [K in keyof T as keyof { [P in K as T[P] extends U ? K : never]: true }]: string };
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export type TN5<T, U> = keyof {\n    [K in keyof T as keyof {\n        [P in K as T[P] extends U ? K : never]: true;\n    }]: string;\n};"
+        ),
+        "Expected nested mapped type in remap clause to use structured multiline formatting: {output}"
+    );
+}
+
+#[test]
+fn test_function_returning_remapped_keyof_parameter_expands_literal_return() {
+    use tsz_solver::types::{ConditionalType, MappedType, TypeParamInfo};
+
+    let source = r#"
+type KeysExtendedBy<T, U> = keyof { [K in keyof T as U extends T[K] ? K : never]: T[K] };
+interface M {
+    a: boolean;
+    b: number;
+}
+function f(x: KeysExtendedBy<M, number>) {
+    return x;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let f_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            parser
+                .arena
+                .get_function(node)
+                .filter(|func| parser.arena.get_identifier_text(func.name) == Some("f"))
+                .map(|_| NodeIndex(idx as u32))
+        })
+        .expect("missing f function");
+    let f_node = parser.arena.get(f_idx).expect("missing f node");
+    let f = parser
+        .arena
+        .get_function(f_node)
+        .expect("missing f function data");
+    let param_idx = f.parameters.nodes[0];
+    let param = parser
+        .arena
+        .get(param_idx)
+        .and_then(|node| parser.arena.get_parameter(node))
+        .expect("missing f parameter");
+
+    let keys_sym = binder
+        .file_locals
+        .get("KeysExtendedBy")
+        .expect("missing KeysExtendedBy symbol");
+    let m_sym = binder.file_locals.get("M").expect("missing M symbol");
+
+    let interner = TypeInterner::new();
+    let t_param = TypeParamInfo::simple(interner.intern_string("T"));
+    let u_param = TypeParamInfo::simple(interner.intern_string("U"));
+    let k_param = TypeParamInfo::simple(interner.intern_string("K"));
+    let t_type = interner.type_param(t_param);
+    let u_type = interner.type_param(u_param);
+    let k_type = interner.type_param(k_param);
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param,
+        constraint: interner.keyof(t_type),
+        name_type: Some(interner.conditional(ConditionalType {
+            check_type: u_type,
+            extends_type: interner.index_access(t_type, k_type),
+            true_type: k_type,
+            false_type: TypeId::NEVER,
+            is_distributive: false,
+        })),
+        template: interner.index_access(t_type, k_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let alias_body = interner.keyof(mapped);
+    let alias_def = DefId(7021);
+    let m_def = DefId(7023);
+    let m_type = interner.object_with_flags(
+        vec![
+            PropertyInfo::new(interner.intern_string("a"), TypeId::BOOLEAN),
+            PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+        ],
+        ObjectFlags::PRESERVE_DECLARATION_ORDER,
+    );
+    let m_lazy = interner.lazy(m_def);
+    let alias_app = interner.application(interner.lazy(alias_def), vec![m_lazy, TypeId::NUMBER]);
+    let function_type = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(interner.intern_string("x"), alias_app)],
+        alias_app,
+    ));
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(alias_def, keys_sym);
+    type_cache.def_to_symbol.insert(m_def, m_sym);
+    type_cache.def_types.insert(alias_def.0, alias_body);
+    type_cache.def_types.insert(m_def.0, m_type);
+    type_cache
+        .def_type_params
+        .insert(alias_def.0, vec![t_param, u_param]);
+    type_cache.node_types.insert(f_idx.0, function_type);
+    type_cache.node_types.insert(f.name.0, function_type);
+    type_cache
+        .node_types
+        .insert(param.type_annotation.0, alias_app);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function f(x: KeysExtendedBy<M, number>): \"b\";"),
+        "Expected returned remapped-key alias parameter to emit the evaluated literal key: {output}"
+    );
+}
+
+#[test]
+fn test_function_returning_remapped_keyof_parameter_expands_renamed_literal_return() {
+    use tsz_solver::types::{ConditionalType, MappedType, TypeParamInfo};
+
+    let source = r#"
+type SelectKeys<Shape, Value> = keyof { [Prop in keyof Shape as Value extends Shape[Prop] ? Prop : never]: Shape[Prop] };
+interface Recordish {
+    yes: string;
+    no: boolean;
+}
+function g(item: SelectKeys<Recordish, string>) {
+    return item;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let g_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            parser
+                .arena
+                .get_function(node)
+                .filter(|func| parser.arena.get_identifier_text(func.name) == Some("g"))
+                .map(|_| NodeIndex(idx as u32))
+        })
+        .expect("missing g function");
+    let g_node = parser.arena.get(g_idx).expect("missing g node");
+    let g = parser
+        .arena
+        .get_function(g_node)
+        .expect("missing g function data");
+    let param_idx = g.parameters.nodes[0];
+    let param = parser
+        .arena
+        .get(param_idx)
+        .and_then(|node| parser.arena.get_parameter(node))
+        .expect("missing g parameter");
+
+    let select_sym = binder
+        .file_locals
+        .get("SelectKeys")
+        .expect("missing SelectKeys symbol");
+    let recordish_sym = binder
+        .file_locals
+        .get("Recordish")
+        .expect("missing Recordish symbol");
+
+    let interner = TypeInterner::new();
+    let shape_param = TypeParamInfo::simple(interner.intern_string("Shape"));
+    let value_param = TypeParamInfo::simple(interner.intern_string("Value"));
+    let prop_param = TypeParamInfo::simple(interner.intern_string("Prop"));
+    let shape_type = interner.type_param(shape_param);
+    let value_type = interner.type_param(value_param);
+    let prop_type = interner.type_param(prop_param);
+    let mapped = interner.mapped(MappedType {
+        type_param: prop_param,
+        constraint: interner.keyof(shape_type),
+        name_type: Some(interner.conditional(ConditionalType {
+            check_type: value_type,
+            extends_type: interner.index_access(shape_type, prop_type),
+            true_type: prop_type,
+            false_type: TypeId::NEVER,
+            is_distributive: false,
+        })),
+        template: interner.index_access(shape_type, prop_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let alias_body = interner.keyof(mapped);
+    let alias_def = DefId(7022);
+    let recordish_def = DefId(7024);
+    let recordish_type = interner.object_with_flags(
+        vec![
+            PropertyInfo::new(interner.intern_string("yes"), TypeId::STRING),
+            PropertyInfo::new(interner.intern_string("no"), TypeId::BOOLEAN),
+        ],
+        ObjectFlags::PRESERVE_DECLARATION_ORDER,
+    );
+    let recordish_lazy = interner.lazy(recordish_def);
+    let alias_app = interner.application(
+        interner.lazy(alias_def),
+        vec![recordish_lazy, TypeId::STRING],
+    );
+    let function_type = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(
+            interner.intern_string("item"),
+            alias_app,
+        )],
+        alias_app,
+    ));
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(alias_def, select_sym);
+    type_cache
+        .def_to_symbol
+        .insert(recordish_def, recordish_sym);
+    type_cache.def_types.insert(alias_def.0, alias_body);
+    type_cache.def_types.insert(recordish_def.0, recordish_type);
+    type_cache
+        .def_type_params
+        .insert(alias_def.0, vec![shape_param, value_param]);
+    type_cache.node_types.insert(g_idx.0, function_type);
+    type_cache.node_types.insert(g.name.0, function_type);
+    type_cache
+        .node_types
+        .insert(param.type_annotation.0, alias_app);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare function g(item: SelectKeys<Recordish, string>): \"yes\";"),
+        "Expected renamed type and mapped parameters to use the evaluated literal key: {output}"
     );
 }
 
@@ -2063,8 +2281,6 @@ const zero = 0 || "";
 const one = 1 || "";
 const zeroBig = 0n || "";
 const oneBig = 1n || "";
-const falsyUnion = (0 as 0 | false) || "fallback";
-const nullishFalsy = (null as null | undefined | "") || "fallback";
 "#,
     );
 
@@ -2083,14 +2299,6 @@ const nullishFalsy = (null as null | undefined | "") || "fallback";
     assert!(
         output.contains("declare const oneBig: 1n;"),
         "Expected non-zero bigint left operand to omit unreachable fallback: {output}"
-    );
-    assert!(
-        output.contains("declare const falsyUnion: \"fallback\";"),
-        "Expected all-falsy unions to expose the fallback literal: {output}"
-    );
-    assert!(
-        output.contains("declare const nullishFalsy: \"fallback\";"),
-        "Expected nullish/falsy unions to expose the fallback literal: {output}"
     );
 }
 

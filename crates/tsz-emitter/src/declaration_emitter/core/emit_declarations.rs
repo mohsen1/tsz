@@ -1403,6 +1403,22 @@ impl<'a> DeclarationEmitter<'a> {
                     } else if let Some(type_text) = func_body
                         .is_some()
                         .then(|| {
+                            self.evaluated_literal_return_type_text_for_returned_identifier(
+                                func,
+                                func_body,
+                                effective_return_type_id,
+                            )
+                        })
+                        .flatten()
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                        let _ = self.emit_non_portable_function_return_diagnostics(
+                            &type_text, func_body, func_name,
+                        );
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| {
                             self.function_body_single_spread_object_literal_type_text(func_body)
                         })
                         .flatten()
