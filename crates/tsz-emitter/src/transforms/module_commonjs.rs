@@ -1550,59 +1550,300 @@ pub fn collect_inline_exported_var_names(
     preserve_const_enums: bool,
 ) -> Vec<String> {
     let mut names = Vec::new();
+    let mut seen = FxHashSet::default();
     for &stmt_idx in statements {
-        let Some(node) = arena.get(stmt_idx) else {
-            continue;
-        };
-        // Direct: export let/const/var x = ... (including `export declare const`)
-        // In CJS, all exported names become `exports.X` properties — even `declare`
-        // exports that have no runtime initializer. tsc qualifies reads of these
-        // names as `exports.X` and wraps calls as `(0, exports.X)()`.
-        if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-            if let Some(var_stmt) = arena.get_variable(node)
-                && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
-            {
-                for &decl_idx in &var_stmt.declarations.nodes {
-                    collect_declaration_names(arena, decl_idx, &mut names);
-                }
-            }
-        }
-        // Wrapped: ExportDeclaration { clause: ... }
-        else if node.kind == syntax_kind_ext::EXPORT_DECLARATION
-            && let Some(export_decl) = arena.get_export_decl(node)
-            && !export_decl.is_type_only
-            && export_decl.module_specifier.is_none()
-            && let Some(clause_node) = arena.get(export_decl.export_clause)
-        {
-            if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                && let Some(var_stmt) = arena.get_variable(clause_node)
-            {
-                for &decl_idx in &var_stmt.declarations.nodes {
-                    collect_declaration_names(arena, decl_idx, &mut names);
-                }
-            }
-            // ExportDeclaration { clause: ImportEqualsDeclaration }
-            // `export import b = a.foo` — the alias name becomes `exports.b`
-            else if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                && let Some(import_decl) = arena.get_import_decl(clause_node)
-                && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
-            {
-                if import_decl.is_type_only {
-                    continue;
-                }
-                if import_alias_resolves_to_exported_type_only(
-                    arena,
-                    import_decl.module_specifier,
-                    statements,
-                    preserve_const_enums,
-                ) {
-                    continue;
-                }
-                names.push(name);
-            }
-        }
+        collect_inline_exported_var_names_from_statement(
+            arena,
+            stmt_idx,
+            statements,
+            preserve_const_enums,
+            &mut names,
+            &mut seen,
+            true,
+        );
     }
     names
+}
+
+fn collect_inline_exported_var_names_from_statement(
+    arena: &NodeArena,
+    stmt_idx: NodeIndex,
+    source_statements: &[NodeIndex],
+    preserve_const_enums: bool,
+    names: &mut Vec<String>,
+    seen: &mut FxHashSet<String>,
+    allow_export_import_alias: bool,
+) {
+    if stmt_idx.is_none() {
+        return;
+    }
+    let Some(node) = arena.get(stmt_idx) else {
+        return;
+    };
+    if collect_exported_var_names_from_statement(
+        arena,
+        node,
+        source_statements,
+        preserve_const_enums,
+        names,
+        seen,
+        allow_export_import_alias,
+    ) {
+        return;
+    }
+
+    match node.kind {
+        k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+            if let Some(block) = arena.get_block(node) {
+                for &stmt in &block.statements.nodes {
+                    collect_inline_exported_var_names_from_statement(
+                        arena,
+                        stmt,
+                        source_statements,
+                        preserve_const_enums,
+                        names,
+                        seen,
+                        false,
+                    );
+                }
+            }
+        }
+        k if k == syntax_kind_ext::IF_STATEMENT => {
+            if let Some(if_stmt) = arena.get_if_statement(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    if_stmt.then_statement,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                    seen,
+                    false,
+                );
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    if_stmt.else_statement,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                    seen,
+                    false,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::FOR_STATEMENT
+            || k == syntax_kind_ext::WHILE_STATEMENT
+            || k == syntax_kind_ext::DO_STATEMENT =>
+        {
+            if let Some(loop_data) = arena.get_loop(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    loop_data.statement,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                    seen,
+                    false,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::FOR_IN_STATEMENT || k == syntax_kind_ext::FOR_OF_STATEMENT => {
+            if let Some(for_data) = arena.get_for_in_of(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    for_data.statement,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                    seen,
+                    false,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+            if let Some(switch_stmt) = arena.get_switch(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    switch_stmt.case_block,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                    seen,
+                    false,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+            if let Some(clause) = arena.get_case_clause(node) {
+                for &stmt in &clause.statements.nodes {
+                    collect_inline_exported_var_names_from_statement(
+                        arena,
+                        stmt,
+                        source_statements,
+                        preserve_const_enums,
+                        names,
+                        seen,
+                        false,
+                    );
+                }
+            }
+        }
+        k if k == syntax_kind_ext::TRY_STATEMENT => {
+            if let Some(try_stmt) = arena.get_try(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    try_stmt.try_block,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                    seen,
+                    false,
+                );
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    try_stmt.catch_clause,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                    seen,
+                    false,
+                );
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    try_stmt.finally_block,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                    seen,
+                    false,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::CATCH_CLAUSE => {
+            if let Some(catch_clause) = arena.get_catch_clause(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    catch_clause.block,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                    seen,
+                    false,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::LABELED_STATEMENT => {
+            if let Some(labeled) = arena.get_labeled_statement(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    labeled.statement,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                    seen,
+                    false,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::WITH_STATEMENT => {
+            if let Some(with_stmt) = arena.get_with_statement(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    with_stmt.then_statement,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                    seen,
+                    false,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_exported_var_names_from_statement(
+    arena: &NodeArena,
+    node: &Node,
+    source_statements: &[NodeIndex],
+    preserve_const_enums: bool,
+    names: &mut Vec<String>,
+    seen: &mut FxHashSet<String>,
+    allow_export_import_alias: bool,
+) -> bool {
+    // Direct: export let/const/var x = ... (including `export declare const`)
+    // In CJS, all exported names become `exports.X` properties — even `declare`
+    // exports that have no runtime initializer. tsc qualifies reads of these
+    // names as `exports.X` and wraps calls as `(0, exports.X)()`.
+    if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+        if let Some(var_stmt) = arena.get_variable(node)
+            && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+        {
+            for &decl_idx in &var_stmt.declarations.nodes {
+                collect_declaration_names_seen(arena, decl_idx, names, seen);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // Wrapped: ExportDeclaration { clause: ... }
+    if node.kind == syntax_kind_ext::EXPORT_DECLARATION
+        && let Some(export_decl) = arena.get_export_decl(node)
+        && !export_decl.is_type_only
+        && export_decl.module_specifier.is_none()
+        && let Some(clause_node) = arena.get(export_decl.export_clause)
+    {
+        if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && let Some(var_stmt) = arena.get_variable(clause_node)
+        {
+            for &decl_idx in &var_stmt.declarations.nodes {
+                collect_declaration_names_seen(arena, decl_idx, names, seen);
+            }
+            return true;
+        }
+        // ExportDeclaration { clause: ImportEqualsDeclaration }
+        // `export import b = a.foo` — the alias name becomes `exports.b`
+        if allow_export_import_alias
+            && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            && let Some(import_decl) = arena.get_import_decl(clause_node)
+            && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
+        {
+            if import_decl.is_type_only {
+                return true;
+            }
+            if import_alias_resolves_to_exported_type_only(
+                arena,
+                import_decl.module_specifier,
+                source_statements,
+                preserve_const_enums,
+            ) {
+                return true;
+            }
+            push_unique_name(names, seen, name);
+            return true;
+        }
+    }
+
+    false
+}
+
+fn collect_declaration_names_seen(
+    arena: &NodeArena,
+    decl_idx: NodeIndex,
+    names: &mut Vec<String>,
+    seen: &mut FxHashSet<String>,
+) {
+    let mut collected = Vec::new();
+    collect_declaration_names(arena, decl_idx, &mut collected);
+    for name in collected {
+        push_unique_name(names, seen, name);
+    }
+}
+
+fn push_unique_name(names: &mut Vec<String>, seen: &mut FxHashSet<String>, name: String) {
+    if seen.insert(name.clone()) {
+        names.push(name);
+    }
 }
 
 /// Emit the exports initialization line

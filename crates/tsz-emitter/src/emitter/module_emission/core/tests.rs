@@ -291,6 +291,86 @@ export function f(obj: { value: number }) {
 }
 
 #[test]
+fn cjs_recovered_if_initializerless_export_default_reads_export_property() {
+    let source = r#"if (true)
+export const cssExports: CssExports;
+console.log(cssExports);
+export default cssExports;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("if (true) { }"),
+        "Initializerless recovered export should leave an empty if body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("console.log(exports.cssExports);"),
+        "Reads of recovered inline exports should be qualified through exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.default = exports.cssExports;"),
+        "Default export expression should reuse the recovered export property.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.default = cssExports;"),
+        "Default export must not read the erased local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.cssExports = void 0;"),
+        "Statement-scoped initializerless exports do not get a CommonJS void 0 preamble.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn cjs_recovered_if_initialized_export_rewrites_later_reads() {
+    let source = r#"if (true)
+export var value = 1;
+console.log(value);
+export default value;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.value = 1;"),
+        "Recovered initialized export should assign through exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("console.log(exports.value);"),
+        "Later reads of recovered inline exports should be qualified through exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.default = exports.value;"),
+        "Default export expression should reuse the recovered export property.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("console.log(value);"),
+        "Later reads must not use the local binding after CommonJS export recovery.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn malformed_import_numeric_operand_emits_recovered_expression() {
     let source = "import 10;";
 
