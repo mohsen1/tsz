@@ -65,6 +65,11 @@ pub fn reset_subtype_thread_local_state() {
 // enough to prevent runaway recursion from hanging.
 const MAX_GLOBAL_SUBTYPE_FUEL: u32 = 10_000;
 
+/// Maximum times a conditional alias base may appear in the current subtype call
+/// stack before the check assumes compatible. Matches tsc's `recursionCount >= 5`
+/// policy in `isRelatedTo` / `getRecursionIdentity`.
+const COND_ALIAS_RECURSION_THRESHOLD: u32 = 5;
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if a Lazy type resolved to an Enum with the same DefId.
     ///
@@ -462,19 +467,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             false
         };
 
-        // For conditional type aliases that are same-base-app, we STILL enter the
-        // def_guard (unlike non-conditional same-base-app where def_pair = None).
-        // This implements tsc's recursion identity mechanism: the def_guard fires
-        // as a cycle on the second occurrence of the same conditional alias,
-        // returning `result_on_cycle` (compatible). This matches tsc's behavior for
-        // deeply recursive conditional types like `NestedRecord<K,V>` where tsc
-        // intentionally bails out after detecting the alias has appeared twice.
-        // Mapped type aliases (Id<T>) are NOT conditional and continue with def_pair=None.
+        // Conditional alias occurrence counter (tsc's recursionCount mechanism).
+        // count < 5: proceed structurally so different args (e.g., number vs string)
+        //   propagate mismatches — TS2322 fires correctly.
+        // count >= 5: assume compatible to prevent TS2589 on deep-but-consistent types.
+        // def_guard fired at count == 2, silencing TS2322 (issue #9305). Counter fixes this.
         let is_cond_same_base_app = both_same_base_app
             && s_app_id
                 .map(|aid| self.interner.type_application(aid).base)
                 .is_some_and(|base| self.is_conditional_alias_base_inline(base));
-        let def_pair = if both_same_base_app && !is_cond_same_base_app {
+
+        let mut cond_alias_entered: Option<DefId> = None;
+        if is_cond_same_base_app {
+            if let Some(base_def) = s_def_id {
+                let count = self.cond_alias_depth.entry(base_def).or_insert(0);
+                if *count >= COND_ALIAS_RECURSION_THRESHOLD {
+                    self.guard.leave(pair);
+                    leave_global!();
+                    return self.result_on_cycle(source, target);
+                }
+                *count += 1;
+                cond_alias_entered = Some(base_def);
+            }
+        }
+
+        let def_pair = if is_cond_same_base_app || both_same_base_app {
             None
         } else if let (Some(s_def), Some(t_def)) = (s_def_id, t_def_id) {
             Some((s_def, t_def))
@@ -520,6 +537,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     s_rev_match && t_rev_match
                 });
                 if found_cycle {
+                    if let Some(d) = cond_alias_entered {
+                        self.cond_alias_leave(d);
+                    }
                     self.guard.leave(pair);
                     leave_global!();
                     return self.result_on_cycle(source, target);
@@ -530,12 +550,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut def_entered = if let Some((s_def, t_def)) = def_pair {
             // Check reversed pair for bivariant cross-recursion
             if self.def_guard.is_visiting(&(t_def, s_def)) {
+                if let Some(d) = cond_alias_entered {
+                    self.cond_alias_leave(d);
+                }
                 self.guard.leave(pair);
                 leave_global!();
                 return self.result_on_cycle(source, target);
             }
             match self.def_guard.enter((s_def, t_def)) {
                 RecursionResult::Cycle => {
+                    if let Some(d) = cond_alias_entered {
+                        self.cond_alias_leave(d);
+                    }
                     self.guard.leave(pair);
                     leave_global!();
                     return self.result_on_cycle(source, target);
@@ -572,6 +598,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     if let Some(dp) = def_entered {
                         self.def_guard.leave(dp);
                     }
+                    if let Some(d) = cond_alias_entered {
+                        self.cond_alias_leave(d);
+                    }
                     self.guard.leave(pair);
                     leave_global!();
                     return SubtypeResult::False;
@@ -579,6 +608,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let result = self.check_object_contract(source, target);
                 if let Some(dp) = def_entered {
                     self.def_guard.leave(dp);
+                }
+                if let Some(d) = cond_alias_entered {
+                    self.cond_alias_leave(d);
                 }
                 self.guard.leave(pair);
                 leave_global!();
@@ -605,6 +637,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // the source is genuinely a callable type.
                 if let Some(dp) = def_entered {
                     self.def_guard.leave(dp);
+                }
+                if let Some(d) = cond_alias_entered {
+                    self.cond_alias_leave(d);
                 }
                 self.guard.leave(pair);
                 leave_global!();
@@ -666,6 +701,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     if let Some(dp) = def_entered {
                         self.def_guard.leave(dp);
                     }
+                    if let Some(d) = cond_alias_entered {
+                        self.cond_alias_leave(d);
+                    }
                     self.guard.leave(pair);
                     leave_global!();
                     return SubtypeResult::True;
@@ -673,6 +711,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let result = self.subtype_of_conditional_target(source, &target_cond);
                 if let Some(dp) = def_entered {
                     self.def_guard.leave(dp);
+                }
+                if let Some(d) = cond_alias_entered {
+                    self.cond_alias_leave(d);
                 }
                 self.guard.leave(pair);
                 leave_global!();
@@ -724,6 +765,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if let Some(result) = variance_result {
                 if let Some(dp) = def_entered {
                     self.def_guard.leave(dp);
+                }
+                if let Some(d) = cond_alias_entered {
+                    self.cond_alias_leave(d);
                 }
                 self.guard.leave(pair);
                 if !has_this_type && let Some(db) = self.query_db {
@@ -788,6 +832,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if let Some(dp) = def_entered {
                 self.def_guard.leave(dp);
             }
+            if let Some(d) = cond_alias_entered {
+                self.cond_alias_leave(d);
+            }
             self.guard.leave(pair);
             if !has_this_type && let Some(db) = self.query_db {
                 let key = self.make_cache_key(source, target);
@@ -812,6 +859,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let result = self.check_subtype(s_elem, t_elem);
             if let Some(dp) = def_entered {
                 self.def_guard.leave(dp);
+            }
+            if let Some(d) = cond_alias_entered {
+                self.cond_alias_leave(d);
             }
             self.guard.leave(pair);
             if !has_this_type && let Some(db) = self.query_db {
@@ -865,6 +915,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if let Some(dp) = def_entered {
                     self.def_guard.leave(dp);
                 }
+                if let Some(d) = cond_alias_entered {
+                    self.cond_alias_leave(d);
+                }
                 self.guard.leave(pair);
                 leave_global!();
                 return result;
@@ -890,9 +943,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         };
 
-        // Cleanup: leave both guards
+        // Cleanup: leave all guards
         if let Some(dp) = def_entered {
             self.def_guard.leave(dp);
+        }
+        if let Some(d) = cond_alias_entered {
+            self.cond_alias_leave(d);
         }
         self.guard.leave(pair);
 
@@ -996,5 +1052,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return true;
         }
         false
+    }
+
+    /// Decrement the conditional-alias occurrence counter for `def_id`.
+    ///
+    /// Must be called once for every successful `cond_alias_entered = Some(def_id)`
+    /// at each exit path from `check_subtype`, matching tsc's decrement after
+    /// the `isRelatedTo` body that uses `recursionCount`.
+    #[inline]
+    fn cond_alias_leave(&mut self, def_id: DefId) {
+        use std::collections::hash_map::Entry;
+        if let Entry::Occupied(mut e) = self.cond_alias_depth.entry(def_id) {
+            let new_val = e.get().saturating_sub(1);
+            if new_val == 0 {
+                e.remove();
+            } else {
+                *e.get_mut() = new_val;
+            }
+        }
     }
 }

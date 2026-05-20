@@ -252,6 +252,15 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// evaluated multiple times across different subtype checks.
     /// Key is (`TypeId`, `no_unchecked_indexed_access`) since that flag affects evaluation.
     pub(crate) eval_cache: FxHashMap<(TypeId, bool), TypeId>,
+    /// Occurrence counter for conditional-alias same-base Application comparisons.
+    ///
+    /// Tracks how many times each conditional alias `DefId` is currently on the
+    /// subtype call stack. Matches tsc's `recursionCount` mechanism: at threshold 5
+    /// the check returns compatible to prevent TS2589. Unlike the set-based
+    /// `def_guard`, this counter allows multiple entries so comparisons with
+    /// different type arguments (e.g., `DeepReadonly<{a: number}>` vs
+    /// `DeepReadonly<{a: string}>`) still propagate structural mismatches.
+    pub(crate) cond_alias_depth: FxHashMap<DefId, u32>,
     /// Apparent object shapes for primitive wrapper fallback.
     ///
     /// Primitive structural subtype checks can ask for the same wrapper shape
@@ -350,6 +359,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             erase_generics: true,
             allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
+            cond_alias_depth: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             tracer: None,
             type_param_equivalences: Vec::new(),
@@ -398,6 +408,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             erase_generics: true,
             allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
+            cond_alias_depth: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             tracer: None,
             type_param_equivalences: Vec::new(),
@@ -512,6 +523,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.def_guard.reset();
         self.sym_visiting.clear();
         self.eval_cache.clear();
+        self.cond_alias_depth.clear();
     }
 
     /// Return entry and size accounting for this checker's operation-local caches.

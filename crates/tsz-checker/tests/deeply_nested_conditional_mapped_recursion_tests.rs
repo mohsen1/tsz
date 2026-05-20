@@ -145,11 +145,15 @@ accept(a, b);
     );
 }
 
-/// tsc rule: a genuinely incompatible assignment to a deeply nested conditional
-/// type must still produce an error — the recursion identity bail-out must
-/// only fire when the same alias is seen twice, not suppress genuine mismatches.
+/// tsc rule: a genuinely incompatible assignment to a conditional type must
+/// produce TS2322 — the recursion counter (threshold 5) must not suppress
+/// shallow mismatches like DeepReadonly<{a:number}> vs DeepReadonly<{a:string}>.
+///
+/// Structural rule: "When same-base conditional alias Applications with different
+/// type arguments are compared, the occurrence counter fires only at threshold 5,
+/// allowing leaf-level mismatches (number vs string) to propagate as False."
 #[test]
-fn deeply_nested_conditional_type_still_errors_on_mismatch() {
+fn conditional_type_mismatch_still_errors_ts2322() {
     let source = r#"
 type DeepReadonly<T> = T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T;
 
@@ -157,12 +161,56 @@ declare const good: DeepReadonly<{ a: number }>;
 const bad: DeepReadonly<{ a: string }> = good;
 "#;
     let codes = check_source_codes(source);
-    // This should still produce TS2322 — the types have incompatible leaf values.
-    // We don't assert it does (tsc's recursion guard may also bail compatible here),
-    // but we DO assert no TS2589 appears.
+    assert!(
+        codes.contains(&2322),
+        "DeepReadonly<{{a:number}}> assigned to DeepReadonly<{{a:string}}> must produce TS2322. Got: {codes:?}"
+    );
     assert!(
         !codes.contains(&2589),
         "DeepReadonly mismatch test must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+/// Alternative alias name to verify the rule is structural (§25 anti-hardcoding).
+#[test]
+fn conditional_type_mismatch_still_errors_ts2322_alt_name() {
+    let source = r#"
+type StripReadonly<T> = T extends object ? { [K in keyof T]: StripReadonly<T[K]> } : T;
+
+declare const src: StripReadonly<{ x: boolean }>;
+const dst: StripReadonly<{ x: string }> = src;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "StripReadonly<{{x:boolean}}> assigned to StripReadonly<{{x:string}}> must produce TS2322. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2589),
+        "StripReadonly mismatch must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+/// NestedRecord with different value types must produce TS2322.
+/// Structural rule: same as above — different leaf value types cause a mismatch.
+#[test]
+fn nested_record_different_value_types_errors_ts2322() {
+    let source = r#"
+type NestedRecord<K extends string, V> = K extends `${infer A}.${infer B}`
+    ? { [X in A]: NestedRecord<B, V> }
+    : { [X in K]: V };
+
+declare const r1: NestedRecord<"a.b", number>;
+const bad: NestedRecord<"a.b", string> = r1;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "NestedRecord<\"a.b\",number> assigned to NestedRecord<\"a.b\",string> must produce TS2322. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2589),
+        "NestedRecord mismatch must not produce TS2589. Got: {codes:?}"
     );
 }
 

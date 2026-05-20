@@ -3899,6 +3899,129 @@ fn test_conditional_alias_self_comparison_is_compatible_renamed_param() {
     );
 }
 
+// Tests for conditional alias subtyping: same base, different type args must NOT be compatible.
+
+/// DeepReadonly<{a: number}> must NOT be assignable to DeepReadonly<{a: string}>.
+/// tsc reports TS2322 here: structural mismatches in conditional alias args must propagate.
+#[test]
+fn test_cond_alias_different_args_is_not_compatible() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    // type DeepReadonly<T> = T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } : T
+    // Represented as a simple non-recursive stub that is still a conditional alias.
+    // Body: T extends object ? {a: DR<inner>} : T — the exact shape doesn't matter
+    // for this test; what matters is that the leaf args (number vs string) differ.
+    let alias_def = DefId(9010);
+
+    let t_info = TypeParamInfo::simple(interner.intern_string("T"));
+    let t_type = interner.type_param(t_info);
+
+    // Non-recursive conditional body: T extends object ? { v: T } : T
+    // When instantiated with number → number extends object (false) → number
+    // When instantiated with string → string
+    let prop_v = interner.intern_string("v");
+    let true_br = interner.object(vec![PropertyInfo::new(prop_v, t_type)]);
+    let body = interner.conditional(ConditionalType {
+        check_type: t_type,
+        extends_type: TypeId::OBJECT,
+        true_type: true_br,
+        false_type: t_type,
+        is_distributive: false,
+    });
+    env.insert_def_with_params(alias_def, body, vec![t_info]);
+    env.insert_def_kind(alias_def, crate::def::DefKind::TypeAlias);
+
+    let base = interner.lazy(alias_def);
+    let app_number = interner.application(base, vec![TypeId::NUMBER]);
+    let app_string = interner.application(base, vec![TypeId::STRING]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    // DR<number> <: DR<string>: tsc rejects (TS2322), must be False
+    let result = checker.check_subtype(app_number, app_string);
+    assert!(
+        !result.is_true(),
+        "DR<number> must NOT be assignable to DR<string> (different leaf args)"
+    );
+}
+
+/// Variant with a type-param named "U" to confirm the fix is not name-dependent
+/// (§25 anti-hardcoding directive: two name variants required).
+#[test]
+fn test_cond_alias_different_args_is_not_compatible_renamed_param() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let alias_def = DefId(9011);
+
+    let u_info = TypeParamInfo::simple(interner.intern_string("U"));
+    let u_type = interner.type_param(u_info);
+
+    let prop_w = interner.intern_string("w");
+    let true_br = interner.object(vec![PropertyInfo::new(prop_w, u_type)]);
+    let body = interner.conditional(ConditionalType {
+        check_type: u_type,
+        extends_type: TypeId::OBJECT,
+        true_type: true_br,
+        false_type: u_type,
+        is_distributive: false,
+    });
+    env.insert_def_with_params(alias_def, body, vec![u_info]);
+    env.insert_def_kind(alias_def, crate::def::DefKind::TypeAlias);
+
+    let base = interner.lazy(alias_def);
+    let app_bool = interner.application(base, vec![TypeId::BOOLEAN]);
+    let app_string = interner.application(base, vec![TypeId::STRING]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    let result = checker.check_subtype(app_bool, app_string);
+    assert!(
+        !result.is_true(),
+        "Alias<boolean> (U-named param) must NOT be assignable to Alias<string>"
+    );
+}
+
+/// Self-comparison of same-base conditional alias with SAME args must still be
+/// compatible even after the false-negative fix.
+#[test]
+fn test_cond_alias_same_args_still_compatible() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let alias_def = DefId(9012);
+
+    let t_info = TypeParamInfo::simple(interner.intern_string("T"));
+    let t_type = interner.type_param(t_info);
+
+    let lazy_alias = interner.lazy(alias_def);
+    let recursive_app = interner.application(lazy_alias, vec![t_type]);
+    let prop_inner = interner.intern_string("inner");
+    let true_br = interner.object(vec![PropertyInfo::new(prop_inner, recursive_app)]);
+    let body = interner.conditional(ConditionalType {
+        check_type: t_type,
+        extends_type: TypeId::OBJECT,
+        true_type: true_br,
+        false_type: t_type,
+        is_distributive: false,
+    });
+    env.insert_def_with_params(alias_def, body, vec![t_info]);
+    env.insert_def_kind(alias_def, crate::def::DefKind::TypeAlias);
+
+    let base = interner.lazy(alias_def);
+    let app1 = interner.application(base, vec![TypeId::STRING]);
+    let app2 = interner.application(base, vec![TypeId::STRING]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    let result = checker.check_subtype(app1, app2);
+    assert!(
+        result.is_true(),
+        "Recursive cond alias with same args must be compatible (cycle assumed at threshold)"
+    );
+}
+
 #[test]
 fn test_object_with_index_noncanonical_numeric_property_fails() {
     let interner = TypeInterner::new();
