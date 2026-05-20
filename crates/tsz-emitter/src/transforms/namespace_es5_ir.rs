@@ -942,7 +942,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             let mut prev_end = body_node.pos + 1; // skip past '{'
             let mut prev_stmt_pos = body_node.pos + 1;
 
-            for &stmt_idx in &stmts.nodes {
+            for (stmt_pos, &stmt_idx) in stmts.nodes.iter().enumerate() {
                 let stmt_node = match self.arena.get(stmt_idx) {
                     Some(n) => n,
                     None => continue,
@@ -954,11 +954,19 @@ impl<'a> NamespaceES5Transformer<'a> {
                 let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
                 let is_class_like = self.is_class_like_member(stmt_idx);
                 let is_namespace_like_stmt = is_namespace_like(self.arena, stmt_node);
-                let trailing_standalone = if is_class_like || is_namespace_like_stmt {
-                    Vec::new()
-                } else {
-                    self.extract_standalone_comments_in_range(code_end, stmt_node.end)
-                };
+                let next_member_erases_runtime = stmts
+                    .nodes
+                    .get(stmt_pos + 1)
+                    .copied()
+                    .is_some_and(|next_stmt_idx| {
+                        self.namespace_member_erases_runtime(next_stmt_idx)
+                    });
+                let trailing_standalone =
+                    if is_class_like || is_namespace_like_stmt || next_member_erases_runtime {
+                        Vec::new()
+                    } else {
+                        self.extract_standalone_comments_in_range(code_end, stmt_node.end)
+                    };
 
                 // Extract leading comments between previous end and this statement.
                 // We compute them up-front but defer pushing until we know whether
@@ -1108,6 +1116,38 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
 
         result
+    }
+
+    fn namespace_member_erases_runtime(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => self
+                .arena
+                .get_export_decl(member_node)
+                .is_some_and(|export| self.namespace_member_erases_runtime(export.export_clause)),
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION
+                || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.arena.get_enum(member_node).is_some_and(|enum_decl| {
+                    self.arena
+                        .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => self
+                .arena
+                .get_import_decl_at(member_idx)
+                .is_some_and(|import| {
+                    !self
+                        .import_equals_target_has_runtime_value(member_idx, import.module_specifier)
+                }),
+            _ => false,
+        }
     }
 
     /// Transform a namespace member, considering already-declared names for `should_declare_var`

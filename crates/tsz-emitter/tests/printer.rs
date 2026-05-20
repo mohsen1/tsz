@@ -3135,6 +3135,57 @@ fn namespace_es5_iife_preserves_line_comment_between_classes() {
 }
 
 #[test]
+fn namespace_es5_drops_comments_for_erased_import_equals_members() {
+    let source = r#"namespace M {
+    export const enum E {
+        A,
+    }
+    export enum R {
+        A,
+    }
+    export interface I {
+    }
+    /** keep runtime enum alias */
+    export import RuntimeAlias = R;
+    /** drop const enum alias */
+    export import Alias = E;
+    /** drop interface alias */
+    export import Callback = I;
+    /** keep class */
+    export class C {
+        value() {
+            return Alias.A;
+        }
+    }
+}
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("keep runtime enum alias"),
+        "Leading comments for import aliases with runtime targets should still be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("drop const enum alias"),
+        "Leading comments for erased const-enum import aliases should not leak.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("drop interface alias"),
+        "Leading comments for erased type-only import aliases should not leak.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("keep class"),
+        "Leading comments for the following runtime class should still be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn namespace_marker_strings_do_not_trigger_missing_arrow_fixture_recovery() {
     let source = r#"namespace missingCurliesWithArrow {
   const a = "namespace withStatement";
