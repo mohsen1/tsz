@@ -171,7 +171,7 @@ impl<'a> IRPrinter<'a> {
         self.write(" = {}));");
     }
 
-    fn emit_es5_class_expression(
+    pub(crate) fn emit_es5_class_expression(
         &mut self,
         name: &str,
         base_class: Option<&IRNode>,
