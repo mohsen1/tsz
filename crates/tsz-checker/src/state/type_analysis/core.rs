@@ -3,7 +3,7 @@
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::generic as generic_query;
-use crate::query_boundaries::common::lazy_def_id;
+use crate::query_boundaries::common::{lazy_def_id, type_param_info};
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -2099,10 +2099,7 @@ impl<'a> CheckerState<'a> {
 
         let cached = registered_def.and_then(|def_id| {
             let cached_id = self.ctx.definition_store.find_type_param_for_def(def_id)?;
-            if let Some(tsz_solver::TypeData::TypeParameter(cached_info)) =
-                self.ctx.types.lookup(cached_id)
-                && cached_info == info
-            {
+            if type_param_info(self.ctx.types, cached_id) == Some(info) {
                 Some(cached_id)
             } else {
                 None
