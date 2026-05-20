@@ -1105,6 +1105,33 @@ export interface LocalOnly {}
 }
 
 #[test]
+fn simple_module_request_scanner_preserves_opposite_quote_specifier_values() {
+    let requests = collect_simple_module_requests_from_text(
+        r#"
+import quotedSingle from "'pkg'";
+export { quotedDouble } from '"pkg"';
+"#,
+    )
+    .expect("opposite quote characters are literal specifier contents");
+
+    let actual: Vec<_> = requests
+        .iter()
+        .map(|(specifier, kind, _, has_type_json)| (specifier.as_str(), *kind, *has_type_json))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            ("'pkg'", tsz::module_resolver::ImportKind::EsmImport, false),
+            (
+                r#""pkg""#,
+                tsz::module_resolver::ImportKind::EsmReExport,
+                false,
+            ),
+        ]
+    );
+}
+
+#[test]
 fn simple_module_request_scanner_falls_back_for_escaped_static_specifiers() {
     let text = r#"
 import "./d\u0065p";

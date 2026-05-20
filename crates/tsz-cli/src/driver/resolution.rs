@@ -836,7 +836,15 @@ fn collect_simple_module_requests_from_text(
 }
 
 fn strip_scanned_string_literal(text: &str) -> Option<String> {
-    let value = text.trim_matches(|ch| ch == '"' || ch == '\'');
+    let quote = text.as_bytes().first().copied()?;
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    if text.as_bytes().last().copied() != Some(quote) || text.len() < 2 {
+        return None;
+    }
+
+    let value = &text[1..text.len() - 1];
     if value.contains('\\') {
         return None;
     }
