@@ -21,7 +21,7 @@
 
 use super::*;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-use crate::intern::{MAX_TUPLE_LENGTH, TypeInterner};
+use crate::intern::{MAX_TUPLE_LENGTH, MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS, TypeInterner};
 use crate::types::{TupleElement, TypeData, TypeParamInfo};
 
 fn tuple_element(type_id: TypeId, rest: bool) -> TupleElement {
@@ -74,6 +74,43 @@ fn instantiate_tuple_double_spread_over_limit_marks_flag_and_returns_error() {
     );
     // Reading clears the flag.
     assert!(!interner.take_tuple_too_large());
+}
+
+/// `[...T, ...T]` must keep counting represented tuple cardinality even
+/// after the soft gate stores a large-but-representable spread as one rest
+/// element. This pins the case where `T` is bigger than the soft flatten cap
+/// but smaller than the hard tuple limit: the first spread occupies one
+/// physical slot, while the represented length is still `T.len()`.
+#[test]
+fn instantiate_tuple_soft_unflattened_spreads_still_count_represented_length() {
+    let interner = TypeInterner::new();
+    let _ = interner.take_tuple_too_large();
+
+    let t_atom = interner.intern_string("T");
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_atom,
+        constraint: Some(interner.array(TypeId::UNKNOWN)),
+        default: None,
+        is_const: false,
+    }));
+
+    let body = interner.tuple(vec![tuple_element(param, true), tuple_element(param, true)]);
+    let soft_unflattened_len = MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS + 1;
+    assert!(
+        soft_unflattened_len < MAX_TUPLE_LENGTH,
+        "regression fixture must stay below the hard cap per spread"
+    );
+
+    let soft_unflattened_tuple = interner.tuple(n_copies_of_any(soft_unflattened_len));
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_atom, soft_unflattened_tuple);
+
+    let result = instantiate_type(&interner, body, &subst);
+    assert_eq!(result, TypeId::ERROR);
+    assert!(
+        interner.take_tuple_too_large(),
+        "two soft-unflattened spreads should exceed represented MAX_TUPLE_LENGTH"
+    );
 }
 
 /// Same rule with a renamed iteration variable proves the gate is keyed on
