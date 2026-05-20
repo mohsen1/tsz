@@ -1567,6 +1567,20 @@ impl TypeInterner {
         if application_has_generic_args && evaluated_precedes_application && !evaluated_is_mapped {
             return;
         }
+        // First-application-wins for pre-existing types: when the evaluated type was
+        // allocated before this application AND already has an Application display alias,
+        // keep the existing alias. This prevents a later concrete instantiation
+        // (e.g., `NestedRecord<"x.y.z.a.b.c", string>`) from overwriting an alias
+        // recorded by an earlier Application (e.g., from evaluating `Id<{x:{...}}>`)
+        // that produced the same interned structural type.
+        if evaluated_precedes_application
+            && !evaluated_is_mapped
+            && self.get_display_alias(evaluated).is_some_and(|existing| {
+                matches!(self.lookup(existing), Some(TypeData::Application(_)))
+            })
+        {
+            return;
+        }
         self.display_alias.insert(evaluated, application);
     }
 
