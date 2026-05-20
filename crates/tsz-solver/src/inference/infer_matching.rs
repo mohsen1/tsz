@@ -516,7 +516,9 @@ impl<'a> InferenceContext<'a> {
                         .flags
                         .contains(crate::types::ObjectFlags::ENUM_NAMESPACE);
 
-                let mut implicit_parts: Vec<TypeId> = Vec::new();
+                let mut implicit_parts = Vec::with_capacity(
+                    source_shape.properties.len() + usize::from(has_implicit_index),
+                );
 
                 // Contribution from number index: in JS, numeric keys are converted
                 // to strings, so for anonymous/enum types a source number index
