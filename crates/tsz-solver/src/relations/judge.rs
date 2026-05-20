@@ -570,7 +570,7 @@ impl<'a> Judge for DefaultJudge<'a> {
             TypeData::Union(members_id) => {
                 // All members must be iterable with compatible element types
                 let members = self.db.type_list(members_id);
-                let mut element_types = Vec::new();
+                let mut element_types = Vec::with_capacity(members.len());
                 for &member in members.iter() {
                     match self.classify_iterable(member) {
                         IterableKind::Array(elem) => element_types.push(elem),
@@ -861,7 +861,7 @@ impl<'a> Judge for DefaultJudge<'a> {
             }
             TypeData::Union(members_id) => {
                 let members = self.db.type_list(members_id);
-                let mut result_types = Vec::new();
+                let mut result_types = Vec::with_capacity(members.len());
                 let mut all_optional = true;
                 let mut any_readonly = false;
 
@@ -911,7 +911,7 @@ impl<'a> Judge for DefaultJudge<'a> {
             }
             TypeData::Intersection(members_id) => {
                 let members = self.db.type_list(members_id);
-                let mut found_types = Vec::new();
+                let mut found_types = Vec::with_capacity(members.len());
                 let mut optional = true;
                 let mut readonly = false;
 
