@@ -8,6 +8,29 @@
 
 set -e
 
+usage() {
+    cat <<'EOF'
+Usage:
+  scripts/setup/reset-ts-submodule.sh
+
+Resets the TypeScript submodule to the pinned SHA from
+scripts/conformance/typescript-versions.json.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1 (try --help)" >&2
+            exit 1
+            ;;
+    esac
+done
+
 # Unset git environment variables that hooks inherit — they interfere
 # with submodule operations by overriding gitlink resolution.
 unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE

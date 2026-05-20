@@ -199,6 +199,30 @@ function fmtMs(value) {
   return value == null ? "-" : `${value.toFixed(2)}ms`;
 }
 
+function fmtSignatureValue(value) {
+  return value == null || value === "" ? "-" : String(value);
+}
+
+function runnerSignatureRows(report) {
+  const fields = [
+    ["Platform", "platform"],
+    ["Arch", "arch"],
+    ["Release", "release"],
+    ["CPU count", "cpu_count"],
+    ["CPU model", "cpu_model"],
+    ["Memory bytes", "total_memory_bytes"],
+    ["GitHub runner OS", "github_runner_os"],
+    ["GitHub runner arch", "github_runner_arch"],
+    ["Cloud Build machine", "cloud_build_machine_type"],
+  ];
+
+  return fields.map(([label, key]) => [
+    label,
+    fmtSignatureValue(report.baseline.runner_signature?.[key]),
+    fmtSignatureValue(report.candidate.runner_signature?.[key]),
+  ]);
+}
+
 export function markdownReport(report) {
   const lines = [
     "# Benchmark Runner Calibration Report",
@@ -214,6 +238,14 @@ export function markdownReport(report) {
     `| Excluded missing timing rows | ${report.totals.excluded_missing_timing_rows} |`,
     "",
   ];
+
+  lines.push("## Runner Signatures", "");
+  lines.push("| Field | Baseline | Candidate |");
+  lines.push("| --- | --- | --- |");
+  for (const [label, baseline, candidate] of runnerSignatureRows(report)) {
+    lines.push(`| ${label} | ${baseline} | ${candidate} |`);
+  }
+  lines.push("");
 
   if (report.warnings.length > 0) {
     lines.push("## Warnings", "");

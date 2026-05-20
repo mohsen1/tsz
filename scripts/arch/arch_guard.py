@@ -622,7 +622,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"diagnostic\.message_text|raw|evaluated)"
             r"\.(?:contains|starts_with|ends_with|as_str)\s*\("
         ),
-        15,
+        14,
     ),
     (
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
@@ -662,7 +662,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\b(?:self|self\.ctx\.types|self\.interner)"
             r"\.is_assignable_to(?:_[A-Za-z0-9_]+)?\s*\("
         ),
-        112,
+        94,
     ),
     (
         "Checker residency boundary: with_parent_cache_attributed migration callsites (Track 10)",
