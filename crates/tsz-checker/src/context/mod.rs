@@ -940,7 +940,7 @@ pub struct CheckerContext<'a> {
     /// Explicit evaluation session state (replaces thread-local depth/fuel guards).
     /// Shared via `Rc` across parent/child contexts so counters survive cross-arena
     /// delegation without implicit global state.
-    pub eval_session: Rc<tsz_solver::EvaluationSession>,
+    pub eval_session: Rc<tsz_solver::evaluation::session::EvaluationSession>,
 
     /// General recursion depth counter for type checking.
     /// Prevents stack overflow by bailing out when depth exceeds the limit.

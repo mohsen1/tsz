@@ -230,7 +230,6 @@ pub use evaluation::evaluate::{
     TypeEvaluator, evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
     evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_with_request,
 };
-pub use evaluation::session::EvaluationSession;
 pub use instantiation::application::{ApplicationEvaluator, ApplicationResult};
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
@@ -241,7 +240,6 @@ pub use instantiation::instantiate::{
     instantiate_type_with_infer, instantiate_type_with_infer_cached, substitute_this_type,
     substitute_this_type_at_return_position, substitute_this_type_cached,
 };
-pub use intern::type_factory::TypeFactory;
 pub use narrowing::{
     CachedPropertyType, DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext,
     NarrowingResult, NullishFilter, OptionalPropertyChainKey, TypeGuard, TypeofKind,
@@ -294,11 +292,6 @@ pub use types::{
     TypeListId, Visibility, is_compiler_managed_type, normalize_display_property_order,
 };
 // unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
-pub use operations::widening::{
-    display_widen_for_redeclaration, get_base_type_for_comparison, widen_argument_type_for_display,
-    widen_literal_type, widen_type, widen_type_deep, widen_type_for_display,
-    widen_type_for_inference,
-};
 
 // Test modules: Most are loaded by their source files via #[path = "tests/..."] declarations.
 // Only include modules here that aren't loaded elsewhere to avoid duplicate_mod warnings.
