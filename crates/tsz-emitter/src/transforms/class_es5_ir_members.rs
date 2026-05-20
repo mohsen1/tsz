@@ -483,6 +483,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
                             multiline_callback: false,
+                            directives: Vec::new(),
                         }]
                     } else if is_async_generator {
                         self.async_generator_method_body(
@@ -626,6 +627,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
                             multiline_callback: false,
+                            directives: Vec::new(),
                         }]
                     } else if is_async_generator {
                         self.async_generator_method_body(

@@ -3616,6 +3616,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 hoisted_var_groups,
                 promise_constructor: self.async_method_promise_constructor(arrow.type_annotation),
                 multiline_callback: false,
+                directives: Vec::new(),
             }],
             is_expression_body: true,
             body_source_range: None,
