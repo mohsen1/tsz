@@ -5,6 +5,7 @@ import {
   COMPILE_GUARD_EXCLUDED_ROWS,
   computeCoverage,
   extractBenchRunnerRows,
+  extractCompileGuardFallbackRows,
   extractCompileGuardRows,
   extractFixtureSourceRows,
   formatMarkdown,
@@ -28,6 +29,9 @@ function baseSurfaces() {
     compileGuardRows: [...allTracked]
       .filter((name) => !COMPILE_GUARD_EXCLUDED_ROWS.has(name))
       .sort(),
+    compileGuardFallbackRows: [...allTracked]
+      .filter((name) => !COMPILE_GUARD_EXCLUDED_ROWS.has(name))
+      .sort(),
     fixtureSourceRows: PROJECT_ROW_DEFINITIONS
       .filter((r) => r.repo !== undefined || r.ref !== undefined)
       .map((r) => r.name)
@@ -49,6 +53,7 @@ function baseSurfaces() {
   for (const row of coverage.rows) {
     assert.ok(validSymbols.has(row.inBenchRunner), `${row.name} inBenchRunner unexpected: ${row.inBenchRunner}`);
     assert.ok(validSymbols.has(row.inCompileGuard), `${row.name} inCompileGuard unexpected: ${row.inCompileGuard}`);
+    assert.ok(validSymbols.has(row.inCompileGuardFallback), `${row.name} inCompileGuardFallback unexpected: ${row.inCompileGuardFallback}`);
     assert.ok(validSymbols.has(row.inFixtureSource), `${row.name} inFixtureSource unexpected: ${row.inFixtureSource}`);
     assert.ok(validSymbols.has(row.inCompatCorpus), `${row.name} inCompatCorpus unexpected: ${row.inCompatCorpus}`);
   }
@@ -70,6 +75,10 @@ function baseSurfaces() {
   assert.ok(
     coverage.drift.some((d) => d.includes("new-required-row") && d.includes("project-compile-guard.sh")),
     `Expected compile guard drift for new-required-row, got: ${coverage.drift.join("; ")}`,
+  );
+  assert.ok(
+    coverage.drift.some((d) => d.includes("new-required-row") && d.includes("compile-guard fallback rows")),
+    `Expected compile guard fallback drift for new-required-row, got: ${coverage.drift.join("; ")}`,
   );
   assert.ok(
     coverage.drift.some((d) => d.includes("new-required-row") && d.includes("COMPATIBILITY_CORPUS_ROWS")),
@@ -111,6 +120,17 @@ function baseSurfaces() {
   assert.ok(
     coverage.drift.some((d) => d.includes("ghost-row") && d.includes("project-compile-guard.sh") && d.includes("not defined")),
     `Expected compile guard orphan drift for ghost-row, got: ${coverage.drift.join("; ")}`,
+  );
+}
+
+// Row in compile-guard fallback arrays that is not defined in project-rows.mjs.
+{
+  const surfaces = baseSurfaces();
+  surfaces.compileGuardFallbackRows = [...surfaces.compileGuardFallbackRows, "fallback-ghost-row"].sort();
+  const coverage = computeCoverage(surfaces);
+  assert.ok(
+    coverage.drift.some((d) => d.includes("fallback-ghost-row") && d.includes("compile-guard fallback rows") && d.includes("not defined")),
+    `Expected compile guard fallback orphan drift for fallback-ghost-row, got: ${coverage.drift.join("; ")}`,
   );
 }
 
@@ -158,6 +178,18 @@ function baseSurfaces() {
   assert.ok(
     !coverage.drift.some((d) => d.includes(excluded) && d.includes("project-compile-guard.sh")),
     `COMPILE_GUARD_EXCLUDED_ROWS row ${excluded} should not trigger compile guard drift`,
+  );
+}
+
+// COMPILE_GUARD_EXCLUDED_ROWS rows are not flagged as missing from fallback arrays.
+{
+  const surfaces = baseSurfaces();
+  const excluded = [...COMPILE_GUARD_EXCLUDED_ROWS][0];
+  surfaces.compileGuardFallbackRows = surfaces.compileGuardFallbackRows.filter((r) => r !== excluded);
+  const coverage = computeCoverage(surfaces);
+  assert.ok(
+    !coverage.drift.some((d) => d.includes(excluded) && d.includes("compile-guard fallback rows")),
+    `COMPILE_GUARD_EXCLUDED_ROWS row ${excluded} should not trigger compile guard fallback drift`,
   );
 }
 
@@ -217,6 +249,23 @@ check_project "$name" "$tsconfig" "$src"
   assert.ok(rows.includes("gamma"), "missing gamma from case arm");
   assert.ok(rows.includes("delta"), "missing delta from case arm");
   assert.ok(!rows.includes("$name"), "$name must be filtered out");
+}
+
+// Extractor: compile guard fallback rows from project-fixtures.sh shell arrays.
+{
+  const snippet = `
+TSZ_COMPILE_GUARD_REQUIRED_ROWS=(
+  "alpha"
+  "beta"
+)
+
+TSZ_COMPILE_GUARD_CANARY_ROWS=(
+  "gamma"
+  "alpha"
+)
+`;
+  const rows = extractCompileGuardFallbackRows(snippet);
+  assert.deepEqual(rows, ["alpha", "beta", "gamma"]);
 }
 
 // Extractor: fixture source rows from project-fixtures.sh case-arm format.
