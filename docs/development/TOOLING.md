@@ -178,14 +178,15 @@ performance question.
 
 ## Conformance Testing
 
+Full conformance is a CI gate, not a normal local command. Local conformance
+work should answer a specific debugging question with a narrow filter, then
+stop once the result informs the fix.
+
 ### Quick Reference
 
 ```bash
 # Build the conformance runner (fast profile)
 cargo build --profile dist-fast -p tsz-conformance
-
-# Run all tests
-.target/dist-fast/tsz-conformance --cache-file scripts/conformance/tsc-cache-full.json
 
 # Run filtered tests (fast iteration)
 .target/dist-fast/tsz-conformance --filter "controlFlow" \
@@ -278,20 +279,21 @@ the helper points to instead of pretending a single row exists.
 
 #### `scripts/conformance/conformance.sh`
 
-The main conformance test orchestrator. Handles running tests, generating snapshots, and analysis.
+The main conformance test orchestrator. Use it locally only with a narrow
+filter. Full run/snapshot modes are reserved for CI or explicit maintainer
+baseline work.
 
 ```bash
-# Run all conformance tests
-./scripts/conformance/conformance.sh run
-
-# Run + analyze + save snapshots
-./scripts/conformance/conformance.sh snapshot
+# Run one focused conformance filter
+./scripts/conformance/conformance.sh run --filter "mappedTypeRelationships" --verbose
 
 # Analyze from existing snapshots (no CPU cost)
 ./scripts/conformance/conformance.sh analyze --campaigns
 ./scripts/conformance/conformance.sh analyze --one-missing
 ./scripts/conformance/conformance.sh analyze --close 2
 ```
+
+Use snapshot-writing modes only in CI or explicit baseline-maintainer work.
 
 ### Snapshot Files
 
@@ -342,7 +344,7 @@ Memory-guarded command execution. Monitors RSS and kills the process if it excee
 
 ```bash
 # Default limit (75% of system RAM)
-scripts/safe-run.sh cargo test
+scripts/safe-run.sh cargo nextest run
 
 # Custom limit
 scripts/safe-run.sh --limit 8192 -- cargo build --release
@@ -351,7 +353,10 @@ scripts/safe-run.sh --limit 8192 -- cargo build --release
 scripts/safe-run.sh --verbose -- cargo build
 ```
 
-Use for: full conformance runs, `cargo test` (full suite), `cargo build --release`, and any multi-worker test runner.
+Use for long-running or memory-intensive commands such as a full
+`cargo nextest run`, release builds, and multi-worker test runners. This does
+not override the CI-only rule for full conformance, emit, or fourslash suites:
+keep those full suites out of normal local development and let CI run them.
 
 ### `scripts/setup/reset-ts-submodule.sh`
 
