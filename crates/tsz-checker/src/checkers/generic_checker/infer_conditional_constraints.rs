@@ -191,6 +191,50 @@ impl<'a> CheckerState<'a> {
             || self.is_assignable_to(restricted, inst_constraint)
     }
 
+    pub(super) fn type_arg_satisfies_via_hidden_infer_constraints(
+        &mut self,
+        type_arg: TypeId,
+        arg_idx: tsz_parser::parser::NodeIndex,
+        inst_constraint: TypeId,
+    ) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut referenced =
+            crate::query_boundaries::common::collect_referenced_types(db, type_arg);
+        referenced.insert(type_arg);
+
+        for ty in referenced {
+            let Some(name_atom) = query::type_parameter_name(db, ty) else {
+                continue;
+            };
+            let name = self.ctx.types.resolve_atom(name_atom).to_string();
+            let Some(constraint) =
+                self.hidden_conditional_infer_constraint_type_for_name(arg_idx, &name)
+            else {
+                continue;
+            };
+            if constraint != TypeId::UNKNOWN
+                && constraint != TypeId::ANY
+                && !query::contains_type_parameters(self.ctx.types, constraint)
+            {
+                substitution.insert(name_atom, constraint);
+            }
+        }
+
+        if substitution.is_empty() {
+            return false;
+        }
+
+        let restricted = crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            type_arg,
+            &substitution,
+        );
+        let restricted = self.resolve_lazy_type(restricted);
+        self.is_assignable_to(restricted, inst_constraint)
+            || self.base_union_members_satisfy_constraint(restricted, inst_constraint)
+    }
+
     pub(super) fn infer_result_satisfies_array_like_constraint(
         &mut self,
         cond_extends: TypeId,
