@@ -16,6 +16,26 @@ pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
     tsz_solver::relations::subtype::are_types_structurally_identical(db, resolver, left, right)
 }
 
+/// Check structural identity with an outer type-parameter scope visible to
+/// both sides. Used by declaration-merge compatibility to compare type-param
+/// constraints across declarations whose own `T`s resolve to distinct
+/// `TypeId`s.
+pub(crate) fn are_types_structurally_identical_in_param_scope<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    left: TypeId,
+    right: TypeId,
+    param_names: &[Atom],
+) -> bool {
+    tsz_solver::computation::are_types_structurally_identical_in_param_scope(
+        db,
+        resolver,
+        left,
+        right,
+        param_names,
+    )
+}
+
 /// Return the element type when `type_id` is a mutable `Array<T>` form used for
 /// redeclaration identity.
 pub(crate) fn mutable_array_element_for_redeclaration(
