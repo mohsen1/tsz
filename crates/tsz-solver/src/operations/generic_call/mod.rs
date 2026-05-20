@@ -489,7 +489,7 @@ fn instantiate_call_type(
     substitution: &TypeSubstitution,
     actual_this_type: Option<TypeId>,
 ) -> TypeId {
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         if let Some(actual_this_type) = actual_this_type {
             let mut instantiator = TypeInstantiator::new(interner, substitution);
             instantiator.this_type = Some(actual_this_type);
