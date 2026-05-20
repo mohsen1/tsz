@@ -324,3 +324,54 @@ class Test {
         "Expected TS2322 for bare return with custom Promise type, got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn preserves_imported_promise_subclass_type_parameter_in_async_diagnostics() {
+    let lib_files = load_lib_files(&["lib.es5.d.ts", "lib.es2015.promise.d.ts"]);
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_libs(
+        &[
+            (
+                "test.ts",
+                r#"
+import { Task } from "./task";
+
+class Test {
+    async example<T>(): Task<T> { return; }
+}
+"#,
+            ),
+            ("task.ts", "export class Task<T> extends Promise<T> { }\n"),
+        ],
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    );
+
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Promise<T>")),
+        "Expected TS1064 suggestion to unwrap imported Task<T> to Promise<T>, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("not assignable to type 'T'")),
+        "Expected bare return check against imported Task<T>'s awaited payload T, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("Promise<Task<T>>")
+                && !message.contains("not assignable to type 'Task<T>'")),
+        "Imported Promise subclass diagnostics should not use the wrapper Task<T>, got: {messages:#?}"
+    );
+}

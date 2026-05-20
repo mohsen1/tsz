@@ -4,7 +4,7 @@ use crate::query_boundaries::checkers::promise as query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use tsz_binder::{Symbol, SymbolId, symbol_flags};
+use tsz_binder::{BinderState, Symbol, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_scanner::SyntaxKind;
@@ -57,6 +57,19 @@ impl<'a> CheckerState<'a> {
     fn current_symbol_is_lib_promise(&self, sym_id: SymbolId) -> bool {
         self.ctx.sym_id_is_lib_promise(sym_id)
             || self.ctx.sym_id_is_current_cloned_lib_promise(sym_id)
+    }
+
+    fn binder_symbol_is_cloned_lib_promise_or_promise_like(
+        &self,
+        binder: &BinderState,
+        sym_id: SymbolId,
+        expected_name: &str,
+    ) -> bool {
+        matches!(expected_name, "Promise" | "PromiseLike")
+            && binder.lib_symbol_ids.contains(&sym_id)
+            && binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name.as_str() == expected_name)
     }
 
     /// True when `type_id` is an `Application` whose base resolves to the
@@ -974,13 +987,22 @@ impl<'a> CheckerState<'a> {
             // If the name is absent from file_locals it resolves to the lib global.
             // node_symbols only tracks declaration nodes, not use-site references,
             // so we cannot use get_node_symbol for the heritage clause identifier.
-            let sym_from_file = self
-                .ctx
-                .get_binder_for_file(decl_file_idx as usize)
+            let declaring_binder = self.ctx.get_binder_for_file(decl_file_idx as usize);
+            let sym_from_file = declaring_binder
                 .and_then(|b| b.file_locals.get(name))
                 .or_else(|| self.ctx.binder.file_locals.get(name));
             let extends_lib_promise = sym_from_file
-                .map(|sym_id| self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id))
+                .map(|sym_id| {
+                    self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
+                        || self
+                            .ctx
+                            .sym_id_is_current_cloned_lib_promise_or_promise_like(sym_id)
+                        || declaring_binder.is_some_and(|binder| {
+                            self.binder_symbol_is_cloned_lib_promise_or_promise_like(
+                                binder, sym_id, name,
+                            )
+                        })
+                })
                 .unwrap_or_else(|| self.ctx.has_name_in_lib(name));
             if !extends_lib_promise {
                 continue;
