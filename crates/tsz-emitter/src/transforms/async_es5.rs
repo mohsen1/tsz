@@ -262,7 +262,7 @@ impl<'a> AsyncES5Emitter<'a> {
             .transformer
             .transform_generator_body(body_idx, has_await);
         let directives = Self::extract_and_remove_directive_prologue(&mut ir);
-        let hoisted = AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut ir);
+        let hoisted = self.transformer.extract_hoisted_var_groups(&mut ir);
         let needs_lexical_this_capture = ir.contains_captured_this_reference();
         let mut printer = IRPrinter::with_arena(self.arena);
         if let Some(text) = self.source_text {
