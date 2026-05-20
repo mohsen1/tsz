@@ -1924,7 +1924,11 @@ impl<'a> CheckerState<'a> {
                             if let Some(expr) = arena.get_expr_type_args(type_node) {
                                 (expr.expression, expr.type_arguments.as_ref())
                             } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                                (expr.expression, expr.type_arguments.as_ref())
+                                if let Some(type_ref) = arena.get_type_ref(type_node) {
+                                    (type_ref.type_name, type_ref.type_arguments.as_ref())
+                                } else {
+                                    (type_idx, None)
+                                }
                             } else {
                                 (type_idx, None)
                             };
