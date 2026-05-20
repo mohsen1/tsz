@@ -1619,7 +1619,6 @@ pub fn get_enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
 ///
 /// Primitives, `never`, `void`, `undefined`, `null`, `unknown`, and literals
 /// are NOT valid base types. Used for TS2509 checking.
-#[allow(clippy::match_same_arms)]
 pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // Fast path: only `any` and `object` intrinsics are valid base types;
     // all other intrinsics (including `BOOLEAN_TRUE` / `BOOLEAN_FALSE`,
@@ -1631,11 +1630,21 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             || type_id == TypeId::PROMISE_BASE;
     }
     match db.lookup(type_id) {
-        Some(TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)) => true,
-        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => true,
-        Some(TypeData::Callable(_) | TypeData::Function(_)) => true,
-        Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
-        Some(TypeData::TypeParameter(_)) => true,
+        // Object-like types, callables, arrays/tuples, type params, and
+        // lazy/application/mapped refs are all valid class base types.
+        Some(
+            TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Callable(_)
+            | TypeData::Function(_)
+            | TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::TypeParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Application(_)
+            | TypeData::Mapped(_),
+        ) => true,
         Some(TypeData::Intersection(list_id)) => {
             let members = db.type_list(list_id);
             members.iter().all(|&m| is_valid_base_type(db, m))
@@ -1646,9 +1655,6 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             let members = db.type_list(list_id);
             !members.is_empty() && members.iter().all(|&m| is_valid_base_type(db, m))
         }
-        Some(TypeData::Lazy(_)) => true, // unresolved references are assumed valid
-        Some(TypeData::Application(_)) => true, // generic applications are object-like
-        Some(TypeData::Mapped(_)) => true, // mapped types are object-like
         Some(TypeData::ReadonlyType(inner)) => is_valid_base_type(db, inner),
         // Intrinsics (never, void, null, etc.), literals, None => not valid base types
         _ => false,
@@ -1660,17 +1666,23 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Interface heritage is narrower than class heritage: the base must be an
 /// object type or an intersection of object types with statically known
 /// members. Unions and type parameters are rejected with TS2312.
-#[allow(clippy::match_same_arms)]
 pub fn is_valid_interface_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return type_id == TypeId::ANY || type_id == TypeId::OBJECT;
     }
 
     match db.lookup(type_id) {
-        Some(TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)) => true,
-        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => true,
-        Some(TypeData::Callable(_) | TypeData::Function(_)) => true,
-        Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
+        Some(
+            TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Callable(_)
+            | TypeData::Function(_)
+            | TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Lazy(_)
+            | TypeData::Application(_),
+        ) => true,
         Some(TypeData::Intersection(list_id)) => {
             let members = db.type_list(list_id);
             !members.is_empty()
@@ -1686,8 +1698,6 @@ pub fn is_valid_interface_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> b
                     .is_some_and(|name_type| contains_type_parameters_db(db, name_type))
         }
         Some(TypeData::ReadonlyType(inner)) => is_valid_interface_base_type(db, inner),
-        Some(TypeData::Lazy(_) | TypeData::Application(_)) => true,
-        Some(TypeData::Union(_) | TypeData::TypeParameter(_)) => false,
         _ => false,
     }
 }
