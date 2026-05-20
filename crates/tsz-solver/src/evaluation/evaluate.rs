@@ -1453,8 +1453,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if self.is_recursive_type_alias_application(original_type_id)
                 && Self::is_structural_display_alias_result(self.interner, evaluated)
             {
-                self.interner
-                    .store_display_alias_preferring_application(evaluated, original_type_id);
+                // Only store the display alias when `evaluated` was freshly produced
+                // by this evaluation (allocated after `original_type_id`). If it
+                // pre-exists, it was already interned by a different alias and
+                // overwriting its alias would corrupt diagnostics for that other alias.
+                // For example, `NestedRecord<"x.y.z", string>` and `Id<...string...>`
+                // can evaluate to the same structural object; the NestedRecord evaluation
+                // must not replace the `Id<...>` alias that was recorded first.
+                let evaluated_is_fresh = match (
+                    self.interner.lookup_alloc_order(evaluated),
+                    self.interner.lookup_alloc_order(original_type_id),
+                ) {
+                    (Some(eval_order), Some(orig_order)) => eval_order > orig_order,
+                    _ => evaluated.0 > original_type_id.0,
+                };
+                if evaluated_is_fresh {
+                    self.interner
+                        .store_display_alias_preferring_application(evaluated, original_type_id);
+                }
             }
             return;
         }

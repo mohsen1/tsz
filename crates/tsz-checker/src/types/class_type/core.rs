@@ -580,6 +580,22 @@ impl<'a> CheckerState<'a> {
                 self.ctx.this_type_stack.push(prescan_type);
                 prescan_this_type = Some(prescan_type);
                 pushed_prescan_this = true;
+
+                // Register prescan body early so that Application property lookup can
+                // resolve Lazy(DefId(Self)) during Phase-2 method body checking. Without
+                // this, `f.x` where `f: Vec2<(a:A)=>B>` fails with TS2349 because
+                // resolve_lazy returns None until the end of this function. Final
+                // registration below overwrites with the complete instance type.
+                if let Some(sym_id) = current_sym {
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    self.ctx
+                        .register_class_instance_in_envs(def_id, prescan_type);
+                    self.ctx.register_resolved_type(
+                        sym_id,
+                        prescan_type,
+                        class_type_params.clone(),
+                    );
+                }
             }
         }
 
