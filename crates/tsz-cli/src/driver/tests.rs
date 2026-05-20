@@ -1895,6 +1895,69 @@ fn test_types_entry_with_explicit_type_roots_still_emits_ts2688() {
     );
 }
 
+#[test]
+fn no_check_suppresses_unresolved_triple_slash_type_reference_errors() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noCheck": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        base.join("index.ts"),
+        "/// <reference types=\"missing\" />\nconst value = 1;\n",
+    )
+    .expect("write index.ts");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR),
+        "noCheck should suppress unresolved triple-slash type reference TS2688, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn no_check_keeps_compiler_options_types_errors() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noCheck": true,
+            "types": ["missing"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(base.join("index.ts"), "const value = 1;\n").expect("write index.ts");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR),
+        "noCheck should still report unresolved compilerOptions.types TS2688, got: {:?}",
+        result.diagnostics
+    );
+}
+
 /// When a JavaScript source file contains TypeScript-only syntax (e.g.,
 /// `import x = require(...)`), tsc emits TS8002 from
 /// `getJSSyntacticDiagnosticsForFile`. Because that diagnostic flows through
