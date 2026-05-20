@@ -2171,7 +2171,11 @@ impl<'a> FlowAnalyzer<'a> {
                 });
 
                 if let Some(outer_flow) = outer_flow_id {
-                    if self.is_captured_variable(reference)
+                    if self.reference_is_in_class_property_initializer(reference) {
+                        // Class property initializers run outside the surrounding
+                        // function's flow point, so they do not inherit its narrowing.
+                        initial_type
+                    } else if self.is_captured_variable(reference)
                         && !self.is_effectively_const_for_narrowing(reference)
                     {
                         // Captured mutable variable that IS reassigned -

@@ -1,6 +1,7 @@
 //! Flow-based definite assignment and declaration ordering checks.
 
 use crate::FlowAnalyzer;
+use crate::control_flow::type_guards::reference_is_in_class_property_initializer;
 use crate::query_boundaries::definite_assignment::should_report_variable_use_before_assignment;
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_binder::SymbolId;
@@ -47,6 +48,11 @@ impl<'a> CheckerState<'a> {
         // do not participate in definite-assignment analysis.
         if !self.symbol_participates_in_flow_analysis(sym_id) {
             trace!("Symbol does not participate in flow analysis, returning declared type");
+            return declared_type;
+        }
+
+        if reference_is_in_class_property_initializer(self.ctx.arena, idx) {
+            trace!("Class property initializer, returning declared type");
             return declared_type;
         }
 

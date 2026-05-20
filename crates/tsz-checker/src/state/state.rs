@@ -23,6 +23,7 @@
 //!
 use crate::CheckerContext;
 use crate::context::{CheckerOptions, TypingRequest};
+use crate::control_flow::type_guards::reference_is_in_class_property_initializer;
 use crate::query_boundaries::common::QueryDatabase;
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
@@ -406,6 +407,10 @@ impl<'a> CheckerState<'a> {
         // the declared type. Re-narrowing would override that with the narrowed type,
         // hiding assignment errors (TS2322) that tsc correctly emits.
         if self.ctx.daa_error_nodes.contains(&idx.0) {
+            return false;
+        }
+
+        if reference_is_in_class_property_initializer(self.ctx.arena, idx) {
             return false;
         }
 
@@ -1161,6 +1166,7 @@ impl<'a> CheckerState<'a> {
                 && (is_identifier || is_this_keyword)
                 && !self.ctx.daa_error_nodes.contains(&idx.0)
                 && !self.is_require_call_bound_identifier(idx)
+                && !reference_is_in_class_property_initializer(self.ctx.arena, idx)
                 && let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
                 && let Some(sym_id) = self
                     .ctx

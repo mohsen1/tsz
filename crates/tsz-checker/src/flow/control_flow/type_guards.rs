@@ -3,7 +3,7 @@
 
 use crate::query_boundaries::common::TypeResolver;
 use tsz_common::interner::Atom;
-use tsz_parser::parser::node::CallExprData;
+use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::narrowing::{GuardSense, TypeGuard, TypeofKind};
@@ -13,6 +13,35 @@ use crate::state::MAX_TREE_WALK_ITERATIONS;
 
 use super::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis as flow_query;
+
+pub(crate) fn reference_is_in_class_property_initializer(
+    arena: &NodeArena,
+    reference: NodeIndex,
+) -> bool {
+    let mut current = reference;
+    for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+        let Some(ext) = arena.get_extended(current) else {
+            return false;
+        };
+        let parent = ext.parent;
+        if parent.is_none() {
+            return false;
+        }
+
+        let Some(parent_node) = arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            return arena
+                .get_property_decl(parent_node)
+                .is_some_and(|property| property.initializer == current);
+        }
+
+        current = parent;
+    }
+
+    false
+}
 
 impl<'a> FlowAnalyzer<'a> {
     /// Check if a reference node is a mutable variable (let/var) as opposed to const.
@@ -365,6 +394,10 @@ impl<'a> FlowAnalyzer<'a> {
         NodeIndex::NONE
     }
 
+    pub(crate) fn reference_is_in_class_property_initializer(&self, reference: NodeIndex) -> bool {
+        reference_is_in_class_property_initializer(self.arena, reference)
+    }
+
     /// Check if a variable is captured from an outer scope (vs declared locally).
     ///
     /// Bug #1.2: Rule #42 should only apply to captured variables, not local variables.
@@ -390,7 +423,10 @@ impl<'a> FlowAnalyzer<'a> {
 
         let decl_fn = self.find_enclosing_function_node(decl_id);
         let reference_fn = self.find_enclosing_function_node(reference);
-        if decl_fn.is_some() && decl_fn == reference_fn {
+        if decl_fn.is_some()
+            && decl_fn == reference_fn
+            && !self.reference_is_in_class_property_initializer(reference)
+        {
             return false;
         }
 

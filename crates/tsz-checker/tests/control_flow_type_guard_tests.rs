@@ -53,6 +53,14 @@ fn strict_diagnostics_with_libs(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn ts18048_messages(diagnostics: &[(u32, String)]) -> Vec<&str> {
+    diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 18048)
+        .map(|(_, message)| message.as_str())
+        .collect()
+}
+
 #[test]
 fn nested_or_right_operand_preserves_false_path_narrowing() {
     let diagnostics = strict_diagnostics(
@@ -74,6 +82,151 @@ function f(x: number | string | boolean) {
             *code == 2339 && message == "Property 'toString' does not exist on type 'never'."
         }),
         "expected the conformance TS2339 for `x.toString()` narrowed to never, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn class_property_initializers_do_not_inherit_outer_parameter_narrowing() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function instanceField(value: string | undefined) {
+    if (value) {
+        class C {
+            field = value.length;
+        }
+    }
+}
+
+function staticField(input: string | undefined) {
+    if (input) {
+        class C {
+            static field = input.length;
+        }
+    }
+}
+
+function classExpression(subject: string | undefined) {
+    if (subject) {
+        const C = class {
+            field = subject.length;
+        };
+    }
+}
+"#,
+    );
+
+    let ts18048 = ts18048_messages(&diagnostics);
+    assert_eq!(
+        ts18048.len(),
+        3,
+        "class property initializers should see the declared nullable parameter type: {diagnostics:#?}"
+    );
+    assert!(
+        ts18048.iter().any(|message| message.contains("'value'")),
+        "instance field should report the renamed parameter, got: {ts18048:?}"
+    );
+    assert!(
+        ts18048.iter().any(|message| message.contains("'input'")),
+        "static field should report the renamed parameter, got: {ts18048:?}"
+    );
+    assert!(
+        ts18048.iter().any(|message| message.contains("'subject'")),
+        "class expression field should report the renamed parameter, got: {ts18048:?}"
+    );
+}
+
+#[test]
+fn nested_closures_inside_class_property_initializers_do_not_inherit_outer_narrowing() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function arrowField(value: string | undefined) {
+    if (value) {
+        class C {
+            field = () => value.length;
+        }
+    }
+}
+
+function functionField(input: string | undefined) {
+    if (input) {
+        class C {
+            field = function () {
+                return input.length;
+            };
+        }
+    }
+}
+"#,
+    );
+
+    let ts18048 = ts18048_messages(&diagnostics);
+    assert_eq!(
+        ts18048.len(),
+        2,
+        "closures nested in class property initializers should also lose outer narrowing: {diagnostics:#?}"
+    );
+    assert!(
+        ts18048.iter().any(|message| message.contains("'value'")),
+        "arrow initializer should report the renamed parameter, got: {ts18048:?}"
+    );
+    assert!(
+        ts18048.iter().any(|message| message.contains("'input'")),
+        "function initializer should report the renamed parameter, got: {ts18048:?}"
+    );
+}
+
+#[test]
+fn class_static_blocks_keep_same_point_outer_parameter_narrowing() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function staticBlock(value: string | undefined) {
+    if (value) {
+        class C {
+            static {
+                value.length;
+            }
+        }
+        value = undefined;
+    }
+}
+"#,
+    );
+
+    let ts18048 = ts18048_messages(&diagnostics);
+    assert!(
+        ts18048.is_empty(),
+        "class static blocks execute at the class-definition flow point: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ordinary_arrow_closure_capture_rules_are_unchanged() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function arrowNoLater(value: string | undefined) {
+    if (value) {
+        const g = () => value.length;
+    }
+}
+
+function arrowAfterAssignment(input: string | undefined) {
+    if (input) {
+        const g = () => input.length;
+        input = undefined;
+    }
+}
+"#,
+    );
+
+    let ts18048 = ts18048_messages(&diagnostics);
+    assert_eq!(
+        ts18048.len(),
+        1,
+        "only the closure followed by reassignment should lose narrowing: {diagnostics:#?}"
+    );
+    assert!(
+        ts18048[0].contains("'input'"),
+        "ordinary closure diagnostic should stay on the reassigned parameter, got: {ts18048:?}"
     );
 }
 
