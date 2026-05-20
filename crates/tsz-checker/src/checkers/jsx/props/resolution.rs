@@ -584,7 +584,10 @@ impl<'a> CheckerState<'a> {
                     }
                     if let Some(expected_type) = expected_special_type {
                         if attr_data.initializer.is_none() {
-                            if !self.is_assignable_to(TypeId::BOOLEAN_TRUE, expected_type) {
+                            if !self.diagnostic_relation_boolean_guard(
+                                TypeId::BOOLEAN_TRUE,
+                                expected_type,
+                            ) {
                                 use crate::diagnostics::{
                                     diagnostic_codes, diagnostic_messages, format_message,
                                 };
@@ -850,7 +853,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }
-                    if !self.is_assignable_to(TypeId::BOOLEAN_TRUE, expected_type) {
+                    if !self.diagnostic_relation_boolean_guard(TypeId::BOOLEAN_TRUE, expected_type)
+                    {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
@@ -992,7 +996,7 @@ impl<'a> CheckerState<'a> {
                     if is_special_named_attr {
                         if actual_type != TypeId::ANY
                             && actual_type != TypeId::ERROR
-                            && !self.is_assignable_to(actual_type, expected_type)
+                            && !self.diagnostic_relation_boolean_guard(actual_type, expected_type)
                         {
                             needs_special_attr_object_assignability = true;
                         }
