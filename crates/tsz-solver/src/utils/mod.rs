@@ -391,7 +391,7 @@ pub(crate) fn expand_tuple_rest(db: &dyn TypeDatabase, type_id: TypeId) -> Tuple
 
     if let Some(elements) = tuple_list_id(db, type_id) {
         let elements = db.tuple_list(elements);
-        let mut fixed = Vec::new();
+        let mut fixed = Vec::with_capacity(elements.len());
         for (i, elem) in elements.iter().enumerate() {
             if elem.rest {
                 let inner = expand_tuple_rest(db, elem.type_id);
