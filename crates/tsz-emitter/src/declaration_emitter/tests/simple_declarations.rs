@@ -8192,12 +8192,48 @@ foo.default = 2;
     );
 
     assert!(
-        output.contains("declare namespace foo {\n    let x: number;"),
-        "Expected ordinary expando property to emit as an ambient namespace member: {output}"
+        output.contains("declare namespace foo {\n    export let x: number;"),
+        "Expected direct expando property to stay exported when a sibling needs an export alias: {output}"
     );
     assert!(
         output.contains("let _default: number;\n    export { _default as default };"),
         "Expected reserved expando property to use local alias plus export specifier: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_static_function_expando_exports_with_reserved_sibling() {
+    let output = emit_js_dts(
+        r#"
+function foo() {}
+foo.handler = function(value) { return value; };
+foo.default = 2;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace foo {\n    export function handler(value: any): any;"),
+        "Expected direct function-valued expando to stay exported when a sibling needs an alias: {output}"
+    );
+    assert!(
+        output.contains("let _default: number;\n    export { _default as default };"),
+        "Expected reserved sibling to use a local alias without exporting the alias declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_static_contextual_keyword_exports_with_reserved_sibling() {
+    let output = emit_js_dts(
+        r#"
+function foo() {}
+foo.class = 1;
+foo.async = 2;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace foo {\n    let _class: number;\n    export { _class as class };\n    export let async: number;"),
+        "Expected contextual keyword property to stay direct and exported after a reserved-word alias: {output}"
     );
 }
 
