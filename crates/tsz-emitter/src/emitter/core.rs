@@ -165,6 +165,9 @@ pub struct PrinterOptions {
     pub jsx_import_source: Option<String>,
     /// Module name to use for AMD/System outFile bundles.
     pub bundled_module_name: Option<String>,
+    /// Per-base AMD factory-parameter counters from preceding files in the bundle.
+    /// Seeds `module_temp_counters` so each file's parameters are globally unique.
+    pub bundle_module_counters: FxHashMap<String, u32>,
     /// When true, suppress "use strict" emission even if module kind is CJS.
     /// Set when module was overridden from ESM/preserve to CJS for .cts/.cjs files.
     pub suppress_use_strict: bool,
@@ -219,6 +222,7 @@ impl Default for PrinterOptions {
             jsx_fragment_factory: None,
             jsx_import_source: None,
             bundled_module_name: None,
+            bundle_module_counters: FxHashMap::default(),
             suppress_use_strict: false,
             strict_null_checks: false,
             verbatim_module_syntax: false,
@@ -406,6 +410,15 @@ pub struct Printer<'a> {
     /// before body declarations are emitted, so `let x` can become `var x_1`
     /// when it would otherwise collide with parameter `x`.
     pub(crate) pending_function_body_parameters: Vec<NodeIndex>,
+
+    /// ES5 replacement for `new.target` in the current lexical function-like
+    /// body. Arrows inherit this value; regular functions/classes replace it
+    /// with their own capture while their body is emitted.
+    pub(crate) current_new_target_substitution: Option<String>,
+
+    /// Pending ES5 `new.target` capture initializer for the function-like body
+    /// that is about to be emitted.
+    pub(crate) pending_new_target_capture_initializer: Option<String>,
 
     /// The name of the current namespace we're emitting inside (if any).
     /// Used for nested exported namespaces to emit proper IIFE parameters.
@@ -1115,6 +1128,8 @@ impl<'a> Printer<'a> {
             namespace_export_inner: false,
             emitting_function_body_block: false,
             pending_function_body_parameters: Vec::new(),
+            current_new_target_substitution: None,
+            pending_new_target_capture_initializer: None,
             current_namespace_name: None,
             parent_namespace_name: None,
             current_namespace_source_path: None,
@@ -1405,6 +1420,11 @@ impl<'a> Printer<'a> {
         self.source_map_text.or(self.source_text)
     }
 
+    /// Returns `source_text.len()` as `u32`, or `fallback` when no source text is attached.
+    pub(crate) fn source_text_end_or(&self, fallback: u32) -> u32 {
+        self.source_text.map_or(fallback, |t| t.len() as u32)
+    }
+
     /// Compute a `SourcePosition` from a byte offset, using the precomputed
     /// line map for O(log n) lookup when available, falling back to the O(n)
     /// linear scan otherwise.
@@ -1495,6 +1515,12 @@ impl<'a> Printer<'a> {
     /// Take the output.
     pub fn take_output(self) -> String {
         self.writer.take_output()
+    }
+
+    /// Returns AMD factory-parameter counters accumulated during emission, for
+    /// threading into the next file's `PrinterOptions::bundle_module_counters`.
+    pub const fn bundle_module_counters(&self) -> &FxHashMap<String, u32> {
+        &self.ctx.module_state.module_temp_counters
     }
     // =========================================================================
     // Main Emit Method
@@ -1791,6 +1817,15 @@ impl<'a> Printer<'a> {
                     // The expression is the keyword token (new/import)
                     if let Some(kw_node) = self.arena.get(access.expression) {
                         if kw_node.kind == SyntaxKind::NewKeyword as u16 {
+                            if self.ctx.target_es5 {
+                                let substitution = self
+                                    .current_new_target_substitution
+                                    .as_deref()
+                                    .unwrap_or("_newTarget")
+                                    .to_string();
+                                self.write(&substitution);
+                                return;
+                            }
                             self.write("new");
                         } else if kw_node.kind == SyntaxKind::ImportKeyword as u16 {
                             self.write("import");

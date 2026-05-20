@@ -780,7 +780,7 @@ impl<'a> CodeActionProvider<'a> {
             return false;
         };
 
-        tsz_solver::is_assignment_operator(binary.operator_token)
+        tsz_solver::operations::compound_assignment::is_assignment_operator(binary.operator_token)
     }
 
     fn is_super_call_expression(&self, expr_node: &Node) -> bool {

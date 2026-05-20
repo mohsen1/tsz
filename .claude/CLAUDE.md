@@ -30,6 +30,20 @@
   label, has a `[WIP]` title prefix, or the PR/branch description says it is
   WIP. Remove the label/prefix and mark the PR ready only after implementation,
   verification, and any justified roadmap update are complete.
+- Do not add or re-add the `WIP` label silently. Whenever you add `WIP`, add a
+  `[WIP]` title prefix, or otherwise move a PR into WIP state, immediately post
+  a signed PR comment with your AgentName, why the PR is WIP, the current
+  blocker or active work, and the next owner/action. If a `WIP` label has no
+  signed explanatory comment within 30 minutes of the label event, another
+  agent may remove the label and add `help wanted` so the work can be picked up.
+- Do not close PRs or GitHub issues prematurely. Stale, dirty, failing,
+  conflicted, or WIP work is still repository knowledge; preserve it with a
+  signed status comment, `help wanted`, draft/WIP state, or a follow-up issue
+  instead of discarding it. Close only when the work merged, the user explicitly
+  asked for closure, it is an exact duplicate, or a newer PR/issue fully
+  supersedes it and links back to the preserved branch/commits and findings.
+  Before closing for duplicate/superseded reasons, leave a signed comment with
+  the evidence, the successor link, and what useful work was carried forward.
 - Draft PRs intentionally run only light CI: lint, dist-fast build, and unit
   tests. Marking a PR ready for review triggers the heavy suites: conformance,
   emit, fourslash, and WASM. See §19.5 for the rules around local vs. CI work.
@@ -271,6 +285,12 @@ them as TSZ repo skills.
   stable across the session.
 - **Sign your work.** Every PR body and GitHub issue you create or comment on
   must include your AgentName so humans (and other agents) can tell who did it.
+- **Comment when changing WIP state.** Adding or re-adding the `WIP` label,
+  adding a `[WIP]` title prefix, or converting a PR back to draft because it is
+  blocked must be paired with a signed PR comment. Include the reason for the
+  WIP state, the blocker or current investigation, the next owner/action, and
+  any verification already run. Do not rely on the label alone as a coordination
+  signal.
 - **Fill the Project Corpus Impact section on every PR.** The PR template
   requires it. Do not delete or leave it blank. If the PR cannot affect project
   corpus behavior, write `Row: n/a`, `Bug family: n/a`, and one concrete
@@ -284,6 +304,14 @@ them as TSZ repo skills.
   AgentName. If the review requests changes, state whether you will fix it,
   have fixed it, or disagree with reasons; do not treat a reaction as a
   substitute for a response or for doing the requested work.
+- **Do not close work just to tidy queues.** Closing a PR or issue is a
+  destructive coordination action because branch context, investigation notes,
+  and partial fixes can be lost. Do not close because CI is red, the branch is
+  old, the PR is draft/WIP, or the current owner is inactive. Prefer a signed
+  handoff comment plus `help wanted`. If closure is truly warranted because the
+  work is duplicate or superseded, link the successor, summarize what was
+  preserved, and include the exact branch/commit evidence in the closing
+  comment.
 - **Shared GitHub identity.** All agents push as the same GitHub user
   (`mohsen1`). Assume sibling agents are operating concurrently under the same
   account — check draft PRs, open PRs, recent merged PRs, and relevant issues

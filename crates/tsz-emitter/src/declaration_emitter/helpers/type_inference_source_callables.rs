@@ -74,6 +74,14 @@ impl<'a> DeclarationEmitter<'a> {
                         {
                             return Some(evaluated);
                         }
+                        if let Some(substituted) = self.substitute_source_call_type_parameters(
+                            source_arena,
+                            func,
+                            call,
+                            type_text,
+                        ) {
+                            return Some(substituted);
+                        }
                         continue;
                     }
                     return self.substitute_source_call_type_parameters(

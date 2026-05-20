@@ -367,6 +367,13 @@ impl<'a> TypePrinter<'a> {
             return true;
         }
 
+        // Type-literal and interface accessors have no parent class symbol, so
+        // the parent_id check below cannot detect them; use the structural
+        // split-accessor encoding instead.
+        if property.has_split_accessor() {
+            return true;
+        }
+
         let Some(parent_id) = property.parent_id else {
             return false;
         };
@@ -927,18 +934,6 @@ impl<'a> TypePrinter<'a> {
             }
 
             parts.push(part);
-        }
-
-        if let Some(indent) = self.indent_level
-            && elements.iter().any(|elem| elem.name.is_some())
-        {
-            let member_indent = "    ".repeat((indent + 1) as usize);
-            let closing_indent = "    ".repeat(indent as usize);
-            let lines: Vec<String> = parts
-                .iter()
-                .map(|part| format!("{member_indent}{part}"))
-                .collect();
-            return format!("[\n{}\n{closing_indent}]", lines.join(",\n"));
         }
 
         format!("[{}]", parts.join(", "))
@@ -2625,7 +2620,7 @@ impl<'a> TypePrinter<'a> {
 #[cfg(test)]
 mod tests {
     use tsz_solver::TypeInterner;
-    use tsz_solver::types::{TypeId, TypeParamInfo};
+    use tsz_solver::types::{TupleElement, TypeId, TypeParamInfo};
 
     use super::TypePrinter;
 
@@ -2718,5 +2713,45 @@ mod tests {
             "`get${Capitalize<string & K>}`"
         );
         assert_eq!(TypePrinter::mapped_name_type_text("asserts T"), "asserts T");
+    }
+
+    #[test]
+    fn labeled_tuple_typeids_print_compact_even_with_indent() {
+        // Declaration AST tuple nodes own source trivia such as member JSDoc and
+        // choose multiline output there. Solver tuple `TypeId`s only carry the
+        // public tuple shape, so labels alone should not force multiline text.
+        let interner = TypeInterner::new();
+        let elem = interner.intern_string("elem");
+        let index = interner.intern_string("index");
+        let tuple = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::OBJECT,
+                name: Some(elem),
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: Some(index),
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        let printed = TypePrinter::new(&interner)
+            .with_indent_level(1)
+            .print_type(tuple);
+        assert_eq!(printed, "[elem: object, index: number]");
+
+        let nested = interner.tuple(vec![TupleElement {
+            type_id: tuple,
+            name: None,
+            optional: false,
+            rest: false,
+        }]);
+        let printed = TypePrinter::new(&interner)
+            .with_indent_level(1)
+            .print_type(nested);
+        assert_eq!(printed, "[[elem: object, index: number]]");
     }
 }

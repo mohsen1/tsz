@@ -3,6 +3,7 @@
 //! Type literals represent inline object types like `{ x: string; y: number }` or
 //! callable types with call/construct signatures.
 
+use super::type_node_helpers::type_node_includes_explicit_undefined;
 use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -269,7 +270,11 @@ impl<'a> CheckerState<'a> {
                             {
                                 let type_arg =
                                     self.get_type_from_type_node_in_type_literal(first_arg);
-                                return self.ctx.types.string_intrinsic_by_name(name, type_arg);
+                                return crate::query_boundaries::type_construction::string_intrinsic_by_name(
+                                    self.ctx.types,
+                                    name,
+                                    type_arg,
+                                );
                             }
                             return TypeId::ERROR;
                         }
@@ -1250,11 +1255,27 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 TypeId::ANY
                             };
+                            let write_type =
+                                if self.ctx.compiler_options.exact_optional_property_types
+                                    && sig.question_token
+                                    && sig.type_annotation.is_some()
+                                    && !type_node_includes_explicit_undefined(
+                                        self.ctx.arena,
+                                        sig.type_annotation,
+                                    )
+                                {
+                                    crate::query_boundaries::common::remove_undefined(
+                                        self.ctx.types.as_type_database(),
+                                        type_id,
+                                    )
+                                } else {
+                                    type_id
+                                };
                             member_order += 1;
                             properties.push(PropertyInfo {
                                 name: name_atom,
                                 type_id,
-                                write_type: type_id,
+                                write_type,
                                 optional: sig.question_token,
                                 readonly: self.has_readonly_modifier(&sig.modifiers),
                                 is_method: false,

@@ -289,6 +289,25 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub(crate) type_param_equivalences: Vec<(TypeId, TypeId)>,
 }
 
+/// Operation-local cache statistics for [`SubtypeChecker`].
+///
+/// Owner: one subtype-checking request family. The evaluation memo is dropped
+/// with the checker or cleared by [`SubtypeChecker::reset`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SubtypeCheckerCacheStatistics {
+    /// Entries in the evaluation memo keyed by input `TypeId` and evaluation mode.
+    pub eval_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl SubtypeCheckerCacheStatistics {
+    /// Estimated heap bytes owned by subtype checker memo tables.
+    #[must_use]
+    pub const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
+}
+
 impl<'a> SubtypeChecker<'a, NoopResolver> {
     /// Create a new `SubtypeChecker` without a resolver (basic mode).
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
@@ -493,6 +512,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.def_guard.reset();
         self.sym_visiting.clear();
         self.eval_cache.clear();
+    }
+
+    /// Return entry and size accounting for this checker's operation-local caches.
+    #[must_use]
+    pub fn cache_statistics(&self) -> SubtypeCheckerCacheStatistics {
+        let eval_entries = self.eval_cache.len();
+        let estimated_size_bytes =
+            eval_entries.saturating_mul(std::mem::size_of::<((TypeId, bool), TypeId)>());
+        SubtypeCheckerCacheStatistics {
+            eval_entries,
+            estimated_size_bytes,
+        }
     }
 
     /// Whether the recursion depth was exceeded during subtype checking.
@@ -2744,18 +2775,6 @@ pub fn is_subtype_of_with_db(db: &dyn QueryDatabase, source: TypeId, target: Typ
     checker.is_subtype_of(source, target)
 }
 
-/// Convenience function for one-off subtype checks with compiler flags.
-/// The flags are a packed u16 bitmask matching RelationCacheKey.flags.
-pub fn is_subtype_of_with_flags(
-    interner: &dyn TypeDatabase,
-    source: TypeId,
-    target: TypeId,
-    flags: u16,
-) -> bool {
-    let mut checker = SubtypeChecker::new(interner).apply_flags(flags);
-    checker.is_subtype_of(source, target)
-}
-
 // Re-enabled subtype tests - verifying API compatibility
 #[cfg(test)]
 #[path = "../../../tests/subtype_tests.rs"]
@@ -2792,6 +2811,10 @@ mod overlap_tests;
 #[cfg(test)]
 #[path = "../../../tests/intersection_optional_subtype_tests.rs"]
 mod intersection_optional_subtype_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/intrinsic_object_tests.rs"]
+mod intrinsic_object_tests;
 
 #[cfg(test)]
 mod with_identity_check_mode_tests {

@@ -268,7 +268,12 @@ impl<'a> Completions<'a> {
         }
 
         if items.is_empty() {
-            self.append_syntactic_member_fallback(expr_idx, &mut seen_names, &mut items);
+            self.append_syntactic_member_fallback(
+                expr_idx,
+                &mut checker,
+                &mut seen_names,
+                &mut items,
+            );
         }
 
         items.sort_by(|a, b| a.label.cmp(&b.label));
@@ -404,7 +409,8 @@ impl<'a> Completions<'a> {
             // — not all string methods or all number methods.
             let members = interner.type_list(members_id);
             if members.len() > 1 {
-                let mut per_member_props: Vec<FxHashMap<String, PropertyCompletion>> = Vec::new();
+                let mut per_member_props: Vec<FxHashMap<String, PropertyCompletion>> =
+                    Vec::with_capacity(members.len());
                 for &member in members.iter() {
                     let mut member_props = FxHashMap::default();
                     let mut member_visited = visited.clone();
@@ -423,7 +429,8 @@ impl<'a> Completions<'a> {
                 if let Some(first) = per_member_props.first() {
                     for (name, info) in first {
                         if per_member_props[1..].iter().all(|m| m.contains_key(name)) {
-                            let mut member_types = vec![info.type_id];
+                            let mut member_types = Vec::with_capacity(per_member_props.len());
+                            member_types.push(info.type_id);
                             for member_props in &per_member_props[1..] {
                                 if let Some(mi) = member_props.get(name) {
                                     member_types.push(mi.type_id);
@@ -660,6 +667,7 @@ impl<'a> Completions<'a> {
     fn append_syntactic_member_fallback(
         &self,
         expr_idx: NodeIndex,
+        checker: &mut CheckerState,
         seen_names: &mut FxHashSet<String>,
         items: &mut Vec<CompletionItem>,
     ) {
@@ -703,7 +711,7 @@ impl<'a> Completions<'a> {
             && let Some(access) = self.arena.get_access_expr(expr_node)
         {
             if let Some(sym_id) = self.resolve_member_target_symbol(access.name_or_argument) {
-                self.append_type_literal_annotation_members(sym_id, seen_names, items);
+                self.append_type_literal_annotation_members(sym_id, checker, seen_names, items);
                 return;
             }
             if let Some(prop_name) = self.arena.get_identifier_text(access.name_or_argument)
@@ -712,6 +720,7 @@ impl<'a> Completions<'a> {
                 self.append_named_property_annotation_members(
                     container_sym,
                     prop_name,
+                    checker,
                     seen_names,
                     items,
                 );
@@ -738,9 +747,6 @@ impl<'a> Completions<'a> {
                     continue;
                 };
 
-                // Extract the member name and kind based on AST node type.
-                // `this.` inside a class body should show all instance members
-                // (properties and methods, both public and private).
                 let (name, kind) = if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
                     let Some(prop) = self.arena.get_property_decl(member_node) else {
                         continue;
@@ -772,14 +778,10 @@ impl<'a> Completions<'a> {
                 }
                 let mut item = CompletionItem::new(name.to_string(), kind);
                 item.sort_text = Some(sort_priority::MEMBER.to_string());
+                item.detail = Self::node_type_detail(checker, member_idx);
                 if kind == CompletionItemKind::Method {
                     item.insert_text = Some(format!("{name}($1)"));
                     item.is_snippet = true;
-                    // Extract method signature from source text for display.
-                    item.detail = self.extract_method_signature_from_source(member_idx);
-                } else if kind == CompletionItemKind::Property {
-                    // Extract property type from source for display.
-                    item.detail = self.extract_property_type_from_source(member_idx);
                 }
                 items.push(item);
             }
@@ -789,19 +791,21 @@ impl<'a> Completions<'a> {
     fn append_type_literal_annotation_members(
         &self,
         sym_id: tsz_binder::SymbolId,
+        checker: &mut CheckerState,
         seen_names: &mut FxHashSet<String>,
         items: &mut Vec<CompletionItem>,
     ) {
         let Some(type_node_idx) = self.symbol_type_annotation_node(sym_id) else {
             return;
         };
-        self.append_members_from_type_node(type_node_idx, seen_names, items);
+        self.append_members_from_type_node(type_node_idx, checker, seen_names, items);
     }
 
     fn append_named_property_annotation_members(
         &self,
         container_sym_id: tsz_binder::SymbolId,
         property_name: &str,
+        checker: &mut CheckerState,
         seen_names: &mut FxHashSet<String>,
         items: &mut Vec<CompletionItem>,
     ) {
@@ -860,6 +864,7 @@ impl<'a> Completions<'a> {
                         }
                         self.append_members_from_type_node(
                             signature.type_annotation,
+                            checker,
                             seen_names,
                             items,
                         );
@@ -887,7 +892,12 @@ impl<'a> Completions<'a> {
                         if name != property_name || prop.type_annotation.is_none() {
                             continue;
                         }
-                        self.append_members_from_type_node(prop.type_annotation, seen_names, items);
+                        self.append_members_from_type_node(
+                            prop.type_annotation,
+                            checker,
+                            seen_names,
+                            items,
+                        );
                     }
                 }
                 _ => {}
@@ -898,6 +908,7 @@ impl<'a> Completions<'a> {
     fn append_members_from_type_node(
         &self,
         type_node_idx: NodeIndex,
+        checker: &mut CheckerState,
         seen_names: &mut FxHashSet<String>,
         items: &mut Vec<CompletionItem>,
     ) {
@@ -977,28 +988,17 @@ impl<'a> Completions<'a> {
             let Some(signature) = self.arena.get_signature(member_node) else {
                 continue;
             };
-            let Some(name_node) = self.arena.get(signature.name) else {
-                continue;
-            };
-            let start = name_node.pos as usize;
-            let end = (name_node.end as usize).min(self.source_text.len());
-            if start >= end {
-                continue;
-            }
-            let raw_name = self.source_text[start..end]
-                .trim()
-                .trim_end_matches(':')
-                .trim_end()
-                .trim_end_matches('?')
-                .trim_end();
-            let (label, needs_quoted_insert) = if (raw_name.starts_with('"')
-                && raw_name.ends_with('"'))
-                || (raw_name.starts_with('\'') && raw_name.ends_with('\''))
-            {
-                (raw_name[1..raw_name.len() - 1].to_string(), true)
+            let name_kind = self.arena.kind(signature.name).unwrap_or(0);
+            let is_quoted = name_kind == SyntaxKind::StringLiteral as u16;
+            let label = if is_quoted {
+                self.arena.get_literal_text(signature.name)
             } else {
-                (raw_name.to_string(), false)
+                self.arena.get_identifier_text(signature.name)
             };
+            let Some(label) = label else {
+                continue;
+            };
+            let label = label.to_string();
             if label.is_empty() || !seen_names.insert(label.clone()) {
                 continue;
             }
@@ -1009,22 +1009,10 @@ impl<'a> Completions<'a> {
             };
             let mut item = CompletionItem::new(label.clone(), kind);
             item.sort_text = Some(sort_priority::MEMBER.to_string());
-            if signature.type_annotation.is_some()
-                && let Some(type_node) = self.arena.get(signature.type_annotation)
-            {
-                let type_start = type_node.pos as usize;
-                let type_end = (type_node.end as usize).min(self.source_text.len());
-                if type_start < type_end {
-                    let type_text = self.source_text[type_start..type_end]
-                        .trim()
-                        .trim_end_matches(';')
-                        .trim_end();
-                    if !type_text.is_empty() {
-                        item = item.with_detail(type_text.to_string());
-                    }
-                }
+            if signature.type_annotation.is_some() {
+                item.detail = Self::node_type_detail(checker, member_idx);
             }
-            if needs_quoted_insert {
+            if is_quoted {
                 item.insert_text = Some(format!("?.[\"{label}\"]"));
             } else if is_method {
                 item.insert_text = Some(format!("{label}($1)"));
@@ -1777,105 +1765,14 @@ impl<'a> Completions<'a> {
         false
     }
 
-    /// Extract a method signature string (e.g. `(): void`) from the source text
-    /// of a method declaration node. Used by the `this.` AST fallback to provide
-    /// type detail when the checker cannot resolve the type.
-    ///
-    /// Robustness audit (PR #G, item 7 in
-    /// `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`): emit a
-    /// structured trace at every invocation so the rate at which
-    /// completion display depends on text-slicing — and the specific
-    /// methods that drive it — are visible. The audit's full solution
-    /// migrates this caller to a semantic `display_signature_for_declaration_node`
-    /// service; this is the visibility-first foothold.
-    fn extract_method_signature_from_source(&self, method_idx: NodeIndex) -> Option<String> {
-        tracing::trace!(
-            site = "completions::extract_method_signature_from_source",
-            method_idx = method_idx.0,
-            "LSP completion fell back to text-sliced method signature"
-        );
-        let node = self.arena.get(method_idx)?;
-        let start = node.pos as usize;
-        let end = node.end.min(self.source_text.len() as u32) as usize;
-        if start >= end {
+    fn node_type_detail(checker: &mut CheckerState, node_idx: NodeIndex) -> Option<String> {
+        let type_id = checker.get_type_of_node(node_idx);
+        let detail = checker.format_type(type_id);
+        if detail.is_empty() {
             return None;
         }
-        let text = &self.source_text[start..end];
-        // Find the opening paren of the parameter list
-        let open = text.find('(')?;
-        // Find the matching close paren
-        let mut depth = 0i32;
-        let mut close = None;
-        for (i, ch) in text[open..].char_indices() {
-            match ch {
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        close = Some(open + i);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let close = close?;
-        // Check for return type annotation after the close paren
-        let after_params = text[close + 1..].trim_start();
-        if let Some(rest) = after_params.strip_prefix(':') {
-            let return_type = rest.trim_start();
-            // Take until `{` or end of line
-            let end_pos = return_type
-                .find('{')
-                .or_else(|| return_type.find('\n'))
-                .unwrap_or(return_type.len());
-            let return_type = return_type[..end_pos].trim();
-            Some(format!("({}): {}", &text[open + 1..close], return_type))
-        } else {
-            Some(format!("({}): void", &text[open + 1..close]))
-        }
-    }
-
-    /// Extract a property type string (e.g. `number`) from the source text of a
-    /// property declaration node. Used by the `this.` AST fallback.
-    ///
-    /// See `extract_method_signature_from_source` for the audit context.
-    fn extract_property_type_from_source(&self, prop_idx: NodeIndex) -> Option<String> {
-        tracing::trace!(
-            site = "completions::extract_property_type_from_source",
-            prop_idx = prop_idx.0,
-            "LSP completion fell back to text-sliced property type"
-        );
-        let node = self.arena.get(prop_idx)?;
-        let prop = self.arena.get_property_decl(node)?;
-        if prop.type_annotation.is_some() {
-            let type_node = self.arena.get(prop.type_annotation)?;
-            let start = type_node.pos as usize;
-            let end = type_node.end.min(self.source_text.len() as u32) as usize;
-            if start < end {
-                return Some(self.source_text[start..end].trim().to_string());
-            }
-        }
-        // If there's an initializer, try to infer the type name from it
-        if prop.initializer.is_some() {
-            let init_node = self.arena.get(prop.initializer)?;
-            let start = init_node.pos as usize;
-            let end = init_node.end.min(self.source_text.len() as u32) as usize;
-            if start < end {
-                let text = self.source_text[start..end].trim();
-                // Simple literal type inference
-                if text.parse::<f64>().is_ok() {
-                    return Some("number".to_string());
-                }
-                if text == "true" || text == "false" {
-                    return Some("boolean".to_string());
-                }
-                if text.starts_with('"') || text.starts_with('\'') || text.starts_with('`') {
-                    return Some("string".to_string());
-                }
-            }
-        }
-        None
+        // Completion details use colon notation `(params): RetType`, not arrow `(params) => RetType`.
+        Some(crate::hover::format::arrow_to_colon(&detail))
     }
 
     pub(super) fn class_extends_expression(&self, class_idx: NodeIndex) -> Option<NodeIndex> {

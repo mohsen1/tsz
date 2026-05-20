@@ -910,6 +910,8 @@ pub fn get_keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeI
     }
 }
 
+/// Instantiate a mapped type template for a specific property key.
+///
 /// Instantiate a mapped type template for a specific property key, handling
 /// name collisions between the mapped key parameter and outer type parameters.
 ///

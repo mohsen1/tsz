@@ -219,6 +219,13 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
     }
 }
 
+// Mirrors tsc's `hasContextSensitiveReturnExpression`: a function body
+// contributes context-sensitivity only when its return expression is itself
+// context-sensitive (per `is_contextually_sensitive`). For block bodies, tsc
+// returns false unconditionally; tsz keeps the per-return scan because its
+// two-pass inference still needs to defer block-bodied functions whose
+// return expression is itself context-sensitive (e.g. an inner unannotated
+// arrow that wants a contextual parameter type from the outer generic).
 fn function_body_needs_contextual_return_type(state: &CheckerState, body_idx: NodeIndex) -> bool {
     use tsz_parser::parser::syntax_kind_ext;
 
@@ -227,24 +234,9 @@ fn function_body_needs_contextual_return_type(state: &CheckerState, body_idx: No
     };
 
     if body_node.kind != syntax_kind_ext::BLOCK {
-        return expression_needs_contextual_return_type(state, body_idx);
+        return is_contextually_sensitive(state, body_idx);
     }
 
-    // For block bodies, use the stricter `is_contextually_sensitive` check on return
-    // expressions rather than the broader `expression_needs_contextual_return_type`.
-    //
-    // tsc's `hasContextSensitiveReturnExpression` returns false for all block bodies.
-    // We can't go that far because our inference pipeline needs the two-pass flow
-    // for block-bodied functions returning context-sensitive expressions (e.g.,
-    // `() => { return a => a + 1 }` where `a` needs contextual type from outer generic).
-    //
-    // But `expression_needs_contextual_return_type` is too broad — it flags ALL object
-    // literals, array literals, and call expressions, even non-sensitive ones. This
-    // incorrectly makes methods like `state() { return { bar2: 1 }; }` context-sensitive,
-    // preventing them from contributing to Round 1 generic inference.
-    //
-    // The stricter check only flags truly context-sensitive return expressions
-    // (those with unannotated params, sensitive nested objects, etc.).
     let Some(block) = state.ctx.arena.get_block(body_node) else {
         return false;
     };

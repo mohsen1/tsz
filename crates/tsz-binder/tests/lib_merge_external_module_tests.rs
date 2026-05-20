@@ -245,3 +245,193 @@ fn module_scoped_symbols_excluded_from_file_locals() {
         "Module-scoped type should NOT be in file_locals"
     );
 }
+
+#[test]
+fn resolve_name_in_lib_module_locals_finds_hoisted_global() {
+    // Two-lib setup mirroring the runtime: a base lib defines `Iterator`,
+    // and an external-module extension contributes a `declare global { var
+    // Iterator }` augmentation. The probe must return the main-binder
+    // SymbolId, expose the lib symbol flags to the accept callback, and
+    // short-circuit on the first accepted candidate.
+    let (base_arena, base_binder) = bind_source("interface Iterator<T> { next(): T; }");
+    let (ext_arena, ext_binder) = bind_source(
+        "export {};
+        declare global {
+            var Iterator: { new<T>(): Iterator<T> };
+        }",
+    );
+
+    let mut main_binder = BinderState::new();
+    let base_ctx = make_lib_context(&base_arena, &base_binder);
+    let ext_ctx = make_lib_context(&ext_arena, &ext_binder);
+    main_binder.merge_lib_contexts_into_binder(&[base_ctx, ext_ctx]);
+
+    let main_iter_id = main_binder
+        .file_locals
+        .get("Iterator")
+        .expect("Iterator should be in main file_locals after merge");
+
+    let probe_contexts: Vec<LibContext> = vec![
+        make_lib_context(&base_arena, &base_binder),
+        make_lib_context(&ext_arena, &ext_binder),
+    ];
+
+    let mut visit_count = 0;
+    let mut seen_flags = Vec::new();
+    let resolved =
+        main_binder.resolve_name_in_lib_module_locals("Iterator", &probe_contexts, |id, flags| {
+            visit_count += 1;
+            seen_flags.push(flags);
+            Some(id)
+        });
+    assert_eq!(resolved, Some(main_iter_id));
+    assert_eq!(visit_count, 1, "should stop at first accepted candidate");
+    assert!(
+        seen_flags[0] & symbol_flags::INTERFACE != 0,
+        "callback must receive lib symbol flags ({:#x})",
+        seen_flags[0]
+    );
+
+    let mut total_visits = 0;
+    let result = main_binder.resolve_name_in_lib_module_locals(
+        "Iterator",
+        &probe_contexts,
+        |_id, _flags| {
+            total_visits += 1;
+            None
+        },
+    );
+    assert_eq!(result, None);
+    assert_eq!(
+        total_visits, 2,
+        "reject-all must visit every lib context that has the name"
+    );
+}
+
+#[test]
+fn resolve_name_in_lib_module_locals_returns_none_when_name_absent() {
+    // Module-scoped lib symbols excluded by Phase 3 of the merge are absent
+    // from the main binder's file_locals. The probe must return None without
+    // invoking the accept callback (no point asking policy about a symbol
+    // that has no current-binder ID).
+    let (lib_arena, lib_binder) = bind_source("interface SomeGlobal {}");
+    let mut main_binder = BinderState::new();
+    main_binder.merge_lib_contexts_into_binder(&[make_lib_context(&lib_arena, &lib_binder)]);
+    assert!(!main_binder.file_locals.has("Nonexistent"));
+
+    let probe_contexts: Vec<LibContext> = vec![make_lib_context(&lib_arena, &lib_binder)];
+    let mut accept_calls = 0;
+    let result =
+        main_binder.resolve_name_in_lib_module_locals("Nonexistent", &probe_contexts, |id, _| {
+            accept_calls += 1;
+            Some(id)
+        });
+    assert_eq!(result, None);
+    assert_eq!(accept_calls, 0);
+}
+
+#[test]
+fn resolve_name_in_lib_module_locals_surfaces_phase3_excluded_module_scoped_flags() {
+    // The probe's reason for existing is to reach lib symbols that Phase 3
+    // of the merge intentionally excluded from the global hoist. Mirror the
+    // `es2025.iterator.d.ts` shape: a base lib defines `interface Iterator`,
+    // and an external-module lib has a module-scoped `class Iterator` that
+    // does NOT participate in the global hoist (no `declare global` for it).
+    //
+    // The probe must surface the module-scoped CLASS flags to the accept
+    // callback so the checker can choose to accept that candidate even
+    // though the post-merge `file_locals` carries only the global INTERFACE
+    // symbol. Reject the base candidate explicitly to prove the iteration
+    // continues past it.
+    let (base_arena, base_binder) = bind_source("interface Iterator<T> { next(): T; }");
+    let (ext_arena, ext_binder) = bind_source(
+        "export {};
+        declare abstract class Iterator<T> { abstract next(): T; }",
+    );
+
+    let mut main_binder = BinderState::new();
+    let base_ctx = make_lib_context(&base_arena, &base_binder);
+    let ext_ctx = make_lib_context(&ext_arena, &ext_binder);
+    main_binder.merge_lib_contexts_into_binder(&[base_ctx, ext_ctx]);
+
+    // Sanity: the module-scoped class is excluded from the merged file_locals,
+    // but the base interface is hoisted with INTERFACE-only flags.
+    let main_iter_id = main_binder
+        .file_locals
+        .get("Iterator")
+        .expect("base lib Iterator should be hoisted into file_locals");
+    let main_iter_sym = main_binder
+        .symbols
+        .get(main_iter_id)
+        .expect("Iterator symbol exists");
+    assert!(
+        main_iter_sym.has_any_flags(symbol_flags::INTERFACE),
+        "hoisted symbol must have INTERFACE flag"
+    );
+    assert!(
+        !main_iter_sym.has_any_flags(symbol_flags::CLASS),
+        "module-scoped CLASS must NOT leak into the global symbol's flags"
+    );
+
+    let probe_contexts: Vec<LibContext> = vec![
+        make_lib_context(&base_arena, &base_binder),
+        make_lib_context(&ext_arena, &ext_binder),
+    ];
+
+    let mut seen_flags = Vec::new();
+    let result =
+        main_binder.resolve_name_in_lib_module_locals("Iterator", &probe_contexts, |id, flags| {
+            seen_flags.push(flags);
+            (flags & symbol_flags::CLASS != 0).then_some(id)
+        });
+
+    assert_eq!(
+        result,
+        Some(main_iter_id),
+        "probe must accept the module-scoped CLASS candidate and return the current-binder id"
+    );
+    assert_eq!(
+        seen_flags.len(),
+        2,
+        "probe must visit both lib contexts (rejected interface + accepted class)"
+    );
+    assert!(
+        seen_flags[0] & symbol_flags::INTERFACE != 0,
+        "first visit should expose the base lib INTERFACE flag, got {:#x}",
+        seen_flags[0]
+    );
+    assert!(
+        seen_flags[1] & symbol_flags::CLASS != 0,
+        "second visit should expose the module-scoped CLASS flag — this is the \
+         Phase-3-excluded fact the probe must surface, got {:#x}",
+        seen_flags[1]
+    );
+}
+
+#[test]
+fn resolve_name_in_lib_module_locals_callback_can_substitute_sym_id() {
+    // The accept callback may return a different SymbolId than `file_sym_id`
+    // — for example, the alias target. The probe returns the callback's
+    // chosen id verbatim. Use a second real binder symbol as the substitute
+    // so the returned id refers to a valid declaration.
+    let (lib_arena, lib_binder) = bind_source(
+        "interface Anchor {}
+         interface Substitute {}",
+    );
+    let mut main_binder = BinderState::new();
+    main_binder.merge_lib_contexts_into_binder(&[make_lib_context(&lib_arena, &lib_binder)]);
+
+    let anchor_id = main_binder.file_locals.get("Anchor").expect("Anchor");
+    let substitute_id = main_binder
+        .file_locals
+        .get("Substitute")
+        .expect("Substitute");
+    assert_ne!(anchor_id, substitute_id);
+
+    let probe_contexts: Vec<LibContext> = vec![make_lib_context(&lib_arena, &lib_binder)];
+    let result =
+        main_binder.resolve_name_in_lib_module_locals("Anchor", &probe_contexts, |_id, _flags| {
+            Some(substitute_id)
+        });
+    assert_eq!(result, Some(substitute_id));
+}

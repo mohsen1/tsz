@@ -17,6 +17,12 @@ pub(crate) fn widen_type_for_inference(db: &dyn TypeDatabase, type_id: TypeId) -
     tsz_solver::widen_type_for_inference(db, type_id)
 }
 
+/// Apply a `const` assertion to a type, recursively converting mutable literals
+/// to their `readonly` / literal-preserving forms.
+pub(crate) fn apply_const_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::operations::widening::apply_const_assertion(db, type_id)
+}
+
 /// Whether `type_id` is a *plain* object/array shape: `Object`,
 /// `ObjectWithIndex`, `Array`, or `Tuple` only. Excludes `Function`,
 /// `Callable`, `Mapped`, `Intersection`, `TypeParameter`, and `Lazy`.

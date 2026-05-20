@@ -18,17 +18,22 @@ fn jsx_diagnostics(source: &str) -> Vec<(u32, String)> {
 }
 
 fn jsx_diagnostics_with_mode(source: &str, jsx_mode: JsxMode) -> Vec<(u32, String)> {
+    jsx_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            jsx_mode,
+            ..CheckerOptions::default()
+        },
+    )
+}
+
+fn jsx_diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
     let file_name = "test.tsx";
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = tsz_binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
-
-    let options = CheckerOptions {
-        jsx_mode,
-        ..CheckerOptions::default()
-    };
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -233,6 +238,123 @@ let x2 = <MyComp a="hi" />;
             diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
         ),
         "Expected TS2739 for missing constrained props on generic class JSX element, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_overloaded_class_optional_props_accept_possibly_undefined_attr_values() {
+    // JSX overload applicability checks the target prop's write surface. With
+    // default optional-property semantics, assigning a `T | undefined` value to
+    // an optional JSX prop is valid, so the overloaded class constructor should
+    // not fall through to TS2769. The second component varies both names and
+    // value shape so this locks the optional-write rule, not one spelling.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class TextBox {{
+    constructor(props: {{ value?: string }});
+    constructor(props: {{ value?: string }}, context?: any);
+    props: {{ value?: string }};
+}}
+
+declare class CounterBox {{
+    constructor(props: {{ amount?: number | false }});
+    constructor(props: {{ amount?: number | false }}, context?: any);
+    props: {{ amount?: number | false }};
+}}
+
+declare const maybeText: string | undefined;
+declare const maybeAmount: number | undefined;
+
+let a = <TextBox value={{maybeText}} />;
+let b = <CounterBox amount={{maybeAmount}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
+        "Optional JSX props should accept possibly-undefined values under default optional-property semantics, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Optional JSX prop write surface should include undefined by default, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_overloaded_class_exact_optional_props_reject_implicit_undefined_attr_values() {
+    // Negative counterpart: with exact optional property types, an optional prop
+    // whose annotation omits `undefined` has a narrower write surface, so an
+    // explicit possibly-undefined JSX attribute should still fail overload
+    // applicability.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class ExactBox {{
+    constructor(props: {{ label?: string }});
+    constructor(props: {{ label?: string }}, context?: any);
+    props: {{ label?: string }};
+}}
+
+declare const maybeLabel: string | undefined;
+let x = <ExactBox label={{maybeLabel}} />;
+"#
+    );
+    let diags = jsx_diagnostics_with_options(
+        &source,
+        CheckerOptions {
+            exact_optional_property_types: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL)
+            || has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Exact optional JSX prop write surface should reject implicit undefined, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_overloaded_class_uses_source_constraints_for_conditional_attr_values() {
+    // `ExtractValue<Wrapped>` is an unresolved conditional result, but
+    // `Wrapped extends SelectProps<any>` proves the extracted value is valid
+    // for `SelectProps<ExtractValue<Wrapped>>["value"]`. JSX overload
+    // applicability should use that source constraint instead of rejecting the
+    // class constructor overload set.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+type OptionValues = string | number | boolean;
+interface Option<TValue = OptionValues> {{
+    value?: TValue;
+    [property: string]: any;
+}}
+type Options<TValue = OptionValues> = Array<Option<TValue>>;
+interface SelectProps<TValue = OptionValues> {{
+    value?: Option<TValue> | Options<TValue> | string | string[] | number | number[] | boolean;
+}}
+interface WrapperProps<T extends OptionValues> {{
+    value?: Option<T> | T;
+}}
+type ExtractValue<Wrapped> = Wrapped extends SelectProps<infer Value> ? Value : never;
+declare class Select<TValue = OptionValues> {{
+    constructor(props: SelectProps<TValue>);
+    constructor(props: SelectProps<TValue>, context?: any);
+    props: SelectProps<TValue>;
+}}
+function wrap<Wrapped extends SelectProps<any>>(props: WrapperProps<ExtractValue<Wrapped>>) {{
+    return <Select<ExtractValue<Wrapped>> value={{props.value}} />;
+}}
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
+        "Conditional attr values should use referenced source constraints for JSX overload applicability, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Conditional attr value should be assignable to the target optional prop, got: {diags:?}"
     );
 }
 
@@ -3404,6 +3526,228 @@ const ExplicitChild = (
     assert!(
         !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "React.ComponentType wrapper normalization should avoid downstream TS2322 here, got: {diags:?}"
+    );
+}
+
+#[test]
+fn react_component_type_return_accepts_generic_overwritten_props_arrow() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    interface ReactElement<P = any> {{}}
+    type ReactNode = ReactElement<any> | string | number | boolean | null | undefined;
+    class Component<P, S = {{}}> {{
+        constructor(props: Readonly<P>);
+        constructor(props: P, context?: any);
+        props: P;
+    }}
+    interface ComponentClass<P = {{}}, S = {{}}> {{
+        new(props: P, context?: any): Component<P, S>;
+    }}
+    interface StatelessComponent<P = {{}}> {{
+        (props: P & {{ children?: ReactNode }}, context?: any): ReactElement<any> | null;
+    }}
+    type ComponentType<P = {{}}> = ComponentClass<P> | StatelessComponent<P>;
+}}
+
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = {{ [P in K]: T[P] }};
+type Omit<T, K extends keyof any> = T extends any ? Pick<T, Exclude<keyof T, K>> : never;
+type Overwrite<T, U> = Omit<T, keyof T & keyof U> & U;
+
+type OptionValues = string | number | boolean;
+interface Option<TValue = OptionValues> {{
+    value?: TValue;
+    [property: string]: any;
+}}
+interface Props<T extends OptionValues> {{
+    value?: Option<T> | T;
+    onChange?(value: Option<T> | undefined): void;
+}}
+type ExtractValueType<T> = T extends ReactSelectProps<infer U> ? U : never;
+type ReactSingleSelectProps<WrappedProps extends ReactSelectProps<any>> =
+    Overwrite<Omit<WrappedProps, "multi">, Props<ExtractValueType<WrappedProps>>>;
+
+declare class ReactSelectClass<TValue = OptionValues> extends React.Component<ReactSelectProps<TValue>> {{}}
+interface ReactSelectProps<TValue = OptionValues> {{
+    multi?: boolean;
+    value?: Option<TValue> | Option<TValue>[] | string | string[] | number | number[] | boolean;
+    onChange?: (newValue: Option<TValue> | Option<TValue>[] | null) => void;
+}}
+
+export function createReactSingleSelect<WrappedProps extends ReactSelectProps<any>>(
+    WrappedComponent: React.ComponentType<WrappedProps>
+): React.ComponentType<ReactSingleSelectProps<WrappedProps>> {{
+    return (props) => {{
+        return (
+            <ReactSelectClass<ExtractValueType<WrappedProps>>
+                {{...props}}
+                multi={{false}}
+                value={{props.value}}
+                onChange={{(value) => {{
+                    if (props.onChange) {{
+                        props.onChange(value === null ? undefined : value);
+                    }}
+                }}}}
+            />
+        );
+    }};
+}}
+"#
+    );
+
+    let diags = jsx_diagnostics_with_options(
+        &source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "generic overwritten props arrow should satisfy React.ComponentType through the callable union member, got: {diags:?}"
+    );
+}
+
+#[test]
+fn react_component_type_return_still_checks_contextual_arrow_body() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    interface ReactElement<P = any> {{ tag: string; }}
+    type ReactNode = ReactElement<any> | string | number | boolean | null | undefined;
+    class Component<P, S = {{}}> {{
+        constructor(props: Readonly<P>);
+        constructor(props: P, context?: any);
+        props: P;
+    }}
+    interface ComponentClass<P = {{}}, S = {{}}> {{
+        new(props: P, context?: any): Component<P, S>;
+    }}
+    interface StatelessComponent<P = {{}}> {{
+        (props: P & {{ children?: ReactNode }}, context?: any): ReactElement<any> | null;
+    }}
+    type ComponentType<P = {{}}> = ComponentClass<P> | StatelessComponent<P>;
+}}
+
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = {{ [P in K]: T[P] }};
+type Omit<T, K extends keyof any> = T extends any ? Pick<T, Exclude<keyof T, K>> : never;
+type Overwrite<T, U> = Omit<T, keyof T & keyof U> & U;
+
+type OptionValues = string | number | boolean;
+interface Option<TValue = OptionValues> {{
+    value?: TValue;
+}}
+interface Props<T extends OptionValues> {{
+    value?: Option<T> | T;
+}}
+type ExtractValueType<T> = T extends ReactSelectProps<infer U> ? U : never;
+type ReactSingleSelectProps<WrappedProps extends ReactSelectProps<any>> =
+    Overwrite<Omit<WrappedProps, "multi">, Props<ExtractValueType<WrappedProps>>>;
+
+interface ReactSelectProps<TValue = OptionValues> {{
+    multi?: boolean;
+    value?: Option<TValue> | Option<TValue>[] | string | string[] | number | number[] | boolean;
+}}
+
+export function createBad<WrappedProps extends ReactSelectProps<any>>(
+    WrappedComponent: React.ComponentType<WrappedProps>
+): React.ComponentType<ReactSingleSelectProps<WrappedProps>> {{
+    return (_props): React.ReactElement<any> => 123;
+}}
+"#
+    );
+
+    let diags = jsx_diagnostics_with_options(
+        &source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "invalid contextual arrow body should still emit TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn react_component_type_return_rejects_incompatible_contextual_arrow_signature() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    interface ReactElement<P = any> {{}}
+    type ReactNode = ReactElement<any> | string | number | boolean | null | undefined;
+    class Component<P, S = {{}}> {{
+        constructor(props: Readonly<P>);
+        constructor(props: P, context?: any);
+        props: P;
+    }}
+    interface ComponentClass<P = {{}}, S = {{}}> {{
+        new(props: P, context?: any): Component<P, S>;
+    }}
+    interface StatelessComponent<P = {{}}> {{
+        (props: P & {{ children?: ReactNode }}, context?: any): ReactElement<any> | null;
+    }}
+    type ComponentType<P = {{}}> = ComponentClass<P> | StatelessComponent<P>;
+}}
+
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = {{ [P in K]: T[P] }};
+type Omit<T, K extends keyof any> = T extends any ? Pick<T, Exclude<keyof T, K>> : never;
+type Overwrite<T, U> = Omit<T, keyof T & keyof U> & U;
+
+type OptionValues = string | number | boolean;
+interface Option<TValue = OptionValues> {{
+    value?: TValue;
+}}
+interface Props<T extends OptionValues> {{
+    value?: Option<T> | T;
+}}
+type ExtractValueType<T> = T extends ReactSelectProps<infer U> ? U : never;
+type ReactSingleSelectProps<WrappedProps extends ReactSelectProps<any>> =
+    Overwrite<Omit<WrappedProps, "multi">, Props<ExtractValueType<WrappedProps>>>;
+
+interface ReactSelectProps<TValue = OptionValues> {{
+    multi?: boolean;
+    value?: Option<TValue> | Option<TValue>[] | string | string[] | number | number[] | boolean;
+}}
+
+export function createBad<WrappedProps extends ReactSelectProps<any>>(
+    WrappedComponent: React.ComponentType<WrappedProps>
+): React.ComponentType<ReactSingleSelectProps<WrappedProps>> {{
+    return (props: ReactSingleSelectProps<WrappedProps> & {{ required: string }}) => {{
+        props.required;
+        return null;
+    }};
+}}
+"#
+    );
+
+    let diags = jsx_diagnostics_with_options(
+        &source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            strict_function_types: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "incompatible returned function signature should still emit TS2322, got: {diags:?}"
     );
 }
 

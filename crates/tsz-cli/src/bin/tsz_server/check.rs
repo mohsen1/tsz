@@ -21,8 +21,8 @@ use tsz_cli::config::{
     checker_target_from_emitter, default_lib_name_for_target, resolve_default_lib_files_from_dir,
     resolve_lib_files_from_dir,
 };
-use tsz_solver::QueryCache;
-use tsz_solver::RelationCacheStats;
+use tsz_solver::construction::QueryCache;
+use tsz_solver::construction::RelationCacheStats;
 
 pub(crate) struct RunCheckResult {
     pub(crate) codes: Vec<i32>,
@@ -350,7 +350,7 @@ impl Server {
             Some(payload)
         })();
 
-        self.stub_response(seq, request, body)
+        self.success_response(seq, request, body)
     }
 
     pub(crate) fn run_check(

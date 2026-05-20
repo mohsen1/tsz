@@ -37,10 +37,12 @@ pub(crate) struct EmitOutputsContext<'a> {
     pub(crate) program: &'a MergedProgram,
     pub(crate) options: &'a ResolvedCompilerOptions,
     pub(crate) base_dir: &'a Path,
+    pub(crate) root_file_paths: &'a [PathBuf],
     pub(crate) root_dir: Option<&'a Path>,
     pub(crate) out_dir: Option<&'a Path>,
     pub(crate) declaration_dir: Option<&'a Path>,
     pub(crate) dirty_paths: Option<&'a FxHashSet<PathBuf>>,
+    pub(crate) outfile_bundle_paths: Option<&'a FxHashSet<PathBuf>>,
     pub(crate) type_caches: &'a FxHashMap<std::path::PathBuf, tsz::checker::TypeCache>,
 }
 
@@ -71,6 +73,12 @@ pub(crate) fn emit_outputs(
         }
     });
     let mut js_bundle_chunks: Vec<String> = Vec::new();
+    // AMD factory-parameter counters accumulated across files in the same
+    // outFile bundle.  Each file's printer seeds its counter map from here and
+    // returns updated counters so the next file uses unique names (e.g.
+    // `m1_1` in the first file, `m1_2` in the second), matching tsc behavior.
+    let mut bundle_amd_counters: rustc_hash::FxHashMap<String, u32> =
+        rustc_hash::FxHashMap::default();
     let duplicate_global_var_names = if declaration_bundle_path.is_some() {
         build_duplicate_global_var_names(context.program)
     } else {
@@ -97,6 +105,12 @@ pub(crate) fn emit_outputs(
         .iter()
         .enumerate()
         .map(|(idx, file)| (idx as u32, file.file_name.clone()))
+        .collect();
+    let root_file_paths: FxHashSet<String> = context
+        .root_file_paths
+        .iter()
+        .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
         .collect();
     let file_lookup = build_program_file_lookup(context.program);
 
@@ -189,6 +203,15 @@ pub(crate) fn emit_outputs(
                 &input_path,
             )
         {
+            if js_bundle_path.is_some()
+                && matches!(context.options.printer.module, ModuleKind::None)
+                && context
+                    .outfile_bundle_paths
+                    .is_some_and(|paths| !paths.contains(&input_path))
+            {
+                continue;
+            }
+
             if is_js_input
                 && js_input_skipped_by_node_modules_depth(
                     &input_path,
@@ -305,11 +328,12 @@ pub(crate) fn emit_outputs(
                 printer_options.module = ModuleKind::ESNext;
             }
 
-            if js_bundle_path.is_some()
-                && matches!(printer_options.module, ModuleKind::AMD | ModuleKind::System)
-            {
+            let is_amd_system_bundle = js_bundle_path.is_some()
+                && matches!(printer_options.module, ModuleKind::AMD | ModuleKind::System);
+            if is_amd_system_bundle {
                 printer_options.bundled_module_name =
                     bundled_module_name(context.base_dir, context.root_dir, &input_path);
+                printer_options.bundle_module_counters = bundle_amd_counters.clone();
             }
 
             // tsc's isFileForcedToBeModuleByFormat: .cjs/.cts/.mjs/.mts files are
@@ -368,6 +392,11 @@ pub(crate) fn emit_outputs(
             }
 
             printer.emit(file.source_file);
+            // Capture AMD counters before consuming printer output so the next
+            // file in this bundle starts numbering where this file left off.
+            if is_amd_system_bundle {
+                bundle_amd_counters = printer.bundle_module_counters().clone();
+            }
             let map_json = map_info
                 .as_ref()
                 .and_then(|_| printer.generate_source_map_json());
@@ -442,6 +471,7 @@ pub(crate) fn emit_outputs(
                     // Set arena to path mapping for module resolution
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_file_idx_to_path(file_idx_to_path.clone());
+                    emitter.set_root_file_paths(root_file_paths.clone());
                     emitter.set_global_symbol_arenas(global_symbol_arenas.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
@@ -452,10 +482,16 @@ pub(crate) fn emit_outputs(
                     emitter
                 } else {
                     let mut emitter = DeclarationEmitter::new(&file.arena);
-                    // Still set binder even without cache for consistency
+                    // Still set binder and current file context without cache for
+                    // declaration paths that consult program-level export facts.
                     emitter.set_binder(Some(&binder));
+                    emitter.set_current_arena(
+                        std::sync::Arc::clone(&file.arena),
+                        file.file_name.clone(),
+                    );
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_file_idx_to_path(file_idx_to_path.clone());
+                    emitter.set_root_file_paths(root_file_paths.clone());
                     emitter.set_global_symbol_arenas(global_symbol_arenas.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);

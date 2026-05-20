@@ -53,13 +53,29 @@ define_lsp_provider!(minimal FoldingRangeProvider, "Provider for folding ranges.
 impl<'a> FoldingRangeProvider<'a> {
     /// Get all folding ranges in the document.
     pub fn get_folding_ranges(&self, root: NodeIndex) -> Vec<FoldingRange> {
-        let mut ranges = Vec::new();
+        let mut ranges = self.range_buffer_for_root(root);
         self.collect_from_node(root, &mut ranges);
         self.collect_comment_ranges(&mut ranges);
         self.collect_region_ranges(&mut ranges);
         ranges.sort_by_key(|r| (r.start_offset, r.end_offset));
         ranges.dedup_by(|a, b| a.start_offset == b.start_offset && a.end_offset == b.end_offset);
         ranges
+    }
+
+    fn range_buffer_for_root(&self, root: NodeIndex) -> Vec<FoldingRange> {
+        let Some(node) = self.arena.get(root) else {
+            return Vec::new();
+        };
+
+        if node.kind != syntax_kind_ext::SOURCE_FILE {
+            return Vec::new();
+        }
+
+        self.arena
+            .get_source_file(node)
+            .map_or_else(Vec::new, |source_file| {
+                Vec::with_capacity(source_file.statements.nodes.len())
+            })
     }
 
     /// Collect folding ranges from AST nodes.

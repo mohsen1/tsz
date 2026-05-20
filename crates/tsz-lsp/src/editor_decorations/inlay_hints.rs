@@ -24,7 +24,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_common::position::{LineMap, Position, Range};
 use tsz_parser::NodeIndex;
-use tsz_parser::parser::node::{NodeAccess, NodeArena};
+use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
 use tsz_parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeInterner;
@@ -228,27 +228,32 @@ impl<'a> InlayHintsProvider<'a> {
 
         let param_names = self.get_parameter_names(decl_idx);
 
-        // Match arguments to parameters
+        // A spread argument terminates positional pairing — it can consume any
+        // number of parameter slots at runtime, so neither the spread itself
+        // nor anything after it has a static position. Matches tsserver.
         if let Some(args) = &call.arguments {
             for (i, &arg_idx) in args.nodes.iter().enumerate() {
                 if i >= param_names.len() {
                     break;
                 }
-                if let Some(param_name) = &param_names[i] {
-                    // Skip if argument is already a named literal or identifier with same name
-                    if self.should_skip_parameter_hint(arg_idx, param_name) {
-                        continue;
-                    }
-
-                    if let Some(arg_node) = self.arena.get(arg_idx) {
-                        let pos = self.line_map.offset_to_position(arg_node.pos, self.source);
-                        hints.push(InlayHint::new(
-                            pos,
-                            format!("{param_name}: "),
-                            InlayHintKind::Parameter,
-                        ));
-                    }
+                let Some(param_name) = param_names[i].as_ref() else {
+                    continue;
+                };
+                let Some(arg_node) = self.arena.get(arg_idx) else {
+                    continue;
+                };
+                if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                    break;
                 }
+                if self.should_skip_parameter_hint(arg_idx, arg_node, param_name) {
+                    continue;
+                }
+                let pos = self.line_map.offset_to_position(arg_node.pos, self.source);
+                hints.push(InlayHint::new(
+                    pos,
+                    format!("{param_name}: "),
+                    InlayHintKind::Parameter,
+                ));
             }
         }
     }
@@ -280,28 +285,64 @@ impl<'a> InlayHintsProvider<'a> {
     }
 
     /// Extract parameter names from a `NodeList` of parameters.
+    ///
+    /// A trailing rest parameter annotated as a labeled tuple type expands into
+    /// one name per labeled tuple position, so that `function f(...args: [a:
+    /// number, b: number])` emits `a:`/`b:` hints instead of a single `args:`.
     fn extract_param_names(
         &self,
         params: &tsz_parser::parser::base::NodeList,
     ) -> Vec<Option<String>> {
-        params
-            .nodes
-            .iter()
-            .map(|&param_idx| {
-                let param_node = self.arena.get(param_idx)?;
-                let param = self.arena.get_parameter(param_node)?;
+        let mut names: Vec<Option<String>> = Vec::with_capacity(params.nodes.len());
+        let last_index = params.nodes.len().saturating_sub(1);
+        for (i, &param_idx) in params.nodes.iter().enumerate() {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                names.push(None);
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                names.push(None);
+                continue;
+            };
+
+            if i == last_index
+                && param.dot_dot_dot_token
+                && let Some(expanded) = self.expand_named_tuple_rest(param.type_annotation)
+            {
+                names.extend(expanded);
+                continue;
+            }
+
+            names.push(
                 self.arena
                     .get_identifier_text(param.name)
+                    .map(std::string::ToString::to_string),
+            );
+        }
+        names
+    }
+
+    /// If the annotation is a tuple type with at least one labeled member,
+    /// return one name per element. Returns `None` for non-tuple or fully
+    /// unlabeled tuples so callers fall back to the rest-parameter's own name.
+    fn expand_named_tuple_rest(&self, type_annotation: NodeIndex) -> Option<Vec<Option<String>>> {
+        let type_node = self.arena.get(type_annotation)?;
+        let tuple = self.arena.get_tuple_type(type_node)?;
+        let mut expanded: Vec<Option<String>> = Vec::with_capacity(tuple.elements.nodes.len());
+        for &element_idx in &tuple.elements.nodes {
+            let label = self.arena.get(element_idx).and_then(|element_node| {
+                let member = self.arena.get_named_tuple_member(element_node)?;
+                self.arena
+                    .get_identifier_text(member.name)
                     .map(std::string::ToString::to_string)
-            })
-            .collect()
+            });
+            expanded.push(label);
+        }
+        expanded.iter().any(Option::is_some).then_some(expanded)
     }
 
     /// Find and extract parameter names from the constructor of a class declaration.
-    fn get_constructor_param_names(
-        &self,
-        class_node: &tsz_parser::parser::node::Node,
-    ) -> Vec<Option<String>> {
+    fn get_constructor_param_names(&self, class_node: &Node) -> Vec<Option<String>> {
         let Some(class) = self.arena.get_class(class_node) else {
             return Vec::new();
         };
@@ -319,11 +360,12 @@ impl<'a> InlayHintsProvider<'a> {
     }
 
     /// Check if we should skip showing a parameter hint for this argument.
-    fn should_skip_parameter_hint(&self, arg_idx: NodeIndex, param_name: &str) -> bool {
-        let Some(arg_node) = self.arena.get(arg_idx) else {
-            return false;
-        };
-
+    fn should_skip_parameter_hint(
+        &self,
+        arg_idx: NodeIndex,
+        arg_node: &Node,
+        param_name: &str,
+    ) -> bool {
         // Skip if the argument is an identifier with the same name as the parameter
         if arg_node.kind == SyntaxKind::Identifier as u16
             && let Some(text) = self.arena.get_identifier_text(arg_idx)

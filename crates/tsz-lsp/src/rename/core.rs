@@ -345,7 +345,7 @@ impl<'a> RenameProvider<'a> {
     fn dedup_locations(
         locations: Vec<tsz_common::position::Location>,
     ) -> Vec<tsz_common::position::Location> {
-        let mut seen = FxHashSet::default();
+        let mut seen = FxHashSet::with_capacity_and_hasher(locations.len(), Default::default());
         let mut deduped = Vec::with_capacity(locations.len());
         for location in locations {
             let key = (

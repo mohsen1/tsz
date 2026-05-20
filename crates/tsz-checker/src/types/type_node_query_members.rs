@@ -216,13 +216,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let binder = self.ctx.binder;
         let file_name = arena.source_files.first()?.file_name.clone();
         let mut child = CheckerState {
-            ctx: CheckerContext::with_parent_cache(
+            ctx: CheckerContext::with_parent_cache_attributed(
                 arena,
                 binder,
                 self.ctx.types,
                 file_name,
                 self.ctx.compiler_options.clone(),
                 self.ctx,
+                tsz_common::perf_counters::CheckerCreationReason::ImportType,
             ),
         };
         child.ctx.copy_cross_file_state_from(self.ctx);
@@ -340,13 +341,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
         let mut checker = CheckerState {
-            ctx: CheckerContext::with_parent_cache(
+            ctx: CheckerContext::with_parent_cache_attributed(
                 target_arena,
                 target_binder,
                 self.ctx.types,
                 target_file_name,
                 self.ctx.compiler_options.clone(),
                 self.ctx,
+                tsz_common::perf_counters::CheckerCreationReason::ImportType,
             ),
         };
         checker.ctx.copy_cross_file_state_from(self.ctx);
@@ -476,32 +478,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     fn widen_mutable_object_literal_property_types(&self, type_id: TypeId) -> TypeId {
-        let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-        else {
-            return type_id;
-        };
-
-        let mut widened_shape = shape.as_ref().clone();
-        let mut changed = false;
-        for prop in &mut widened_shape.properties {
-            let widened_read =
-                crate::query_boundaries::common::widen_literal_type(self.ctx.types, prop.type_id);
-            let widened_write = crate::query_boundaries::common::widen_literal_type(
-                self.ctx.types,
-                prop.write_type,
-            );
-            if widened_read != prop.type_id || widened_write != prop.write_type {
-                changed = true;
-            }
-            prop.type_id = widened_read;
-            prop.write_type = widened_write;
-        }
-
-        if changed {
-            self.ctx.types.factory().object_with_index(widened_shape)
-        } else {
-            type_id
-        }
+        crate::query_boundaries::type_computation::core::widen_mutable_object_literal_property_types(
+            self.ctx.types,
+            type_id,
+        )
     }
 }

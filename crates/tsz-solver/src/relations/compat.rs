@@ -3,10 +3,13 @@
 use crate::caches::db::QueryDatabase;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
-use crate::types::{IntrinsicKind, LiteralValue, MappedType, PropertyInfo, TypeData, TypeId};
+use crate::types::{
+    IntrinsicKind, LiteralValue, MappedModifier, MappedType, PropertyInfo, TypeData, TypeId,
+};
 use crate::visitor::{
-    TypeVisitor, intrinsic_kind, is_empty_object_type_through_type_constraints, is_error_type,
-    keyof_inner_type, lazy_def_id, type_param_info,
+    TypeVisitor, application_id, index_access_parts, intrinsic_kind,
+    is_empty_object_type_through_type_constraints, is_error_type, keyof_inner_type, lazy_def_id,
+    mapped_type_id, type_param_info, union_list_id,
 };
 use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
@@ -233,6 +236,26 @@ pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
     cache: FxHashMap<(TypeId, TypeId), bool>,
 }
 
+/// Operation-local cache statistics for [`CompatChecker`].
+///
+/// Owner: one compatibility-checking request family. The relation memo is
+/// cleared when policy-affecting checker options change and is dropped with the
+/// checker.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CompatCheckerCacheStatistics {
+    /// Entries in the compatibility relation memo keyed by source and target `TypeId`.
+    pub relation_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl CompatCheckerCacheStatistics {
+    /// Estimated heap bytes owned by compatibility memo tables.
+    #[must_use]
+    pub const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
+}
+
 impl<'a> CompatChecker<'a, NoopResolver> {
     /// Create a new compatibility checker without a resolver.
     /// Note: Callers should configure `strict_function_types` explicitly via `set_strict_function_types()`
@@ -256,6 +279,18 @@ impl<'a> CompatChecker<'a, NoopResolver> {
 }
 
 impl<'a, R: TypeResolver> CompatChecker<'a, R> {
+    /// Return entry and size accounting for this checker's operation-local caches.
+    #[must_use]
+    pub fn cache_statistics(&self) -> CompatCheckerCacheStatistics {
+        let relation_entries = self.cache.len();
+        let estimated_size_bytes =
+            relation_entries.saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>());
+        CompatCheckerCacheStatistics {
+            relation_entries,
+            estimated_size_bytes,
+        }
+    }
+
     fn function_like_weak_type_properties(
         &self,
         mut props: Vec<PropertyInfo>,
@@ -1207,6 +1242,26 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return self.is_assignable_to_empty_object(source);
         }
 
+        // Source-to-homomorphic-mapped comparison before full subtype check.
+        //
+        // When target is `{ [K in keyof S]+?: S[K] }`, `{ readonly [K in keyof S]: S[K] }`,
+        // or another homomorphic projection whose template accepts `S[K]`, a value of
+        // `S` already satisfies the target's required properties. Keep this structural:
+        // this applies to deferred sources like indexed accesses as well as type
+        // parameters, and does not depend on alias names such as utility helpers.
+        if let Some(TypeData::Mapped(t_mapped_id)) = self.interner.lookup(target)
+            && self.is_source_assignable_to_homomorphic_mapped_target(source, t_mapped_id)
+        {
+            return true;
+        }
+        if let Some(app_id) = application_id(self.interner, target)
+            && let Some(expanded) = self.subtype.try_expand_application(app_id)
+            && let Some(t_mapped_id) = mapped_type_id(self.interner, expanded)
+            && self.is_source_assignable_to_homomorphic_mapped_target(source, t_mapped_id)
+        {
+            return true;
+        }
+
         // Check mapped-to-mapped structural comparison before full subtype check.
         if let (Some(TypeData::Mapped(s_mapped_id)), Some(TypeData::Mapped(t_mapped_id))) =
             (self.interner.lookup(source), self.interner.lookup(target))
@@ -1266,14 +1321,34 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 // Guard: if any intersection member of the evaluated source
                 // equals the evaluated target, the relation is trivially true
                 // and tsc would not overflow.
-                let trivially_related = if let Some(members_id) =
+                let source_intersection_contains_target = if let Some(members_id) =
                     crate::visitor::intersection_list_id(self.interner, resolved_source)
                 {
-                    let members = self.interner.type_list(members_id);
-                    members.contains(&resolved_target)
+                    self.interner
+                        .type_list(members_id)
+                        .contains(&resolved_target)
                 } else {
                     false
                 };
+                let target_union_contains_source =
+                    if let Some(members_id) = union_list_id(self.interner, resolved_target) {
+                        self.interner
+                            .type_list(members_id)
+                            .contains(&resolved_source)
+                    } else {
+                        false
+                    };
+                let source_union_contains_target =
+                    if let Some(members_id) = union_list_id(self.interner, resolved_source) {
+                        self.interner
+                            .type_list(members_id)
+                            .contains(&resolved_target)
+                    } else {
+                        false
+                    };
+                let trivially_related = source_intersection_contains_target
+                    || target_union_contains_source
+                    || source_union_contains_target;
                 if !trivially_related {
                     self.subtype.guard.mark_exceeded();
                     return false;
@@ -1284,6 +1359,82 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Default to structural subtype checking
         self.configure_subtype(strict_function_types);
         self.subtype.is_subtype_of(source, target)
+    }
+
+    /// Check if a source type is assignable to a homomorphic mapped target over itself.
+    fn is_source_assignable_to_homomorphic_mapped_target(
+        &mut self,
+        source: TypeId,
+        target_mapped_id: crate::types::MappedTypeId,
+    ) -> bool {
+        let mapped = self.interner.get_mapped(target_mapped_id);
+
+        if let Some(name_type) = mapped.name_type
+            && !super::subtype::rules::generics::is_filtering_name_type(
+                self.interner,
+                name_type,
+                &mapped,
+            )
+        {
+            return false;
+        }
+
+        // A mapped type that removes optionality can demand properties that the
+        // source may not have, so `S` is not generally assignable to `Required<S>`.
+        if mapped.optional_modifier == Some(MappedModifier::Remove) {
+            return false;
+        }
+
+        let Some(mapped_source) = keyof_inner_type(self.interner, mapped.constraint) else {
+            return false;
+        };
+
+        if !self.homomorphic_mapped_sources_match(source, mapped_source) {
+            return false;
+        }
+
+        if let Some((template_obj, template_idx)) =
+            index_access_parts(self.interner, mapped.template)
+        {
+            type_param_info(self.interner, template_idx).is_some_and(|idx_param| {
+                idx_param.name == mapped.type_param.name && template_obj == mapped_source
+            })
+        } else {
+            let k_type_id = self.interner.type_param(crate::types::TypeParamInfo {
+                name: mapped.type_param.name,
+                constraint: Some(mapped.constraint),
+                default: None,
+                is_const: false,
+            });
+            let source_value_type = self.interner.index_access(mapped_source, k_type_id);
+            self.configure_subtype(self.strict_function_types);
+            self.subtype
+                .check_subtype(source_value_type, mapped.template)
+                .is_true()
+        }
+    }
+
+    fn homomorphic_mapped_sources_match(&self, source: TypeId, mapped_source: TypeId) -> bool {
+        if source == mapped_source {
+            return true;
+        }
+
+        if let (Some(source_param), Some(mapped_param)) = (
+            type_param_info(self.interner, source),
+            type_param_info(self.interner, mapped_source),
+        ) {
+            return source_param.name == mapped_param.name;
+        }
+
+        if let (Some((source_obj, source_idx)), Some((mapped_obj, mapped_idx))) = (
+            index_access_parts(self.interner, source),
+            index_access_parts(self.interner, mapped_source),
+        ) {
+            return self.homomorphic_mapped_sources_match(source_obj, mapped_obj)
+                && self.homomorphic_mapped_sources_match(source_idx, mapped_idx);
+        }
+
+        false
     }
 
     /// Check if two mapped types are assignable via structural template comparison.
@@ -1445,6 +1596,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // Same type
         if source == target {
+            return Some(true);
+        }
+
+        // Direct union containment: `S` is assignable to `S | U` without
+        // recursively exploring any expansive sibling members.
+        if let Some(members_id) = union_list_id(self.interner, target)
+            && self.interner.type_list(members_id).contains(&source)
+        {
             return Some(true);
         }
 
@@ -1764,14 +1923,33 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
-        // For intersection targets, ALL members must be weak types.
-        // e.g., `string & { opt?: number }` is NOT weak because `string` is not weak.
-        // This matches tsc's isWeakType() which checks every() for intersections.
+        // For weak intersections, tsc gathers properties from ALL members before
+        // testing common-property overlap — a source that shares a name with any
+        // member does not violate the rule.
         if let Some(TypeData::Intersection(list_id)) = self.interner.lookup(target) {
             let members = self.interner.type_list(list_id);
+            // All members must be weak for the intersection to be considered weak.
+            // e.g., `string & { opt?: number }` is NOT weak because `string` is not weak.
             if members.iter().any(|m| !self.is_weak_type(*m)) {
                 return false;
             }
+            // Collect properties from all members. The intersection is weak iff
+            // source shares no property name with any member's property set.
+            let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+            let mut all_target_props: Vec<crate::types::PropertyInfo> = Vec::new();
+            for &member in members.iter() {
+                let Some(shape_id) = extractor.extract(member) else {
+                    continue;
+                };
+                let shape = self
+                    .interner
+                    .object_shape(crate::types::ObjectShapeId(shape_id));
+                all_target_props.extend_from_slice(&shape.properties);
+            }
+            if all_target_props.is_empty() {
+                return false;
+            }
+            return self.violates_weak_type_with_target_props(source, &all_target_props);
         }
 
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
@@ -1804,12 +1982,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // any property that arrays also have. If not, it's a weak type violation.
         //
         // IMPORTANT: Only apply this when the target is a standalone weak type
-        // (Object/ObjectWithIndex), NOT when it's part of an intersection.
-        // Intersections like `{ a?: string } & number[]` should not trigger
-        // weak type violations because the intersection includes array properties.
+        // (Object/ObjectWithIndex). Intersection targets are handled above with
+        // the combined-property path.
         if self.is_array_or_tuple_type(source) {
             // Only trigger the array weak-type check when the target is a
-            // standalone object shape, not an intersection or other compound type.
+            // standalone object shape, not another compound type.
             let target_is_standalone_object = matches!(
                 self.interner.lookup(target),
                 Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_))
@@ -1831,8 +2008,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 }
                 return true; // Non-empty array, target lacks array-like props → violation
             }
-            // For intersection/other compound targets, skip the array check
-            // and fall through to the standard weak type check.
+            // For other compound targets, skip the array check and fall through
+            // to the standard weak type check.
         }
 
         self.violates_weak_type_with_target_props(source, target_props)

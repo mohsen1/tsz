@@ -511,64 +511,8 @@ function patchTestState(FourSlash, TszAdapter) {
 function patchSessionClient(SessionClient, ts) {
     const proto = SessionClient.prototype;
 
-    // Create a wrapper host that fixes getDefaultLibFileName for the native LS.
-    // The TszClientHost inherits from LanguageServiceAdapterHost and returns
-    // Harness.Compiler.defaultLibFileName, which is undefined in our setup.
-    // We wrap the host to provide a valid lib path via ts.getDefaultLibFilePath().
-    const createNativeHost = (host) => {
-        const wrapper = Object.create(host);
-        wrapper.getDefaultLibFileName = (options) => {
-            return ts.getDefaultLibFilePath(options || host.getCompilationSettings?.() || {});
-        };
-        // Ensure readFile can serve lib files from built/local
-        const origReadFile = host.readFile?.bind(host);
-        const origFileExists = host.fileExists?.bind(host);
-        const origGetScriptSnapshot = host.getScriptSnapshot?.bind(host);
-        const fs = require("fs");
-        const path = require("path");
-        const builtLocal = path.join(process.cwd(), "built/local");
-
-        wrapper.readFile = (fileName) => {
-            const result = origReadFile?.(fileName);
-            if (result != null) return result;
-            // Try to serve lib files from built/local
-            const baseName = path.basename(fileName);
-            if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
-                const libPath = path.join(builtLocal, baseName);
-                try { return fs.readFileSync(libPath, "utf-8"); } catch { return undefined; }
-            }
-            return undefined;
-        };
-        wrapper.fileExists = (fileName) => {
-            if (origFileExists?.(fileName)) return true;
-            const baseName = path.basename(fileName);
-            if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
-                const libPath = path.join(builtLocal, baseName);
-                return fs.existsSync(libPath);
-            }
-            return false;
-        };
-        wrapper.getScriptSnapshot = (fileName) => {
-            const result = origGetScriptSnapshot?.(fileName);
-            if (result) return result;
-            // Serve lib files
-            const content = wrapper.readFile(fileName);
-            if (content != null) return ts.ScriptSnapshot.fromString(content);
-            return undefined;
-        };
-        // getScriptFileNames: include lib files if asked
-        const origGetScriptFileNames = host.getScriptFileNames?.bind(host);
-        wrapper.getScriptFileNames = () => {
-            return origGetScriptFileNames?.() || [];
-        };
-        return wrapper;
-    };
-
     // Native LS fallback disabled: tsz-server must answer LSP requests on its own.
-    // Historical runner.cjs code called withNativeFallback to substitute results from
-    // a real TypeScript language service when tsz's output was empty or less focused,
-    // which made fourslash pass-rate overstate parity. Keep the signatures so call
-    // sites compile, but always return undefined so no substitution happens.
+    // Stub signatures are kept so call sites need no changes.
     const getNativeLanguageService = (_client) => null;
 
     const withNativeFallback = (_client, _op) => undefined;

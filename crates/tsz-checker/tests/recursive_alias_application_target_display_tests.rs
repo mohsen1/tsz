@@ -194,6 +194,123 @@ function assign(base: Chain<BaseNode>, leaf: Chain<LeafNode>) {
     );
 }
 
+/// Structural rule (union body, #8423): a TS2322 message for a recursive
+/// union-bodied alias must show the alias name and not multi-level unfold
+/// the recursive self-reference.
+#[test]
+fn ts2322_recursive_union_alias_source_and_target_display() {
+    let source = r#"
+type ValueOrArray<E> = E | ValueOrArray<E>[];
+
+declare const v: ValueOrArray<string>;
+const x: ValueOrArray<number> = v;
+"#;
+    let diags = check_strict(source);
+    let ts2322: Vec<&(u32, String)> = diags.iter().filter(|(c, _)| *c == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly one TS2322 for `x = v`; got: {diags:?}"
+    );
+    let msg = &ts2322[0].1;
+    assert!(
+        msg.contains("'ValueOrArray<string>'"),
+        "TS2322 source must keep the recursive union alias name \
+         `ValueOrArray<string>`. Got: {msg:?}"
+    );
+    assert!(
+        msg.contains("'ValueOrArray<number>'"),
+        "TS2322 target must keep the recursive union alias name \
+         `ValueOrArray<number>`. Got: {msg:?}"
+    );
+    // Guard against the over-expanded form: the source side must not contain
+    // the recursive body twice (which would indicate two levels of unfolding).
+    let value_or_array_occurrences = msg.matches("ValueOrArray<").count();
+    assert!(
+        value_or_array_occurrences <= 3,
+        "TS2322 message must not multiply unfold the recursive alias; \
+         expected at most 3 occurrences of `ValueOrArray<` (one on each side \
+         plus at most one inner reference). Got {value_or_array_occurrences} \
+         in: {msg:?}"
+    );
+}
+
+/// Same rule with different identifier choices (anti-§25 hardcoding).
+#[test]
+fn ts2322_recursive_union_alias_source_and_target_display_alt_names() {
+    let source = r#"
+type Nested<P> = P | Nested<P>[];
+
+declare const a: Nested<boolean>;
+const b: Nested<number> = a;
+"#;
+    let diags = check_strict(source);
+    let ts2322: Vec<&(u32, String)> = diags.iter().filter(|(c, _)| *c == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly one TS2322 for `b = a`; got: {diags:?}"
+    );
+    let msg = &ts2322[0].1;
+    assert!(
+        msg.contains("'Nested<boolean>'"),
+        "TS2322 source must keep the recursive alias name `Nested<boolean>`. \
+         Got: {msg:?}"
+    );
+    assert!(
+        msg.contains("'Nested<number>'"),
+        "TS2322 target must keep the recursive alias name `Nested<number>`. \
+         Got: {msg:?}"
+    );
+    let nested_occurrences = msg.matches("Nested<").count();
+    assert!(
+        nested_occurrences <= 3,
+        "TS2322 message must not multiply unfold the recursive alias; got \
+         {nested_occurrences} occurrences of `Nested<` in: {msg:?}"
+    );
+}
+
+/// Source is `(ValueOrArray<E>)[]` (an Array-of-Application form). The Array
+/// is one level of expansion against the alias body's recursive arm; tsc
+/// displays it as `(ValueOrArray<number>)[]` (alias preserved inside the
+/// Array). tsz must not over-expand the recursive arm by re-evaluating the
+/// nested Application again.
+#[test]
+fn ts2322_recursive_union_alias_array_source_display() {
+    let source = r#"
+type ValueOrArray<E> = E | ValueOrArray<E>[];
+
+declare const v: ValueOrArray<number>[];
+const x: ValueOrArray<number> & { extra: string } = v;
+"#;
+    let diags = check_strict(source);
+    let ts2322: Vec<&(u32, String)> = diags.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "expected at least one TS2322 for the intersection mismatch; got: {diags:?}"
+    );
+    let msg = &ts2322[0].1;
+    assert!(
+        msg.contains("ValueOrArray<number>"),
+        "TS2322 must show the recursive alias name. Got: {msg:?}"
+    );
+    // The source must not contain a multi-level structural unfolding of the
+    // alias body (e.g. `(number | (ValueOrArray<number>)[] | (number | …)[])[]`).
+    // The give-away of a multi-level unfolding is the literal substring
+    // `(number |` appearing inside the source — that's the alias body
+    // expanded once *inside* the recursive arm.
+    let source_str = msg
+        .strip_prefix("Type '")
+        .and_then(|rest| rest.find("' is not assignable").map(|i| &rest[..i]))
+        .expect("TS2322 message should begin with `Type '...'`");
+    assert!(
+        !source_str.contains("(number |"),
+        "TS2322 source must not unfold the recursive arm twice; the alias \
+         body should appear at most once. Got source={source_str:?} from \
+         msg={msg:?}"
+    );
+}
+
 /// Negative/fallback: a non-recursive intersection alias must still take the
 /// ordinary diagnostic path and assert its actual display surface. This catches
 /// over-eager structural-body aliasing without relying on an assignable

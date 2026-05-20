@@ -242,6 +242,8 @@ pub(super) fn parse_reference_no_default_lib_value(line: &str) -> Option<bool> {
 pub(super) struct SourceReadResult {
     pub(super) sources: Vec<SourceEntry>,
     pub(super) dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    pub(super) outfile_bundle_paths: FxHashSet<PathBuf>,
+    pub(super) outfile_bundle_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
     /// Tuples of (`file_path`, `type_name`, `byte_offset_of_types_attr`, `span_length`).
     pub(super) type_reference_errors: Vec<(PathBuf, String, usize, usize)>,
     /// TS1453: Invalid `resolution-mode` values in `/// <reference types="..." />` directives.
@@ -587,6 +589,9 @@ pub(super) fn read_source_files(
 
     let mut sources: FxHashMap<PathBuf, (Option<String>, bool, bool)> = FxHashMap::default(); // (text, is_binary, suppress_parser_diagnostics)
     let mut dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> = FxHashMap::default();
+    let mut outfile_bundle_paths: FxHashSet<PathBuf> = FxHashSet::default();
+    let mut outfile_bundle_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> =
+        FxHashMap::default();
     let mut seen = FxHashSet::default();
     let mut discovery_order: FxHashMap<PathBuf, usize> = FxHashMap::default();
     let mut next_discovery_order = 0usize;
@@ -617,6 +622,7 @@ pub(super) fn read_source_files(
 
     for path in paths {
         let canonical = normalize(path, options);
+        outfile_bundle_paths.insert(canonical.clone());
         if seen.insert(canonical.clone()) {
             discovery_order.insert(canonical.clone(), next_discovery_order);
             next_discovery_order += 1;
@@ -704,6 +710,9 @@ pub(super) fn read_source_files(
                         .expect("cached arm only fires when dependencies entry exists");
                     dependencies.insert(path.clone(), cached_deps.clone());
                     sources.insert(path.clone(), (None, false, false));
+                    if let Some(cached_bundle_deps) = cache.outfile_bundle_dependencies.get(&path) {
+                        outfile_bundle_paths.extend(cached_bundle_deps.iter().cloned());
+                    }
                     for dep in cached_deps {
                         if seen.insert(dep.clone()) {
                             discovery_order.insert(dep.clone(), next_discovery_order);
@@ -744,6 +753,7 @@ pub(super) fn read_source_files(
                 (Some(text), is_binary, suppress_parser_diagnostics),
             );
             let entry = dependencies.entry(path.clone()).or_default();
+            let bundle_entry = outfile_bundle_dependencies.entry(path.clone()).or_default();
 
             if !options.no_resolve {
                 for (
@@ -808,6 +818,10 @@ pub(super) fn read_source_files(
                     if let Some(resolved) = outcome.resolved_path {
                         let canonical = normalize(&resolved, options);
                         entry.insert(canonical.clone());
+                        if import_kind != tsz::module_resolver::ImportKind::DynamicImport {
+                            outfile_bundle_paths.insert(canonical.clone());
+                            bundle_entry.insert(canonical.clone());
+                        }
                         if has_source_file_extension(&canonical) && seen.insert(canonical.clone()) {
                             discovery_order.insert(canonical.clone(), next_discovery_order);
                             next_discovery_order += 1;
@@ -895,6 +909,8 @@ pub(super) fn read_source_files(
                     if let Some(resolved) = resolved {
                         let canonical = normalize(&resolved, options);
                         entry.insert(canonical.clone());
+                        outfile_bundle_paths.insert(canonical.clone());
+                        bundle_entry.insert(canonical.clone());
                         if seen.insert(canonical.clone()) {
                             discovery_order.insert(canonical.clone(), next_discovery_order);
                             next_discovery_order += 1;
@@ -925,6 +941,8 @@ pub(super) fn read_source_files(
                             {
                                 let canonical = normalize(&alt, options);
                                 entry.insert(canonical.clone());
+                                outfile_bundle_paths.insert(canonical.clone());
+                                bundle_entry.insert(canonical.clone());
                                 if seen.insert(canonical.clone()) {
                                     discovery_order.insert(canonical.clone(), next_discovery_order);
                                     next_discovery_order += 1;
@@ -964,6 +982,8 @@ pub(super) fn read_source_files(
                         continue;
                     };
                     entry.insert(resolved_reference.clone());
+                    outfile_bundle_paths.insert(resolved_reference.clone());
+                    bundle_entry.insert(resolved_reference.clone());
                     if seen.insert(resolved_reference.clone()) {
                         discovery_order.insert(resolved_reference.clone(), next_discovery_order);
                         next_discovery_order += 1;
@@ -1003,6 +1023,8 @@ pub(super) fn read_source_files(
     Ok(SourceReadResult {
         sources: list,
         dependencies,
+        outfile_bundle_paths,
+        outfile_bundle_dependencies,
         type_reference_errors,
         resolution_mode_errors,
     })

@@ -5,6 +5,7 @@ pub mod cache;
 pub mod cli;
 pub mod compiler_options;
 pub(crate) mod options_convert;
+pub(crate) mod parity;
 pub(crate) mod process_rss;
 pub mod runner;
 pub(crate) mod server_pool;

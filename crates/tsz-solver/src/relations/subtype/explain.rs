@@ -700,6 +700,41 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(members) = union_list_id(self.interner, resolved_target) {
             let members = self.interner.type_list(members);
+            let application_shaped_comparison = application_id(self.interner, source).is_some()
+                || application_id(self.interner, target).is_some();
+            let source_members = union_list_id(self.interner, resolved_source)
+                .map(|list_id| self.interner.type_list(list_id).as_ref().to_vec())
+                .unwrap_or_else(|| vec![resolved_source]);
+            for &member in members.iter() {
+                if self.check_subtype(resolved_source, member).is_true() {
+                    continue;
+                }
+                for &source_member in &source_members {
+                    if self.check_subtype(source_member, member).is_true() {
+                        continue;
+                    }
+                    let member_reason = self.explain_failure_guarded(source_member, member);
+                    let missing_property = match member_reason {
+                        Some(SubtypeFailureReason::MissingProperty { property_name, .. }) => {
+                            Some(property_name)
+                        }
+                        Some(SubtypeFailureReason::MissingProperties {
+                            property_names, ..
+                        }) => property_names.first().copied(),
+                        _ => None,
+                    };
+                    if let Some(property_name) = missing_property {
+                        if application_shaped_comparison {
+                            return Some(SubtypeFailureReason::MissingProperty {
+                                property_name,
+                                source_type: source,
+                                target_type: target,
+                            });
+                        }
+                        break;
+                    }
+                }
+            }
             return Some(SubtypeFailureReason::NoUnionMemberMatches {
                 source_type: source,
                 target_union_members: members.as_ref().to_vec(),
@@ -949,6 +984,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
 
                 // Check optional/required mismatch
+                //
+                // Always emit OptionalPropertyRequired when source is optional and target is
+                // required, regardless of exactOptionalPropertyTypes mode. This matches tsc's
+                // diagnostic priority: the optional-vs-required message ("Property 'x' is
+                // missing in type") takes precedence over a type-level mismatch message.
+                // The main subtype check gates whether the assignment is actually compatible
+                // (e.g., {a?: T} vs {a: T|undefined} passes in standard mode and never
+                // reaches this explain path).
                 if sp.optional && !t_prop.optional {
                     return Some(SubtypeFailureReason::OptionalPropertyRequired {
                         property_name: t_prop.name,
@@ -977,8 +1020,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 if !t_prop.readonly
                     && !sp.readonly
-                    && (sp.write_type != TypeId::NONE && sp.write_type != sp.type_id
-                        || t_prop.write_type != TypeId::NONE && t_prop.write_type != t_prop.type_id)
+                    && (sp.has_split_accessor() || t_prop.has_split_accessor())
                 {
                     let source_write = self.optional_property_write_type(sp);
                     let target_write = self.optional_property_write_type(t_prop);
@@ -1239,8 +1281,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 if !t_prop.readonly
                     && !sp.readonly
-                    && (sp.write_type != TypeId::NONE && sp.write_type != sp.type_id
-                        || t_prop.write_type != TypeId::NONE && t_prop.write_type != t_prop.type_id)
+                    && (sp.has_split_accessor() || t_prop.has_split_accessor())
                 {
                     let source_write = self.optional_property_write_type(sp);
                     let target_write = self.optional_property_write_type(t_prop);

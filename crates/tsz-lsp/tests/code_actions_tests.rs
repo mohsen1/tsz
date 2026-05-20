@@ -51,6 +51,98 @@ fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> Str
     result
 }
 
+fn add_missing_await_actions(source: &str, diagnostic_needle: &str) -> Vec<CodeAction> {
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, diagnostic_needle);
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        source: None,
+        message: "Property 'toString' does not exist on type 'Promise<number>'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    provider.provide_code_actions(
+        root,
+        Range::new(Position::new(0, 0), Position::new(0, 0)),
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    )
+}
+
+fn has_add_missing_await_action(actions: &[CodeAction]) -> bool {
+    actions
+        .iter()
+        .any(|action| action.title == "Add missing 'await'")
+}
+
+fn move_to_file_action(source: &str, file_name: &str, needle: &str) -> CodeAction {
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, file_name.to_string(), source);
+
+    let range = range_for_substring(source, &line_map, needle);
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: Some(vec![CodeActionKind::Refactor]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    actions
+        .into_iter()
+        .find(|action| action.title.starts_with("Move "))
+        .expect("expected move-to-file action")
+}
+
+#[test]
+fn test_move_to_file_preserves_type_only_imports_in_target_file() {
+    let source = concat!(
+        "import type { Foo } from \"./types\";\n",
+        "import { type Bar, makeBar } from \"./values\";\n",
+        "\n",
+        "function use(f: Foo, b: Bar) {\n",
+        "  return makeBar(b);\n",
+        "}\n",
+    );
+
+    let action = move_to_file_action(source, "src/a.ts", "use");
+    let edit = action.edit.as_ref().expect("expected workspace edit");
+    let target_edits = edit
+        .changes
+        .get("src/use.ts")
+        .expect("expected target file edit");
+    let target_text = &target_edits[0].new_text;
+
+    assert!(target_text.contains("import type { Foo } from \"./types\";"));
+    assert!(target_text.contains("import { type Bar, makeBar } from \"./values\";"));
+    assert!(target_text.contains("export function use(f: Foo, b: Bar)"));
+}
+
 #[test]
 fn test_extract_variable_property_access() {
     let source = "const x = foo.bar.baz + 1;";
@@ -1152,6 +1244,66 @@ fn test_quickfix_add_missing_property_to_class_element_access() {
         updated,
         "class Foo {\n  method() {\n    this[\"bar\"];\n  }\n  \"bar\": any;\n}\n"
     );
+}
+
+#[test]
+fn test_quickfix_add_missing_await_requires_await_legal_context() {
+    let cases = [
+        (
+            "async function can await",
+            "async function f() {\n  const p = fetchN();\n  return p.toString();\n}\n",
+            true,
+        ),
+        (
+            "async generator can await",
+            "async function* f() {\n  const p = fetchN();\n  return p.toString();\n}\n",
+            true,
+        ),
+        (
+            "non-async function cannot await",
+            "function f() {\n  const p = fetchN();\n  return p.toString();\n}\n",
+            false,
+        ),
+        (
+            "non-async generator cannot await",
+            "function* f() {\n  const p = fetchN();\n  return p.toString();\n}\n",
+            false,
+        ),
+        (
+            "nested async arrow inside generator can await",
+            "function* f() {\n  const p = fetchN();\n  const run = async () => p.toString();\n}\n",
+            true,
+        ),
+        (
+            "class static block cannot await",
+            "class C {\n  static {\n    const p = fetchN();\n    p.toString();\n  }\n}\n",
+            false,
+        ),
+        (
+            "class field initializer cannot await",
+            "class C {\n  field = fetchN().toString();\n}\n",
+            false,
+        ),
+        (
+            "nested async arrow inside class field can await",
+            "class C {\n  field = async () => fetchN().toString();\n}\n",
+            true,
+        ),
+        (
+            "nested async function inside static block can await",
+            "class C {\n  static {\n    async function run() {\n      const p = fetchN();\n      p.toString();\n    }\n  }\n}\n",
+            true,
+        ),
+    ];
+
+    for (label, source, should_offer) in cases {
+        let actions = add_missing_await_actions(source, "toString");
+        assert_eq!(
+            has_add_missing_await_action(&actions),
+            should_offer,
+            "{label}: actions were {actions:#?}"
+        );
+    }
 }
 
 #[test]
@@ -3687,4 +3839,167 @@ fn test_code_actions_on_enum_declaration() {
         },
     );
     let _ = actions;
+}
+
+// =============================================================================
+// addMissingAwait quick-fix: enclosing-context gating (issue #8762)
+//
+// Structural rule: the codefix may only fire when an `await` expression would
+// be syntactically legal at the diagnostic position. The innermost enclosing
+// function-like decides — a non-async function, non-async generator,
+// non-async arrow, non-async method, constructor, getter, or setter all
+// reject `await`, while async function-likes, class static blocks, and the
+// top-level module body accept it.
+// =============================================================================
+
+fn run_add_missing_await_quickfix(source: &str, needle: &str) -> Option<CodeAction> {
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let range = range_for_substring(source, &line_map, needle);
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        source: None,
+        message: "Property 'toString' does not exist on type 'Promise<number>'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+    let actions = provider.provide_code_actions(
+        root,
+        Range::new(Position::new(0, 0), Position::new(0, 0)),
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+    actions
+        .into_iter()
+        .find(|a| a.title == crate::code_actions::ADD_MISSING_AWAIT_TITLE)
+}
+
+#[track_caller]
+fn assert_add_await_offered(source: &str, needle: &str) {
+    assert!(
+        run_add_missing_await_quickfix(source, needle).is_some(),
+        "expected addMissingAwait to be offered; source:\n{source}",
+    );
+}
+
+#[track_caller]
+fn assert_add_await_not_offered(source: &str, needle: &str) {
+    assert!(
+        run_add_missing_await_quickfix(source, needle).is_none(),
+        "expected addMissingAwait NOT to be offered; source:\n{source}",
+    );
+}
+
+#[test]
+fn add_missing_await_blocked_inside_non_async_generator() {
+    let source =
+        "function* g() {\n  const p: Promise<number> = fetchN();\n  return p.toString();\n}\n";
+    assert_add_await_not_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_blocked_inside_non_async_generator_renamed_binder() {
+    // Same shape with a renamed identifier — proves the rule is structural
+    // and not keyed on the identifier names that happen to appear in the
+    // test corpus.
+    let source = "function* gen() {\n  const promise: Promise<number> = makeIt();\n  return promise.toString();\n}\n";
+    assert_add_await_not_offered(source, "promise.toString");
+}
+
+#[test]
+fn add_missing_await_blocked_inside_non_async_function() {
+    let source =
+        "function f() {\n  const p: Promise<number> = fetchN();\n  return p.toString();\n}\n";
+    assert_add_await_not_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_blocked_inside_non_async_method() {
+    let source = "class C {\n  m() {\n    const p: Promise<number> = fetchN();\n    return p.toString();\n  }\n}\n";
+    assert_add_await_not_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_blocked_inside_constructor() {
+    let source = "class C {\n  constructor() {\n    const p: Promise<number> = fetchN();\n    p.toString();\n  }\n}\n";
+    assert_add_await_not_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_blocked_inside_getter() {
+    let source = "class C {\n  get x() {\n    const p: Promise<number> = fetchN();\n    return p.toString();\n  }\n}\n";
+    assert_add_await_not_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_blocked_inside_setter() {
+    let source = "class C {\n  set x(_v: number) {\n    const p: Promise<number> = fetchN();\n    p.toString();\n  }\n}\n";
+    assert_add_await_not_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_blocked_inside_non_async_arrow() {
+    let source =
+        "const f = () => {\n  const p: Promise<number> = fetchN();\n  return p.toString();\n};\n";
+    assert_add_await_not_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_blocked_inside_arrow_nested_in_async_function() {
+    let source = "async function outer() {\n  const cb = () => {\n    const p: Promise<number> = fetchN();\n    return p.toString();\n  };\n  return cb;\n}\n";
+    assert_add_await_not_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_offered_at_top_level() {
+    let source = "const p: Promise<number> = fetchN();\np.toString();\n";
+    assert_add_await_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_offered_inside_async_function() {
+    let source =
+        "async function f() {\n  const p: Promise<number> = fetchN();\n  return p.toString();\n}\n";
+    assert_add_await_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_offered_inside_async_generator() {
+    let source = "async function* ag() {\n  const p: Promise<number> = fetchN();\n  return p.toString();\n}\n";
+    assert_add_await_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_offered_inside_async_method() {
+    let source = "class C {\n  async m() {\n    const p: Promise<number> = fetchN();\n    return p.toString();\n  }\n}\n";
+    assert_add_await_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_offered_inside_async_arrow() {
+    let source = "const f = async () => {\n  const p: Promise<number> = fetchN();\n  return p.toString();\n};\n";
+    assert_add_await_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_offered_inside_async_arrow_nested_in_non_async_function() {
+    let source = "function outer() {\n  const cb = async () => {\n    const p: Promise<number> = fetchN();\n    return p.toString();\n  };\n  return cb;\n}\n";
+    assert_add_await_offered(source, "p.toString");
+}
+
+#[test]
+fn add_missing_await_offered_inside_class_static_block() {
+    let source = "class C {\n  static {\n    const p: Promise<number> = fetchN();\n    p.toString();\n  }\n}\n";
+    assert_add_await_offered(source, "p.toString");
 }

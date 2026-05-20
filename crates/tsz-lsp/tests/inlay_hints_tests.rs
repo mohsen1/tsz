@@ -36,6 +36,14 @@ fn get_type_hints(hints: &[InlayHint]) -> Vec<&InlayHint> {
         .collect()
 }
 
+/// Helper to get only parameter hints from the results.
+fn get_param_hints(hints: &[InlayHint]) -> Vec<&InlayHint> {
+    hints
+        .iter()
+        .filter(|h| h.kind == InlayHintKind::Parameter)
+        .collect()
+}
+
 #[test]
 fn test_inlay_hint_parameter() {
     let position = Position::new(0, 10);
@@ -1393,4 +1401,167 @@ fn test_inlay_hint_parameter_label() {
     assert_eq!(hint.kind, InlayHintKind::Parameter);
     assert_eq!(hint.position.line, 2);
     assert_eq!(hint.position.character, 15);
+}
+
+#[test]
+fn test_no_param_hints_for_spread_of_const_tuple() {
+    // tsserver suppresses parameter-name hints when a call argument is a
+    // spread, because the spread breaks the static 1:1 mapping between
+    // arguments and parameters.
+    let source = "\
+declare function f(a: number, b: number, c: number): void;
+const t = [1, 2, 3] as const;
+f(...t);
+";
+    let hints = get_hints_for_source(source);
+    let param_hints = get_param_hints(&hints);
+    assert!(
+        param_hints.is_empty(),
+        "Spread argument should suppress all parameter hints, got {param_hints:?}"
+    );
+}
+
+#[test]
+fn test_no_param_hints_for_spread_of_array_literal() {
+    let source = "\
+declare function f(a: number, b: number, c: number): void;
+f(...[1, 2, 3]);
+";
+    let hints = get_hints_for_source(source);
+    let param_hints = get_param_hints(&hints);
+    assert!(
+        param_hints.is_empty(),
+        "Spread array-literal argument should suppress hints, got {param_hints:?}"
+    );
+}
+
+#[test]
+fn test_no_param_hints_for_spread_of_generic_array() {
+    // Non-literal spread operand: still can't statically pair args with
+    // params, so no hints. Matches tsserver.
+    let source = "\
+declare function f(a: number, b: number, c: number): void;
+declare const nums: number[];
+f(...nums);
+";
+    let hints = get_hints_for_source(source);
+    let param_hints = get_param_hints(&hints);
+    assert!(
+        param_hints.is_empty(),
+        "Spread of non-literal source should suppress hints, got {param_hints:?}"
+    );
+}
+
+#[test]
+fn test_param_hints_before_spread_are_kept() {
+    // Args before a spread are still positionally bound to params; the
+    // spread terminates pairing only from its own position onwards.
+    let source = "\
+declare function f(a: number, b: number, c: number): void;
+const rest = [2, 3] as const;
+f(1, ...rest);
+";
+    let hints = get_hints_for_source(source);
+    let param_hints = get_param_hints(&hints);
+    assert_eq!(
+        param_hints.len(),
+        1,
+        "Should keep exactly one hint for the arg before the spread, got {param_hints:?}"
+    );
+    assert_eq!(param_hints[0].label, "a: ");
+}
+
+#[test]
+fn test_param_hints_unaffected_for_plain_call_no_spread() {
+    // Regression: ensure ordinary positional calls still get hints after
+    // the spread-aware change.
+    let source = "\
+declare function f(a: number, b: number, c: number): void;
+f(1, 2, 3);
+";
+    let hints = get_hints_for_source(source);
+    let param_hints = get_param_hints(&hints);
+    assert_eq!(
+        param_hints.len(),
+        3,
+        "Positional call should produce one hint per arg, got {param_hints:?}"
+    );
+    assert_eq!(param_hints[0].label, "a: ");
+    assert_eq!(param_hints[1].label, "b: ");
+    assert_eq!(param_hints[2].label, "c: ");
+}
+
+#[test]
+fn test_param_hints_named_tuple_rest_expands_labels() {
+    // When the rest parameter is annotated as a named-tuple type, the
+    // labels provide one name per positional slot. Positional args get
+    // a hint per tuple-member label, not a single `args:` hint.
+    let source = "\
+declare function f(...args: [a: number, b: number, c: number]): void;
+f(1, 2, 3);
+";
+    let hints = get_hints_for_source(source);
+    let param_hints = get_param_hints(&hints);
+    assert_eq!(
+        param_hints.len(),
+        3,
+        "Named-tuple rest should expand to one hint per label, got {param_hints:?}"
+    );
+    assert_eq!(param_hints[0].label, "a: ");
+    assert_eq!(param_hints[1].label, "b: ");
+    assert_eq!(param_hints[2].label, "c: ");
+}
+
+#[test]
+fn test_param_hints_spread_into_named_tuple_rest_suppressed() {
+    // Spread argument still suppresses pairing even when the rest param
+    // is a named tuple — the spread breaks position alignment.
+    let source = "\
+declare function f(...args: [a: number, b: number, c: number]): void;
+const t = [1, 2, 3] as const;
+f(...t);
+";
+    let hints = get_hints_for_source(source);
+    let param_hints = get_param_hints(&hints);
+    assert!(
+        param_hints.is_empty(),
+        "Spread into named-tuple rest should still suppress hints, got {param_hints:?}"
+    );
+}
+
+#[test]
+fn test_param_hints_named_tuple_rest_renamed_labels() {
+    // Renamed-label variant of the named-tuple expansion test — proves the
+    // rule isn't keyed on the spelling of any particular label.
+    let source = "\
+declare function g(...xs: [first: string, second: string]): void;
+g(\"hi\", \"there\");
+";
+    let hints = get_hints_for_source(source);
+    let param_hints = get_param_hints(&hints);
+    assert_eq!(
+        param_hints.len(),
+        2,
+        "Named-tuple rest with renamed labels should still expand, got {param_hints:?}"
+    );
+    assert_eq!(param_hints[0].label, "first: ");
+    assert_eq!(param_hints[1].label, "second: ");
+}
+
+#[test]
+fn test_param_hints_unlabeled_tuple_rest_keeps_rest_name() {
+    // If the rest tuple has no labels, fall back to the rest parameter's
+    // own identifier (current pre-change behavior).
+    let source = "\
+declare function f(...args: [number, number]): void;
+f(1, 2);
+";
+    let hints = get_hints_for_source(source);
+    let param_hints = get_param_hints(&hints);
+    // No labels => fall back to "args". Only the first arg is paired
+    // because the rest param resolves to a single name.
+    assert!(
+        param_hints.iter().all(|h| h.label == "args: "),
+        "Unlabeled tuple rest should fall back to the rest name, got {param_hints:?}"
+    );
 }

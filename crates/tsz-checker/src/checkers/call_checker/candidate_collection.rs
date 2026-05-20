@@ -3,6 +3,7 @@
 use super::CallableContext;
 use crate::computation::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
     array_element_type_for_type, contains_index_access_with_type_parameter_object,
@@ -938,7 +939,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.in_const_assertion = true;
                 }
             }
-            let arg_snap = self.ctx.snapshot_diagnostics();
+            let arg_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
             let raw_arg_type = self.get_type_of_node_with_request(arg_idx, &request);
             let arg_type = if let Some(expected) = expected_context_type.or(expected_type) {
                 let expected_eval = self.evaluate_type_with_env(expected);
@@ -1040,7 +1041,7 @@ impl<'a> CheckerState<'a> {
                     == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     && self
                         .ctx
-                        .speculative_diagnostics_since(&arg_snap)
+                        .speculative_diagnostics_since(arg_snap.snapshot())
                         .iter()
                         .any(|diag| {
                             diag.code
@@ -1053,14 +1054,14 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .diagnostics
                     .iter()
-                    .take(arg_snap.diagnostics_len)
+                    .take(arg_snap.checkpoint())
                     .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
                     .collect();
                 let mut seen_diag_keys = existing_diag_keys;
                 let preserve_destructuring_initializer_overload_diagnostics = self
                     .ctx
                     .preserve_destructuring_initializer_overload_diagnostics;
-                self.ctx.rollback_diagnostics_filtered(&arg_snap, |diag| {
+                arg_snap.rollback_filtered_reusable(&mut self.ctx.diagnostic_state(), |diag| {
                     if Self::should_preserve_speculative_call_diagnostic(diag) {
                         return true;
                     }
@@ -1194,7 +1195,7 @@ impl<'a> CheckerState<'a> {
                 let callback_indices = self.callback_function_indices(arg_idx);
                 let contextual_param_spans = contextual_callback_param_spans;
                 let had_contextual_callbacks = !contextual_callback_indices.is_empty();
-                self.ctx.rollback_diagnostics_filtered(&arg_snap, |d| {
+                arg_snap.rollback_filtered_reusable(&mut self.ctx.diagnostic_state(), |d| {
                     !(matches!(d.code, 7006 | 7019 | 7031 | 7051)
                         && d.start >= s
                         && d.start < e

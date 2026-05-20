@@ -9,7 +9,10 @@ use crate::query_boundaries::assignability::{
     is_assignable_with_overrides, is_relation_cacheable, is_type_parameter_like,
     keyof_object_properties, map_compound_members,
 };
-use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries};
+use crate::query_boundaries::common::{
+    collect_lazy_def_ids, collect_type_queries, intersection_members, object_shape_id,
+    object_with_index_shape_id, union_members,
+};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
@@ -2011,10 +2014,24 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> (TypeId, TypeId) {
         self.ensure_relation_inputs_ready(&[source, target]);
-        let source = self.substitute_this_type_if_needed(source);
-        let target = self.substitute_this_type_if_needed(target);
-        let source = self.evaluate_type_for_assignability(source);
-        let target = self.evaluate_type_for_assignability(target);
+        let raw_source = self.substitute_this_type_if_needed(source);
+        let raw_target = self.substitute_this_type_if_needed(target);
+        let source = self.evaluate_type_for_assignability(raw_source);
+        let target = crate::query_boundaries::assignability::homomorphic_mapped_projection_target(
+            self.ctx.types,
+            &self.ctx,
+            raw_source,
+            raw_target,
+        )
+        .or_else(|| {
+            crate::query_boundaries::assignability::homomorphic_mapped_projection_target(
+                self.ctx.types,
+                &self.ctx,
+                source,
+                raw_target,
+            )
+        })
+        .unwrap_or_else(|| self.evaluate_type_for_assignability(raw_target));
         (source, target)
     }
 
@@ -2107,6 +2124,19 @@ impl<'a> CheckerState<'a> {
             source, target,
         );
         self.execute_relation_request(&request)
+    }
+
+    /// Boolean relation guard for diagnostic code paths.
+    ///
+    /// Keep these calls grep-distinct from diagnostic decisions that need
+    /// `RelationOutcome` failure classification, weak-union handling, or depth
+    /// reporting.
+    pub(crate) fn diagnostic_relation_boolean_guard(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to(source, target)
     }
 
     /// Check if source type is assignable to target type.
@@ -2645,6 +2675,17 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Structural fast path for `{}` source: avoids re-evaluating every
+        // candidate's generic application through the full relation, which
+        // can degrade to a false negative when evaluation fuel is exhausted
+        // on one candidate of a 100+-key intrinsic map.
+        if crate::query_boundaries::common::is_empty_object_type(self.ctx.types, source) {
+            let mut visited = FxHashSet::default();
+            return candidate_types
+                .iter()
+                .any(|&candidate| self.candidate_rejects_empty_object(candidate, &mut visited));
+        }
+
         // Use the checker's compat-aware `is_assignable_to`, not the solver's
         // strict subtype check. The Lawyer (CompatChecker) accepts permissive
         // cases that the Judge (SubtypeChecker) rejects — most importantly,
@@ -2656,6 +2697,75 @@ impl<'a> CheckerState<'a> {
         candidate_types
             .into_iter()
             .any(|candidate| !self.is_assignable_to(source, candidate))
+    }
+
+    /// `true` iff `{}` would be rejected against `candidate`. Falls back to
+    /// `false` when the shape cannot be inspected, so an inconclusive probe
+    /// here cannot manufacture a false positive against the caller.
+    fn candidate_rejects_empty_object(
+        &mut self,
+        candidate: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if candidate == TypeId::ANY
+            || candidate == TypeId::UNKNOWN
+            || candidate == TypeId::NEVER
+            || candidate == TypeId::ERROR
+            || candidate == TypeId::NULL
+            || candidate == TypeId::UNDEFINED
+            || candidate == TypeId::VOID
+        {
+            return false;
+        }
+        if !visited.insert(candidate) {
+            return false;
+        }
+
+        let evaluated = self.evaluate_type_for_assignability(candidate);
+        let probe = if evaluated == TypeId::ERROR {
+            candidate
+        } else {
+            evaluated
+        };
+
+        if probe != candidate && !visited.insert(probe) {
+            return false;
+        }
+
+        if let Some(members) = union_members(self.ctx.types, probe) {
+            return members
+                .iter()
+                .all(|&m| self.candidate_rejects_empty_object(m, visited));
+        }
+
+        if let Some(members) = intersection_members(self.ctx.types, probe) {
+            return members
+                .iter()
+                .any(|&m| self.candidate_rejects_empty_object(m, visited));
+        }
+
+        let shape_id = object_shape_id(self.ctx.types, probe)
+            .or_else(|| object_with_index_shape_id(self.ctx.types, probe));
+
+        if let Some(shape_id) = shape_id
+            && self
+                .ctx
+                .types
+                .object_shape(shape_id)
+                .properties
+                .iter()
+                .any(|prop| !prop.optional)
+        {
+            return true;
+        }
+
+        if crate::query_boundaries::common::has_call_signatures(self.ctx.types, probe)
+            || crate::query_boundaries::common::has_construct_signatures(self.ctx.types, probe)
+        {
+            return true;
+        }
+
+        false
     }
 
     fn is_deferred_generic_index_for_object(

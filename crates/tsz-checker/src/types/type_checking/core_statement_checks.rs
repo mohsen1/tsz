@@ -361,12 +361,68 @@ impl<'a> CheckerState<'a> {
                 );
                 false
             } else {
-                let ok = self.check_assignable_or_report_at_exact_anchor(
-                    return_type,
-                    expected_type,
-                    source_error_node,
-                    fallback_error_node,
-                );
+                let contextual_block_function_has_inferred_signature = self
+                    .ctx
+                    .arena
+                    .get(return_data.expression)
+                    .filter(|node| node.is_function_expression_or_arrow())
+                    .and_then(|expr| self.ctx.arena.get_function(expr))
+                    .is_some_and(|func| {
+                        func.type_annotation.is_none()
+                            && func.parameters.nodes.iter().all(|&param_idx| {
+                                self.ctx
+                                    .arena
+                                    .get(param_idx)
+                                    .and_then(|param| self.ctx.arena.get_parameter(param))
+                                    .is_some_and(|param| param.type_annotation.is_none())
+                            })
+                            && self
+                                .ctx
+                                .arena
+                                .get(func.body)
+                                .is_some_and(|body| body.kind == syntax_kind_ext::BLOCK)
+                    });
+                let can_defer_contextual_callable_union =
+                    contextual_block_function_has_inferred_signature
+                        && {
+                            let evaluated_expected = self.evaluate_type_with_env(expected_type);
+                            let mut callable_members =
+                                crate::query_boundaries::assignability::contextual_function_callable_union_members(
+                                    self.ctx.types,
+                                    return_type,
+                                    expected_type,
+                                );
+                            if evaluated_expected != expected_type {
+                                callable_members.extend(
+                                    crate::query_boundaries::assignability::contextual_function_callable_union_members(
+                                        self.ctx.types,
+                                        return_type,
+                                        evaluated_expected,
+                                    ),
+                                );
+                            }
+                            callable_members.into_iter().any(|member| {
+                                let outcome = self.assign_relation_outcome(return_type, member);
+                                outcome.related
+                                    || crate::query_boundaries::assignability::contextual_callable_member_failure_is_generic_parameter_drift(
+                                        self.ctx.types,
+                                        outcome.failure.as_ref(),
+                                    )
+                                    || (outcome.failure.is_none()
+                                        && crate::query_boundaries::assignability::contextual_callable_member_has_unclassified_generic_parameter_drift(
+                                            self.ctx.types,
+                                            return_type,
+                                            member,
+                                        ))
+                            })
+                        };
+                let ok = can_defer_contextual_callable_union
+                    || self.check_assignable_or_report_at_exact_anchor(
+                        return_type,
+                        expected_type,
+                        source_error_node,
+                        fallback_error_node,
+                    );
                 if !ok {
                     // TS2409: In constructors, also emit the constructor-specific diagnostic
                     // alongside the TS2322 already emitted by check_assignable_or_report.

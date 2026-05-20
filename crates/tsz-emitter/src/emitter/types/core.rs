@@ -59,7 +59,8 @@ impl<'a> Printer<'a> {
         };
 
         self.emit(array.element_type);
-        self.write("[]");
+        self.open_bracket();
+        self.close_bracket();
     }
 
     pub(in crate::emitter) fn emit_tuple_type(&mut self, node: &Node) {
@@ -130,12 +131,14 @@ impl<'a> Printer<'a> {
 
     pub(in crate::emitter) fn emit_type_literal(&mut self, node: &Node) {
         let Some(type_lit) = self.arena.get_type_literal(node) else {
-            self.write("{}");
+            self.open_brace();
+            self.close_brace();
             return;
         };
 
         if type_lit.members.nodes.is_empty() {
-            self.write("{}");
+            self.open_brace();
+            self.close_brace();
             return;
         }
 

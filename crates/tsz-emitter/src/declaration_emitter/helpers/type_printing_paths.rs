@@ -454,6 +454,37 @@ impl<'a> DeclarationEmitter<'a> {
                 .map(|symbol| symbol.escaped_name.clone());
         }
 
+        // Check local import-equals aliases (import alias = LocalNs).
+        // Key is (parent_sym_id, escaped_name) to avoid SymbolId ambiguity: the binder
+        // may assign different IDs to the same namespace in exports vs parent-chain.
+        if let Some(sym) = binder.symbols.get(sym_id) {
+            let key = (sym.parent, sym.escaped_name.clone());
+            if let Some(alias_names) = self.local_namespace_alias_targets.get(&key) {
+                if alias_names.len() != 1 {
+                    tracing::debug!(
+                        sym_id = sym_id.0,
+                        parent = sym.parent.0,
+                        name = %sym.escaped_name,
+                        alias_count = alias_names.len(),
+                        "resolve_namespace_import_alias: ambiguous local alias target"
+                    );
+                    return None;
+                }
+                let alias_name = alias_names
+                    .iter()
+                    .next()
+                    .expect("checked alias set has exactly one entry");
+                tracing::debug!(
+                    sym_id = sym_id.0,
+                    parent = sym.parent.0,
+                    name = %sym.escaped_name,
+                    alias = %alias_name,
+                    "resolve_namespace_import_alias: local alias hit"
+                );
+                return Some(alias_name.clone());
+            }
+        }
+
         let module_path = self.resolve_symbol_module_path(sym_id)?;
 
         let mut local_imports: Vec<SymbolId> = self.import_symbol_map.keys().copied().collect();
@@ -993,6 +1024,10 @@ impl<'a> DeclarationEmitter<'a> {
     ///
     /// Converts "../utils.ts" -> "../utils"
     pub(crate) fn strip_ts_extensions(&self, path: &str) -> String {
+        if let Some((base, ext)) = Self::arbitrary_extension_declaration_user_parts(path) {
+            return format!("{base}.{ext}");
+        }
+
         // Remove TypeScript and JavaScript source/declaration extensions.
         for ext in [
             ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".tsx", ".ts", ".mts", ".cts", ".jsx", ".js",
@@ -1003,6 +1038,25 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         path.to_string()
+    }
+
+    fn arbitrary_extension_declaration_user_parts(path: &str) -> Option<(&str, &str)> {
+        let stem = path.strip_suffix(".ts")?;
+        let (base, ext) = stem.rsplit_once(".d.")?;
+        if base.is_empty() || ext.is_empty() || ext.contains('/') || ext.contains('.') {
+            return None;
+        }
+        if Self::is_recognized_inner_module_ext(ext) {
+            return None;
+        }
+        Some((base, ext))
+    }
+
+    fn is_recognized_inner_module_ext(ext: &str) -> bool {
+        matches!(
+            ext,
+            "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" | "json" | "d"
+        )
     }
 
     pub(in crate::declaration_emitter) fn normalized_source_path(

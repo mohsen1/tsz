@@ -1919,3 +1919,143 @@ export class Enhancement {
         "Static methods must not use instance this return syntax: {output}"
     );
 }
+
+// === Tests for symbol_types fallback (issue #8744) ===
+
+#[test]
+fn fix_symbol_types_fallback_used_when_node_types_is_any() {
+    // When node_types holds ANY (context-contaminated by contextual re-evaluation),
+    // the emitter must fall back to symbol_types to recover the arrow function return type.
+    use crate::type_cache_view::TypeCacheView;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::NodeIndex;
+    use tsz_parser::parser::syntax_kind_ext;
+    use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypeInterner};
+
+    let source = "export const isNonNull = (x: number | null) => x !== null;";
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    // Find the arrow function node.
+    let arrow_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(i, n)| {
+            (n.kind == syntax_kind_ext::ARROW_FUNCTION).then_some(NodeIndex(i as u32))
+        })
+        .expect("ARROW_FUNCTION node");
+
+    // Get the symbol bound to "isNonNull".
+    let sym_id = binder
+        .file_locals
+        .get("isNonNull")
+        .expect("isNonNull symbol");
+
+    // Build a concrete function type: (x: number | null) => boolean
+    let interner = TypeInterner::new();
+    let x_atom = interner.intern_string("x");
+    let param_type = interner.union(vec![TypeId::NUMBER, TypeId::NULL]);
+    let func_type = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(x_atom),
+            type_id: param_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Simulate contamination: node_types = ANY, symbol_types = real function type.
+    let mut type_cache = TypeCacheView::default();
+    type_cache.node_types.insert(arrow_idx.0, TypeId::ANY);
+    type_cache.symbol_types.insert(sym_id, func_type);
+
+    let mut emitter = crate::declaration_emitter::DeclarationEmitter::with_type_info(
+        &parser.arena,
+        type_cache,
+        &interner,
+        &binder,
+    );
+    let output = emitter.emit(root);
+
+    assert!(
+        !output.contains(": any"),
+        "should not emit `any` when symbol_types holds a concrete type: {output}"
+    );
+    assert!(
+        output.contains("boolean"),
+        "should recover boolean return type from symbol_types: {output}"
+    );
+}
+
+#[test]
+fn fix_predicate_pattern2_does_not_rewrite_unrelated_union_shapes() {
+    // (T & undefined) | string must NOT be rewritten as T & ({} | undefined).
+    // Only (T & undefined) | (T & {}) qualifies — both arms must be verified.
+    use crate::type_cache_view::TypeCacheView;
+    use tsz_solver::{
+        FunctionShape, ParamInfo, TypeId, TypeInterner,
+        types::{TypeParamInfo, TypePredicate, TypePredicateTarget},
+    };
+
+    let interner = TypeInterner::new();
+
+    // Build type param T.
+    let t_atom = interner.intern_string("T");
+    let t_param = interner.type_param(TypeParamInfo::simple(t_atom));
+
+    // Build (T & undefined) | string — the second arm is NOT T & {}.
+    let t_and_undef = interner.intersection(vec![t_param, TypeId::UNDEFINED]);
+    let bad_union = interner.union(vec![t_and_undef, TypeId::STRING]);
+
+    // Build a function type with predicate `x is (T & undefined) | string`.
+    let x_atom = interner.intern_string("x");
+    let func_type = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo::simple(t_atom)],
+        params: vec![ParamInfo {
+            name: Some(x_atom),
+            type_id: TypeId::UNKNOWN,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(x_atom),
+            type_id: Some(bad_union),
+            parameter_index: None,
+        }),
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let parser = tsz_parser::ParserState::new("test.ts".to_string(), String::new());
+    let binder = tsz_binder::BinderState::new();
+    let type_cache = TypeCacheView::default();
+    let emitter = crate::declaration_emitter::DeclarationEmitter::with_type_info(
+        &parser.arena,
+        type_cache,
+        &interner,
+        &binder,
+    );
+
+    // The predicate type should fall through to the normal printer, not rewrite.
+    let text = emitter
+        .function_type_predicate_text(func_type, None)
+        .unwrap_or_default();
+
+    assert!(
+        !text.contains("& ({} | undefined)"),
+        "should not rewrite (T & undefined) | string as T & ({{}} | undefined): {text}"
+    );
+}

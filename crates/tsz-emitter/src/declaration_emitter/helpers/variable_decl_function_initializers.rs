@@ -99,7 +99,11 @@ impl<'a> DeclarationEmitter<'a> {
                 .node_types
                 .get(&initializer.0)
                 .copied()
-                .or_else(|| self.get_node_type_or_names(&[decl_idx, decl_name, initializer]));
+                .or_else(|| self.get_node_type_or_names(&[decl_idx, decl_name, initializer]))
+                .filter(|&t| {
+                    t != tsz_solver::types::TypeId::ANY && t != tsz_solver::types::TypeId::ERROR
+                })
+                .or_else(|| self.get_type_via_symbol_for_func(initializer, decl_name));
             if let Some(func_type_id) = func_type_id {
                 if let Some(predicate_text) =
                     self.function_type_predicate_text(func_type_id, func.type_parameters.as_ref())
@@ -179,10 +183,57 @@ impl<'a> DeclarationEmitter<'a> {
             .get(&initializer.0)
             .copied()
             .or_else(|| self.get_node_type_or_names(&[decl_idx, decl_name, initializer]))
+            .filter(|&t| {
+                t != tsz_solver::types::TypeId::ANY && t != tsz_solver::types::TypeId::ERROR
+            })
+            .or_else(|| self.get_type_via_symbol_for_func(initializer, decl_name))
             .and_then(|func_type_id| {
                 tsz_solver::type_queries::flow::extract_predicate_signature(*interner, func_type_id)
             })
             .is_some()
+    }
+
+    /// Returns `true` when the initializer is an unannotated arrow/function-expression whose
+    /// symbol has a non-trivial (non-any, non-error) cached type in `symbol_types`.
+    ///
+    /// This covers the case where the checker's `node_types` cache was invalidated by
+    /// contextual re-evaluation (e.g. the function is passed as a callback), so the emitter
+    /// cannot find the inferred return type through the normal node-type path.  The symbol
+    /// cache is not invalidated by contextual re-evaluation and always holds the canonical
+    /// type.
+    pub(in crate::declaration_emitter) fn function_initializer_has_inferred_return_via_symbol(
+        &self,
+        decl_idx: NodeIndex,
+        decl_name: NodeIndex,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+        if func.type_annotation.is_some() {
+            return false;
+        }
+        let node_cached = self
+            .get_node_type(initializer)
+            .or_else(|| self.get_node_type(decl_idx))
+            .or_else(|| self.get_node_type(decl_name));
+        if node_cached.is_some_and(|t| {
+            t != tsz_solver::types::TypeId::ANY && t != tsz_solver::types::TypeId::ERROR
+        }) {
+            return false;
+        }
+        self.get_type_via_symbol_for_func(initializer, decl_name)
+            .is_some_and(|t| {
+                t != tsz_solver::types::TypeId::ANY && t != tsz_solver::types::TypeId::ERROR
+            })
     }
 
     pub(in crate::declaration_emitter) fn maybe_emit_non_portable_function_return_diagnostic(

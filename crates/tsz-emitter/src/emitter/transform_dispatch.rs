@@ -557,34 +557,15 @@ impl<'a> Printer<'a> {
                         return;
                     }
 
-                    // For non-default exported enums in CJS, fold exports.Name into
-                    // the IIFE tail: (E || (exports.E = E = {})) instead of a
-                    // separate `exports.E = E;` statement after the IIFE.
+                    // For non-default exported enums in CJS, fold every
+                    // `exports.<alias>` binding into the IIFE tail:
+                    //   (E || (exports.EE = exports.E = E = {}))
                     if node.kind == syntax_kind_ext::ENUM_DECLARATION
                         && !is_default
                         && let Some(enum_decl) = self.arena.get_enum(node)
+                        && self.emit_cjs_enum_with_alias_fold(idx, names.as_ref(), enum_decl, false)
                     {
-                        let enum_name = self.get_identifier_text_idx(enum_decl.name);
-                        if !enum_name.is_empty() {
-                            let mut enum_emitter = EnumES5Emitter::new(self.arena);
-                            enum_emitter.set_indent_level(self.writer.indent_level());
-                            enum_emitter
-                                .set_preserve_const_enums(self.ctx.options.preserve_const_enums);
-                            if let Some(text) = self.source_text_for_map() {
-                                enum_emitter.set_source_text(text);
-                            }
-                            enum_emitter.set_commonjs_export_fold(&enum_name);
-                            enum_emitter.set_emit_var_declaration(
-                                !self.declared_namespace_names.contains(&enum_name),
-                            );
-                            let output = enum_emitter.emit_enum(idx);
-                            self.declared_namespace_names.insert(enum_name.clone());
-                            // Record the name so `export { E }` re-export handler
-                            // skips the now-redundant `exports.E = E;`.
-                            self.ctx.module_state.iife_exported_names.insert(enum_name);
-                            self.write(output.trim_end_matches('\n'));
-                            return;
-                        }
+                        return;
                     }
 
                     // For non-default function declarations, the preamble already
@@ -803,7 +784,7 @@ impl<'a> Printer<'a> {
                             return;
                         }
                         k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                            self.emit_function_expression_es5_params(func_node);
+                            self.emit_function_expression_es5_params(func_node, function_node);
                             return;
                         }
                         k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {
@@ -1469,7 +1450,7 @@ impl<'a> Printer<'a> {
                             self.emit_function_declaration_es5_params(func_node);
                         }
                         k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                            self.emit_function_expression_es5_params(func_node);
+                            self.emit_function_expression_es5_params(func_node, *function_node);
                         }
                         k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {
                             if let Some(func) = self.arena.get_function(func_node) {
@@ -1682,6 +1663,20 @@ impl<'a> Printer<'a> {
                     return;
                 }
 
+                // The Chain dispatch arrives here when lowering produced
+                // `Chain[ES5Enum, CommonJSExport]` for an `export enum E`
+                // (target=es5). The chained `ES5Enum` would emit a separate
+                // `exports.E = E;` line *after* the IIFE and miss
+                // multi-alias folds; route through the same fold helper the
+                // non-Chain path uses instead.
+                if !*is_default
+                    && node.kind == syntax_kind_ext::ENUM_DECLARATION
+                    && let Some(enum_decl) = self.arena.get_enum(node)
+                    && self.emit_cjs_enum_with_alias_fold(idx, names.as_ref(), enum_decl, true)
+                {
+                    return;
+                }
+
                 if !*is_default
                     && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
                     && self.variable_stmt_has_binding_pattern(node)
@@ -1886,7 +1881,7 @@ impl<'a> Printer<'a> {
                             return;
                         }
                         k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                            self.emit_function_expression_es5_params(func_node);
+                            self.emit_function_expression_es5_params(func_node, *function_node);
                             return;
                         }
                         k if k == syntax_kind_ext::ARROW_FUNCTION && !self.ctx.target_es5 => {
@@ -1956,6 +1951,79 @@ impl<'a> Printer<'a> {
         } else {
             self.emit_chained_directive(node, idx, directives, index - 1);
         }
+    }
+
+    /// Emit a non-default `export enum E { ... }` (CJS) using the
+    /// alias-folded IIFE tail. Returns `true` when the helper handled the
+    /// emit (callers should `return` immediately).
+    ///
+    /// `names` is the source-ordered alias list — direct export + any later
+    /// `export { local as alias }`. When the list is empty (defensive
+    /// fallback), the enum's local name is used. The helper deliberately
+    /// owns the bookkeeping (`iife_exported_names` /
+    /// `iife_exported_bindings`) so call sites stay a single-line dispatch.
+    fn emit_cjs_enum_with_alias_fold(
+        &mut self,
+        idx: NodeIndex,
+        names: &[IdentifierId],
+        enum_decl: &tsz_parser::parser::node::EnumData,
+        skip_comments: bool,
+    ) -> bool {
+        let node = match self.arena.get(idx) {
+            Some(n) => n,
+            None => return false,
+        };
+        if node.kind != syntax_kind_ext::ENUM_DECLARATION {
+            return false;
+        }
+
+        let enum_name = self.get_identifier_text_idx(enum_decl.name);
+        if enum_name.is_empty() {
+            return false;
+        }
+
+        let mut alias_strings: Vec<String> = names
+            .iter()
+            .filter_map(|name_id| {
+                self.arena
+                    .identifiers
+                    .get(*name_id as usize)
+                    .map(|ident| ident.escaped_text.clone())
+            })
+            .filter(|name| !name.is_empty())
+            .collect();
+        if alias_strings.is_empty() {
+            alias_strings.push(enum_name.clone());
+        }
+
+        let mut enum_emitter = EnumES5Emitter::new(self.arena);
+        enum_emitter.set_indent_level(self.writer.indent_level());
+        enum_emitter.set_preserve_const_enums(self.ctx.options.preserve_const_enums);
+        if let Some(text) = self.source_text_for_map() {
+            enum_emitter.set_source_text(text);
+        }
+        enum_emitter.set_commonjs_export_folds(alias_strings.iter().map(String::as_str));
+        enum_emitter.set_emit_var_declaration(!self.declared_namespace_names.contains(&enum_name));
+        let output = enum_emitter.emit_enum(idx);
+        self.declared_namespace_names.insert(enum_name.clone());
+        self.ctx
+            .module_state
+            .iife_exported_names
+            .insert(enum_name.clone());
+        let bindings_entry = self
+            .ctx
+            .module_state
+            .iife_exported_bindings
+            .entry(enum_name)
+            .or_default();
+        for alias in alias_strings {
+            bindings_entry.insert(alias);
+        }
+        self.write(output.trim_end_matches('\n'));
+        if skip_comments {
+            self.skip_comments_for_erased_node(node);
+        }
+        true
     }
 
     fn emit_es5_enum_directive(&mut self, node: &Node, enum_node: NodeIndex) {

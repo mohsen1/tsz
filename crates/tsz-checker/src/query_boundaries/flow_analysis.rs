@@ -38,6 +38,44 @@ pub(crate) fn enum_member_domain(db: &dyn TypeDatabase, type_id: TypeId) -> Type
         .unwrap_or(type_id)
 }
 
+pub(crate) fn type_has_typeof_result(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::TypeEnvironment>,
+    type_id: TypeId,
+    typeof_result: &str,
+) -> bool {
+    let mut narrowing = tsz_solver::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    narrowing.narrow_by_typeof(type_id, typeof_result) != TypeId::NEVER
+}
+
+pub(crate) fn cases_exhaust_type(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::TypeEnvironment>,
+    switch_type: TypeId,
+    case_types: &[TypeId],
+) -> bool {
+    let switch_type = enum_member_domain(db.as_type_database(), switch_type);
+    if matches!(switch_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN) || case_types.is_empty()
+    {
+        return false;
+    }
+    if case_types
+        .iter()
+        .any(|&ty| matches!(ty, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN))
+    {
+        return false;
+    }
+
+    let mut narrowing = tsz_solver::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    narrowing.narrow_excluding_types(switch_type, case_types) == TypeId::NEVER
+}
+
 fn resolve_assignment_reduction_type(
     db: &dyn TypeDatabase,
     env: Option<&tsz_solver::TypeEnvironment>,
@@ -219,7 +257,11 @@ pub(crate) fn fallback_compound_assignment_result(
     operator_token: u16,
     rhs_literal_type: Option<TypeId>,
 ) -> Option<TypeId> {
-    tsz_solver::fallback_compound_assignment_result(db, operator_token, rhs_literal_type)
+    tsz_solver::operations::compound_assignment::fallback_compound_assignment_result(
+        db,
+        operator_token,
+        rhs_literal_type,
+    )
 }
 
 pub(crate) fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
@@ -235,6 +277,18 @@ pub(crate) fn instance_type_from_constructor(
     type_id: TypeId,
 ) -> Option<TypeId> {
     tsz_solver::type_queries::instance_type_from_constructor(db, type_id)
+}
+
+/// Return the predicate type from `[Symbol.hasInstance](v: ...): v is T` if present.
+///
+/// Mirrors the solver's `instance_type_from_symbol_has_instance` so the checker
+/// can decide whether to use type-predicate narrowing semantics (which do not
+/// exclude primitives) instead of standard instanceof semantics (which do).
+pub(crate) fn instance_type_from_symbol_has_instance(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::instance_type_from_symbol_has_instance(db, type_id)
 }
 
 pub(crate) fn is_promise_like_type(db: &dyn QueryDatabase, type_id: TypeId) -> bool {

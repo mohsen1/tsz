@@ -114,6 +114,58 @@ class NumberStore implements NumericStore {
     );
 }
 
+#[test]
+fn private_field_index_access_uses_declared_type_over_empty_object_initializer() {
+    let source = r#"
+class Request {
+  readonly #subscribers: {
+    [key: string]: (event: "completed" | "error", error?: unknown) => void;
+  };
+
+  constructor() {
+    this.#subscribers = {};
+    const subscriptionKey = "onDone";
+    this.#subscribers[subscriptionKey] = (event, error) => {
+      delete this.#subscribers[subscriptionKey];
+    };
+  }
+}
+"#;
+    let cs = codes(source);
+    assert!(
+        !cs.contains(&7053),
+        "expected private field indexed access to use the declared index signature; got codes: {cs:?}"
+    );
+}
+
+#[test]
+fn private_field_index_access_uses_declared_mapped_record_over_empty_object_initializer() {
+    let source = r#"
+type Dict<T> = {
+  [P in string]: T;
+};
+
+class Request {
+  readonly #subscribers: Dict<
+    (event: "completed" | "error", error?: unknown) => void
+  >;
+
+  constructor() {
+    this.#subscribers = {};
+    const subscriptionKey = "onDone";
+    this.#subscribers[subscriptionKey] = (event, error) => {
+      delete this.#subscribers[subscriptionKey];
+    };
+  }
+}
+"#;
+    let cs = codes(source);
+    assert!(
+        !cs.contains(&7053),
+        "expected private mapped-record field indexed access to use the declared index signature; got codes: {cs:?}"
+    );
+}
+
 // ── Correct errors preserved ─────────────────────────────────────────────
 
 #[test]

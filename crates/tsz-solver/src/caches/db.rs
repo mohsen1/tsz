@@ -11,6 +11,9 @@ use crate::intern::TypeInterner;
 use crate::intern::type_factory::TypeFactory;
 use crate::narrowing;
 use crate::objects::element_access::{ElementAccessEvaluator, ElementAccessResult};
+use crate::relations::relation_queries::{
+    RelationContext, RelationKind, RelationPolicy, query_relation,
+};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
@@ -23,11 +26,69 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
+/// Read-only access to interned type storage.
+///
+/// This is the narrow capability for helpers that only inspect existing
+/// type data and do not need construction, provenance, cache, or policy hooks.
+pub trait TypeStore {
+    fn lookup(&self, id: TypeId) -> Option<TypeData>;
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]>;
+}
+
+impl<T: TypeDatabase + ?Sized> TypeStore for T {
+    fn lookup(&self, id: TypeId) -> Option<TypeData> {
+        TypeDatabase::lookup(self, id)
+    }
+
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
+        TypeDatabase::type_list(self, id)
+    }
+}
+
+/// Cache hooks for solver type-content traversal predicates.
+///
+/// The answers are stable for a `TypeId` within one interner because interned
+/// type data is immutable. Keeping these hooks out of [`TypeDatabase`] makes
+/// traversal-cache capability visible as a narrower contract.
+pub trait TypePredicateCache {
+    /// Look up a cached `contains_this_type(type_id)` result if available.
+    ///
+    /// Default impl returns `None` (no caching). The primary implementation
+    /// on `TypeInterner` consults a project-wide `DashMap`; the `QueryCache`
+    /// delegate forwards through to the interner so all sharing callers hit
+    /// the same cache.
+    fn contains_this_type_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_this_type(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_this_type_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `contains_infer_types_db(type_id)` result if available.
+    fn contains_infer_types_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_infer_types_db(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_infer_types_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Look up a cached `contains_type_query_db(type_id)` result if available.
+    fn contains_type_query_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_type_query_db(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
 /// into concrete storage structures directly.
-pub trait TypeDatabase {
+pub trait TypeDatabase: TypePredicateCache {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
     fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {
@@ -130,18 +191,6 @@ pub trait TypeDatabase {
     fn unique_symbol(&self, symbol: SymbolRef) -> TypeId;
     fn infer(&self, info: TypeParamInfo) -> TypeId;
     fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId;
-
-    /// Create a string intrinsic type by name ("Uppercase", "Lowercase", "Capitalize", "Uncapitalize").
-    /// Returns `TypeId::ERROR` for unrecognized names.
-    fn string_intrinsic_by_name(&self, name: &str, type_arg: TypeId) -> TypeId {
-        match name {
-            "Uppercase" => self.string_intrinsic(StringIntrinsicKind::Uppercase, type_arg),
-            "Lowercase" => self.string_intrinsic(StringIntrinsicKind::Lowercase, type_arg),
-            "Capitalize" => self.string_intrinsic(StringIntrinsicKind::Capitalize, type_arg),
-            "Uncapitalize" => self.string_intrinsic(StringIntrinsicKind::Uncapitalize, type_arg),
-            _ => TypeId::ERROR,
-        }
-    }
 
     /// Store display-only properties for a fresh object literal.
     ///
@@ -295,41 +344,6 @@ pub trait TypeDatabase {
         false
     }
 
-    /// Look up a cached `contains_this_type(type_id)` result if available.
-    ///
-    /// Default impl returns `None` (no caching). The primary implementation
-    /// on `TypeInterner` consults a project-wide `DashMap`; the `QueryCache`
-    /// delegate forwards through to the interner so all sharing callers hit
-    /// the same cache.
-    fn contains_this_type_cached(&self, _type_id: TypeId) -> Option<bool> {
-        None
-    }
-
-    /// Record the result of `contains_this_type(type_id)` in the shared
-    /// interner cache. Default impl is a no-op.
-    fn set_contains_this_type_cache(&self, _type_id: TypeId, _result: bool) {}
-
-    /// Look up a cached `contains_infer_types_db(type_id)` result if available.
-    ///
-    /// Like `contains_this_type`, the answer is stable for a `TypeId` within one
-    /// interner because interned type data is immutable.
-    fn contains_infer_types_cached(&self, _type_id: TypeId) -> Option<bool> {
-        None
-    }
-
-    /// Record the result of `contains_infer_types_db(type_id)` in the shared
-    /// interner cache. Default impl is a no-op.
-    fn set_contains_infer_types_cache(&self, _type_id: TypeId, _result: bool) {}
-
-    /// Look up a cached `contains_type_query_db(type_id)` result if available.
-    fn contains_type_query_cached(&self, _type_id: TypeId) -> Option<bool> {
-        None
-    }
-
-    /// Record the result of `contains_type_query_db(type_id)` in the shared
-    /// interner cache. Default impl is a no-op.
-    fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
-
     /// Whether `exactOptionalPropertyTypes` is enabled.
     ///
     /// Exposed on `TypeDatabase` (in addition to `QueryDatabase`) so that
@@ -339,6 +353,32 @@ pub trait TypeDatabase {
     /// `TypeInterner` and `QueryCache`.
     fn exact_optional_property_types(&self) -> bool {
         false
+    }
+}
+
+impl TypePredicateCache for TypeInterner {
+    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_this_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_this_cache.insert(type_id, result);
+    }
+
+    fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_infer_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_infer_cache.insert(type_id, result);
+    }
+
+    fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_type_query_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_type_query_cache.insert(type_id, result);
     }
 }
 
@@ -706,30 +746,6 @@ impl TypeDatabase for TypeInterner {
         Self::is_evaluation_fuel_exhausted(self)
     }
 
-    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_this_cache.get(&type_id).map(|v| *v)
-    }
-
-    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_this_cache.insert(type_id, result);
-    }
-
-    fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_infer_cache.get(&type_id).map(|v| *v)
-    }
-
-    fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_infer_cache.insert(type_id, result);
-    }
-
-    fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_type_query_cache.get(&type_id).map(|v| *v)
-    }
-
-    fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_type_query_cache.insert(type_id, result);
-    }
-
     fn exact_optional_property_types(&self) -> bool {
         TypeInterner::exact_optional_property_types(self)
     }
@@ -1075,35 +1091,31 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Task #49: Global Canonical Mapping
     fn canonical_id(&self, type_id: TypeId) -> TypeId;
 
-    /// Subtype check with compiler flags.
-    ///
-    /// The `flags` parameter is a packed u16 bitmask matching `RelationCacheKey.flags`:
-    /// - bit 0: `strict_null_checks`
-    /// - bit 1: `strict_function_types`
-    /// - bit 2: `exact_optional_property_types`
-    /// - bit 3: `no_unchecked_indexed_access`
-    /// - bit 4: `disable_method_bivariance`
-    /// - bit 5: `allow_void_return`
-    /// - bit 6: `allow_bivariant_rest`
-    /// - bit 7: `allow_bivariant_param_count`
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
         // Default implementation: use non-strict mode for backward compatibility
-        // Individual callers can use is_subtype_of_with_flags for explicit flag control
-        self.is_subtype_of_with_flags(source, target, 0)
+        self.is_subtype_of_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
-    /// Subtype check with explicit compiler flags.
+    /// Subtype check with a typed relation policy.
     ///
-    /// The `flags` parameter is a packed u16 bitmask matching `RelationCacheKey.flags`.
-    fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        // Default implementation: use SubtypeChecker with default flags
-        // (This will be overridden by QueryCache with proper caching)
-        crate::relations::subtype::is_subtype_of_with_flags(
+    /// Prefer this for new relation paths. It keeps relation behavior and cache
+    /// partitioning described by [`RelationPolicy`] instead of extending the
+    /// legacy packed `u16` flag protocol.
+    fn is_subtype_of_with_policy(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> bool {
+        query_relation(
             self.as_type_database(),
             source,
             target,
-            flags,
+            RelationKind::Subtype,
+            policy,
+            RelationContext::default(),
         )
+        .related
     }
 
     /// TypeScript assignability check with full compatibility rules (The Lawyer).
@@ -1122,14 +1134,30 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Uses separate cache from `is_subtype_of` to prevent cache poisoning.
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
         // Default implementation: use non-strict mode for backward compatibility
-        // Individual callers can use is_assignable_to_with_flags for explicit flag control
-        self.is_assignable_to_with_flags(source, target, 0)
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
-    /// Assignability check with explicit compiler flags.
+    /// Assignability check with a typed relation policy.
     ///
-    /// The `flags` parameter is a packed u16 bitmask matching `RelationCacheKey.flags`.
-    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool;
+    /// Prefer this for new relation paths. It keeps relation behavior and cache
+    /// partitioning described by [`RelationPolicy`] instead of extending the
+    /// legacy packed `u16` flag protocol.
+    fn is_assignable_to_with_policy(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> bool {
+        query_relation(
+            self.as_type_database(),
+            source,
+            target,
+            RelationKind::Assignable,
+            policy,
+            RelationContext::default(),
+        )
+        .related
+    }
 
     /// Look up a cached subtype result for the given key.
     /// Returns `None` if the result is not cached.
@@ -1342,16 +1370,7 @@ impl QueryDatabase for TypeInterner {
 
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
         // Default implementation: use non-strict mode for backward compatibility
-        self.is_assignable_to_with_flags(source, target, 0)
-    }
-
-    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        use crate::relations::compat::CompatChecker;
-        let mut checker = CompatChecker::new(self);
-        if flags != 0 {
-            checker.apply_flags(flags);
-        }
-        checker.is_assignable(source, target)
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
     fn resolve_property_access(

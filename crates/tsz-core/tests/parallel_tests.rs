@@ -1504,7 +1504,7 @@ namespace N1 {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut recreated_checker = crate::checker::state::CheckerState::with_options(
         &file.arena,
         &rebuilt_binder,
@@ -1559,7 +1559,7 @@ namespace N1 {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &file.arena,
         &rebuilt_binder,
@@ -1681,7 +1681,7 @@ namespace N1 {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &file.arena,
         &rebuilt_binder,
@@ -1870,7 +1870,7 @@ c = d;
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(program_file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &program_file.arena,
         &rebuilt_binder,
@@ -2044,7 +2044,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         .find(|file| file.file_name == "test.ts")
         .expect("expected merged test.ts file");
     let rebuilt_binder = create_binder_from_bound_file(program_file, &program, 0);
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &program_file.arena,
         &rebuilt_binder,
@@ -9312,7 +9312,7 @@ var e: Date = c.b();
         },
     );
 
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
     let mut checker = crate::checker::state::CheckerState::with_options(
         &file1_bound.arena,
         &binder,

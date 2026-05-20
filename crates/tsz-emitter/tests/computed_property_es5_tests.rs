@@ -124,6 +124,63 @@ fn computed_method_still_uses_computed_temp() {
     );
 }
 
+#[test]
+fn computed_method_super_call_in_arrow_uses_lexical_this() {
+    let source = r#"
+class Base {
+    bar() { return 0; }
+}
+class C extends Base {
+    foo() {
+        () => {
+            var obj = { [super.bar()]() { } };
+        };
+        return 0;
+    }
+}
+"#;
+    let output = emit_es5(source);
+
+    assert!(
+        output.contains("var _this = this;"),
+        "Arrow with a super call in a computed key should capture lexical this.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_super.prototype.bar.call(_this)"),
+        "Super method calls inside lowered arrow computed keys should bind the lexical this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_super.prototype.bar.call(this)"),
+        "Super method calls inside the arrow must not bind the nested function's this.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn computed_method_super_element_call_in_arrow_uses_lexical_this() {
+    let source = r#"
+class Base {
+    bar() { return 0; }
+}
+class C extends Base {
+    foo(key) {
+        () => {
+            var obj = { [super[key]()]() { } };
+        };
+    }
+}
+"#;
+    let output = emit_es5(source);
+
+    assert!(
+        output.contains("_super.prototype[key].call(_this)"),
+        "Super element calls inside lowered arrow computed keys should bind the lexical this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_super.prototype[key].call(this)"),
+        "Super element calls inside the arrow must not bind the nested function's this.\nOutput:\n{output}"
+    );
+}
+
 /// Issue #3968: An object literal spread whose leading element segment
 /// contains a computed property must lower the elements via the
 /// `(_a = {}, _a[k] = 1, _a)` pattern, not as an ES2015 `{ [k]: 1 }`
@@ -157,5 +214,76 @@ const obj = { [k]: 1, ...b };"#;
     assert_eq!(
         opens, closes,
         "Emitted JS must have balanced parens.\nOutput:\n{output}"
+    );
+}
+
+/// When the first spread in an ES5 object literal is itself an object literal,
+/// tsc uses it directly as the `__assign` target instead of allocating `{}`.
+///
+/// Rule: `{ ...{x} }` → `__assign({x})` (single arg, literal is the target)
+///       `{ ...v }` → `__assign({}, v)` (variable: fresh empty target)
+#[test]
+fn object_literal_spread_uses_literal_as_assign_target() {
+    // Single spread that is an object literal: __assign({x: 0}) not __assign({}, {x: 0})
+    let output = emit_es5("const a = { ...{ x: 0 } };");
+    assert!(
+        output.contains("__assign({ x: 0 })"),
+        "Object literal spread should be used as direct __assign target.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__assign({}, { x: 0 })"),
+        "Should NOT create empty {{}} for object literal spread.\nOutput:\n{output}"
+    );
+
+    // Object literal spread first, then own props: __assign({x:0}, {y:1})
+    let output2 = emit_es5("const b = { ...{ x: 0 }, y: 1 };");
+    assert!(
+        output2.contains("__assign({ x: 0 }, { y: 1 })"),
+        "Object literal spread + own props: literal as target, own as source.\nOutput:\n{output2}"
+    );
+    assert!(
+        !output2.contains("__assign(__assign"),
+        "Should NOT double-wrap for object literal spread + own props.\nOutput:\n{output2}"
+    );
+
+    // Variable spread: keeps standard __assign({}, v) form
+    let output3 = emit_es5("declare const v: any; const c = { ...v };");
+    assert!(
+        output3.contains("__assign({}, v)"),
+        "Variable spread must still use fresh {{}} as target.\nOutput:\n{output3}"
+    );
+
+    // Variable spread + own props: __assign(__assign({}, v), {y:1})
+    let output4 = emit_es5("declare const v: any; const d = { ...v, y: 1 };");
+    assert!(
+        output4.contains("__assign(__assign({}, v), { y: 1 })"),
+        "Variable spread + own props must use nested __assign.\nOutput:\n{output4}"
+    );
+}
+
+/// Object-literal spreads are only safe as direct `__assign` targets when the
+/// inner object literal is simple. If the inner literal has its own spread, tsc
+/// lowers that inner literal to a separate assign chain and copies it through
+/// `{}` at the outer spread boundary.
+#[test]
+fn nested_object_literal_spread_keeps_empty_outer_assign_target() {
+    let output = emit_es5("declare const b: any; const a = { ...{ a: 3, ...b } };");
+    assert!(
+        output.contains("__assign({}, __assign({ a: 3 }, b))"),
+        "Nested object-literal spread should copy the inner assign result through {{}}.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__assign(__assign({ a: 3 }, b))"),
+        "Nested object-literal spread should not use the inner assign result as the outer target.\nOutput:\n{output}"
+    );
+
+    let output2 = emit_es5("declare const b: any; const a = { ...{ a: 3, ...b }, c: 1 };");
+    assert!(
+        output2.contains("__assign(__assign({}, __assign({ a: 3 }, b)), { c: 1 })"),
+        "Nested object-literal spread with trailing props should keep the empty outer target.\nOutput:\n{output2}"
+    );
+    assert!(
+        !output2.contains("__assign(__assign({ a: 3 }, b), { c: 1 })"),
+        "Trailing props should not mutate the inner object-spread assign result.\nOutput:\n{output2}"
     );
 }

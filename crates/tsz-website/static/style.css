@@ -1153,6 +1153,11 @@ tr:nth-child(even) { background: var(--table-stripe); }
   margin: 0.5rem 0 2rem;
 }
 
+.loc-stat-split {
+  opacity: 0.75;
+  margin-left: 0.25rem;
+}
+
 .section-divider {
   border: none;
   border-top: 1px solid var(--border-subtle);

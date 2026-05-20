@@ -269,27 +269,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn union_context_for_array_literal_prefers_tuple(&self, contextual: TypeId) -> bool {
-        let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, contextual)
-        else {
-            return false;
-        };
-
-        let mut saw_tuple = false;
-        for member in members {
-            let Some(applicable) =
-                crate::query_boundaries::common::array_applicable_type(self.ctx.types, member)
-            else {
-                return false;
-            };
-
-            if !crate::query_boundaries::common::is_tuple_type(self.ctx.types, applicable) {
-                return false;
-            }
-            saw_tuple = true;
-        }
-
-        saw_tuple
+        expr_ops::union_context_prefers_tuple_array_literal(self.ctx.types, contextual)
     }
 
     fn sole_array_applicable_union_context(&mut self, contextual: TypeId) -> Option<TypeId> {
@@ -766,12 +746,12 @@ impl<'a> CheckerState<'a> {
                 // EXCEPTION: union-of-all-tuples is handled via per-position typing below.
                 crate::context::TypingRequest::NONE
             } else if let Some(ref helper) = ctx_helper {
-                if tuple_context.is_some() || force_tuple_for_union_context {
-                    // For a union of all tuple types (force_tuple_for_union_context), use
-                    // per-position contextual typing: the element type at position `index`
-                    // is the union of each member tuple's type at that position.
-                    // e.g. `["a"] | ["b"]` gives position 0 context `"a" | "b"`,
-                    // preserving string literal types instead of widening to `string`.
+                if tuple_context.is_some()
+                    || force_tuple_for_union_context
+                    || force_tuple_for_mapped
+                {
+                    // Per-position contextual typing for tuple, union-of-tuples,
+                    // and homomorphic mapped contexts (binds K to the index literal).
                     match helper.get_tuple_element_type_with_count(index, total_elem_count) {
                         Some(ty) => request.read().contextual(ty),
                         None => crate::context::TypingRequest::NONE,

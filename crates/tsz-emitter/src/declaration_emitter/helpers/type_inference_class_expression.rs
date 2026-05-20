@@ -231,10 +231,8 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             self.indent_level + 2
         };
-        let mut instance_scratch = self.scratch_declaration_emitter();
-        instance_scratch.indent_level = instance_indent;
-        let mut static_scratch = self.scratch_declaration_emitter();
-        static_scratch.indent_level = self.indent_level + 1;
+        let mut instance_scratch = self.scratch_object_type_body_emitter(instance_indent);
+        let mut static_scratch = self.scratch_object_type_body_emitter(self.indent_level + 1);
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -451,10 +449,8 @@ impl<'a> DeclarationEmitter<'a> {
             params_text = "...args: any[]".to_string();
         }
 
-        let mut instance_scratch = self.scratch_declaration_emitter();
-        instance_scratch.indent_level = self.indent_level + 2;
-        let mut static_scratch = self.scratch_declaration_emitter();
-        static_scratch.indent_level = self.indent_level + 1;
+        let mut instance_scratch = self.scratch_object_type_body_emitter(self.indent_level + 2);
+        let mut static_scratch = self.scratch_object_type_body_emitter(self.indent_level + 1);
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -633,8 +629,7 @@ impl<'a> DeclarationEmitter<'a> {
                     continue;
                 };
                 if let Some(class) = self.arena.get_class(decl_node) {
-                    let mut scratch = self.scratch_declaration_emitter();
-                    scratch.indent_level = indent_level;
+                    let mut scratch = self.scratch_object_type_body_emitter(indent_level);
                     for member_idx in class.members.nodes.iter().copied() {
                         let Some(member_node) = self.arena.get(member_idx) else {
                             continue;
@@ -652,8 +647,7 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
                 if let Some(interface) = self.arena.get_interface(decl_node) {
-                    let mut scratch = self.scratch_declaration_emitter();
-                    scratch.indent_level = indent_level;
+                    let mut scratch = self.scratch_object_type_body_emitter(indent_level);
                     for member_idx in interface.members.nodes.iter().copied() {
                         scratch.emit_class_member(member_idx);
                     }

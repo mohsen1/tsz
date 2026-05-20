@@ -4,7 +4,7 @@
 //! relation, property, and element access queries. This is the concrete
 //! database implementation used by the checker at runtime.
 
-use crate::caches::db::{QueryDatabase, TypeDatabase};
+use crate::caches::db::{QueryDatabase, TypeDatabase, TypePredicateCache};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_trace;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
@@ -14,16 +14,15 @@ use crate::intern::TypeInterner;
 use crate::objects::element_access::ElementAccessResult;
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::relation_queries::{
-    RelationContext, RelationPolicy, configured_compat_checker, configured_subtype_checker,
+    RelationContext, RelationKind, RelationPolicy, query_relation,
 };
-use crate::relations::subtype::{NoopResolver, TypeResolver};
+use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
-    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheConfig, RelationCacheKey,
-    StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
-    TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
-    Visibility,
+    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, StringIntrinsicKind, SymbolRef,
+    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId,
+    TypeData, TypeId, TypeListId, TypeParamInfo, Variance, Visibility,
 };
 use crate::visitor::is_error_type;
 use dashmap::DashMap;
@@ -37,17 +36,8 @@ type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
 
-/// Build a subtype cache config from the legacy packed `u16` flags by routing
-/// through the typed relation policy bridge.
-pub const fn subtype_cache_config_from_legacy_flags(flags: u16) -> RelationCacheConfig {
-    RelationPolicy::from_flags(flags).cache_config()
-}
-
-/// Build an assignability cache config from legacy packed `u16` flags by
-/// routing through the typed relation policy bridge.
-pub const fn assignability_cache_config_from_legacy_flags(flags: u16) -> RelationCacheConfig {
-    RelationPolicy::from_flags(flags).cache_config()
-}
+const SUBTYPE_POLICY_TRACE_OP: &str = "is_subtype_of_with_policy";
+const ASSIGNABILITY_POLICY_TRACE_OP: &str = "is_assignable_to_with_policy";
 
 /// Thread-safe shared query cache for cross-file type checking.
 ///
@@ -194,7 +184,7 @@ impl QueryCacheStatistics {
         // We use 64 bytes as a conservative per-bucket overhead constant.
         const BUCKET_OVERHEAD: usize = 64;
 
-        // eval_cache: (TypeId, bool) -> TypeId  ≈ 8 + 1 + 4 = 13 bytes key+value
+        // eval_cache: EvaluationCacheKey -> TypeId  ≈ 8 + 1 + 4 = 13 bytes key+value
         let eval = self.eval_cache_entries * (BUCKET_OVERHEAD + 13);
 
         // application_eval_cache: (DefId, SmallVec<[TypeId;4]>, bool) -> TypeId
@@ -840,6 +830,33 @@ impl<'a> QueryCache<'a> {
     }
 }
 
+impl TypePredicateCache for QueryCache<'_> {
+    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_this_type_cached(type_id)
+    }
+
+    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
+        self.interner.set_contains_this_type_cache(type_id, result);
+    }
+
+    fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_infer_types_cached(type_id)
+    }
+
+    fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_contains_infer_types_cache(type_id, result);
+    }
+
+    fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_type_query_cached(type_id)
+    }
+
+    fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
+        self.interner.set_contains_type_query_cache(type_id, result);
+    }
+}
+
 impl TypeDatabase for QueryCache<'_> {
     fn intern(&self, key: TypeData) -> TypeId {
         self.interner.intern(key)
@@ -1199,31 +1216,6 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.is_evaluation_fuel_exhausted()
     }
 
-    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_this_type_cached(type_id)
-    }
-
-    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
-        self.interner.set_contains_this_type_cache(type_id, result);
-    }
-
-    fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_infer_types_cached(type_id)
-    }
-
-    fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_infer_types_cache(type_id, result);
-    }
-
-    fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_type_query_cached(type_id)
-    }
-
-    fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
-        self.interner.set_contains_type_query_cache(type_id, result);
-    }
-
     fn exact_optional_property_types(&self) -> bool {
         self.exact_optional_property_types.get()
     }
@@ -1367,7 +1359,7 @@ impl QueryDatabase for QueryCache<'_> {
         let mut evaluator =
             crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
         evaluator = evaluator.with_query_db(self);
-        let result = evaluator.evaluate_request(request);
+        let result = evaluator.evaluate_request_result(request).into_type_id();
 
         // PERF: Persist intermediate evaluation results from this session into
         // the long-lived eval_cache. During recursive mapped type expansion
@@ -1483,7 +1475,12 @@ impl QueryDatabase for QueryCache<'_> {
         self.subtype_reduction_cache.insert(key, result);
     }
 
-    fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+    fn is_subtype_of_with_policy(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> bool {
         // Fast identity/top/bottom paths — avoid cache key construction, RefCell
         // borrow, and SubtypeChecker allocation entirely.
         if source == target
@@ -1511,25 +1508,21 @@ impl QueryDatabase for QueryCache<'_> {
             let query_id = query_trace::next_query_id();
             query_trace::relation_start(
                 query_id,
-                "is_subtype_of_with_flags",
+                SUBTYPE_POLICY_TRACE_OP,
                 source,
                 target,
-                flags,
+                policy.flags,
             );
             query_id
         });
-        let key = RelationCacheKey::for_subtype(
-            source,
-            target,
-            subtype_cache_config_from_legacy_flags(flags),
-        );
+        let key = RelationCacheKey::for_subtype(source, target, policy.cache_config());
         let cached = self.subtype_cache.borrow().get(&key).copied();
 
         if let Some(result) = cached {
             self.subtype_cache_hits
                 .set(self.subtype_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, true);
+                query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1542,7 +1535,7 @@ impl QueryDatabase for QueryCache<'_> {
             self.subtype_cache_hits
                 .set(self.subtype_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, true);
+                query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1550,27 +1543,32 @@ impl QueryDatabase for QueryCache<'_> {
         self.subtype_cache_misses
             .set(self.subtype_cache_misses.get() + 1);
 
-        let policy = RelationPolicy::from_flags(flags);
-        let resolver = NoopResolver;
-        let mut checker = configured_subtype_checker(
+        let result = query_relation(
             self.as_type_database(),
-            &resolver,
+            source,
+            target,
+            RelationKind::Subtype,
             policy,
             RelationContext::default(),
         );
-        let result = checker.is_subtype_of(source, target);
+        let result = result.related;
         self.subtype_cache.borrow_mut().insert(key, result);
         // Write to shared cache for cross-file benefit.
         if let Some(shared) = self.shared {
             shared.subtype_cache.insert(key, result);
         }
         if let Some(query_id) = trace_query_id {
-            query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, false);
+            query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, false);
         }
         result
     }
 
-    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+    fn is_assignable_to_with_policy(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> bool {
         // Fast identity/top/bottom paths — avoid cache key construction, RefCell
         // borrow, and CompatChecker allocation entirely.
         if source == target
@@ -1598,30 +1596,20 @@ impl QueryDatabase for QueryCache<'_> {
             let query_id = query_trace::next_query_id();
             query_trace::relation_start(
                 query_id,
-                "is_assignable_to_with_flags",
+                ASSIGNABILITY_POLICY_TRACE_OP,
                 source,
                 target,
-                flags,
+                policy.flags,
             );
             query_id
         });
-        // Task A: Use passed flags instead of hardcoded 0,0.
-        // The flags bitmask is the legacy `u16` protocol owned by the
-        // checker's `pack_relation_flags()`; convert it to a typed
-        // `RelationCacheConfig` that matches the effective defaults of a
-        // fresh `CompatChecker` so write-paths and read-paths share the
-        // same cache slot.
-        let key = RelationCacheKey::for_assignability(
-            source,
-            target,
-            assignability_cache_config_from_legacy_flags(flags),
-        );
+        let key = RelationCacheKey::for_assignability(source, target, policy.cache_config());
 
         if let Some(result) = self.check_cache(&self.assignability_cache, key) {
             self.assignability_cache_hits
                 .set(self.assignability_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, true);
+                query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1634,7 +1622,7 @@ impl QueryDatabase for QueryCache<'_> {
             self.assignability_cache_hits
                 .set(self.assignability_cache_hits.get() + 1);
             if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, true);
+                query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
@@ -1642,15 +1630,15 @@ impl QueryDatabase for QueryCache<'_> {
         self.assignability_cache_misses
             .set(self.assignability_cache_misses.get() + 1);
 
-        let policy = RelationPolicy::from_flags(flags);
-        let resolver = NoopResolver;
-        let mut checker = configured_compat_checker(
+        let result = query_relation(
             self.as_type_database(),
-            &resolver,
+            source,
+            target,
+            RelationKind::Assignable,
             policy,
             RelationContext::default(),
         );
-        let result = checker.is_assignable(source, target);
+        let result = result.related;
 
         self.insert_cache(&self.assignability_cache, key, result);
         // Write to shared cache for cross-file benefit.
@@ -1658,19 +1646,19 @@ impl QueryDatabase for QueryCache<'_> {
             shared.assignability_cache.insert(key, result);
         }
         if let Some(query_id) = trace_query_id {
-            query_trace::relation_end(query_id, "is_assignable_to_with_flags", result, false);
+            query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, false);
         }
         result
     }
 
     /// Convenience wrapper for `is_subtype_of` with default flags.
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
-        self.is_subtype_of_with_flags(source, target, 0) // Default non-strict mode for backward compatibility
+        self.is_subtype_of_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
     /// Convenience wrapper for `is_assignable_to` with default flags.
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
-        self.is_assignable_to_with_flags(source, target, 0) // Default non-strict mode for backward compatibility
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
     fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {
