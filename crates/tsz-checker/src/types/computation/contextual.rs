@@ -9,21 +9,22 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::MethodDeclData;
 
-fn method_decl_is_contextually_sensitive(state: &CheckerState, method: &MethodDeclData) -> bool {
-    let has_unannotated_params = method.parameters.nodes.iter().any(|&param_idx| {
+fn has_unannotated_params(state: &CheckerState, nodes: &[NodeIndex]) -> bool {
+    nodes.iter().any(|&param_idx| {
         state
             .ctx
             .arena
             .get(param_idx)
             .and_then(|pn| state.ctx.arena.get_parameter(pn))
             .is_some_and(|p| p.type_annotation.is_none())
-    });
-    // A method referencing `this` is context-sensitive: its `this` type flows from the
-    // object's contextual type and can only be resolved after outer type params are inferred.
+    })
+}
+
+fn method_decl_is_contextually_sensitive(state: &CheckerState, method: &MethodDeclData) -> bool {
     let uses_this =
         tsz_parser::syntax::transform_utils::contains_this_reference(state.ctx.arena, method.body);
     uses_this
-        || has_unannotated_params
+        || has_unannotated_params(state, &method.parameters.nodes)
         || (method.parameters.nodes.is_empty()
             && method.type_annotation.is_none()
             && function_body_needs_contextual_return_type(state, method.body))
@@ -85,14 +86,6 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
         // not from any object literal contextual type.
         k if k == syntax_kind_ext::ARROW_FUNCTION || k == syntax_kind_ext::FUNCTION_EXPRESSION => {
             if let Some(func) = state.ctx.arena.get_function(node) {
-                let has_unannotated_params = func.parameters.nodes.iter().any(|&param_idx| {
-                    if let Some(param_node) = state.ctx.arena.get(param_idx)
-                        && let Some(param) = state.ctx.arena.get_parameter(param_node)
-                    {
-                        return param.type_annotation.is_none();
-                    }
-                    false
-                });
                 let uses_this = k == syntax_kind_ext::FUNCTION_EXPRESSION
                     && tsz_parser::syntax::transform_utils::contains_this_reference(
                         state.ctx.arena,
@@ -100,7 +93,7 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
                     );
 
                 uses_this
-                    || has_unannotated_params
+                    || has_unannotated_params(state, &func.parameters.nodes)
                     || (func.parameters.nodes.is_empty()
                         && func.type_annotation.is_none()
                         && function_body_needs_contextual_return_type(state, func.body))
