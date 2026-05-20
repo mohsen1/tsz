@@ -1146,18 +1146,12 @@ pub struct CheckerContext<'a> {
     /// forms of each module name are indexed.
     pub global_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
 
-    /// Pre-built arena-pointer → file-index map. Eliminates O(N) scans in
-    /// `get_binder_for_arena` / `get_file_idx_for_arena` (13+ call sites).
-    /// Key is `Arc::as_ptr(arena) as usize` for `Send`/`Sync` safety.
+    /// Pre-built arena-pointer → file-index map for O(1) arena owner lookup.
     pub global_arena_index: Option<Arc<FxHashMap<usize, usize>>>,
-
     /// Normalized-file-name → file-index reverse index consumed by
     /// `resolve_import_target_from_file` via `resolve_specifier_via_file_index`.
     pub global_file_name_index: Option<Arc<crate::module_resolution::FileNameIndex>>,
-
-    /// Pre-built global-scope duplicate candidate index.
     pub global_scope_conflict_index: Option<Arc<GlobalScopeConflictIndex>>,
-
     /// Program-wide `FileReexportsMap` shared across cross-file lookup
     /// binders. The full merged map lives here once; per-file cross-file
     /// lookup binders leave their `reexports` field empty and the
@@ -1510,11 +1504,8 @@ pub struct ProgramContext {
     /// Pre-computed global module binder index: module name -> Vec<`binder_idx`>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
-    /// Pre-computed arena-pointer → file-index map. O(1) arena→binder lookups.
     pub global_arena_index: Option<Arc<FxHashMap<usize, usize>>>,
-    /// Pre-computed filename reverse index; see `CheckerContext::global_file_name_index`.
     pub global_file_name_index: Option<Arc<crate::module_resolution::FileNameIndex>>,
-    /// Pre-built global-scope duplicate candidate index.
     pub global_scope_conflict_index: Option<Arc<GlobalScopeConflictIndex>>,
     /// Program-wide re-export index shared across cross-file lookup binders;
     /// see `CheckerContext::program_reexports`.
