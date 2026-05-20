@@ -22,6 +22,7 @@ TypeScript/tests/cases/compiler/reorderProperties.ts
 TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts
 TypeScript/tests/cases/compiler/reverseMappedTypeContextualTypesPerElementOfTupleConstraint.ts
 TypeScript/tests/cases/compiler/spyComparisonChecking.ts
+TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
 TypeScript/tests/cases/compiler/temporal.ts
 TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive3.ts
 TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts
