@@ -1488,7 +1488,7 @@ impl DefinitionStore {
             _ => return Vec::new(),
         };
 
-        let mut resolved = Vec::new();
+        let mut resolved = Vec::with_capacity(heritage_names.len());
         for name_str in &heritage_names {
             let name_atom = intern_fn(name_str);
             if let Some(candidates) = self.name_to_defs.get(&name_atom) {
@@ -1988,7 +1988,7 @@ impl DefinitionStore {
 
             // Resolve implements_names → DefinitionInfo.implements
             if !entry.implements_names.is_empty() {
-                let mut resolved_implements = Vec::new();
+                let mut resolved_implements = Vec::with_capacity(entry.implements_names.len());
                 for name_str in &entry.implements_names {
                     if name_str.contains('.') {
                         continue;

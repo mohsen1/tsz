@@ -3498,6 +3498,22 @@ pub fn load_tsconfig_with_diagnostics(path: &Path) -> Result<ParsedTsConfig> {
     load_tsconfig_inner_with_diagnostics(path, &mut visited, false)
 }
 
+fn config_ignore_deprecations_silences_6_0(config: &TsConfig) -> bool {
+    matches!(
+        config
+            .compiler_options
+            .as_ref()
+            .and_then(|options| options.ignore_deprecations.as_deref()),
+        Some("6.0")
+    )
+}
+
+const fn is_ts60_deprecation_diagnostic_code(code: u32) -> bool {
+    code == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+        || code
+            == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+}
+
 fn load_tsconfig_inner(
     path: &Path,
     visited: &mut FxHashSet<PathBuf>,
@@ -3640,6 +3656,12 @@ fn load_tsconfig_inner_with_diagnostics(
                 ));
             }
         }
+    }
+
+    if config_ignore_deprecations_silences_6_0(&parsed.config) {
+        parsed
+            .diagnostics
+            .retain(|diag| !is_ts60_deprecation_diagnostic_code(diag.code));
     }
 
     visited.remove(&canonical);
@@ -7335,6 +7357,45 @@ mod tests {
                 .diagnostics
                 .iter()
                 .map(|d| d.code)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_child_ignore_deprecations_suppresses_inherited_ts5107() {
+        let temp = tempdir().expect("create temp dir");
+        let base_path = temp.path().join("base.json");
+        std::fs::write(
+            &base_path,
+            r#"{
+  "compilerOptions": {
+    "moduleResolution": "node"
+  }
+}"#,
+        )
+        .expect("write base");
+
+        let child_path = temp.path().join("tsconfig.json");
+        std::fs::write(
+            &child_path,
+            r#"{
+  "extends": "./base.json",
+  "compilerOptions": {
+    "ignoreDeprecations": "6.0"
+  },
+  "files": ["a.ts"]
+}"#,
+        )
+        .expect("write child");
+
+        let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load child");
+        assert!(
+            !parsed.diagnostics.iter().any(|d| d.code == 5107),
+            "child ignoreDeprecations=6.0 should suppress inherited TS5107, got: {:?}",
+            parsed
+                .diagnostics
+                .iter()
+                .map(|d| (&d.file, d.code, &d.message_text))
                 .collect::<Vec<_>>()
         );
     }
