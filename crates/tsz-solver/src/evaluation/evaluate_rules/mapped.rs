@@ -919,30 +919,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Returns true when the mapped type must stay deferred because its constraint
-    /// is (or contains) `keyof TypeParam` — i.e. the key-set depends on an unknown T.
+    /// is `keyof T` (or `keyof Partial<T>`) where T is still a type parameter.
+    ///
+    /// Intersection constraints like `keyof T & keyof C` are intentionally excluded:
+    /// those defer later at the "could not extract concrete keys" fallback, which
+    /// lets intermediate paths like `try_distribute_mapped_over_union_source` run
+    /// correctly for patterns such as `{ [K in keyof T & string]: T[K] }`.
     fn is_mapped_type_over_type_parameter(&self, mapped: &MappedType) -> bool {
         self.constraint_has_keyof_type_param(mapped.constraint)
     }
 
-    /// Returns true when `constraint` is or contains a `keyof TypeParam` member.
+    /// Returns true when `constraint` is `keyof T` (or `keyof Partial<T>`) where T
+    /// is a type parameter or infer type.
     ///
-    /// Covers `keyof T`, intersections `keyof T & keyof C`, and transitive mapped
-    /// types `keyof Partial<T>` so that all deferred-evaluation cases are caught.
+    /// Does not recurse through intersections — `keyof T & string` must not defer
+    /// early so that `try_distribute_mapped_over_union_source` still runs correctly.
     fn constraint_has_keyof_type_param(&self, constraint: TypeId) -> bool {
-        match self.interner().lookup(constraint) {
-            Some(TypeData::KeyOf(source)) => match self.interner().lookup(source) {
-                Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => true,
-                Some(TypeData::Mapped(inner_mapped_id)) => {
-                    let inner_mapped = self.interner().get_mapped(inner_mapped_id);
-                    self.constraint_has_keyof_type_param(inner_mapped.constraint)
-                }
-                _ => false,
-            },
-            Some(TypeData::Intersection(members)) => self
-                .interner()
-                .type_list(members)
-                .iter()
-                .any(|&m| self.constraint_has_keyof_type_param(m)),
+        let Some(TypeData::KeyOf(source)) = self.interner().lookup(constraint) else {
+            return false;
+        };
+        match self.interner().lookup(source) {
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => true,
+            Some(TypeData::Mapped(inner_mapped_id)) => {
+                let inner_mapped = self.interner().get_mapped(inner_mapped_id);
+                self.constraint_has_keyof_type_param(inner_mapped.constraint)
+            }
             _ => false,
         }
     }
