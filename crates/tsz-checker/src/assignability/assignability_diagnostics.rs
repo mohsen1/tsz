@@ -2468,7 +2468,7 @@ impl<'a> CheckerState<'a> {
         }
         let value_type = value_prop.type_id;
 
-        !self.is_assignable_to(TypeId::UNDEFINED, value_type)
+        !self.diagnostic_relation_boolean_guard(TypeId::UNDEFINED, value_type)
     }
 
     fn iterator_result_application_args(&self, type_id: TypeId) -> Option<Vec<TypeId>> {
