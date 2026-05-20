@@ -1,13 +1,13 @@
 use tsz_solver::{ObjectShape, TypeDatabase, TypeId, TypeResolver};
 
-pub(crate) use tsz_solver::PropertyCollectionResult;
+pub(crate) use tsz_solver::objects::PropertyCollectionResult;
 
 pub(crate) fn collect_properties<R: TypeResolver>(
     type_id: TypeId,
     db: &dyn TypeDatabase,
     resolver: &R,
 ) -> PropertyCollectionResult {
-    tsz_solver::collect_properties(type_id, db, resolver)
+    tsz_solver::objects::collect_properties(type_id, db, resolver)
 }
 
 pub(crate) fn collected_properties_object_type<R: TypeResolver>(
