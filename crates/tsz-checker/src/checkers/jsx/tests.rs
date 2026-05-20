@@ -783,7 +783,7 @@ fn jsx_empty_element_attributes_property_uses_instance_type() {
     assert!(
         ts2322.iter().any(|d| d
             .message_text
-            .contains("is not assignable to type '{ q?: number | undefined; }'")),
+            .contains("is not assignable to type '{ q?: number | undefined; }'") ),
         "expected TS2322 to compare against the instance type, got: {diagnostics:?}"
     );
     assert!(
@@ -3313,7 +3313,7 @@ let k = <Comp>hello<A /></Comp>;
     );
 }
 
-/// `ComponentType<P>` is an Application type (not a direct union in the TypeData sense)
+/// `ComponentType<P>` is an Application type (not a direct union in the `TypeData` sense)
 /// that evaluates to `ComponentClass<P> | FunctionComponent<P>`. When used as a JSX tag,
 /// its expanded members are React alias applications whose recursive return types trigger
 /// cycle-detection false positives if we check them. The Application itself must be treated
@@ -3375,7 +3375,7 @@ fn jsx_component_type_application_no_ts2786() {
 }
 
 /// `FunctionComponent<P>` used directly as a JSX tag type (Application, not a union) must
-/// not emit TS2786. Its return types create the same cycle-detection risk as ComponentType<P>.
+/// not emit TS2786. Its return types create the same cycle-detection risk as `ComponentType<P>`.
 ///
 /// The non-React counterpart (a custom interface with invalid returns) must still emit TS2786
 /// to prove the skip is React-alias-specific, not universal.
