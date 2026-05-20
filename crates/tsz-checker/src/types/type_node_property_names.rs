@@ -64,6 +64,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if self.symbol_refers_to_unique_symbol(sym_id) {
             return Some(format!("__unique_{}", sym_id.0));
         }
+        // Variables and parameters with an explicit `: symbol` annotation (not
+        // `: unique symbol`) also receive a binding-identity key.  The same
+        // `__unique_<id>` format is used so that the access-site conversion in
+        // element-access evaluation can match by SymbolRef without any special
+        // casing in the solver's property-lookup loop.
+        if self.symbol_has_nonunique_symbol_annotation(sym_id) {
+            return Some(format!("__unique_{}", sym_id.0));
+        }
 
         self.get_property_name(name_idx)
     }
@@ -279,5 +287,81 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .and_then(|call| arena.get(call.expression))
             .and_then(|expr_node| arena.get_identifier(expr_node))
             .is_some_and(|ident| ident.escaped_text == "Symbol")
+    }
+
+    /// Returns `true` when `sym_id` refers to a variable or parameter declared
+    /// with an explicit `: symbol` annotation (not `: unique symbol`).
+    ///
+    /// These "non-unique symbol" bindings produce computed property keys stored
+    /// as `__unique_<id>` so that element-access evaluation can match them by
+    /// binding identity, mirroring how TypeScript resolves `ws[sym]` when `sym`
+    /// is typed as the general `symbol` type.
+    pub(super) fn symbol_has_nonunique_symbol_annotation(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.get_symbol_from_any_context(sym_id) else {
+            return false;
+        };
+        let file_idx = symbol.decl_file_idx;
+        let owner_binder = self
+            .ctx
+            .get_binder_for_file(file_idx as usize)
+            .unwrap_or(self.ctx.binder);
+
+        symbol.all_declarations().into_iter().any(|decl_idx| {
+            let mut candidate_arenas: Vec<&tsz_parser::parser::node::NodeArena> = Vec::new();
+            if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+            }
+            if let Some(symbol_arena) = owner_binder.symbol_arenas.get(&sym_id) {
+                candidate_arenas.push(symbol_arena.as_ref());
+            }
+            if std::ptr::eq(owner_binder, self.ctx.binder) {
+                candidate_arenas.push(self.ctx.arena);
+            }
+
+            candidate_arenas
+                .into_iter()
+                .any(|arena| self.declaration_has_nonunique_symbol_annotation(arena, decl_idx))
+        })
+    }
+
+    fn declaration_has_nonunique_symbol_annotation(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(decl_idx) else {
+            return false;
+        };
+
+        let type_annotation = if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let Some(var_decl) = arena.get_variable_declaration(node) else {
+                return false;
+            };
+            var_decl.type_annotation
+        } else if node.kind == syntax_kind_ext::PARAMETER {
+            let Some(param) = arena.get_parameter(node) else {
+                return false;
+            };
+            param.type_annotation
+        } else {
+            return false;
+        };
+
+        if !type_annotation.is_some() {
+            return false;
+        }
+
+        // `: symbol` parses as SyntaxKind::SymbolKeyword (a keyword type node), which is
+        // never unique symbol. `: unique symbol` parses as TYPE_OPERATOR + SymbolKeyword.
+        if let Some(ann_node) = arena.get(type_annotation)
+            && ann_node.kind == SyntaxKind::SymbolKeyword as u16
+        {
+            return true;
+        }
+
+        // Fallback: handle `symbol` written as a TypeReference (rare but possible in some
+        // AST forms); exclude `unique symbol` so the unique-symbol path stays intact.
+        self.is_symbol_type_node_in_arena(arena, type_annotation)
+            && !self.is_unique_symbol_type_annotation_in_arena(arena, type_annotation)
     }
 }

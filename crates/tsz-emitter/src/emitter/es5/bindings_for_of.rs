@@ -2,7 +2,7 @@
 
 use super::super::Printer;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::ForInOfData;
+use tsz_parser::parser::node::{ForInOfData, Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -234,6 +234,11 @@ impl<'a> Printer<'a> {
                     .cloned()
                     .collect();
                 let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
+                let body_temp_count =
+                    self.count_downlevel_expression_hoisted_temps(for_in_of.statement);
+                if body_temp_count > 0 {
+                    self.preallocate_hoisted_temp_names(body_temp_count);
+                }
                 self.emit_loop_function(
                     &loop_fn_name,
                     &param_vars,
@@ -399,6 +404,75 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+    }
+
+    fn count_downlevel_expression_hoisted_temps(&self, idx: NodeIndex) -> usize {
+        if !self.ctx.needs_es2020_lowering || idx.is_none() {
+            return 0;
+        }
+
+        let mut count = 0usize;
+        let mut stack = vec![idx];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.arena.get(current) else {
+                continue;
+            };
+
+            count += self.downlevel_expression_hoisted_temp_count_for_node(node);
+
+            if self.downlevel_expression_temp_scope_boundary(node) {
+                continue;
+            }
+
+            for child in self.arena.get_children(current) {
+                stack.push(child);
+            }
+        }
+        count
+    }
+
+    fn downlevel_expression_hoisted_temp_count_for_node(&self, node: &Node) -> usize {
+        if let Some(access) = self.arena.get_access_expr(node)
+            && access.question_dot_token
+            && !self.is_simple_nullish_expression(access.expression)
+        {
+            return 1;
+        }
+
+        if let Some(binary) = self.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
+            && !self.is_simple_nullish_expression(binary.left)
+        {
+            return 1;
+        }
+
+        if let Some(call) = self.arena.get_call_expr(node)
+            && node.is_optional_chain()
+            && !self.optional_chain_call_uses_simple_receiver_for_temp_count(call.expression)
+            && !self.is_simple_nullish_expression(call.expression)
+        {
+            return 1;
+        }
+
+        0
+    }
+
+    fn optional_chain_call_uses_simple_receiver_for_temp_count(&self, callee: NodeIndex) -> bool {
+        let Some(callee_node) = self.arena.get(callee) else {
+            return false;
+        };
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        access.question_dot_token && self.is_simple_nullish_expression(access.expression)
+    }
+
+    fn downlevel_expression_temp_scope_boundary(&self, node: &Node) -> bool {
+        self.arena.get_function(node).is_some()
+            || self.arena.get_method_decl(node).is_some()
+            || self.arena.get_constructor(node).is_some()
+            || self.arena.get_accessor(node).is_some()
+            || self.arena.get_class(node).is_some()
     }
 
     pub(in crate::emitter) fn estimate_for_of_assignment_temp_reserve(

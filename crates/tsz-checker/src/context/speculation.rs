@@ -144,6 +144,18 @@ pub(crate) struct ReturnTypeSnapshot {
     pub cache: CacheSnapshot,
 }
 
+impl ReturnTypeSnapshot {
+    /// The diagnostic checkpoint embedded in this return-type snapshot.
+    pub(crate) const fn diagnostic_snapshot(&self) -> &DiagnosticSnapshot {
+        &self.full.diag
+    }
+
+    /// Roll back return-type inference state through the speculation boundary.
+    pub(crate) fn rollback(&self, speculation: &mut SpeculationState<'_, '_>) {
+        speculation.ctx.rollback_return_type(self);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CheckerContext snapshot methods
 // ---------------------------------------------------------------------------
@@ -286,7 +298,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Roll back to a return-type snapshot, discarding speculative diagnostics,
     /// dedup state, and cache entries added during speculation.
-    pub(crate) fn rollback_return_type(&mut self, snap: &ReturnTypeSnapshot) {
+    fn rollback_return_type(&mut self, snap: &ReturnTypeSnapshot) {
         self.rollback_full(&snap.full);
         self.node_types.clone_from(&snap.cache.node_types);
         self.request_node_types
@@ -507,6 +519,12 @@ impl DiagnosticState<'_, '_> {
     }
 }
 
+impl SpeculationState<'_, '_> {
+    fn rollback_full(&mut self, snap: &FullSnapshot) {
+        self.ctx.rollback_full(snap);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot holder for diagnostic speculation
 // ---------------------------------------------------------------------------
@@ -613,6 +631,32 @@ impl DiagnosticSpeculationSnapshot {
 // `.snapshot()` for manual operations) and intentionally drop it to commit
 // the speculative diagnostics. A debug_assert in Drop would break these
 // legitimate patterns.
+
+/// Full checker-state snapshot holder for speculative checking.
+///
+/// Like `DiagnosticSpeculationSnapshot`, dropping is an implicit commit.
+/// Call `rollback()` explicitly when discarding diagnostics, implicit-any
+/// bookkeeping, and request cache state produced during a speculative probe.
+#[allow(dead_code)]
+pub(crate) struct FullSpeculationSnapshot {
+    snapshot: FullSnapshot,
+    committed: bool,
+}
+
+#[allow(dead_code)]
+impl FullSpeculationSnapshot {
+    pub(crate) fn new(ctx: &CheckerContext) -> Self {
+        Self {
+            snapshot: ctx.snapshot_full(),
+            committed: false,
+        }
+    }
+
+    pub(crate) fn rollback(mut self, speculation: &mut SpeculationState<'_, '_>) {
+        speculation.rollback_full(&self.snapshot);
+        self.committed = true;
+    }
+}
 
 // Unit tests for speculation API are in tests/speculation_rollback_tests.rs
 // (integration tests that use the full parse→bind→check pipeline).

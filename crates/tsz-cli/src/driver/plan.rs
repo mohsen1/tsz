@@ -584,6 +584,9 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
             "exactOptionalPropertyTypes" => options.checker.exact_optional_property_types = false,
             "erasableSyntaxOnly" => options.checker.erasable_syntax_only = false,
             "sound" => options.checker.sound_mode = false,
+            "soundCheckDeclarations" => options.checker.sound_check_declarations = false,
+            "soundReportOnly" => options.checker.sound_report_only = false,
+            "soundPedantic" => options.checker.sound_pedantic = false,
             "experimentalDecorators" => {
                 options.checker.experimental_decorators = false;
                 options.printer.legacy_decorators = false;

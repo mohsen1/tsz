@@ -1991,6 +1991,39 @@ fn test_t_extends_any_distribution_over_never_preserved() {
 }
 
 #[test]
+fn test_t_extends_any_never_false_target_accepts_true_branch_source() {
+    // In target position, `T extends any|unknown ? X : never` accepts a source
+    // that already fits `X`; the distributive `never` case contributes no
+    // values, so the source does not also have to be assignable to `never`.
+    let interner = TypeInterner::new();
+
+    for (param_name, extends_type) in [
+        ("T", TypeId::ANY),
+        ("P", TypeId::UNKNOWN),
+        ("Item", TypeId::ANY),
+    ] {
+        let check = make_unconstrained_param(&interner, param_name);
+        let target = interner.conditional(ConditionalType {
+            check_type: check,
+            extends_type,
+            true_type: TypeId::STRING,
+            false_type: TypeId::NEVER,
+            is_distributive: true,
+        });
+
+        let mut checker = SubtypeChecker::new(&interner);
+        assert!(
+            checker.is_subtype_of(TypeId::STRING, target),
+            "`{param_name} extends any|unknown ? string : never` should accept string"
+        );
+        assert!(
+            !checker.is_subtype_of(TypeId::NUMBER, target),
+            "`{param_name} extends any|unknown ? string : never` should still reject number"
+        );
+    }
+}
+
+#[test]
 fn test_equal_any_x_rejects_non_any_extends_identity() {
     // Structural simulation of the type-challenges `Equal<X, Y>` trick:
     //   type Equal<X, Y> = (<T>() => T extends X ? 1 : 2) extends
@@ -2877,4 +2910,41 @@ fn test_colocated_infer_constrained_all_satisfy_keeps_union() {
     // "foo" | "bar" satisfies extends string → true branch with U = "foo" | "bar"
     let expected = interner.union2(foo, bar);
     assert_eq!(result, expected);
+}
+
+#[test]
+fn function_intrinsic_extends_callable_in_conditional_types() {
+    use crate::types::{FunctionShape, ParamInfo};
+
+    let interner = TypeInterner::new();
+    let callable_target = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let cond = ConditionalType {
+        check_type: TypeId::FUNCTION,
+        extends_type: callable_target,
+        true_type: TypeId::STRING,
+        false_type: TypeId::NUMBER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "conditional types keep tsc's Function-extends-callable true branch"
+    );
 }

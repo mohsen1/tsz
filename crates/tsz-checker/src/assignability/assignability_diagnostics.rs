@@ -503,7 +503,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !self.is_assignable_to(prop_value_type, target_prop_type) {
+            if !self.diagnostic_relation_boolean_guard(prop_value_type, target_prop_type) {
                 // Report TS2322 at the property name (use _with_anchor to avoid
                 // assignment_diagnostic_anchor_idx walking up to the variable declaration)
                 self.error_type_not_assignable_at_with_anchor(
@@ -750,16 +750,16 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Reset the relation depth flag before the assignability check so we
-        // can detect fresh depth exceedance from this particular relation.
-        self.ctx.relation_depth_exceeded.set(false);
+        // Reset overflow flags before the assignability check so we detect fresh
+        // exceedance from this particular relation rather than a prior one.
+        self.ctx
+            .relation_overflow
+            .set(crate::context::RelationOverflowFlags::default());
         let assignable = self.diagnostic_relation_boolean_guard(source, target);
-        // TS2859: if the solver hit its recursion/complexity limit and could
-        // not establish assignability, emit "Excessive complexity comparing
-        // types". A successful relation may still set the sticky depth flag
-        // while exploring expansive recursive siblings; tsc does not report
-        // TS2859 when an assignable path was found.
-        if !assignable && self.ctx.relation_depth_exceeded.get() {
+        // tsc emits TS2859 ("Excessive complexity") for all relation-checker
+        // overflows regardless of whether it was depth or iteration that fired.
+        // TS2321 ("Excessive stack depth") fires from a separate mechanism.
+        if !assignable && self.ctx.relation_overflow.get().has_overflow() {
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_node(

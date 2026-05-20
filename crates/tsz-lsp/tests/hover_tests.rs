@@ -1794,6 +1794,31 @@ fn test_hover_jsdoc_link_preserves_display_alias() {
     );
 }
 
+#[test]
+fn test_hover_jsdoc_link_and_markdown_escaping_compose() {
+    let source = concat!(
+        "interface Target { value: number; }\n",
+        "/** See {@link Target|Target[0]} and literal [not a link](x). */\n",
+        "function consumer() {}\n",
+        "consumer();",
+    );
+    let info = get_hover_at(source, 3, 0).expect("hover info for consumer call");
+    let doc = info
+        .contents
+        .iter()
+        .find(|c| c.contains("See "))
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        doc.contains("[Target\\[0\\]](file:///test.ts#L1,"),
+        "link label should be escaped while preserving the Markdown anchor, got: {doc}",
+    );
+    assert!(
+        doc.contains("literal \\[not a link\\]\\(x\\)"),
+        "surrounding prose should still be Markdown-escaped, got: {doc}",
+    );
+}
+
 /// An unresolved `{@link X}` must not crash hover and must degrade to plain
 /// text in both the Markdown body and the plain `documentation` field. This
 /// is the acceptance criterion in issue #8759 ("broken @link does not crash").
@@ -1871,4 +1896,119 @@ fn test_hover_jsdoc_plain_documentation_strips_link_uri() {
         "raw token should not survive in plain documentation, got: {}",
         info.documentation,
     );
+}
+
+fn hover_markdown_section(info: &HoverInfo) -> String {
+    info.contents
+        .iter()
+        .find(|c: &&String| !c.starts_with("```typescript"))
+        .cloned()
+        .unwrap_or_default()
+}
+
+#[test]
+fn test_hover_jsdoc_summary_escapes_markdown_delimiters() {
+    // A user-supplied summary contains characters that would otherwise be
+    // interpreted as Markdown link syntax. The hover Markdown content must
+    // backslash-escape them so the renderer treats them as literal text.
+    let source = "/** See foo[0] for [an example](http://e) */\nfunction g() {}\ng();";
+    let info = get_hover_at(source, 2, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("foo\\[0\\]"),
+        "Bracket literals must be escaped in Markdown hover; got: {md:?}"
+    );
+    assert!(
+        md.contains("\\[an example\\]\\(http://e\\)"),
+        "Link-shaped literals must be inert in hover; got: {md:?}"
+    );
+    // The plain documentation field is rendered as text, not Markdown, so it
+    // must keep the original characters and not pick up backslashes.
+    assert!(
+        info.documentation.contains("foo[0]"),
+        "Plain documentation must keep raw text; got: {:?}",
+        info.documentation
+    );
+    assert!(
+        !info.documentation.contains("\\["),
+        "Plain documentation must not contain Markdown escapes; got: {:?}",
+        info.documentation
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_param_description_escapes_markdown_delimiters() {
+    let source = "/**\n * @param a See [docs](http://e) for details\n */\nfunction g(a: number) { return a; }\ng(1);";
+    let info = get_hover_at(source, 4, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("`a` See \\[docs\\]\\(http://e\\) for details"),
+        "Parameter description must be Markdown-escaped; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_param_name_with_backtick_uses_safe_fence() {
+    // A parameter description containing a literal backtick must not be
+    // emitted as a single-fenced inline span — that would terminate the
+    // span at the first inner backtick. The renderer chooses a longer
+    // fence per CommonMark §6.1.
+    let source =
+        "/**\n * @param a a `with` backtick\n */\nfunction g(a: number) { return a; }\ng(1);";
+    let info = get_hover_at(source, 4, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    // Description's literal backticks are escaped by the prose path so the
+    // Markdown renderer shows them verbatim instead of starting an inline
+    // code span.
+    assert!(
+        md.contains("`a` a \\`with\\` backtick"),
+        "Inline backticks in @param description must be escaped; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_returns_escapes_markdown_delimiters() {
+    let source = "/**\n * @returns the result [0..n]\n */\nfunction g() { return 0; }\ng();";
+    let info = get_hover_at(source, 4, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("Returns: the result \\[0..n\\]"),
+        "@returns text must be Markdown-escaped; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_example_uses_longer_fence_when_content_has_triple_backtick() {
+    // A code block whose body contains its own triple-backtick fence must be
+    // emitted with a longer outer fence so the renderer cannot terminate the
+    // block early. Avoid embedding three backticks directly in the Rust
+    // literal — write the JSDoc literal as concatenated string pieces.
+    let triple = "```";
+    let source = format!(
+        "/**\n * @example {triple}js\n *   foo();\n * {triple}\n */\nfunction g() {{}}\ng();"
+    );
+    let info = get_hover_at(&source, 6, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    let four = "````";
+    assert!(
+        md.contains(four),
+        "Example fence must outlast the inner ``` fence; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_summary_rule_is_name_independent() {
+    // Renaming the alphanumeric portion of a summary must not change whether
+    // delimiter characters are escaped. The rule is structural (§25).
+    let make = |label: &str| format!("/** See {label}[0] */\nfunction g() {{}}\ng();");
+    for label in ["foo", "bar", "myThing", "X"] {
+        let source = make(label);
+        let info = get_hover_at(&source, 2, 0).expect("Should find hover info");
+        let md = hover_markdown_section(&info);
+        let expected = format!("See {label}\\[0\\]");
+        assert!(
+            md.contains(&expected),
+            "Bracket escape must apply regardless of identifier {label:?}; got: {md:?}"
+        );
+    }
 }

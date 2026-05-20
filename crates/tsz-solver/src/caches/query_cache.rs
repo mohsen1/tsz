@@ -4,7 +4,7 @@
 //! relation, property, and element access queries. This is the concrete
 //! database implementation used by the checker at runtime.
 
-use crate::caches::db::{QueryDatabase, TypeDatabase, TypePredicateCache};
+use crate::caches::db::{QueryDatabase, TypeDatabase, TypePredicateCache, TypeTupleLimitSignal};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_trace;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
@@ -747,7 +747,7 @@ impl<'a> QueryCache<'a> {
                 }
 
                 // Collect properties per member
-                let mut all_props: Vec<Vec<PropertyInfo>> = Vec::new();
+                let mut all_props: Vec<Vec<PropertyInfo>> = Vec::with_capacity(non_nullish.len());
                 for &member in &non_nullish {
                     all_props.push(self.collect_object_spread_properties_inner(member, visited));
                 }
@@ -854,6 +854,16 @@ impl TypePredicateCache for QueryCache<'_> {
 
     fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
         self.interner.set_contains_type_query_cache(type_id, result);
+    }
+}
+
+impl TypeTupleLimitSignal for QueryCache<'_> {
+    fn take_tuple_too_large(&self) -> bool {
+        self.interner.take_tuple_too_large()
+    }
+
+    fn mark_tuple_too_large(&self) {
+        self.interner.set_tuple_too_large();
     }
 }
 

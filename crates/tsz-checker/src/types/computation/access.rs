@@ -62,129 +62,6 @@ pub(crate) fn optional_chain_root(arena: &NodeArena, idx: NodeIndex) -> NodeInde
 }
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn expando_element_key_name(&mut self, key_expr_idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(key_expr_idx)?;
-        match node.kind {
-            k if k == SyntaxKind::Identifier as u16 => {
-                let ident = self.ctx.arena.get_identifier(node)?;
-                let name = &ident.escaped_text;
-
-                // Resolve through the binder the same way detect_expando_assignment
-                // does, so the key matches what was stored at bind time.
-                let binder_sym = self
-                    .ctx
-                    .binder
-                    .get_node_symbol(key_expr_idx)
-                    .or_else(|| {
-                        self.ctx
-                            .binder
-                            .resolve_identifier(self.ctx.arena, key_expr_idx)
-                    })
-                    .or_else(|| self.ctx.binder.file_locals.get(name));
-                if let Some(sym_id) = binder_sym
-                    && let Some(key) = self.resolved_const_expando_key_from_binder(sym_id, 0)
-                {
-                    return Some(key);
-                }
-
-                // Fallback: resolve through the type system for non-binder cases.
-                let prev = self.ctx.preserve_literal_types;
-                self.ctx.preserve_literal_types = true;
-                let key_type = self.get_type_of_node(key_expr_idx);
-                self.ctx.preserve_literal_types = prev;
-
-                if let Some(lit) =
-                    crate::query_boundaries::common::literal_value(self.ctx.types, key_type)
-                {
-                    return Some(match lit {
-                        tsz_solver::LiteralValue::String(s) => self.ctx.types.resolve_atom(s),
-                        tsz_solver::LiteralValue::Number(n) => n.0.to_string(),
-                        tsz_solver::LiteralValue::Boolean(b) => b.to_string(),
-                        tsz_solver::LiteralValue::BigInt(b) => self.ctx.types.resolve_atom(b),
-                    });
-                }
-
-                if let Some(sym_ref) =
-                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, key_type)
-                {
-                    return Some(format!("__unique_{}", sym_ref.0));
-                }
-
-                Some(name.clone())
-            }
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NumericLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                self.ctx.arena.get_literal(node).map(|lit| lit.text.clone())
-            }
-            _ => None,
-        }
-    }
-
-    fn is_direct_expando_element_write_base(&self, object_expr_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(object_expr_idx) else {
-            return false;
-        };
-        node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-    }
-
-    fn is_expando_element_access_read(
-        &mut self,
-        object_expr_idx: NodeIndex,
-        key_expr_idx: NodeIndex,
-    ) -> bool {
-        let Some(obj_key) = property_access_chain_text_in_arena(self.ctx.arena, object_expr_idx)
-        else {
-            return false;
-        };
-        let Some(prop_key) = self.expando_element_key_name(key_expr_idx) else {
-            return false;
-        };
-
-        if self
-            .ctx
-            .binder
-            .expando_properties
-            .get(&obj_key)
-            .is_some_and(|props| {
-                props
-                    .iter()
-                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
-            })
-        {
-            return true;
-        }
-
-        // Use global expando index for O(1) lookup instead of O(N) binder scan
-        if let Some(expando_idx) = &self.ctx.global_expando_index {
-            if expando_idx.get(&obj_key).is_some_and(|props| {
-                props
-                    .iter()
-                    .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
-            }) {
-                return true;
-            }
-        } else if let Some(all_binders) = &self.ctx.all_binders {
-            for binder in all_binders.iter() {
-                if binder
-                    .expando_properties
-                    .get(&obj_key)
-                    .is_some_and(|props| {
-                        props
-                            .iter()
-                            .any(|prop| self.canonical_expando_property_name(prop) == prop_key)
-                    })
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
     /// Get the type of an element access expression (e.g., arr[0], obj["prop"]).
     ///
     /// Handles element access with optional chaining, index signatures,
@@ -241,6 +118,18 @@ impl<'a> CheckerState<'a> {
             .filter(|_| numeric_string_index.is_none())
             .map(|name| self.ctx.types.literal_string(name))
             .unwrap_or(index_type);
+
+        // When the index is a `symbol`-typed identifier, convert to a
+        // `UniqueSymbol(SymbolRef)` so the solver can match binding-identity
+        // properties stored as `__unique_<sym_id>`.  This mirrors how TypeScript
+        // resolves `ws[sym]` when `sym: symbol` was used as a computed property
+        // name in the object's type declaration.
+        let index_type_for_access = if index_type == TypeId::SYMBOL {
+            self.nonunique_symbol_index_type(access.name_or_argument)
+                .unwrap_or(index_type_for_access)
+        } else {
+            index_type_for_access
+        };
 
         // Get the type of the object. In write context, prefer the receiver's
         // declared type when it already has the indexed member, otherwise fall
@@ -740,11 +629,15 @@ impl<'a> CheckerState<'a> {
                 index_type,
             )
         {
+            let display_receiver = self.display_receiver_for_generic_indexed_write(
+                pre_resolution_object_type,
+                raw_object_type,
+            );
             return self
                 .ctx
                 .types
                 .factory()
-                .index_access(pre_resolution_object_type, index_type);
+                .index_access(display_receiver, index_type);
         }
 
         // Concrete receiver indexed by a generic key (`K extends keyof Receiver`):

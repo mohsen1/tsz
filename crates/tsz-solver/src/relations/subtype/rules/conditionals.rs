@@ -714,10 +714,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Strategy 2: Both branches must be supertypes of source.
-        if self.check_subtype(source, target.true_type).is_true()
-            && self.check_subtype(source, target.false_type).is_true()
+        // Strategy 2: Branch compatibility. A distributive
+        // `T extends any|unknown ? X : never` target is the canonical shape of
+        // utility aliases that map over each constituent of `T`. For any
+        // non-empty constituent the false branch is unreachable; for `never`,
+        // distribution produces `never` rather than a value outside `X`. When
+        // the source already fits `X`, do not require it to also fit `never`.
+        let true_result = self.check_subtype(source, target.true_type);
+        if true_result.is_true()
+            && target.is_distributive
+            && target.false_type == TypeId::NEVER
+            && (target.extends_type == TypeId::ANY || target.extends_type == TypeId::UNKNOWN)
         {
+            return SubtypeResult::True;
+        }
+
+        // Otherwise both branches must be supertypes of source.
+        let false_result = self.check_subtype(source, target.false_type);
+        if true_result.is_true() && false_result.is_true() {
             SubtypeResult::True
         } else {
             SubtypeResult::False

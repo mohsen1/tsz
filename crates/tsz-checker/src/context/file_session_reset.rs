@@ -254,7 +254,8 @@ impl<'a> CheckerContext<'a> {
         self.recursion_depth.borrow_mut().reset();
         self.instantiation_depth.set(0);
         self.depth_exceeded.set(false);
-        self.relation_depth_exceeded.set(false);
+        self.relation_overflow
+            .set(crate::context::RelationOverflowFlags::default());
         self.skip_callable_type_param_suppression.set(false);
         self.heritage_merge_depth.set(0);
         self.type_resolution_fuel

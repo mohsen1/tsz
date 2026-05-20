@@ -662,6 +662,10 @@ name = "signature_assignability_regression_tests"
 path = "tests/signature_assignability_regression_tests.rs"
 
 [[test]]
+name = "global_function_intrinsic_assignability_tests"
+path = "tests/global_function_intrinsic_assignability_tests.rs"
+
+[[test]]
 name = "element_access_structural_codes_tests"
 path = "tests/element_access_structural_codes_tests.rs"
 
@@ -1424,6 +1428,14 @@ path = "tests/arbitrary_ext_decl_module_resolution_tests.rs"
 [[test]]
 name = "mixin_any_base_index_sig_tests"
 path = "tests/mixin_any_base_index_sig_tests.rs"
+
+[[test]]
+name = "stage3_lib_namespace_resolution_tests"
+path = "tests/stage3_lib_namespace_resolution_tests.rs"
+
+[[test]]
+name = "ts2321_ts2859_tests"
+path = "tests/ts2321_ts2859_tests.rs"
 
 [lints]
 workspace = true

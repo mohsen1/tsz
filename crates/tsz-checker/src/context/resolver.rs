@@ -528,7 +528,19 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                             | tsz_solver::def::DefKind::Interface
                             | tsz_solver::def::DefKind::TypeAlias
                     ) {
-                        return Some(*instance_type);
+                        let type_alias_self_wrapper = kind == tsz_solver::def::DefKind::TypeAlias
+                            && crate::query_boundaries::definition_identity::is_lazy_def_identity(
+                                self.types,
+                                *instance_type,
+                                def_id,
+                            );
+                        // A type-alias self wrapper is its public identity,
+                        // not a structural body. Let inference/evaluation
+                        // fall through to the type environment or
+                        // DefinitionStore body for transparent aliases.
+                        if !type_alias_self_wrapper {
+                            return Some(*instance_type);
+                        }
                     }
                 } else {
                     // Fallback: look up symbol flags from binder (primary binder only,

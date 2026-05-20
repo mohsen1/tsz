@@ -701,8 +701,6 @@ jobs:
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
             .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
-            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-template-manifest.json
-            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-test-cases-manifest.json
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
@@ -756,8 +754,6 @@ jobs:
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
             .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
-            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-template-manifest.json
-            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-test-cases-manifest.json
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
@@ -931,7 +927,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: conformance-shard-${{ matrix.shard }}
-          path: .ci-metrics/conformance.json
+          path: |
+            .ci-metrics/conformance.json
+            .ci-metrics/conformance-failures-*.txt
           if-no-files-found: warn
           retention-days: 1
 

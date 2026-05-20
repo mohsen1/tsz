@@ -163,6 +163,16 @@ export function validateProjectMetadata({
       failures.push(`${row.name}: invalid category ${String(row.category)}`);
     }
 
+    if (
+      row.generated_by !== undefined
+      && row.benchmark_set === "required"
+      && row.guard_set !== "required"
+    ) {
+      failures.push(
+        `${row.name}: required generated benchmark row with generated_by must set guard_set required`,
+      );
+    }
+
     const missingExternalPinFields = new Set();
     if (row.category === "external") {
       for (const field of ["repo", "ref", "repo_env", "ref_env"]) {

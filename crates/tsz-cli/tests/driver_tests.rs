@@ -4879,6 +4879,75 @@ fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
 }
 
 #[test]
+fn compile_react16_automatic_jsx_intrinsics_keep_children_and_img_src() {
+    let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join(".lib/react16.d.ts"), &react16);
+    write_file(
+        &base.join("one.tsx"),
+        r#"/// <reference path="./.lib/react16.d.ts" />
+/* @jsxRuntime classic */
+import * as React from "react";
+export const first = <img src="./image.png" />;
+"#,
+    );
+    write_file(
+        &base.join("two.tsx"),
+        r#"/// <reference path="./.lib/react16.d.ts" />
+/* @jsxRuntime automatic */
+const props = { answer: 42 };
+const a = <div key="foo" {...props}>text</div>;
+const b = <img src="./image.png" />;
+
+export { a, b };
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"export * as one from "./one.js";
+export * as two from "./two.js";
+"#,
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.strict = true;
+    args.target = Some(crate::args::Target::Es2015);
+    args.jsx = Some(crate::args::JsxEmit::ReactJsx);
+    args.module = Some(crate::args::Module::CommonJs);
+    args.no_emit = true;
+    args.files = vec![
+        PathBuf::from("one.tsx"),
+        PathBuf::from("two.tsx"),
+        PathBuf::from("index.ts"),
+    ];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let relevant: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                || d.code
+                    == diagnostic_codes::COMPONENTS_DONT_ACCEPT_TEXT_AS_CHILD_ELEMENTS_TEXT_IN_JSX_HAS_THE_TYPE_STRING_BU
+        })
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected real react16 automatic JSX intrinsics to accept text children and img src, got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
+        result.diagnostics,
+        result.files_read,
+        result.file_infos
+    );
+}
+
+#[test]
 fn compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322() {
     let Some(mut source) = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/jsxCallElaborationCheckNoCrash1.tsx",

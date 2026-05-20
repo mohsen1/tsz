@@ -635,6 +635,10 @@ pub struct TypeInterner {
     /// reduction). Mirrors tsc's `removeSubtypes` complexity heuristic that
     /// emits TS2590. The checker reads and clears this flag to emit the diagnostic.
     pub(super) union_too_complex: AtomicBool,
+    /// Flag set when tuple synthesis detects that a spread would produce a tuple
+    /// with more than `MAX_REPRESENTABLE_TUPLE_LENGTH` elements. The checker reads
+    /// and clears this to emit TS2799 instead of TS2589.
+    pub(super) tuple_too_large: AtomicBool,
     /// Global evaluation fuel counter.
     ///
     /// Tracks cumulative evaluation work across ALL `TypeEvaluator` instances.
@@ -701,6 +705,7 @@ impl TypeInterner {
             conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
+            tuple_too_large: AtomicBool::new(false),
             evaluation_fuel: AtomicU32::new(0),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
         }
@@ -743,6 +748,23 @@ impl TypeInterner {
     #[inline]
     pub(crate) fn set_union_too_complex(&self) {
         self.union_too_complex.store(true, Ordering::Relaxed);
+    }
+
+    /// Atomically read and clear the "tuple too large" flag.
+    ///
+    /// Returns `true` if a tuple spread synthesis was aborted because the result
+    /// would exceed `MAX_REPRESENTABLE_TUPLE_LENGTH` elements. The checker uses
+    /// this to emit TS2799 instead of TS2589.
+    #[inline]
+    pub fn take_tuple_too_large(&self) -> bool {
+        self.tuple_too_large.swap(false, Ordering::Relaxed)
+    }
+
+    /// Mark that a tuple spread synthesis was aborted due to exceeding the
+    /// representable tuple length limit.
+    #[inline]
+    pub(crate) fn set_tuple_too_large(&self) {
+        self.tuple_too_large.store(true, Ordering::Relaxed);
     }
 
     /// Set the global Array base type (e.g., Array<T> from lib.d.ts).

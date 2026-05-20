@@ -3,6 +3,9 @@
 //! Provides shared extraction and parsing for hover and signature help.
 
 pub mod link;
+pub mod markdown_escape;
+
+pub use markdown_escape::{escape_markdown_label, format_inline_code};
 
 use rustc_hash::FxHashMap;
 use tsz_common::comments::{get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment};

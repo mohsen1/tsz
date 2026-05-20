@@ -16,6 +16,8 @@
 //! lives outside (`LinkUriResolver`) so the parser stays decoupled from any
 //! one symbol table or LSP feature.
 
+use super::{escape_markdown_label, format_inline_code};
+
 /// Visual style requested by a link tag.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum LinkStyle {
@@ -133,15 +135,21 @@ where
 /// don't process Markdown links still see the human-readable form, and so a
 /// broken target never crashes hover (acceptance criterion).
 pub fn expand_links_to_markdown(text: &str, resolver: &mut impl LinkUriResolver) -> String {
-    splice_links(text, |link| {
-        let label = link.display.unwrap_or(link.target);
-        match (resolver.resolve_link_uri(link.target), link.style) {
-            (Some(uri), LinkStyle::Code) => format!("[`{label}`]({uri})"),
-            (Some(uri), LinkStyle::Plain) => format!("[{label}]({uri})"),
-            (None, LinkStyle::Code) => format!("`{label}`"),
-            (None, LinkStyle::Plain) => label.to_string(),
-        }
-    })
+    splice_links(
+        text,
+        |segment| escape_markdown_label(segment),
+        |link| {
+            let label = link.display.unwrap_or(link.target);
+            match (resolver.resolve_link_uri(link.target), link.style) {
+                (Some(uri), LinkStyle::Code) => format!("[{}]({uri})", format_inline_code(label)),
+                (Some(uri), LinkStyle::Plain) => {
+                    format!("[{}]({uri})", escape_markdown_label(label))
+                }
+                (None, LinkStyle::Code) => format_inline_code(label),
+                (None, LinkStyle::Plain) => escape_markdown_label(label),
+            }
+        },
+    )
 }
 
 /// Rewrite inline link tokens in `text` into plain text for hovers that do
@@ -149,22 +157,28 @@ pub fn expand_links_to_markdown(text: &str, resolver: &mut impl LinkUriResolver)
 /// rewrite never queries a resolver: it strips the tag, keeping only the
 /// display label (or the target as label when no display is given).
 pub fn expand_links_to_plain(text: &str) -> String {
-    splice_links(text, |link| link.display.unwrap_or(link.target).to_string())
+    splice_links(text, std::string::ToString::to_string, |link| {
+        link.display.unwrap_or(link.target).to_string()
+    })
 }
 
-fn splice_links(text: &str, mut render: impl FnMut(&InlineLink<'_>) -> String) -> String {
+fn splice_links(
+    text: &str,
+    mut render_text: impl FnMut(&str) -> String,
+    mut render_link: impl FnMut(&InlineLink<'_>) -> String,
+) -> String {
     let links = iter_inline_links(text);
     if links.is_empty() {
-        return text.to_string();
+        return render_text(text);
     }
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0;
     for link in &links {
-        out.push_str(&text[cursor..link.span.start]);
-        out.push_str(&render(link));
+        out.push_str(&render_text(&text[cursor..link.span.start]));
+        out.push_str(&render_link(link));
         cursor = link.span.end;
     }
-    out.push_str(&text[cursor..]);
+    out.push_str(&render_text(&text[cursor..]));
     out
 }
 

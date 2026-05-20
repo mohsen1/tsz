@@ -40,6 +40,10 @@ exclude = [
 [lib]
 crate-type = ["rlib"]
 
+[features]
+default = ["dts"]
+dts = ["tsz-emitter/dts"]
+
 [dependencies]
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
@@ -48,7 +52,7 @@ tsz-binder = { workspace = true }
 tsz-solver = { workspace = true }
 tsz-lowering = { workspace = true }
 tsz-checker = { workspace = true }
-tsz-emitter = { workspace = true }
+tsz-emitter = { workspace = true, default-features = false }
 tsz-lsp = { workspace = true }
 anyhow = { workspace = true }
 wasm-bindgen = { workspace = true }
