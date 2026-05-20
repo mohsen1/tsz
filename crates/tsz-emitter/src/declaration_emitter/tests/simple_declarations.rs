@@ -1060,6 +1060,28 @@ const c2 = g<string> ?? ((x: string) => x);
 }
 
 #[test]
+fn test_short_circuit_or_truthy_function_left_omits_fallback_type() {
+    let output = emit_dts_with_binding(
+        r#"
+class c {
+    private p: string;
+}
+
+var l = (() => new c()) || "";
+"#,
+    );
+
+    assert!(
+        output.contains("declare var l: () => c;"),
+        "Expected always-truthy arrow operand to determine || declaration type: {output}"
+    );
+    assert!(
+        !output.contains("declare var l: (() => c) | string;"),
+        "Did not expect unreachable || fallback string in declaration type: {output}"
+    );
+}
+
+#[test]
 fn test_trailing_top_level_jsdoc_after_export_is_preserved() {
     let output = emit_dts(
         r#"

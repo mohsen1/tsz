@@ -39,6 +39,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         if operator == SyntaxKind::BarBarToken as u16 {
             left_parts.retain(|part| !Self::short_circuit_or_excludes_left_type(&part.text));
+            if self.short_circuit_operand_is_always_truthy(binary.left) {
+                Self::dedupe_and_sort_short_circuit_type_parts(&mut left_parts);
+                return (!left_parts.is_empty()).then_some(left_parts);
+            }
         } else {
             left_parts.retain(|part| !Self::short_circuit_nullish_excludes_left_type(&part.text));
         }
@@ -120,6 +124,20 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(decl_node.pos);
         }
         self.arena.get(expr_idx).map(|node| node.pos)
+    }
+
+    fn short_circuit_operand_is_always_truthy(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_idx) = self.skip_parenthesized_expression_via_parent_node(expr_idx) else {
+            return false;
+        };
+        self.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || node.kind == syntax_kind_ext::NEW_EXPRESSION
+        })
     }
 
     fn short_circuit_or_excludes_left_type(type_text: &str) -> bool {
