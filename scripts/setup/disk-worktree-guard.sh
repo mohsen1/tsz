@@ -105,9 +105,14 @@ echo "sister_worktree_reuse_candidates:"
 reuse_candidates="$(
   git -C "$REPO_ROOT" worktree list --porcelain \
     | awk '
-      /^worktree / { if (path) print path "\t" branch; path=substr($0,10); branch="" }
+      /^worktree / { if (path) print path "\t" branch; path=substr($0,10); branch=""; head="" }
+      /^HEAD / { head=substr($0,6) }
       /^branch / { branch=substr($0,8) }
-      /^detached / { branch="detached:" substr($0,10) }
+      /^detached/ {
+        rev=substr($0,10)
+        if (rev == "") rev=substr(head,1,12)
+        branch="detached:" rev
+      }
       END { if (path) print path "\t" branch }
     ' \
     | while IFS=$'\t' read -r wt branch; do
