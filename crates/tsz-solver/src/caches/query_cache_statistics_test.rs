@@ -37,11 +37,13 @@ fn intersection_merge_cache_is_visible_in_statistics_and_size_estimate() {
 }
 
 #[test]
-fn application_eval_cache_cross_file_sharing() {
-    // Structural rule: when the same generic alias application, such as
-    // `Compute<T>`, is evaluated in multiple files of a project, the second
-    // file should find the result in the shared application eval cache rather
-    // than recomputing it.
+fn application_eval_cache_is_file_local() {
+    // Structural rule: `application_eval_cache` results are NOT shared
+    // cross-file. The evaluation of `(DefId, [TypeId])` depends on the
+    // per-file resolver's body registration for that `DefId`; the same key can
+    // produce different results in two files (e.g., async/Promise families where
+    // the alias body is registered at different points in parallel checking).
+    // Sharing stale results across files causes conformance regressions.
     let interner = TypeInterner::new();
     let shared = SharedQueryCache::new();
 
@@ -49,7 +51,7 @@ fn application_eval_cache_cross_file_sharing() {
     let args = &[TypeId::STRING];
     let result = TypeId::NUMBER;
 
-    // File A evaluates `Alias<string>` and populates the shared cache.
+    // File A evaluates `Alias<string>` and stores the result locally.
     {
         let db_a = QueryCache::new_with_shared(&interner, &shared);
         assert_eq!(
@@ -67,28 +69,27 @@ fn application_eval_cache_cross_file_sharing() {
         assert_eq!(stats.application_eval_cache_misses, 1);
     }
 
-    // File B gets a fresh per-file cache but shares the same `SharedQueryCache`.
-    // It should find the result without recomputing.
+    // File B gets a fresh per-file cache. It must NOT inherit file A's result:
+    // the resolver may return a different body for the same DefId in file B's
+    // context (e.g., the body is not yet registered, or a different overload is
+    // visible). File B must recompute from scratch.
     {
         let db_b = QueryCache::new_with_shared(&interner, &shared);
         assert_eq!(
             db_b.lookup_application_eval_cache(def_id, args, false),
-            Some(result),
-            "cross-file shared application_eval_cache should return the cached result"
+            None,
+            "application_eval_cache must not be shared cross-file"
         );
         let stats = db_b.statistics();
+        assert_eq!(stats.application_eval_cache_hits, 0, "no cross-file hits");
         assert_eq!(
-            stats.application_eval_cache_hits, 1,
-            "should be a cache hit"
-        );
-        assert_eq!(
-            stats.application_eval_cache_misses, 0,
-            "shared hit should not count as a miss"
+            stats.application_eval_cache_misses, 1,
+            "file-B lookup should be a miss"
         );
     }
 
     // A flag difference (`noUncheckedIndexedAccess=true`) must not hit the
-    // false-keyed entry. Different semantics require separate results.
+    // false-keyed entry even within the same file.
     {
         let db_c = QueryCache::new_with_shared(&interner, &shared);
         assert_eq!(
@@ -118,18 +119,18 @@ fn application_eval_cache_stats_visible_in_display() {
 }
 
 #[test]
-fn instantiation_cache_cross_file_sharing_respects_key_shape() {
-    // Structural rule: when multiple files instantiate the same generic body
-    // with the same canonical substitution, mode bits, and `this` type, the
-    // second file should hit the shared instantiation cache. Mode or `this`
-    // differences must stay isolated because they can produce different
-    // instantiated `TypeId`s.
+fn instantiation_cache_is_file_local() {
+    // Structural rule: `instantiation_cache` results are NOT shared cross-file.
+    // Instantiation of a generic body can depend on `Lazy(DefId)` resolution
+    // that is per-file; a result produced in one file's context would be stale
+    // in another file where different `DefId` bindings are registered.
+    // Async/Promise/dynamic-import families are the primary witnesses.
     let interner = TypeInterner::new();
     let shared = SharedQueryCache::new();
     let key = InstantiationCacheKey::new(TypeId::STRING, CanonicalSubst::empty(), 0, None);
     let result = TypeId::NUMBER;
 
-    // File A instantiates the body and seeds both the local and shared caches.
+    // File A instantiates the body and stores it in its local cache only.
     {
         let db_a = QueryCache::new_with_shared(&interner, &shared);
         assert_eq!(db_a.lookup_instantiation_cache(&key), None);
@@ -142,26 +143,27 @@ fn instantiation_cache_cross_file_sharing_respects_key_shape() {
         assert_eq!(stats.instantiation_cache_misses, 1);
     }
 
-    // File B has a fresh local cache but should promote the shared hit into it.
+    // File B has a fresh local cache and must NOT inherit file A's result.
+    // The same instantiation key may resolve differently in file B's context.
     {
         let db_b = QueryCache::new_with_shared(&interner, &shared);
         assert_eq!(
             db_b.lookup_instantiation_cache(&key),
-            Some(result),
-            "cross-file shared instantiation_cache should return the cached result"
+            None,
+            "instantiation_cache must not be shared cross-file"
         );
 
         let stats = db_b.statistics();
-        assert_eq!(stats.instantiation_cache_entries, 1);
-        assert_eq!(stats.instantiation_cache_hits, 1);
+        assert_eq!(stats.instantiation_cache_entries, 0);
+        assert_eq!(stats.instantiation_cache_hits, 0);
         assert_eq!(
-            stats.instantiation_cache_misses, 0,
-            "shared hit should not count as a miss"
+            stats.instantiation_cache_misses, 1,
+            "file-B lookup should be a miss"
         );
     }
 
     // Mode-bit and `this` differences are semantically distinct instantiation
-    // requests and must not alias the entry stored above.
+    // requests and must not alias the entry stored above (within the same file).
     {
         let db_c = QueryCache::new_with_shared(&interner, &shared);
         let mode_distinct_key =

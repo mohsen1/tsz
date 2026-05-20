@@ -41,6 +41,11 @@ type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
 const SUBTYPE_POLICY_TRACE_OP: &str = "is_subtype_of_with_policy";
 const ASSIGNABILITY_POLICY_TRACE_OP: &str = "is_assignable_to_with_policy";
 
+#[inline(always)]
+fn inc(c: &Cell<u64>) {
+    c.set(c.get() + 1);
+}
+
 /// Thread-safe shared query cache for cross-file type checking.
 ///
 /// In multi-file projects (e.g., ts-toolbelt with 242 files), each file checker
@@ -53,21 +58,34 @@ const ASSIGNABILITY_POLICY_TRACE_OP: &str = "is_assignable_to_with_policy";
 /// (zero overhead), then falls back to the shared cache on miss. Results are
 /// written to both local and shared caches.
 ///
-/// Shared caches:
-/// - `eval_cache`: type evaluation (conditional types, mapped types, etc.)
-/// - `application_eval_cache`: type alias application evaluation keyed by
-///   `(DefId, [TypeId], bool)` - avoids re-evaluating the same generic
-///   instantiation in every file that imports a shared utility type.
-/// - `instantiation_cache`: `instantiate_type` results keyed by
-///   `(TypeId, CanonicalSubst, mode_bits, Option<this_type>)` - avoids
-///   re-instantiating the same generic body, such as a mapped or conditional
-///   type, when multiple files request the same substitution.
-/// - `subtype_cache`: subtype relation results
-/// - `assignability_cache`: assignability relation results
+/// ### What is safe to share cross-file
+///
+/// Only caches whose keys fully determine their results regardless of which
+/// file's type-environment (resolver, body registrations) was active during
+/// evaluation are safe to share:
+///
+/// - `eval_cache`: keyed by `(TypeId, bool)` — a globally-interned `TypeId`
+///   always evaluates to the same result under the same options.
+/// - `subtype_cache` / `assignability_cache`: keyed by `(TypeId, TypeId, ...)` —
+///   relation results between globally-interned types are file-independent.
+///
+/// ### What is NOT safe to share cross-file
+///
+/// - `application_eval_cache` (keyed by `(DefId, [TypeId], bool)`): the alias
+///   body returned by the resolver for a `DefId` depends on which declarations
+///   have been registered in the current file's type environment. Two files may
+///   evaluate the same key and get different results if the alias body is not
+///   yet registered (returns `UNKNOWN`) in one file but is registered in another.
+///   Sharing stale `UNKNOWN`-derived results poisons the cache for later files.
+///   Async/`Promise`/dynamic-import families are especially affected because
+///   `Awaited<T>` resolves `Promise.then` through per-file body registration.
+///
+/// - `instantiation_cache` (keyed by `(TypeId, CanonicalSubst, mode_bits, this_type)`):
+///   instantiation of a generic body can depend on `Lazy(DefId)` resolution that
+///   is per-file. A result produced in file A's context may be stale when reused
+///   in file B where different `DefId` bindings are in scope.
 pub struct SharedQueryCache {
     eval_cache: DashMap<EvaluationCacheKey, TypeId, FxBuildHasher>,
-    application_eval_cache: DashMap<ApplicationEvalCacheKey, TypeId, FxBuildHasher>,
-    instantiation_cache: DashMap<InstantiationCacheKey, TypeId, FxBuildHasher>,
     subtype_cache: DashMap<RelationCacheKey, bool, FxBuildHasher>,
     assignability_cache: DashMap<RelationCacheKey, bool, FxBuildHasher>,
 }
@@ -76,8 +94,6 @@ impl SharedQueryCache {
     pub fn new() -> Self {
         SharedQueryCache {
             eval_cache: DashMap::with_hasher(FxBuildHasher),
-            application_eval_cache: DashMap::with_hasher(FxBuildHasher),
-            instantiation_cache: DashMap::with_hasher(FxBuildHasher),
             subtype_cache: DashMap::with_hasher(FxBuildHasher),
             assignability_cache: DashMap::with_hasher(FxBuildHasher),
         }
@@ -85,11 +101,7 @@ impl SharedQueryCache {
 
     /// Number of entries across all shared caches.
     pub fn total_entries(&self) -> usize {
-        self.eval_cache.len()
-            + self.application_eval_cache.len()
-            + self.instantiation_cache.len()
-            + self.subtype_cache.len()
-            + self.assignability_cache.len()
+        self.eval_cache.len() + self.subtype_cache.len() + self.assignability_cache.len()
     }
 }
 
@@ -703,36 +715,20 @@ impl<'a> QueryCache<'a> {
     }
 
     fn check_application_eval_cache(&self, key: ApplicationEvalCacheKey) -> Option<TypeId> {
-        if let Some(result) = self.application_eval_cache.borrow().get(&key).copied() {
-            self.application_eval_cache_hits
-                .set(self.application_eval_cache_hits.get() + 1);
-            return Some(result);
+        match self.application_eval_cache.borrow().get(&key).copied() {
+            Some(result) => {
+                inc(&self.application_eval_cache_hits);
+                Some(result)
+            }
+            None => {
+                inc(&self.application_eval_cache_misses);
+                None
+            }
         }
-        // Check shared cross-file cache. This avoids re-evaluating the same
-        // generic application, such as `Compute<T>`, in every file that
-        // imports it.
-        if let Some(shared) = self.shared
-            && let Some(result) = shared.application_eval_cache.get(&key).map(|r| *r)
-        {
-            self.application_eval_cache.borrow_mut().insert(key, result);
-            self.application_eval_cache_hits
-                .set(self.application_eval_cache_hits.get() + 1);
-            return Some(result);
-        }
-        self.application_eval_cache_misses
-            .set(self.application_eval_cache_misses.get() + 1);
-        None
     }
 
     fn insert_application_eval_cache(&self, key: ApplicationEvalCacheKey, result: TypeId) {
-        if let Some(shared) = self.shared {
-            self.application_eval_cache
-                .borrow_mut()
-                .insert(key.clone(), result);
-            shared.application_eval_cache.insert(key, result);
-        } else {
-            self.application_eval_cache.borrow_mut().insert(key, result);
-        }
+        self.application_eval_cache.borrow_mut().insert(key, result);
     }
 
     fn check_object_spread_properties_cache(&self, key: TypeId) -> Option<Vec<PropertyInfo>> {
@@ -1493,39 +1489,27 @@ impl QueryDatabase for QueryCache<'_> {
 
     /// Look up a cross-call `instantiate_type` result.
     ///
-    /// Checks the per-file local cache first, then the shared cross-file cache.
     /// Hit/miss counters feed `QueryCacheStatistics`.
+    ///
+    /// Instantiation results are NOT shared cross-file: the instantiation of a
+    /// generic body can depend on `Lazy(DefId)` resolution that is per-file, so
+    /// a result produced in one file's context would be stale in another.
     fn lookup_instantiation_cache(&self, key: &InstantiationCacheKey) -> Option<TypeId> {
-        if let Some(result) = self.instantiation_cache.lookup(key) {
-            self.instantiation_cache_hits
-                .set(self.instantiation_cache_hits.get() + 1);
-            return Some(result);
+        match self.instantiation_cache.lookup(key) {
+            Some(result) => {
+                inc(&self.instantiation_cache_hits);
+                Some(result)
+            }
+            None => {
+                inc(&self.instantiation_cache_misses);
+                None
+            }
         }
-        // Check shared cross-file cache. This avoids re-instantiating the same
-        // generic body, such as a mapped or conditional type body, when
-        // multiple files request the same substitution.
-        if let Some(shared) = self.shared
-            && let Some(result) = shared.instantiation_cache.get(key).map(|r| *r)
-        {
-            self.instantiation_cache.insert(key.clone(), result);
-            self.instantiation_cache_hits
-                .set(self.instantiation_cache_hits.get() + 1);
-            return Some(result);
-        }
-        self.instantiation_cache_misses
-            .set(self.instantiation_cache_misses.get() + 1);
-        None
     }
 
-    /// Store an `instantiate_type` result in the local cache and, when a shared
-    /// cache is present, in the shared cache too.
+    /// Store an `instantiate_type` result in the per-file local cache.
     fn insert_instantiation_cache(&self, key: InstantiationCacheKey, result: TypeId) {
-        if let Some(shared) = self.shared {
-            self.instantiation_cache.insert(key.clone(), result);
-            shared.instantiation_cache.insert(key, result);
-        } else {
-            self.instantiation_cache.insert(key, result);
-        }
+        self.instantiation_cache.insert(key, result);
     }
 
     /// Look up a cached `remove_subtypes_for_bct` result. Hit/miss counters
@@ -1537,13 +1521,11 @@ impl QueryDatabase for QueryCache<'_> {
     ) -> Option<std::sync::Arc<[TypeId]>> {
         match self.subtype_reduction_cache.lookup(key) {
             Some(result) => {
-                self.subtype_reduction_cache_hits
-                    .set(self.subtype_reduction_cache_hits.get() + 1);
+                inc(&self.subtype_reduction_cache_hits);
                 Some(result)
             }
             None => {
-                self.subtype_reduction_cache_misses
-                    .set(self.subtype_reduction_cache_misses.get() + 1);
+                inc(&self.subtype_reduction_cache_misses);
                 None
             }
         }
@@ -1602,8 +1584,7 @@ impl QueryDatabase for QueryCache<'_> {
         let cached = self.subtype_cache.borrow().get(&key).copied();
 
         if let Some(result) = cached {
-            self.subtype_cache_hits
-                .set(self.subtype_cache_hits.get() + 1);
+            inc(&self.subtype_cache_hits);
             if let Some(query_id) = trace_query_id {
                 query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, true);
             }
@@ -1615,16 +1596,14 @@ impl QueryDatabase for QueryCache<'_> {
             && let Some(result) = shared.subtype_cache.get(&key).map(|r| *r)
         {
             self.subtype_cache.borrow_mut().insert(key, result);
-            self.subtype_cache_hits
-                .set(self.subtype_cache_hits.get() + 1);
+            inc(&self.subtype_cache_hits);
             if let Some(query_id) = trace_query_id {
                 query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
 
-        self.subtype_cache_misses
-            .set(self.subtype_cache_misses.get() + 1);
+        inc(&self.subtype_cache_misses);
 
         let result = query_relation(
             self.as_type_database(),
@@ -1689,8 +1668,7 @@ impl QueryDatabase for QueryCache<'_> {
         let key = RelationCacheKey::for_assignability(source, target, policy.cache_config());
 
         if let Some(result) = self.check_cache(&self.assignability_cache, key) {
-            self.assignability_cache_hits
-                .set(self.assignability_cache_hits.get() + 1);
+            inc(&self.assignability_cache_hits);
             if let Some(query_id) = trace_query_id {
                 query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, true);
             }
@@ -1702,16 +1680,14 @@ impl QueryDatabase for QueryCache<'_> {
             && let Some(result) = shared.assignability_cache.get(&key).map(|r| *r)
         {
             self.assignability_cache.borrow_mut().insert(key, result);
-            self.assignability_cache_hits
-                .set(self.assignability_cache_hits.get() + 1);
+            inc(&self.assignability_cache_hits);
             if let Some(query_id) = trace_query_id {
                 query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, true);
             }
             return result;
         }
 
-        self.assignability_cache_misses
-            .set(self.assignability_cache_misses.get() + 1);
+        inc(&self.assignability_cache_misses);
 
         let result = query_relation(
             self.as_type_database(),
@@ -1747,11 +1723,9 @@ impl QueryDatabase for QueryCache<'_> {
     fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {
         let result = self.subtype_cache.borrow().get(&key).copied();
         if result.is_some() {
-            self.subtype_cache_hits
-                .set(self.subtype_cache_hits.get() + 1);
+            inc(&self.subtype_cache_hits);
         } else {
-            self.subtype_cache_misses
-                .set(self.subtype_cache_misses.get() + 1);
+            inc(&self.subtype_cache_misses);
         }
         result
     }
@@ -1763,11 +1737,9 @@ impl QueryDatabase for QueryCache<'_> {
     fn lookup_assignability_cache(&self, key: RelationCacheKey) -> Option<bool> {
         let result = self.assignability_cache.borrow().get(&key).copied();
         if result.is_some() {
-            self.assignability_cache_hits
-                .set(self.assignability_cache_hits.get() + 1);
+            inc(&self.assignability_cache_hits);
         } else {
-            self.assignability_cache_misses
-                .set(self.assignability_cache_misses.get() + 1);
+            inc(&self.assignability_cache_misses);
         }
         result
     }
@@ -1783,11 +1755,9 @@ impl QueryDatabase for QueryCache<'_> {
             .get(&intersection_id)
             .copied();
         if result.is_some() {
-            self.intersection_merge_cache_hits
-                .set(self.intersection_merge_cache_hits.get() + 1);
+            inc(&self.intersection_merge_cache_hits);
         } else {
-            self.intersection_merge_cache_misses
-                .set(self.intersection_merge_cache_misses.get() + 1);
+            inc(&self.intersection_merge_cache_misses);
         }
         result
     }
