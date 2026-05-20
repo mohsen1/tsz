@@ -435,17 +435,28 @@ impl<'a> Printer<'a> {
         self.write(fn_name);
         self.write(" = function (");
 
+        let captured_param_names = captured_vars
+            .iter()
+            .map(|var| {
+                self.ctx
+                    .block_scope_state
+                    .get_emitted_name(var)
+                    .unwrap_or_else(|| var.clone())
+            })
+            .collect::<Vec<_>>();
+        let outer_shadowed_body_vars = body_info
+            .block_scoped_vars
+            .iter()
+            .filter(|var| self.ctx.block_scope_state.get_emitted_name(var).is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+
         // Parameters are the captured variables
-        for (i, var) in captured_vars.iter().enumerate() {
+        for (i, emitted) in captured_param_names.iter().enumerate() {
             if i > 0 {
                 self.write(", ");
             }
-            // If the variable was renamed by block scoping, use the renamed version
-            if let Some(emitted) = self.ctx.block_scope_state.get_emitted_name(var) {
-                self.write(&emitted);
-            } else {
-                self.write(var);
-            }
+            self.write(emitted);
         }
 
         self.write(") {");
@@ -456,8 +467,15 @@ impl<'a> Printer<'a> {
 
         // Emit the body statements inside the IIFE
         self.ctx.block_scope_state.enter_function_scope();
-        for var in captured_vars {
-            self.ctx.block_scope_state.register_function_parameter(var);
+        for var in &outer_shadowed_body_vars {
+            self.ctx
+                .block_scope_state
+                .register_function_scope_shadowed_name(var);
+        }
+        for (var, emitted) in captured_vars.iter().zip(captured_param_names.iter()) {
+            self.ctx
+                .block_scope_state
+                .register_function_parameter_with_emitted_name(var, emitted);
         }
         let prev_lexical_block_missing_initializer_function_depth =
             self.lexical_block_missing_initializer_function_depth;
@@ -923,6 +941,41 @@ function foo(x: number) {\n\
         assert!(
             output.contains("var v, v;"),
             "Loop body var hoist should preserve duplicate var declarations.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn loop_capture_helper_body_uses_renamed_captured_parameter() {
+        let source = "declare function keep(v: number): void;\n\
+function foo() {\n\
+  let i = 0;\n\
+  for (let i = 0; i < 2; i++) {\n\
+    (() => i)();\n\
+  }\n\
+  keep(i);\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("var _loop_1 = function (i_1)"),
+            "Loop helper signature should use the block-scoped emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return i_1;"),
+            "Helper body references should resolve through the same emitted parameter.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_loop_1(i_1);"),
+            "Loop helper call should pass the same emitted captured variable.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("keep(i);"),
+            "Outer lexical binding should keep its own emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("return i;"),
+            "Helper body must not drift back to the outer binding name.\nOutput:\n{output}"
         );
     }
 
