@@ -1,10 +1,11 @@
 //! Tests for spread and rest operator type checking
 
 use tsz_checker::test_utils::{
-    check_source_diagnostics, diagnostic_code_message_refs as diagnostic_code_messages,
+    check_source_diagnostics, check_source_with_libs,
+    diagnostic_code_message_refs as diagnostic_code_messages,
     diagnostic_code_message_refs_with_code as diagnostic_code_messages_with_code, diagnostic_codes,
     diagnostic_count, diagnostic_count_where, diagnostic_messages_with_code, diagnostics_where,
-    diagnostics_with_code, has_diagnostic_where,
+    diagnostics_with_code, has_diagnostic_where, load_lib_files, strict_checker_options,
 };
 
 #[test]
@@ -1729,6 +1730,39 @@ Extension.create({
         ts2783_count,
         2,
         "Expected one TS2783 for each overwritten `editor` property, got {ts2783_count}. Diagnostics: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+}
+
+#[test]
+fn test_builtin_partial_preserves_inferred_contextual_this_member() {
+    let source = r#"
+// @strict: true
+
+interface BoxConfig<Options> {
+  addOptions?: () => Options;
+  run?: (this: { options: Options }) => void;
+}
+
+declare function createBox<O>(config: Partial<BoxConfig<O>>): void;
+
+createBox({
+  addOptions() {
+    return { nested: { value: 1 } };
+  },
+  run() {
+    this.options.nested.value;
+  },
+});
+
+export {};
+"#;
+    let libs = load_lib_files(&["es5.d.ts"]);
+    let diagnostics = check_source_with_libs(source, "test.ts", strict_checker_options(), &libs);
+    assert_eq!(
+        diagnostic_count(&diagnostics, 2339),
+        0,
+        "Contextual `this.options` should use the options inferred through built-in Partial; diagnostics: {:?}",
         diagnostic_code_messages(&diagnostics)
     );
 }

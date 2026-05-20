@@ -1083,6 +1083,23 @@ impl<'a> CheckerState<'a> {
 
     // Request cache safety checks are in request_cache.rs
 
+    fn access_expression_root_is_this(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..32 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+                return true;
+            }
+            let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                return false;
+            };
+            current = access.expression;
+        }
+        false
+    }
+
     #[inline]
     pub fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_node_with_request(idx, &TypingRequest::NONE)
@@ -1162,6 +1179,13 @@ impl<'a> CheckerState<'a> {
                 node_kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     || node_kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             };
+            let depends_on_current_this = self.current_this_type().is_some()
+                && (is_this_keyword
+                    || (is_access_expr && self.access_expression_root_is_this(idx)));
+            // `this` and property chains rooted at `this` depend on the active
+            // contextual receiver. A cache entry produced under an earlier
+            // generic inference pass must not be reused after Round 2 installs
+            // a more concrete contextual `this` type.
             if let Some((name, _)) = crate::dispatch_helpers::keyword_type_mapping(node_kind)
                 && self.is_keyword_type_used_as_value_position(idx)
             {
@@ -1206,7 +1230,8 @@ impl<'a> CheckerState<'a> {
             // If the flow cache already has a result for this (flow_node, symbol, type),
             // we can return it immediately — skipping FlowAnalyzer creation, is_narrowable_identifier
             // checks, parameter default checks, and all other setup (~300ns savings per call).
-            else if !skip_flow_narrowing
+            else if !depends_on_current_this
+                && !skip_flow_narrowing
                 && (is_identifier || is_this_keyword)
                 && !self.ctx.daa_error_nodes.contains(&idx.0)
                 && !self.is_require_call_bound_identifier(idx)
@@ -1270,14 +1295,16 @@ impl<'a> CheckerState<'a> {
             // x should have the narrowed type "string".
             //
             // Only apply narrowing if skip_flow_narrowing is false (respects testing/special contexts)
-            let should_narrow = (is_identifier || is_this_keyword)
+            let should_narrow = !depends_on_current_this
+                && (is_identifier || is_this_keyword)
                 && self.should_apply_flow_narrowing_for_identifier(idx, skip_flow_narrowing);
 
             // Property/element access expressions (e.g. `this.no`, `obj.kind`) can also
             // be narrowed by control flow analysis. After `if (this.no === 1)`, the
             // property access `this.no` should be narrowed to `1`. Apply flow narrowing
             // for access expressions when not in a write context.
-            let should_narrow_access = is_access_expr
+            let should_narrow_access = !depends_on_current_this
+                && is_access_expr
                 && !skip_flow_narrowing
                 && self.ctx.binder.get_node_flow(idx).is_some();
 
@@ -1326,7 +1353,10 @@ impl<'a> CheckerState<'a> {
             // property/element access nodes may have a different write type
             // than the cached read type. Bypass the cache so
             // get_type_of_property_access can return the write_type.
-            if (skip_flow_narrowing && is_access_expr) || is_super_sensitive {
+            if depends_on_current_this
+                || (skip_flow_narrowing && is_access_expr)
+                || is_super_sensitive
+            {
                 // Fall through to recompute with write-type awareness
             } else {
                 tracing::trace!(idx = idx.0, type_id = cached.0, "(cached) get_type_of_node");
