@@ -58,9 +58,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 df_kb="$(df -Pk "$WORKTREE_PARENT" | awk 'NR==2 {print $4}')"
-free_gb=$(( df_kb / 1024 / 1024 ))
+free_mb=$(( df_kb / 1024 ))
+free_gb=$(( free_mb / 1024 ))
 
 printf 'disk_free_gb=%s path=%s\n' "$free_gb" "$WORKTREE_PARENT"
+printf 'disk_free_mb=%s\n' "$free_mb"
 
 prune_incremental() {
   local pruned=0
@@ -83,8 +85,10 @@ if (( free_gb < MIN_FREE_GB )); then
   if [[ "$AUTO_PRUNE" == true ]]; then
     prune_incremental
     df_kb="$(df -Pk "$WORKTREE_PARENT" | awk 'NR==2 {print $4}')"
-    free_gb=$(( df_kb / 1024 / 1024 ))
+    free_mb=$(( df_kb / 1024 ))
+    free_gb=$(( free_mb / 1024 ))
     printf 'disk_free_gb_after=%s\n' "$free_gb"
+    printf 'disk_free_mb_after=%s\n' "$free_mb"
   fi
 else
   printf 'disk_status=ok min_free_gb=%s\n' "$MIN_FREE_GB"
