@@ -25,6 +25,22 @@ fn parse_and_print_for_target(source: &str, target: ScriptTarget) -> String {
     )
 }
 
+#[test]
+fn lowered_instance_field_arrow_initializer_keeps_trailing_comment_after_semicolon() {
+    let source = "function D() {\n    return class T {\n        a = () => arguments  // should error\n    }\n}\n";
+
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("this.a = () => arguments; // should error"),
+        "Lowered class-field assignment should attach the trailing comment after the statement semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("arguments  // should error"),
+        "Arrow concise-body printing should not consume the class-field trailing comment before the assignment semicolon.\nOutput:\n{output}"
+    );
+}
+
 /// Regression test: trailing comments on static class fields must be
 /// preserved when the field is lowered to `ClassName.field = value;`
 /// for targets < ES2022.

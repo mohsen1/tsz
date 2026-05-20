@@ -333,6 +333,9 @@ impl<'a> Printer<'a> {
         if self.ctx.options.remove_comments {
             return;
         }
+        if self.suppress_arrow_concise_body_trailing_comments {
+            return;
+        }
         let Some(body_node) = self.arena.get(body_idx) else {
             return;
         };

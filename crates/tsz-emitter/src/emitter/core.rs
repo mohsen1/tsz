@@ -351,6 +351,13 @@ pub struct Printer<'a> {
     /// Used across `emit_source_file` and `emit_block` to prevent double-emission.
     pub(crate) comment_emit_idx: usize,
 
+    /// Suppress trailing comments emitted by arrow concise-body printing.
+    ///
+    /// Lowered class-field assignments emit their own statement semicolon after
+    /// the initializer expression, so same-line trailing comments must be
+    /// attached after that semicolon rather than inside a nested arrow body.
+    pub(crate) suppress_arrow_concise_body_trailing_comments: bool,
+
     /// All identifier texts in the source file.
     /// Collected once at `emit_source_file` start for temp name collision detection.
     /// Mirrors TypeScript's `sourceFile.identifiers` used by `makeUniqueName`.
@@ -1108,6 +1115,7 @@ impl<'a> Printer<'a> {
             all_comments: Vec::new(),
             source_comment_ranges: Vec::new(),
             comment_emit_idx: 0,
+            suppress_arrow_concise_body_trailing_comments: false,
             file_identifiers: FxHashSet::default(),
             helper_import_aliases: FxHashMap::default(),
             commonjs_tslib_import_binding: "tslib_1".to_string(),

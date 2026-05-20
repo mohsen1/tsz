@@ -1448,9 +1448,14 @@ impl<'a> Printer<'a> {
                             self.comment_emit_idx += 1;
                         }
                     }
+                    let prev_suppress_arrow_trailing =
+                        self.suppress_arrow_concise_body_trailing_comments;
+                    self.suppress_arrow_concise_body_trailing_comments = true;
                     self.with_scoped_static_initializer_context_cleared(|this| {
                         this.emit_expression(*init_idx);
                     });
+                    self.suppress_arrow_concise_body_trailing_comments =
+                        prev_suppress_arrow_trailing;
                 }
                 self.write(";");
                 // Emit trailing comments from the original class field.
