@@ -2154,15 +2154,16 @@ fn test_enum_narrowing_two_names_same_fix() {
 // Rule: when Array.isArray(x) is truthy, tsz must narrow any union member
 // that is array-like (including Application(ReadonlyArray, [T]) and
 // ReadonlyType(Array(T))) to itself, and exclude it on the falsy branch.
-// This covers issue #8782.
 // =============================================================================
 
 /// Register a dummy `ReadonlyArray` base in the interner and return its TypeId.
 ///
-/// All tests that need `ReadonlyArray<T>` applications must call this once per
-/// interner and use the returned base for every `interner.application(base, ..)` call.
-/// Calling it multiple times on the same interner would clobber the registered
-/// base TypeId, making previously-built applications point to a stale TypeId.
+/// All tests that need `ReadonlyArray<T>` applications must share one registered
+/// base per interner. A second `set_readonly_array_base_type` call on the same
+/// interner changes the canonical base, so applications built with the old base
+/// would no longer be recognized by the O(1) TypeId comparison in the narrowing
+/// check (the name/def fallback would still catch them, but the test invariant
+/// would be misleading).
 fn register_readonly_array_base(interner: &TypeInterner) -> TypeId {
     let base = interner.object(vec![]);
     interner.set_readonly_array_base_type(base);

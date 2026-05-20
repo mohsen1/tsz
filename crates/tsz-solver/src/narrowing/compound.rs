@@ -945,10 +945,9 @@ impl<'a> NarrowingContext<'a> {
 
     /// True iff `base` is the canonical `ReadonlyArray` generic definition.
     ///
-    /// Three-tier check: O(1) registered TypeId, builtin-def predicate for
-    /// `Lazy` bases, then name-match for `UnresolvedTypeName` and alias
-    /// fallback — matching the shape of `readonly_array_application_base` in
-    /// the subtype checker.
+    /// Checks registered TypeId first (O(1), no resolver needed), then
+    /// `Lazy`/`UnresolvedTypeName`/alias fallback for contexts where the
+    /// base type has not yet been interned as the canonical instance.
     fn application_base_is_readonly_array(&self, base: TypeId) -> bool {
         if self
             .db
