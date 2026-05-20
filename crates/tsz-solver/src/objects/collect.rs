@@ -84,7 +84,7 @@ pub enum PropertyCollectionResult {
 /// This function handles:
 /// - Recursive traversal of intersection members
 /// - Lazy/Ref type resolution
-/// - Property type intersection (using raw intersection to avoid recursion)
+/// - Property type intersection with recursion-safe sentinel normalization
 /// - Optionality merging (required wins)
 /// - Readonly merging (readonly is cumulative)
 /// - Index signature merging
@@ -452,9 +452,11 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 // Merge into our properties
                 if let Some(&idx) = self.prop_index.get(&prop.name) {
                     let existing = &mut self.properties[idx];
-                    existing.type_id = self
-                        .interner
-                        .intersect_types_raw2(existing.type_id, union_type);
+                    existing.type_id = crate::types::intersect_merged_property_types(
+                        self.interner,
+                        existing.type_id,
+                        union_type,
+                    );
                     existing.optional = existing.optional && all_optional;
                     existing.readonly = existing.readonly || any_readonly;
                 } else {
@@ -485,10 +487,12 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         for prop in &shape.properties {
             if let Some(&idx) = self.prop_index.get(&prop.name) {
                 let existing = &mut self.properties[idx];
-                // TS Rule: Intersect types (using raw to avoid recursion)
-                existing.type_id = self
-                    .interner
-                    .intersect_types_raw2(existing.type_id, prop.type_id);
+                // TS Rule: intersect property types without full recursive normalization.
+                existing.type_id = crate::types::intersect_merged_property_types(
+                    self.interner,
+                    existing.type_id,
+                    prop.type_id,
+                );
                 // TS Rule: Optional if ALL are optional (required wins)
                 existing.optional = existing.optional && prop.optional;
                 // TS Rule: Readonly only if ALL are readonly (writable wins)
@@ -499,9 +503,11 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 if !existing.readonly {
                     existing.write_type = existing.type_id;
                 } else {
-                    existing.write_type = self
-                        .interner
-                        .intersect_types_raw2(existing.write_type, prop.write_type);
+                    existing.write_type = crate::types::intersect_merged_property_types(
+                        self.interner,
+                        existing.write_type,
+                        prop.write_type,
+                    );
                 }
                 // Merge visibility: use the more restrictive one (private > protected > public)
                 existing.visibility = merge_visibility(existing.visibility, prop.visibility);
@@ -518,9 +524,11 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         if let Some(ref idx) = shape.string_index {
             if let Some(existing) = &mut self.string_index {
                 // Intersect value types
-                existing.value_type = self
-                    .interner
-                    .intersect_types_raw2(existing.value_type, idx.value_type);
+                existing.value_type = crate::types::intersect_merged_property_types(
+                    self.interner,
+                    existing.value_type,
+                    idx.value_type,
+                );
                 // Readonly only if ALL are readonly
                 existing.readonly = existing.readonly && idx.readonly;
             } else {
@@ -532,9 +540,11 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         if let Some(ref idx) = shape.number_index {
             if let Some(existing) = &mut self.number_index {
                 // Intersect value types
-                existing.value_type = self
-                    .interner
-                    .intersect_types_raw2(existing.value_type, idx.value_type);
+                existing.value_type = crate::types::intersect_merged_property_types(
+                    self.interner,
+                    existing.value_type,
+                    idx.value_type,
+                );
                 // Readonly only if ALL are readonly
                 existing.readonly = existing.readonly && idx.readonly;
             } else {

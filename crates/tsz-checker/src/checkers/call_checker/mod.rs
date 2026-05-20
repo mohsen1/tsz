@@ -67,7 +67,7 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         {
             return false;
         }
-        if self.state.is_assignable_to(source, target) {
+        if self.state.is_assignable_to_with_env(source, target) {
             return true;
         }
         if self

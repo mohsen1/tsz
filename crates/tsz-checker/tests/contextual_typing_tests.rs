@@ -10,8 +10,10 @@
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::test_utils::{check_source, check_source_with_libs, load_lib_files};
-use tsz_common::common::ScriptTarget;
+use tsz_checker::test_utils::{
+    check_multi_file, check_source, check_source_with_libs, load_lib_files,
+};
+use tsz_common::common::{ModuleKind, ScriptTarget};
 
 const LIB_NAMES: &[&str] = &[
     "es5.d.ts",
@@ -1145,6 +1147,352 @@ const result = map([1, 2, 3], item => item + 1);
     assert!(
         ts7006_errors.is_empty(),
         "Expected no TS7006 errors for generic callback parameter, got {ts7006_errors:?}"
+    );
+}
+
+#[test]
+fn generic_readonly_array_argument_uses_element_constraint_for_callback_context() {
+    let source = r#"
+interface RefStep {
+  $castTo<T>(): Alias<T>;
+}
+interface Builder<Schema, Table extends keyof Schema> {
+  ref(name: keyof Schema[Table] & string): RefStep;
+}
+interface Alias<T> {
+  as(name: string): Aliased<T>;
+}
+interface Aliased<T> {
+  value: T;
+}
+
+type SelectExpression<Schema, Table extends keyof Schema> =
+  | string
+  | ((builder: Builder<Schema, Table>) => Aliased<1 | 2>);
+
+interface Query<Schema, Table extends keyof Schema> {
+  select<Item extends SelectExpression<Schema, Table>>(
+    selections: readonly Item[],
+  ): Query<Schema, Table>;
+}
+
+declare const query: Query<{ row: { name: string; kind: number } }, 'row'>;
+
+query.select([
+  'name',
+  (builder) => builder.ref('kind').$castTo<1 | 2>().as('kind'),
+]);
+"#;
+
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            no_implicit_any: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| matches!(diag.code, 7006 | 2347 | 2339))
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected readonly-array element constraint to contextually type the callback, got {relevant:?}"
+    );
+}
+
+#[test]
+fn generic_method_conditional_return_preserves_literal_table_key() {
+    let source = r#"
+type TableExpressionOrList<Schema, Tables extends keyof Schema> =
+  | (keyof Schema & string)
+  | readonly (keyof Schema & string)[];
+
+type ExtractTableAlias<Schema, Table> = Table extends keyof Schema ? Table : never;
+
+type SelectFrom<
+  Schema,
+  Tables extends keyof Schema,
+  Table extends TableExpressionOrList<Schema, Tables>,
+> = [Table] extends [keyof Schema]
+  ? Builder<Schema, Tables | ExtractTableAlias<Schema, Table>>
+  : Builder<Schema, keyof Schema>;
+
+interface Builder<Schema, Tables extends keyof Schema> {
+  select<Item extends keyof Schema[Tables] & string>(
+    selections: readonly Item[],
+  ): Builder<Schema, Tables>;
+}
+
+interface Query<Schema> {
+  selectFrom<Table extends TableExpressionOrList<Schema, never>>(
+    from: Table,
+  ): SelectFrom<Schema, never, Table>;
+}
+
+declare const db: Query<{ row: { name: string } }>;
+
+db.selectFrom('row').select(['name']);
+"#;
+
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| matches!(diag.code, 2339 | 2345))
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected conditional generic method return to preserve the selected table key, got {relevant:?}"
+    );
+}
+
+#[test]
+fn imported_generic_method_conditional_return_preserves_literal_table_key() {
+    let defs = r#"
+export type TableExpressionOrList<Schema, Tables extends keyof Schema> =
+  | TableExpression<Schema, Tables>
+  | readonly TableExpression<Schema, Tables>[];
+
+export type TableExpression<Schema, Tables extends keyof Schema> =
+  | AnyAliasedTable<Schema>
+  | AnyTable<Schema>
+  | AliasedExpressionOrFactory<Schema, Tables>;
+
+export type AnyAliasedTable<Schema> = `${AnyTable<Schema>} as ${string}`;
+export type AnyTable<Schema> = keyof Schema & string;
+
+export interface ExpressionBuilder<Schema, Tables extends keyof Schema> {
+  ref(name: keyof Schema[Tables] & string): unknown;
+}
+
+export interface AliasedExpression<Value, Alias extends string> {
+  value: Value;
+  alias: Alias;
+}
+
+export type AliasedExpressionOrFactory<Schema, Tables extends keyof Schema> =
+  | AliasedExpression<any, any>
+  | ((builder: ExpressionBuilder<Schema, Tables>) => AliasedExpression<any, any>);
+
+export type ExtractTableAlias<Schema, Table> = Table extends keyof Schema ? Table : never;
+
+export type SelectFrom<
+  Schema,
+  Tables extends keyof Schema,
+  Table extends TableExpressionOrList<Schema, Tables>,
+> = [Table] extends [keyof Schema]
+  ? Builder<Schema, Tables | ExtractTableAlias<Schema, Table>>
+  : Builder<Schema, keyof Schema>;
+
+export interface Builder<Schema, Tables extends keyof Schema> {
+  select<Item extends keyof Schema[Tables] & string>(
+    selections: readonly Item[],
+  ): Builder<Schema, Tables>;
+}
+
+export class QueryCreator<Schema> {
+  selectFrom<Table extends TableExpressionOrList<Schema, never>>(
+    from: Table,
+  ): SelectFrom<Schema, never, Table> {
+    throw new Error();
+  }
+}
+
+export interface QueryExecutorProvider {
+  getExecutor(): unknown;
+}
+
+export interface QueryProps {
+  executor: unknown;
+}
+
+export class Query<Schema>
+  extends QueryCreator<Schema>
+  implements QueryExecutorProvider
+{
+  readonly #props: QueryProps;
+
+  constructor(args: QueryProps) {
+    super();
+    this.#props = args;
+  }
+
+  getExecutor(): unknown {
+    return this.#props.executor;
+  }
+}
+"#;
+    let usage = r#"
+import type { Query } from './defs.js';
+
+declare const db: Query<{ row: { name: string } }>;
+
+db.selectFrom('row').select(['name']);
+"#;
+
+    let diagnostics = check_multi_file(
+        &[("./defs.ts", defs), ("./usage.ts", usage)],
+        "./usage.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| matches!(diag.code, 2339 | 2345))
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected imported conditional generic method return to preserve the selected table key, got {relevant:?}"
+    );
+}
+
+#[test]
+fn imported_generic_method_accepts_aliased_table_key_template() {
+    let defs = r#"
+export type TableExpressionOrList<Schema, Tables extends keyof Schema> =
+  | TableExpression<Schema, Tables>
+  | readonly TableExpression<Schema, Tables>[];
+
+export type TableExpression<Schema, Tables extends keyof Schema> =
+  | `${keyof Schema & string} as ${string}`
+  | (keyof Schema & string)
+  | AliasedExpressionOrFactory<Schema, Tables>;
+
+export interface ExpressionBuilder<Schema, Tables extends keyof Schema> {
+  ref(name: keyof Schema[Tables] & string): unknown;
+}
+
+export interface AliasedExpression<Value, Alias extends string> {
+  value: Value;
+  alias: Alias;
+}
+
+export type AliasedExpressionOrFactory<Schema, Tables extends keyof Schema> =
+  | AliasedExpression<any, any>
+  | ((builder: ExpressionBuilder<Schema, Tables>) => AliasedExpression<any, any>);
+
+export type SelectFrom<
+  Schema,
+  Tables extends keyof Schema,
+  Table extends TableExpressionOrList<Schema, Tables>,
+> = Builder<Schema, Tables>;
+
+export interface Builder<Schema, Tables extends keyof Schema> {
+  select<Item extends keyof Schema[keyof Schema] & string>(
+    selections: readonly Item[],
+  ): Builder<Schema, Tables>;
+}
+
+export class QueryCreator<Schema> {
+  selectFrom<Table extends TableExpressionOrList<Schema, never>>(
+    from: Table,
+  ): SelectFrom<Schema, never, Table> {
+    throw new Error();
+  }
+}
+
+export class Query<Schema> extends QueryCreator<Schema> {}
+"#;
+    let usage = r#"
+import type { Query } from './defs.js';
+
+declare const db: Query<SysTables>;
+
+db.selectFrom('sys.tables as tables');
+db.selectFrom('sys.schemas as s');
+
+class Holder {
+  readonly #db: Query<SysTables>;
+
+  constructor(db: Query<any>) {
+    this.#db = db;
+  }
+
+  query() {
+    this.#db.selectFrom('sys.tables as tables');
+    this.#db.selectFrom('sys.schemas as s');
+  }
+}
+
+interface SysTables {
+  "sys.tables": { name: string };
+  "sys.schemas": { name: string };
+}
+"#;
+
+    let diagnostics = check_multi_file(
+        &[("./defs.ts", defs), ("./usage.ts", usage)],
+        "./usage.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2022,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| matches!(diag.code, 2339 | 2345))
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected imported generic method to accept aliased table key templates, got {relevant:?}"
+    );
+}
+
+#[test]
+fn inherited_generic_method_constraint_substitutes_class_type_parameter() {
+    let source = r#"
+class Base<Schema> {
+  selectFrom<Table extends AnyAliasedTable<Schema>>(
+    from: Table,
+  ): void {}
+}
+
+type AnyAliasedTable<Schema> = `${AnyTable<Schema>} as ${string}`;
+type AnyTable<Schema> = keyof Schema & string;
+
+class Query<Schema> extends Base<Schema> {}
+
+declare const db: Query<SysTables>;
+
+db.selectFrom('sys.tables as tables');
+
+interface SysTables {
+  "sys.tables": { name: string };
+}
+"#;
+
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2022,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| matches!(diag.code, 2339 | 2345))
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Expected inherited generic method constraints to substitute class type parameters, got {relevant:?}"
     );
 }
 

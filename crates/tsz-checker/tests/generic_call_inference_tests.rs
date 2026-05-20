@@ -2412,6 +2412,67 @@ const result: Readonly<string> = wrap("hello");
 }
 
 #[test]
+fn contextual_generic_return_call_preserves_object_literal_discriminant() {
+    let source = r#"
+type Readonly<T> = {
+    readonly [P in keyof T]: T[P];
+};
+declare function freeze<T>(obj: T): Readonly<T>;
+
+interface Node {
+    readonly kind: 'Node';
+    readonly value: string;
+}
+
+type Factory = {
+    create(value: string): Readonly<Node>;
+};
+
+const Factory: Factory = freeze<Factory>({
+    create(value) {
+        return freeze({
+            kind: 'Node',
+            value,
+        });
+    },
+});
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Contextual generic return calls should preserve object literal discriminants. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn explicit_generic_mapped_intersection_parameter_preserves_object_literal_discriminant() {
+    let source = r#"
+type AllProps<T> = T & {
+    [P in keyof T]-?: unknown;
+};
+
+declare function requireAllProps<T>(obj: AllProps<T>): T;
+
+interface Node {
+    readonly kind: 'Node';
+    readonly value: string;
+}
+
+function create(value: string): Node {
+    return requireAllProps<Node>({
+        kind: 'Node',
+        value,
+    });
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "Explicit generic mapped-intersection parameters should contextually type object literal discriminants. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn generic_call_with_union_return_context() {
     // Return context substitution should handle union target types
     let source = r#"

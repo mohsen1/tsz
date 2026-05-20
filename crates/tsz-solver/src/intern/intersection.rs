@@ -602,9 +602,12 @@ impl TypeInterner {
                     for prop in &callable.properties {
                         if let Some(existing) = properties.iter_mut().find(|p| p.name == prop.name)
                         {
-                            // Intersect property types using raw intersection to avoid infinite recursion
-                            existing.type_id =
-                                self.intersect_types_raw2(existing.type_id, prop.type_id);
+                            // Intersect property types without full recursive normalization.
+                            existing.type_id = crate::types::intersect_merged_property_types(
+                                self,
+                                existing.type_id,
+                                prop.type_id,
+                            );
                             existing.optional = existing.optional && prop.optional;
                             // Intersection: readonly only if ALL are readonly (writable wins)
                             existing.readonly = existing.readonly && prop.readonly;
@@ -612,8 +615,11 @@ impl TypeInterner {
                             if !existing.readonly {
                                 existing.write_type = existing.type_id;
                             } else {
-                                existing.write_type =
-                                    self.intersect_types_raw2(existing.write_type, prop.write_type);
+                                existing.write_type = crate::types::intersect_merged_property_types(
+                                    self,
+                                    existing.write_type,
+                                    prop.write_type,
+                                );
                             }
                         } else {
                             properties.push(prop.clone());
@@ -625,8 +631,11 @@ impl TypeInterner {
                         (Some(idx), Some(existing)) => {
                             string_index = Some(IndexSignature {
                                 key_type: existing.key_type,
-                                value_type: self
-                                    .intersect_types_raw2(existing.value_type, idx.value_type),
+                                value_type: crate::types::intersect_merged_property_types(
+                                    self,
+                                    existing.value_type,
+                                    idx.value_type,
+                                ),
                                 // Intersection: readonly only if ALL constituents are readonly
                                 readonly: existing.readonly && idx.readonly,
                                 param_name: None,
@@ -639,8 +648,11 @@ impl TypeInterner {
                         (Some(idx), Some(existing)) => {
                             number_index = Some(IndexSignature {
                                 key_type: existing.key_type,
-                                value_type: self
-                                    .intersect_types_raw2(existing.value_type, idx.value_type),
+                                value_type: crate::types::intersect_merged_property_types(
+                                    self,
+                                    existing.value_type,
+                                    idx.value_type,
+                                ),
                                 // Intersection: readonly only if ALL constituents are readonly
                                 readonly: existing.readonly && idx.readonly,
                                 param_name: None,
@@ -710,7 +722,7 @@ impl TypeInterner {
                     let existing = &mut merged_props[idx];
                     // Property exists - intersect the types for stricter checking
                     // In TypeScript, if same property has different types, use intersection
-                    // Use raw intersection to avoid infinite recursion.
+                    // Intersect property types without full recursive normalization.
                     //
                     // CRITICAL: When one property is optional and the other is required,
                     // the optional property's type implicitly includes `undefined`.
@@ -729,7 +741,8 @@ impl TypeInterner {
                         } else {
                             prop.type_id
                         };
-                        existing.type_id = self.intersect_types_raw2(lhs, rhs);
+                        existing.type_id =
+                            crate::types::intersect_merged_property_types(self, lhs, rhs);
                     }
                     // Merge flags: required wins over optional, readonly only if ALL readonly
                     // For optional: only optional if ALL are optional (required wins)
@@ -742,7 +755,9 @@ impl TypeInterner {
                     // - NONE sentinel means "readonly, no setter". Skip it when merging.
                     // - If both have real write_types, intersect them for divergent accessor support.
                     // - Use normalizing `intersection2` to distribute over unions and reduce subtypes.
-                    if existing.write_type != prop.write_type {
+                    if !existing.readonly {
+                        existing.write_type = existing.type_id;
+                    } else if existing.write_type != prop.write_type {
                         if prop.write_type == TypeId::NONE {
                             // prop is readonly, keep existing.write_type unchanged
                         } else if existing.write_type == TypeId::NONE {
@@ -782,7 +797,11 @@ impl TypeInterner {
                     }
                     merged_string_index = Some(IndexSignature {
                         key_type: existing.key_type,
-                        value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
+                        value_type: crate::types::intersect_merged_property_types(
+                            self,
+                            existing.value_type,
+                            idx.value_type,
+                        ),
                         // Intersection: readonly only if ALL constituents are readonly
                         readonly: existing.readonly && idx.readonly,
                         param_name: None,
@@ -806,7 +825,11 @@ impl TypeInterner {
                     }
                     merged_number_index = Some(IndexSignature {
                         key_type: existing.key_type,
-                        value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
+                        value_type: crate::types::intersect_merged_property_types(
+                            self,
+                            existing.value_type,
+                            idx.value_type,
+                        ),
                         // Intersection: readonly only if ALL constituents are readonly
                         readonly: existing.readonly && idx.readonly,
                         param_name: None,

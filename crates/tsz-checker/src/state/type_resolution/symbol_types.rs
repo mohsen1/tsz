@@ -985,6 +985,13 @@ impl<'a> CheckerState<'a> {
             }
             if merged != TypeId::ERROR {
                 self.ctx.symbol_instance_types.insert(sym_id, merged);
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                let params = self.get_type_params_for_symbol(sym_id);
+                self.ctx
+                    .register_def_auto_params_in_envs(def_id, merged, params);
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(merged, def_id);
             }
             return merged;
         }
@@ -1091,11 +1098,19 @@ impl<'a> CheckerState<'a> {
             .insert(sym_id, interface_type);
 
         self.pop_type_parameters(updates);
-        let _ = params; // params are not needed for this path
 
         let merged = self.merge_interface_heritage_types(&declarations, interface_type);
         self.ctx.symbol_instance_types.insert(sym_id, merged);
         let def_id = self.ctx.get_or_create_def_id(sym_id);
+        let params = if params.is_empty() {
+            self.ctx
+                .get_def_type_params(def_id)
+                .unwrap_or_else(|| self.get_type_params_for_symbol(sym_id))
+        } else {
+            params
+        };
+        self.ctx
+            .register_def_auto_params_in_envs(def_id, merged, params);
         self.ctx
             .definition_store
             .register_type_to_def(merged, def_id);

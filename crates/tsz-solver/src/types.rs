@@ -1056,6 +1056,40 @@ impl PropertyInfo {
     }
 }
 
+/// Intersect property or index value types while preserving cheap top/bottom
+/// reductions that raw intersection construction intentionally skips.
+///
+/// Intersection property merging uses raw intersections to avoid recursive
+/// normalization, but `unknown` is still the intersection identity and `any`,
+/// `never`, and `error` keep their normal sentinel behavior. Without this,
+/// `{ value: string } & { value: unknown }` stores `string & unknown` and can
+/// compare differently from tsc's per-member intersection relation.
+pub fn intersect_merged_property_types(
+    db: &dyn crate::TypeDatabase,
+    left: TypeId,
+    right: TypeId,
+) -> TypeId {
+    if left == right {
+        return left;
+    }
+    if left == TypeId::ERROR || right == TypeId::ERROR {
+        return TypeId::ERROR;
+    }
+    if left == TypeId::NEVER || right == TypeId::NEVER {
+        return TypeId::NEVER;
+    }
+    if left == TypeId::ANY || right == TypeId::ANY {
+        return TypeId::ANY;
+    }
+    if left == TypeId::UNKNOWN {
+        return right;
+    }
+    if right == TypeId::UNKNOWN {
+        return left;
+    }
+    db.intersect_types_raw2(left, right)
+}
+
 /// Normalize display-only properties for diagnostic storage.
 ///
 /// Unlike canonical object properties, display properties should preserve
@@ -1096,11 +1130,12 @@ pub fn merge_display_properties_for_intersection(
             if let Some(&idx) = prop_indices.get(&prop.name) {
                 let existing: &mut PropertyInfo = &mut merged[idx];
                 if existing.type_id != prop.type_id {
-                    existing.type_id = db.intersect_types_raw2(existing.type_id, prop.type_id);
+                    existing.type_id =
+                        intersect_merged_property_types(db, existing.type_id, prop.type_id);
                 }
                 if existing.write_type != prop.write_type {
                     existing.write_type =
-                        db.intersect_types_raw2(existing.write_type, prop.write_type);
+                        intersect_merged_property_types(db, existing.write_type, prop.write_type);
                 }
             } else {
                 prop_indices.insert(prop.name, merged.len());

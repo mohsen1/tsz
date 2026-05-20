@@ -488,6 +488,18 @@ impl<'a> CheckerState<'a> {
             {
                 return false; // CLI resolved module
             }
+            let source_file_idx = self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .unwrap_or(self.ctx.current_file_idx);
+            if self
+                .ctx
+                .resolve_import_target_from_file(source_file_idx, module_name)
+                .is_some()
+                || self.ctx.resolve_import_target(module_name).is_some()
+            {
+                return false; // Project module resolved, exports may still be populated lazily
+            }
             // Module is not resolved - this is an unresolved import
             return true;
         }

@@ -592,10 +592,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Cross-evaluator stack overflow prevention.
-        // Only check thread-local global depth when the local guard depth
-        // is already significant (>= 10). This avoids expensive TLS access
-        // on the vast majority of shallow evaluations.
-        if self.guard.depth() >= 10 {
+        //
+        // Most recursion is visible to the per-evaluator guard, but infer-pattern
+        // fallbacks can create fresh evaluators while matching applications
+        // against conditional/object patterns. Those evaluators stay shallow
+        // individually while the combined call stack grows. Count application
+        // and conditional evaluations globally even at shallow local depth so
+        // that recursive generic expansion can bail out opaquely.
+        let needs_global_depth_guard = self.guard.depth() >= 10
+            || matches!(
+                self.interner.lookup(type_id),
+                Some(TypeData::Application(_) | TypeData::Conditional(_))
+            );
+        if needs_global_depth_guard {
             thread_local! {
                 static GLOBAL_EVAL_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
             }

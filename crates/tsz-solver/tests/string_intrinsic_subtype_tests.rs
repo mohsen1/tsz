@@ -10,7 +10,7 @@ use crate::evaluate_type;
 use crate::intern::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{StringIntrinsicKind, TemplateSpan, TypeData, TypeId, TypeParamInfo};
-use crate::{RelationContext, RelationKind, RelationPolicy, query_relation};
+use crate::{PropertyInfo, RelationContext, RelationKind, RelationPolicy, query_relation};
 
 // =============================================================================
 // Rule 1: StringIntrinsic(kind, T) <: string
@@ -55,6 +55,27 @@ fn string_intrinsic_capitalize_is_subtype_of_string() {
     assert!(
         checker.is_subtype_of(cap_string, TypeId::STRING),
         "Capitalize<string> should be assignable to string"
+    );
+}
+
+#[test]
+fn string_literal_matches_template_with_keyof_object_string_intersection() {
+    let interner = TypeInterner::new();
+
+    let table_name = interner.intern_string("sys.tables");
+    let schema = interner.object(vec![PropertyInfo::new(table_name, TypeId::UNKNOWN)]);
+    let table_key = interner.intersection(vec![interner.keyof(schema), TypeId::STRING]);
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(table_key),
+        TemplateSpan::Text(interner.intern_string(" as ")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let source = interner.literal_string("sys.tables as tables");
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(source, pattern),
+        "literal table alias should match `${{keyof Schema & string}} as ${{string}}`"
     );
 }
 

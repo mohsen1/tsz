@@ -4,6 +4,7 @@ use crate::TypeInterner;
 use crate::def::{DefId, DefKind};
 use crate::visitor::application_id;
 use std::sync::Arc;
+use tsz_binder::SymbolId;
 
 fn atom_names(interner: &TypeInterner, atoms: &[tsz_common::interner::Atom]) -> Vec<String> {
     let mut names: Vec<String> = atoms
@@ -578,6 +579,174 @@ fn test_application_subtype_canonicalizes_lazy_and_typequery_bases() {
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
 
     assert!(checker.is_subtype_of(source, target));
+    assert!(!checker.is_subtype_of(source, mismatch));
+}
+
+#[test]
+fn test_application_subtype_canonicalizes_object_shape_and_lazy_bases() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let box_def = DefId(4042);
+    let box_symbol = SymbolRef(4042);
+    let box_symbol_id = SymbolId(4042);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let box_body = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(interner.intern_string("value"), t_type)],
+        ObjectFlags::empty(),
+        Some(box_symbol_id),
+    );
+    env.insert_def_with_params(box_def, box_body, vec![t_param]);
+    env.insert_def_kind(box_def, DefKind::Interface);
+
+    let lowered_base = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(interner.intern_string("value"), t_type)],
+        ObjectFlags::empty(),
+        Some(box_symbol_id),
+    );
+    let source = interner.application(lowered_base, vec![TypeId::NUMBER]);
+    let target = interner.application(interner.lazy(box_def), vec![TypeId::NUMBER]);
+    let mismatch = interner.application(interner.lazy(box_def), vec![TypeId::STRING]);
+
+    let resolver = MockVarianceResolver {
+        env: &env,
+        def_id: box_def,
+        symbol: Some(box_symbol),
+        variances: Arc::from(vec![Variance::COVARIANT]),
+    };
+    let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
+    let source_app = application_id(&interner, source).expect("source app");
+    let target_app = application_id(&interner, target).expect("target app");
+    assert!(
+        checker
+            .check_application_to_application_subtype(source_app, target_app)
+            .is_true(),
+        "direct application relation should instantiate the structural source base"
+    );
+
+    assert!(
+        checker.is_subtype_of(source, target),
+        "a generic application whose base has already lowered to a symbol-backed object shape \
+         should remain in the same family as the corresponding lazy generic base"
+    );
+    assert!(!checker.is_subtype_of(source, mismatch));
+}
+
+#[test]
+fn test_application_subtype_canonicalizes_display_aliased_object_and_lazy_bases() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let box_def = DefId(4043);
+    let box_symbol = SymbolRef(4043);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("Item"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let box_body = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("payload"),
+        t_type,
+    )]);
+    env.insert_def_with_params(box_def, box_body, vec![t_param]);
+    env.insert_def_kind(box_def, DefKind::Interface);
+
+    let lowered_base = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("payload"),
+        t_type,
+    )]);
+    let unrelated_intersection_member = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("tag"),
+        TypeId::STRING,
+    )]);
+    let generic_intersection_member = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(interner.intern_string("payload"), t_type)],
+        ObjectFlags::empty(),
+        Some(SymbolId(4043)),
+    );
+    let intersection_alias = interner.intersection(vec![
+        unrelated_intersection_member,
+        generic_intersection_member,
+    ]);
+    interner.store_display_alias(lowered_base, intersection_alias);
+
+    let source = interner.application(lowered_base, vec![TypeId::NUMBER]);
+    let target = interner.application(interner.lazy(box_def), vec![TypeId::NUMBER]);
+    let mismatch = interner.application(interner.lazy(box_def), vec![TypeId::STRING]);
+
+    let resolver = MockVarianceResolver {
+        env: &env,
+        def_id: box_def,
+        symbol: Some(box_symbol),
+        variances: Arc::from(vec![Variance::COVARIANT]),
+    };
+    let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
+    let source_app = application_id(&interner, source).expect("source app");
+    let target_app = application_id(&interner, target).expect("target app");
+    assert!(
+        checker
+            .check_application_to_application_subtype(source_app, target_app)
+            .is_true(),
+        "direct application relation should instantiate the structural source base"
+    );
+
+    assert!(
+        checker.is_subtype_of(source, target),
+        "a generic application whose base has lowered to a display-aliased object shape \
+         should remain in the same family as the corresponding lazy generic base"
+    );
+    assert!(!checker.is_subtype_of(source, mismatch));
+}
+
+#[test]
+fn test_application_subtype_instantiates_structural_object_base_against_lazy_base() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let box_def = DefId(4044);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("Value"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let body = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("payload"),
+        t_type,
+    )]);
+    env.insert_def_with_params(box_def, body, vec![t_param]);
+    env.insert_def_kind(box_def, DefKind::Interface);
+
+    let structural_base = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("payload"),
+        t_type,
+    )]);
+    let source = interner.application(structural_base, vec![TypeId::NUMBER]);
+    let target = interner.application(interner.lazy(box_def), vec![TypeId::NUMBER]);
+    let mismatch = interner.application(interner.lazy(box_def), vec![TypeId::STRING]);
+
+    let resolver = MockVarianceResolver {
+        env: &env,
+        def_id: box_def,
+        symbol: None,
+        variances: Arc::from(vec![Variance::COVARIANT]),
+    };
+    let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
+
+    assert!(
+        checker.is_subtype_of(source, target),
+        "a generic application whose base is already a structural body should instantiate \
+         that body with the compared lazy generic's type parameters"
+    );
     assert!(!checker.is_subtype_of(source, mismatch));
 }
 

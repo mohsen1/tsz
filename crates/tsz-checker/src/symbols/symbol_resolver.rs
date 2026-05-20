@@ -1053,10 +1053,11 @@ impl<'a> CheckerState<'a> {
                     .import_name
                     .as_deref()
                     .unwrap_or(&alias_symbol.escaped_name);
-                let source_file_idx = self
-                    .ctx
-                    .resolve_symbol_file_index(sym_id)
-                    .unwrap_or(self.ctx.current_file_idx);
+                let source_file_idx = if alias_symbol.decl_file_idx != u32::MAX {
+                    alias_symbol.decl_file_idx as usize
+                } else {
+                    self.ctx.current_file_idx
+                };
                 if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
                     module_name,
                     expected_name,
@@ -1645,14 +1646,14 @@ impl<'a> CheckerState<'a> {
                 if let Some(alias_symbol) =
                     self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                     && alias_symbol.has_any_flags(symbol_flags::ALIAS)
-                    && alias_symbol.is_type_only
                     && let Some(module_name) = alias_symbol.import_module.as_ref()
                     && let Some(import_name) = alias_symbol.import_name.as_deref()
                 {
-                    let source_file_idx = self
-                        .ctx
-                        .resolve_symbol_file_index(sym_id)
-                        .unwrap_or(self.ctx.current_file_idx);
+                    let source_file_idx = if alias_symbol.decl_file_idx != u32::MAX {
+                        alias_symbol.decl_file_idx as usize
+                    } else {
+                        self.ctx.current_file_idx
+                    };
                     if let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
                         module_name,
                         import_name,

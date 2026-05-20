@@ -199,18 +199,7 @@ impl<'a> CheckerState<'a> {
                     .insert_type_param_variance(d, declared.clone());
                 return Some(declared);
             }
-            let computed =
-                tsz_solver::relations::variance::compute_type_param_variances_with_resolver(
-                    self.ctx.types.as_type_database(),
-                    &self.ctx,
-                    d,
-                );
-            if let Some(ref variances) = computed {
-                self.ctx
-                    .types
-                    .insert_type_param_variance(d, variances.clone());
-            }
-            computed
+            None
         });
 
         source_args

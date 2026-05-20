@@ -778,6 +778,18 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         def_id: tsz_solver::DefId,
     ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
         self.get_def_type_params(def_id)
+            .or_else(|| {
+                self.type_env
+                    .try_borrow()
+                    .ok()
+                    .and_then(|env| TypeResolver::get_lazy_type_params(&*env, def_id))
+            })
+            .or_else(|| {
+                self.type_environment
+                    .try_borrow()
+                    .ok()
+                    .and_then(|env| TypeResolver::get_lazy_type_params(&*env, def_id))
+            })
     }
 
     fn is_boxed_def_id(&self, def_id: tsz_solver::DefId, kind: tsz_solver::IntrinsicKind) -> bool {
@@ -999,7 +1011,20 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// - **Interface/Class**: Nominal - Different interfaces are incompatible even
     ///   if structurally identical, so they must keep their Lazy(DefId) reference
     fn get_def_kind(&self, def_id: tsz_solver::DefId) -> Option<tsz_solver::def::DefKind> {
-        self.definition_store.get_kind(def_id)
+        self.definition_store
+            .get_kind(def_id)
+            .or_else(|| {
+                self.type_env
+                    .try_borrow()
+                    .ok()
+                    .and_then(|env| TypeResolver::get_def_kind(&*env, def_id))
+            })
+            .or_else(|| {
+                self.type_environment
+                    .try_borrow()
+                    .ok()
+                    .and_then(|env| TypeResolver::get_def_kind(&*env, def_id))
+            })
     }
 
     fn get_def_name(&self, def_id: tsz_solver::DefId) -> Option<tsz_common::interner::Atom> {

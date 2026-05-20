@@ -102,6 +102,25 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.get_node_symbol(class_idx))
     }
 
+    pub(crate) fn completed_class_instance_type_from_cache(
+        &self,
+        class_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let cached = self
+            .ctx
+            .class_instance_type_cache
+            .get(&class_idx)
+            .copied()?;
+        if matches!(cached, TypeId::ANY | TypeId::ERROR) {
+            return Some(cached);
+        }
+        self.ctx
+            .class_instance_type_to_decl
+            .get(&cached)
+            .is_some_and(|&decl_idx| decl_idx == class_idx)
+            .then_some(cached)
+    }
+
     /// Get the instance type of a class declaration.
     ///
     /// This is the type that instances of the class will have. It includes:
@@ -152,7 +171,7 @@ impl<'a> CheckerState<'a> {
                 return result;
             }
 
-            if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
+            if let Some(cached) = self.completed_class_instance_type_from_cache(class_idx) {
                 return cached;
             }
         } else {
@@ -170,7 +189,7 @@ impl<'a> CheckerState<'a> {
                     .copied()
                     .unwrap_or(TypeId::ERROR);
             }
-            if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
+            if let Some(cached) = self.completed_class_instance_type_from_cache(class_idx) {
                 return cached;
             }
         }
@@ -1783,13 +1802,12 @@ impl<'a> CheckerState<'a> {
 
                 // Get the base class instance type.
                 // We already resolved a concrete class declaration (`base_class_idx`) above, so
-                // we can read through the declaration cache directly and avoid an extra symbol
-                // resolution round trip on this hot inheritance path.
+                // we can reuse completed declaration-cache entries and avoid an extra symbol
+                // resolution round trip on this hot inheritance path. Partial prescan entries
+                // are only valid while the base is actively being resolved; outside that cycle,
+                // force the base class to complete before merging inherited method signatures.
                 let base_instance_type = self
-                    .ctx
-                    .class_instance_type_cache
-                    .get(&base_class_idx)
-                    .copied()
+                    .completed_class_instance_type_from_cache(base_class_idx)
                     .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
                 let base_instance_type = self.resolve_lazy_type(base_instance_type);
                 let mut base_type_params = Vec::new();

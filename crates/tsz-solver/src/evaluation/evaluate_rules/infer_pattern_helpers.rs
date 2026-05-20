@@ -23,6 +23,8 @@ use tsz_common::interner::Atom;
 use super::super::evaluate::TypeEvaluator;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    const MAX_INFER_OBJECT_APPLICATION_EVAL_DEPTH: u32 = 2;
+
     pub(crate) fn implicit_sequence_property_type(
         &self,
         source: TypeId,
@@ -1699,23 +1701,41 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 true
             }
             Some(TypeData::Application(_)) => {
+                thread_local! {
+                    static INFER_OBJECT_APPLICATION_EVAL_DEPTH: std::cell::Cell<u32> =
+                        const { std::cell::Cell::new(0) };
+                }
+
+                let entered = INFER_OBJECT_APPLICATION_EVAL_DEPTH.with(|depth| {
+                    let current = depth.get();
+                    if current >= Self::MAX_INFER_OBJECT_APPLICATION_EVAL_DEPTH {
+                        return false;
+                    }
+                    depth.set(current + 1);
+                    true
+                });
+                if !entered {
+                    return false;
+                }
+
                 let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
                 evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
                 if let Some(query_db) = self.query_db() {
                     evaluator = evaluator.with_query_db(query_db);
                 }
                 let evaluated = evaluator.evaluate(source);
-                if evaluated == source {
-                    return false;
-                }
-                self.match_infer_object_pattern(
-                    evaluated,
-                    pattern_shape_id,
-                    pattern,
-                    bindings,
-                    visited,
-                    checker,
-                )
+                let matched = evaluated != source
+                    && self.match_infer_object_pattern(
+                        evaluated,
+                        pattern_shape_id,
+                        pattern,
+                        bindings,
+                        visited,
+                        checker,
+                    );
+                INFER_OBJECT_APPLICATION_EVAL_DEPTH
+                    .with(|depth| depth.set(depth.get().saturating_sub(1)));
+                matched
             }
             Some(TypeData::Callable(callable_shape_id)) => {
                 // Callable types (class constructors) have properties (static members)

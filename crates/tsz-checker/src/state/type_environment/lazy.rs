@@ -864,7 +864,12 @@ impl<'a> CheckerState<'a> {
                                 // Point) can find properties.
                                 let from_node_cache = if cached.is_none() {
                                     symbol.primary_declaration().and_then(|idx| {
-                                        self.ctx.class_instance_type_cache.get(&idx).copied()
+                                        if self.ctx.class_instance_resolution_set.contains(&sym_id)
+                                        {
+                                            self.ctx.class_instance_type_cache.get(&idx).copied()
+                                        } else {
+                                            self.completed_class_instance_type_from_cache(idx)
+                                        }
                                     })
                                 } else {
                                     None
@@ -1367,9 +1372,13 @@ impl<'a> CheckerState<'a> {
                     .get(&sym_id)
                     .copied()
                     .or_else(|| {
-                        symbol
-                            .primary_declaration()
-                            .and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
+                        symbol.primary_declaration().and_then(|idx| {
+                            if self.ctx.class_instance_resolution_set.contains(&sym_id) {
+                                self.ctx.class_instance_type_cache.get(&idx).copied()
+                            } else {
+                                self.completed_class_instance_type_from_cache(idx)
+                            }
+                        })
                     })
                     .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
             } else {
@@ -1608,9 +1617,13 @@ impl<'a> CheckerState<'a> {
                     .get(&sym_id)
                     .copied()
                     .or_else(|| {
-                        symbol
-                            .primary_declaration()
-                            .and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
+                        symbol.primary_declaration().and_then(|idx| {
+                            if self.ctx.class_instance_resolution_set.contains(&sym_id) {
+                                self.ctx.class_instance_type_cache.get(&idx).copied()
+                            } else {
+                                self.completed_class_instance_type_from_cache(idx)
+                            }
+                        })
                     })
                     .unwrap_or_else(|| {
                         // Try building the instance type directly from the class symbol.

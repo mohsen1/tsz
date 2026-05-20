@@ -7,6 +7,11 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
     ) -> Option<TypeId> {
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)?;
+        if let Ok(env) = self.ctx.type_env.try_borrow()
+            && let Some(instance_type) = env.get_class_instance_type(def_id)
+        {
+            return Some(instance_type);
+        }
         if !self
             .ctx
             .definition_store

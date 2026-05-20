@@ -620,6 +620,12 @@ impl<'a> TypeInstantiator<'a> {
     }
 
     fn instantiate_inner(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(type_id)
+            && let Some(local_type_param) = self.lookup_local_type_param(info.name)
+        {
+            return local_type_param;
+        }
+
         // Check if we're already processing this type (cycle detection)
         if let Some(&cached) = self.visiting.get(&type_id) {
             if cached != type_id

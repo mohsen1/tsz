@@ -237,6 +237,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // Same-family generic applications with `any`-dependent arguments need
+        // the variance gate before cache lookup and recursion guards. Otherwise
+        // recursive structural expansion can cache a false result for pairs like
+        // `FunctionModule<any, keyof any>` vs `FunctionModule<DB, keyof DB>`
+        // before the relation gets a chance to apply TypeScript's `any`
+        // compatibility rule at the generic boundary.
+        if !self.bypass_evaluation
+            && let (Some(s_app_id), Some(t_app_id)) = (
+                application_id(self.interner, source).or_else(|| {
+                    self.interner
+                        .get_display_alias(source)
+                        .and_then(|alias| application_id(self.interner, alias))
+                }),
+                application_id(self.interner, target).or_else(|| {
+                    self.interner
+                        .get_display_alias(target)
+                        .and_then(|alias| application_id(self.interner, alias))
+                }),
+            )
+        {
+            let s_app = self.interner.type_application(s_app_id);
+            let t_app = self.interner.type_application(t_app_id);
+            if s_app
+                .args
+                .iter()
+                .chain(t_app.args.iter())
+                .any(|arg| arg.is_any())
+                && let Some(result) = self.try_variance_fast_path(s_app_id, t_app_id)
+                && result.is_true()
+            {
+                return result;
+            }
+        }
+
         // In TypeScript, `unknown` equals `{} | null | undefined`. When the
         // source is `unknown` and the target is a union containing all three
         // constituents, unknown is assignable. This is also handled by the compat
@@ -692,16 +726,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .get_display_alias(source)
                     .and_then(|alias| application_id(self.interner, alias))
             });
-            let variance_result =
-                if let (Some(s_app_id), Some(t_app_id)) = (s_app_id_for_variance, t_app_id) {
-                    self.try_variance_fast_path(s_app_id, t_app_id)
-                } else if let Some(s_app_id) = s_app_id {
-                    // Source is Application, target might be Union containing an Application.
-                    // This handles optional properties where target is App<X> | undefined.
-                    self.try_variance_against_union_target(s_app_id, target)
-                } else {
-                    None
-                };
+            let t_app_id_for_variance = t_app_id.or_else(|| {
+                self.interner
+                    .get_display_alias(target)
+                    .and_then(|alias| application_id(self.interner, alias))
+            });
+            let variance_result = if let (Some(s_app_id), Some(t_app_id)) =
+                (s_app_id_for_variance, t_app_id_for_variance)
+            {
+                self.try_variance_fast_path(s_app_id, t_app_id)
+            } else if let Some(s_app_id) = s_app_id {
+                // Source is Application, target might be Union containing an Application.
+                // This handles optional properties where target is App<X> | undefined.
+                self.try_variance_against_union_target(s_app_id, target)
+            } else {
+                None
+            };
 
             if let Some(result) = variance_result {
                 if let Some(dp) = def_entered {
@@ -718,6 +758,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 leave_global!();
                 return result;
+            }
+
+            if let (Some(s_app_id), Some(t_app_id)) = (s_app_id, t_app_id) {
+                let result = self.check_application_to_application_subtype(s_app_id, t_app_id);
+                if result.is_true() {
+                    if let Some(dp) = def_entered {
+                        self.def_guard.leave(dp);
+                    }
+                    self.guard.leave(pair);
+                    if !has_this_type && let Some(db) = self.query_db {
+                        let key = self.make_cache_key(source, target);
+                        db.insert_subtype_cache(key, true);
+                    }
+                    leave_global!();
+                    return result;
+                }
             }
         }
 

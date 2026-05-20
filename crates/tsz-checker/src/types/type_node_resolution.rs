@@ -24,19 +24,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
             return None;
         }
-        if !symbol.is_type_only {
-            return None;
-        }
         let module_name = symbol.import_module.as_ref()?;
         let import_name = symbol.import_name.as_deref()?;
         if import_name == "*" {
             return None;
         }
 
-        let source_file_idx = self
-            .ctx
-            .resolve_symbol_file_index(sym_id)
-            .unwrap_or(self.ctx.current_file_idx);
+        let source_file_idx = if symbol.decl_file_idx != u32::MAX {
+            symbol.decl_file_idx as usize
+        } else {
+            self.ctx
+                .resolve_symbol_file_index(sym_id)
+                .unwrap_or(self.ctx.current_file_idx)
+        };
         let target_file_idx = self
             .ctx
             .resolve_import_target_from_file(source_file_idx, module_name)?;
@@ -56,7 +56,36 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .or_else(|| target_binder.file_locals.get(import_name))?;
         let target_symbol = target_binder.get_symbol(target_sym_id)?;
         if !target_symbol.has_any_flags(tsz_binder::symbol_flags::TYPE) {
-            return None;
+            let type_side_target = target_binder
+                .get_symbols()
+                .find_all_by_name(import_name)
+                .iter()
+                .copied()
+                .find(|candidate_id| {
+                    let Some(candidate) = target_binder.get_symbol(*candidate_id) else {
+                        return false;
+                    };
+                    if !candidate.is_exported
+                        || !candidate.has_any_flags(tsz_binder::symbol_flags::TYPE)
+                    {
+                        return false;
+                    }
+                    candidate.declarations.iter().any(|decl_idx| {
+                        if let Some(arenas) = target_binder
+                            .declaration_arenas
+                            .get(&(*candidate_id, *decl_idx))
+                        {
+                            arenas
+                                .iter()
+                                .any(|decl_arena| std::ptr::eq(decl_arena.as_ref(), target_arena))
+                        } else {
+                            true
+                        }
+                    })
+                })?;
+            self.ctx
+                .register_symbol_file_target(type_side_target, target_file_idx);
+            return Some(type_side_target);
         }
         self.ctx
             .register_symbol_file_target(target_sym_id, target_file_idx);

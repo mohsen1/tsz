@@ -1347,6 +1347,12 @@ impl<'a> CheckerState<'a> {
         {
             tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_cross_file();
             let def_id = self.ctx.get_or_create_def_id(sym_id);
+            let params = self
+                .ctx
+                .get_def_type_params(def_id)
+                .unwrap_or_else(|| self.get_type_params_for_symbol(sym_id));
+            self.ctx
+                .register_def_auto_params_in_envs(def_id, cached_type, params);
             self.ctx
                 .definition_store
                 .register_type_to_def(cached_type, def_id);

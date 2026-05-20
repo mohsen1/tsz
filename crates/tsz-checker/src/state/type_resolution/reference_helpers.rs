@@ -365,7 +365,10 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or(true);
         if should_extract_params {
-            let params = self.extract_declared_type_params_for_reference_symbol(sym_id, name);
+            let mut params = self.extract_declared_type_params_for_reference_symbol(sym_id, name);
+            if params.is_empty() {
+                params = self.get_type_params_for_symbol(sym_id);
+            }
             if !params.is_empty() {
                 self.ctx.insert_def_type_params(def_id, params);
             } else if !self.ctx.lib_contexts.is_empty() {
@@ -1064,8 +1067,8 @@ impl<'a> CheckerState<'a> {
                         )
                         .is_some_and(|shape| !shape.construct_signatures.is_empty());
                     if cached_has_construct_signature
-                        && let Some(&class_cached) =
-                            self.ctx.class_instance_type_cache.get(&decl_idx)
+                        && let Some(class_cached) =
+                            self.completed_class_instance_type_from_cache(decl_idx)
                         && class_cached != TypeId::ERROR
                         && class_cached != TypeId::ANY
                     {

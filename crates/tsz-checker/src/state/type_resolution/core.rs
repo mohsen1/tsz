@@ -12,8 +12,9 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Keep the lowered generic base/defaults, but replace explicit type
-    /// arguments with checker-resolved forms so inline type literals preserve
-    /// computed property names and other checker-owned facts.
+    /// arguments with checker-resolved forms so current-file references,
+    /// forward interfaces, inline type literals, computed property names, and
+    /// other checker-owned facts are preserved.
     fn rebuild_application_with_checker_type_args(
         &mut self,
         application: TypeId,
@@ -25,32 +26,10 @@ impl<'a> CheckerState<'a> {
         };
 
         for (slot, &arg_idx) in app_args.iter_mut().zip(type_args.nodes.iter()) {
-            if self.type_arg_needs_checker_resolution(arg_idx) {
-                *slot = self.get_type_from_type_node(arg_idx);
-            }
+            *slot = self.get_type_from_type_node(arg_idx);
         }
 
         self.ctx.types.application(base, app_args)
-    }
-
-    fn type_arg_needs_checker_resolution(&self, arg_idx: NodeIndex) -> bool {
-        let Some(type_lit) = self
-            .ctx
-            .arena
-            .get(arg_idx)
-            .and_then(|node| self.ctx.arena.get_type_literal(node))
-        else {
-            return false;
-        };
-
-        type_lit.members.nodes.iter().any(|&member_idx| {
-            self.ctx
-                .arena
-                .get(member_idx)
-                .and_then(|member| self.ctx.arena.get_signature(member))
-                .and_then(|sig| self.ctx.arena.get(sig.name))
-                .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-        })
     }
 
     fn same_file_type_alias_parts_for_name(

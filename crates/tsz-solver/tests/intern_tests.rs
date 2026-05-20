@@ -1063,6 +1063,42 @@ fn test_partial_object_merging_in_intersection() {
     }
 }
 
+#[test]
+fn test_intersection_property_merge_uses_writable_read_type_when_unknown_is_identity() {
+    let interner = TypeInterner::new();
+    let name = interner.intern_string("value");
+
+    let mut readonly_string = PropertyInfo::readonly(name, TypeId::STRING);
+    readonly_string.write_type = TypeId::NONE;
+
+    let mut writable_unknown = PropertyInfo::new(name, TypeId::UNKNOWN);
+    writable_unknown.write_type = TypeId::UNKNOWN;
+
+    let readonly_obj = interner.object(vec![readonly_string]);
+    let writable_obj = interner.object(vec![writable_unknown]);
+    let merged = interner.intersection(vec![readonly_obj, writable_obj]);
+
+    let TypeData::Object(shape_id) = interner
+        .lookup(merged)
+        .unwrap_or_else(|| panic!("Expected merged object type, got missing type {merged:?}"))
+    else {
+        panic!(
+            "Expected merged object type, got {:?}",
+            interner.lookup(merged)
+        );
+    };
+    let shape = interner.object_shape(shape_id);
+    let prop = shape
+        .properties
+        .iter()
+        .find(|prop| prop.name == name)
+        .expect("expected merged value property");
+
+    assert_eq!(prop.type_id, TypeId::STRING);
+    assert_eq!(prop.write_type, TypeId::STRING);
+    assert!(!prop.readonly);
+}
+
 // Task #43: Test partial callable merging in mixed intersections
 #[test]
 fn test_partial_callable_merging_in_intersection() {

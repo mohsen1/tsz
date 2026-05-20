@@ -231,3 +231,56 @@ export const IdentifierNode: IdentifierNodeFactory = {
         "Imported interface+const merge should use the const value side in expression context. Got: {ts2339:?}. All: {diagnostics:?}"
     );
 }
+
+#[test]
+fn imported_interface_const_merge_uses_type_side_for_annotations() {
+    let node = r#"
+export interface ItemNode {
+  readonly kind: 'ItemNode';
+  readonly id: string;
+}
+
+type ItemNodeFactory = Readonly<{
+  create(id: string): Readonly<ItemNode>;
+}>;
+
+export const ItemNode: ItemNodeFactory = {
+  create(id) {
+    return { kind: 'ItemNode', id };
+  },
+};
+"#;
+    let usage = r#"
+import { ItemNode } from "./node.js";
+
+export interface Holder {
+  readonly node: ItemNode;
+}
+
+const node: ItemNode = ItemNode.create('id');
+const holder: Holder = { node };
+"#;
+    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_libs(
+        &[("./node.ts", node), ("./usage.ts", usage)],
+        "./usage.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|d| d.code != 2318)
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+    let relevant = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2345 | 2739 | 2740))
+        .collect::<Vec<_>>();
+    assert!(
+        relevant.is_empty(),
+        "Imported interface+const merge should use the interface type side in annotations. Got: {relevant:?}. All: {diagnostics:?}"
+    );
+}

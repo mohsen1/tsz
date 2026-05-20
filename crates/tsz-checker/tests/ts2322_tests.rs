@@ -7432,6 +7432,128 @@ const badNumber: IsolationLevel = 1;
     );
 }
 
+#[test]
+fn imported_declare_class_type_reference_uses_instance_side_in_method_parameter() {
+    let config = r#"
+export interface DriverConfig {
+  connection: Connection;
+  request: RequestClass;
+}
+
+export interface Connection {
+  execSql(request: Request): void;
+}
+
+export interface RequestClass {
+  new (sqlText: string, callback: (error?: Error | null) => void): Request;
+}
+
+export declare class Request {
+  addParameter(name: string, value: unknown): void;
+  once(event: 'requestCompleted', listener: () => void): this;
+}
+"#;
+    let usage = r#"
+import type { Connection, DriverConfig, Request } from './config.js';
+
+class Runner {
+  readonly #connection: Connection;
+  readonly #request: Request;
+
+  constructor(config: DriverConfig) {
+    this.#connection = config.connection;
+    this.#request = new config.request('select 1', () => {});
+  }
+
+  run(): void {
+    this.#connection.execSql(this.#request);
+  }
+}
+"#;
+    let diags = tsz_checker::test_utils::check_multi_file(
+        &[("./config.ts", config), ("./usage.ts", usage)],
+        "./usage.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_diagnostic_code(&diags, 2345),
+        "expected imported method parameter type to use the class instance side; got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,),
+        "expected constructed value to assign to the declared class instance type; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn imported_private_generic_class_accepts_same_class_with_any_type_argument() {
+    let model = r#"
+export class Store<T> {
+  private readonly props!: T;
+  get(): T {
+    return this.props;
+  }
+}
+
+export class CaseBuilder<DB, TB extends keyof DB> {
+  private readonly props!: unknown;
+  when<RE extends TB>(reference: RE): CaseBuilder<DB, TB> {
+    return this;
+  }
+}
+
+export class Query<DB> {
+  private readonly props!: unknown;
+  case(): CaseBuilder<DB, keyof DB>;
+  case<V>(value: Expression<V>): CaseBuilder<DB, keyof DB>;
+  case<V>(value?: Expression<V>): any {
+    return null as any;
+  }
+}
+
+export interface Expression<T> {
+  expressionType?: T;
+}
+"#;
+    let usage = r#"
+import type { Query, Store } from './model.js';
+
+interface Tables {
+  person: { id: number };
+}
+
+class Consumer {
+  readonly #store: Store<Tables>;
+  readonly #query: Query<Tables>;
+
+  constructor(store: Store<any>, query: Query<any>) {
+    this.#store = store;
+    this.#query = query;
+  }
+}
+"#;
+    let diags = tsz_checker::test_utils::check_multi_file(
+        &[("./model.ts", model), ("./usage.ts", usage)],
+        "./usage.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,),
+        "expected same imported generic class instantiated with any to be assignable across its private brand; got: {diags:#?}"
+    );
+}
+
 // =============================================================================
 // Type alias instantiation with template-literal interpolation (TS2322)
 // =============================================================================

@@ -13,14 +13,83 @@ use crate::instantiation::instantiate::fill_application_defaults;
 use crate::types::{MappedModifier, MappedType, TypeData, TypeParamInfo, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
-    application_id, array_element_type, contains_type_parameter_named, index_access_parts,
-    intersection_list_id, is_empty_object_type, keyof_inner_type, lazy_def_id, literal_value,
-    mapped_type_id, object_shape_id, object_with_index_shape_id, tuple_list_id, type_param_info,
-    union_list_id,
+    application_id, array_element_type, contains_type_parameter_named,
+    contains_type_parameter_named_shallow, index_access_parts, intersection_list_id,
+    is_empty_object_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id,
+    object_shape_id, object_with_index_shape_id, tuple_list_id, type_param_info, union_list_id,
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn variance_arg_mismatch_is_any_dependent(
+        &self,
+        type_params: &[TypeParamInfo],
+        arg_index: usize,
+        source_args: &[TypeId],
+        target_args: &[TypeId],
+    ) -> bool {
+        let Some(param) = type_params.get(arg_index) else {
+            return false;
+        };
+        let Some(constraint) = param.constraint else {
+            return false;
+        };
+
+        type_params
+            .iter()
+            .enumerate()
+            .filter(|(dep_index, _)| *dep_index != arg_index)
+            .any(|(dep_index, dep_param)| {
+                let dep_has_any = source_args.get(dep_index).is_some_and(|arg| arg.is_any())
+                    || target_args.get(dep_index).is_some_and(|arg| arg.is_any());
+                dep_has_any
+                    && contains_type_parameter_named_shallow(
+                        self.interner,
+                        constraint,
+                        dep_param.name,
+                    )
+            })
+    }
+
+    fn application_args_are_any_dependent_compatible(
+        &mut self,
+        type_params: &[TypeParamInfo],
+        source_args: &[TypeId],
+        target_args: &[TypeId],
+    ) -> bool {
+        if source_args.len() != target_args.len()
+            || source_args.len() > type_params.len()
+            || !source_args
+                .iter()
+                .chain(target_args.iter())
+                .any(|arg| arg.is_any())
+        {
+            return false;
+        }
+
+        let mut used_any_dependency = false;
+        for i in 0..source_args.len() {
+            let source_arg = source_args[i];
+            let target_arg = target_args[i];
+            if source_arg == target_arg
+                || (self.check_subtype(source_arg, target_arg).is_true()
+                    && self.check_subtype(target_arg, source_arg).is_true())
+            {
+                continue;
+            }
+
+            if self.variance_arg_mismatch_is_any_dependent(type_params, i, source_args, target_args)
+            {
+                used_any_dependency = true;
+                continue;
+            }
+
+            return false;
+        }
+
+        used_any_dependency
+    }
+
     fn iterator_protocol_mismatch_for_same_application_family(
         &mut self,
         source_type: TypeId,
@@ -73,6 +142,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         s_app.args.iter().chain(t_app.args.iter()).all(|&arg| {
             !crate::contains_type_parameters(self.interner, arg)
                 && !crate::contains_this_type(self.interner, arg)
+                && !arg.is_any()
         })
     }
 
@@ -103,21 +173,502 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
+        self.application_base_def_ids(base).into_iter().next()
+    }
+
+    fn application_base_def_ids(&self, base: TypeId) -> Vec<DefId> {
+        let mut seen = Vec::new();
+        let mut defs = Vec::new();
+        self.collect_application_base_def_ids(base, &mut seen, &mut defs);
+        defs
+    }
+
+    fn collect_application_base_def_ids(
+        &self,
+        base: TypeId,
+        seen: &mut Vec<TypeId>,
+        defs: &mut Vec<DefId>,
+    ) {
         if base.is_intrinsic() {
-            return None;
+            return;
         }
-        match self.interner.lookup(base) {
-            Some(TypeData::Lazy(def_id)) => Some(def_id),
-            Some(TypeData::TypeQuery(sym_ref)) => {
-                let def_id = self.resolver.symbol_to_def_id(sym_ref)?;
-                matches!(
-                    self.resolver.get_def_kind(def_id),
-                    Some(crate::def::DefKind::Interface | crate::def::DefKind::TypeAlias)
+        if seen.contains(&base) {
+            return;
+        }
+        seen.push(base);
+
+        let mut push_def = |def_id: DefId| {
+            let known_generic_def = matches!(
+                self.resolver.get_def_kind(def_id),
+                Some(
+                    crate::def::DefKind::Class
+                        | crate::def::DefKind::Interface
+                        | crate::def::DefKind::TypeAlias
                 )
-                .then_some(def_id)
+            ) || self.resolver.get_lazy_type_params(def_id).is_some();
+            if known_generic_def && !defs.contains(&def_id) {
+                defs.push(def_id);
             }
-            _ => None,
+        };
+
+        match self.interner.lookup(base) {
+            Some(TypeData::Lazy(def_id)) => push_def(def_id),
+            Some(TypeData::TypeQuery(sym_ref)) => {
+                if let Some(def_id) = self.resolver.symbol_to_def_id(sym_ref)
+                    && matches!(
+                        self.resolver.get_def_kind(def_id),
+                        Some(crate::def::DefKind::Interface | crate::def::DefKind::TypeAlias)
+                    )
+                    && !defs.contains(&def_id)
+                {
+                    defs.push(def_id);
+                }
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                if let Some(symbol) = shape.symbol {
+                    let symbol_ref = crate::SymbolRef(symbol.0);
+                    if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
+                        push_def(def_id);
+                    }
+                }
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                self.collect_application_base_def_ids(app.base, seen, defs);
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                for &member in self.interner.type_list(list_id).iter() {
+                    self.collect_application_base_def_ids(member, seen, defs);
+                }
+            }
+            _ => {}
         }
+
+        if let Some(alias) = self.interner.get_display_alias(base)
+            && alias != base
+        {
+            self.collect_application_base_def_ids(alias, seen, defs);
+        }
+    }
+
+    fn application_bases_same_family(
+        &self,
+        source_base: TypeId,
+        target_base: TypeId,
+    ) -> (bool, Option<DefId>, Option<DefId>) {
+        let source_defs = self.application_base_def_ids(source_base);
+        let target_defs = self.application_base_def_ids(target_base);
+        let matched_defs = source_defs.iter().find_map(|source_def| {
+            target_defs
+                .iter()
+                .find(|&&target_def| self.resolver.defs_are_equivalent(*source_def, target_def))
+                .map(|&target_def| (*source_def, target_def))
+        });
+        let same_family = source_base == target_base || matched_defs.is_some();
+        let source_def = matched_defs
+            .map(|(source_def, _)| source_def)
+            .or_else(|| source_defs.first().copied());
+        let target_def = matched_defs
+            .map(|(_, target_def)| target_def)
+            .or_else(|| target_defs.first().copied());
+        (same_family, source_def, target_def)
+    }
+
+    fn collect_structural_type_params(&self, type_id: TypeId) -> Vec<TypeParamInfo> {
+        let mut seen_types = Vec::new();
+        let mut seen_names = Vec::new();
+        let mut params = Vec::new();
+        self.collect_structural_type_params_inner(
+            type_id,
+            &mut seen_types,
+            &mut seen_names,
+            &[],
+            &mut params,
+        );
+        params
+    }
+
+    fn collect_structural_type_params_inner(
+        &self,
+        type_id: TypeId,
+        seen_types: &mut Vec<TypeId>,
+        seen_names: &mut Vec<tsz_common::interner::Atom>,
+        blocked_names: &[tsz_common::interner::Atom],
+        params: &mut Vec<TypeParamInfo>,
+    ) {
+        if type_id.is_intrinsic() || seen_types.contains(&type_id) {
+            return;
+        }
+        seen_types.push(type_id);
+
+        match self.interner.lookup(type_id) {
+            Some(TypeData::TypeParameter(info)) => {
+                if !blocked_names.contains(&info.name) && !seen_names.contains(&info.name) {
+                    seen_names.push(info.name);
+                    params.push(info);
+                }
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                for prop in &shape.properties {
+                    self.collect_structural_type_params_inner(
+                        prop.type_id,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                    self.collect_structural_type_params_inner(
+                        prop.write_type,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+                if let Some(index) = shape.string_index.as_ref() {
+                    self.collect_structural_type_params_inner(
+                        index.key_type,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                    self.collect_structural_type_params_inner(
+                        index.value_type,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+                if let Some(index) = shape.number_index.as_ref() {
+                    self.collect_structural_type_params_inner(
+                        index.key_type,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                    self.collect_structural_type_params_inner(
+                        index.value_type,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                for signature in shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                {
+                    self.collect_signature_type_params(
+                        &signature.type_params,
+                        &signature.params,
+                        signature.return_type,
+                        signature.this_type,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                    if let Some(predicate_type) = signature.type_predicate.and_then(|p| p.type_id) {
+                        self.collect_structural_type_params_inner(
+                            predicate_type,
+                            seen_types,
+                            seen_names,
+                            blocked_names,
+                            params,
+                        );
+                    }
+                }
+                for prop in &shape.properties {
+                    self.collect_structural_type_params_inner(
+                        prop.type_id,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                    self.collect_structural_type_params_inner(
+                        prop.write_type,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+                if let Some(index) = shape.string_index.as_ref() {
+                    self.collect_structural_type_params_inner(
+                        index.value_type,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+                if let Some(index) = shape.number_index.as_ref() {
+                    self.collect_structural_type_params_inner(
+                        index.value_type,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+            }
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                self.collect_signature_type_params(
+                    &shape.type_params,
+                    &shape.params,
+                    shape.return_type,
+                    shape.this_type,
+                    seen_types,
+                    seen_names,
+                    blocked_names,
+                    params,
+                );
+                if let Some(predicate_type) = shape.type_predicate.and_then(|p| p.type_id) {
+                    self.collect_structural_type_params_inner(
+                        predicate_type,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+            }
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+                for &member in self.interner.type_list(list_id).iter() {
+                    self.collect_structural_type_params_inner(
+                        member,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+            }
+            Some(TypeData::Array(element) | TypeData::ReadonlyType(element)) => {
+                self.collect_structural_type_params_inner(
+                    element,
+                    seen_types,
+                    seen_names,
+                    blocked_names,
+                    params,
+                );
+            }
+            Some(TypeData::Tuple(list_id)) => {
+                for element in self.interner.tuple_list(list_id).iter() {
+                    self.collect_structural_type_params_inner(
+                        element.type_id,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                self.collect_structural_type_params_inner(
+                    app.base,
+                    seen_types,
+                    seen_names,
+                    blocked_names,
+                    params,
+                );
+                for &arg in &app.args {
+                    self.collect_structural_type_params_inner(
+                        arg,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = self.interner.get_conditional(cond_id);
+                for child in [
+                    cond.check_type,
+                    cond.extends_type,
+                    cond.true_type,
+                    cond.false_type,
+                ] {
+                    self.collect_structural_type_params_inner(
+                        child,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+            }
+            Some(TypeData::Mapped(mapped_id)) => {
+                let mapped = self.interner.get_mapped(mapped_id);
+                self.collect_structural_type_params_inner(
+                    mapped.constraint,
+                    seen_types,
+                    seen_names,
+                    blocked_names,
+                    params,
+                );
+                self.collect_structural_type_params_inner(
+                    mapped.template,
+                    seen_types,
+                    seen_names,
+                    blocked_names,
+                    params,
+                );
+                if let Some(name_type) = mapped.name_type {
+                    self.collect_structural_type_params_inner(
+                        name_type,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+            }
+            Some(TypeData::KeyOf(operand) | TypeData::NoInfer(operand)) => {
+                self.collect_structural_type_params_inner(
+                    operand,
+                    seen_types,
+                    seen_names,
+                    blocked_names,
+                    params,
+                );
+            }
+            Some(TypeData::IndexAccess(object, index)) => {
+                self.collect_structural_type_params_inner(
+                    object,
+                    seen_types,
+                    seen_names,
+                    blocked_names,
+                    params,
+                );
+                self.collect_structural_type_params_inner(
+                    index,
+                    seen_types,
+                    seen_names,
+                    blocked_names,
+                    params,
+                );
+            }
+            Some(TypeData::TemplateLiteral(list_id)) => {
+                for span in self.interner.template_list(list_id).iter() {
+                    if let crate::types::TemplateSpan::Type(inner) = span {
+                        self.collect_structural_type_params_inner(
+                            *inner,
+                            seen_types,
+                            seen_names,
+                            blocked_names,
+                            params,
+                        );
+                    }
+                }
+            }
+            Some(TypeData::StringIntrinsic { type_arg, .. }) => {
+                self.collect_structural_type_params_inner(
+                    type_arg,
+                    seen_types,
+                    seen_names,
+                    blocked_names,
+                    params,
+                );
+            }
+            Some(TypeData::Infer(info)) => {
+                if let Some(constraint) = info.constraint {
+                    self.collect_structural_type_params_inner(
+                        constraint,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+                if let Some(default) = info.default {
+                    self.collect_structural_type_params_inner(
+                        default,
+                        seen_types,
+                        seen_names,
+                        blocked_names,
+                        params,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn collect_signature_type_params(
+        &self,
+        local_type_params: &[TypeParamInfo],
+        signature_params: &[crate::types::ParamInfo],
+        return_type: TypeId,
+        this_type: Option<TypeId>,
+        seen_types: &mut Vec<TypeId>,
+        seen_names: &mut Vec<tsz_common::interner::Atom>,
+        blocked_names: &[tsz_common::interner::Atom],
+        params: &mut Vec<TypeParamInfo>,
+    ) {
+        let mut nested_blocked = blocked_names.to_vec();
+        for local in local_type_params {
+            nested_blocked.push(local.name);
+        }
+        for local in local_type_params {
+            if let Some(constraint) = local.constraint {
+                self.collect_structural_type_params_inner(
+                    constraint,
+                    seen_types,
+                    seen_names,
+                    &nested_blocked,
+                    params,
+                );
+            }
+            if let Some(default) = local.default {
+                self.collect_structural_type_params_inner(
+                    default,
+                    seen_types,
+                    seen_names,
+                    &nested_blocked,
+                    params,
+                );
+            }
+        }
+        if let Some(this_type) = this_type {
+            self.collect_structural_type_params_inner(
+                this_type,
+                seen_types,
+                seen_names,
+                &nested_blocked,
+                params,
+            );
+        }
+        for param in signature_params {
+            self.collect_structural_type_params_inner(
+                param.type_id,
+                seen_types,
+                seen_names,
+                &nested_blocked,
+                params,
+            );
+        }
+        self.collect_structural_type_params_inner(
+            return_type,
+            seen_types,
+            seen_names,
+            &nested_blocked,
+            params,
+        );
     }
 
     /// Helper for resolving two Ref/TypeQuery symbols and checking subtype.
@@ -385,9 +936,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // This lets the variance fast path handle cases like Generator<T>
         // which should be treated as Generator<T, any, unknown>.
         // ===================================================================
-        if s_app.base == t_app.base
+        let (same_base_family, s_base_def, t_base_def) =
+            self.application_bases_same_family(s_app.base, t_app.base);
+
+        if same_base_family
             && s_app.args.len() != t_app.args.len()
-            && let Some(def_id) = self.application_base_def_id(s_app.base)
+            && let Some(def_id) = s_base_def.or(t_base_def)
             && let Some(type_params) = self.resolver.get_lazy_type_params(def_id)
         {
             let s_norm = fill_application_defaults(self.interner, &s_app.args, &type_params);
@@ -410,9 +964,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let same_arity = s_app.args.len() == t_app.args.len();
-        let same_application_family = same_arity && s_app.base == t_app.base;
+        let same_application_family = same_arity && same_base_family;
         let variance_def_id = if same_application_family {
-            self.application_base_def_id(s_app.base)
+            s_base_def.or(t_base_def)
         } else {
             None
         };
@@ -431,6 +985,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && self.application_has_promise_like_then_contract(query_db, target_type, t_app.args[0])
         {
             return self.check_subtype(s_app.args[0], t_app.args[0]);
+        }
+
+        if !same_application_family {
+            if let Some(result) = self.check_structural_application_against_generic_application(
+                &s_app, t_app_id, t_base_def,
+            ) {
+                return result;
+            }
+            if let Some(result) = self.check_generic_application_against_structural_application(
+                s_app_id, &t_app, s_base_def,
+            ) {
+                return result;
+            }
         }
 
         if same_application_family
@@ -476,6 +1043,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     if variances.len() == s_app.args.len() {
                         let needs_structural_fallback =
                             variances.iter().any(|v| v.needs_structural_fallback());
+                        let has_any_arg = s_app
+                            .args
+                            .iter()
+                            .chain(t_app.args.iter())
+                            .any(|arg| arg.is_any());
+                        let type_params_for_variance = if has_any_arg {
+                            self.resolver.get_lazy_type_params(def_id)
+                        } else {
+                            None
+                        };
                         let mut all_ok = true;
                         let mut any_checked = false;
                         for (i, variance) in variances.iter().enumerate() {
@@ -483,6 +1060,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             let t_arg = t_app.args[i];
 
                             // Apply variance rules for each type argument
+                            let mut arg_ok = true;
                             if variance.is_invariant() {
                                 any_checked = true;
                                 // Invariant: Must be mutually assignable (effectively equal)
@@ -490,21 +1068,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 if !self.check_subtype(s_arg, t_arg).is_true()
                                     || !self.check_subtype(t_arg, s_arg).is_true()
                                 {
-                                    all_ok = false;
-                                    break;
+                                    arg_ok = false;
                                 }
                             } else if variance.is_covariant() {
                                 any_checked = true;
                                 // Covariant: source <: target (normal direction)
                                 if !self.check_subtype(s_arg, t_arg).is_true() {
-                                    all_ok = false;
-                                    break;
+                                    arg_ok = false;
                                 }
                             } else if variance.is_contravariant() {
                                 any_checked = true;
                                 // Contravariant: target <: source (reversed direction)
                                 // Function parameters are the classic example
                                 if !self.check_subtype(t_arg, s_arg).is_true() {
+                                    arg_ok = false;
+                                }
+                            }
+                            if !arg_ok {
+                                let any_dependent =
+                                    type_params_for_variance
+                                        .as_ref()
+                                        .is_some_and(|type_params| {
+                                            self.variance_arg_mismatch_is_any_dependent(
+                                                type_params,
+                                                i,
+                                                &s_app.args,
+                                                &t_app.args,
+                                            )
+                                        });
+                                if any_dependent {
+                                    continue;
+                                } else {
                                     all_ok = false;
                                     break;
                                 }
@@ -519,7 +1113,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             // comparison. This handles cases like Required<{a?}> vs Required<{b?}>
                             // where the type args are mutually assignable but the mapped results
                             // are structurally incompatible.
-                            if !needs_structural_fallback {
+                            if !needs_structural_fallback || has_any_arg {
                                 return SubtypeResult::True;
                             }
                         }
@@ -529,6 +1123,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             && !all_ok
                             && !needs_structural_fallback
                             && !rejection_unreliable
+                            && !has_any_arg
                         {
                             // For two applications of the same generic definition with
                             // concrete type arguments, a variance failure is conclusive.
@@ -565,7 +1160,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         if any_checked && !all_ok && needs_structural_fallback {
                             let has_reliable_rejection =
                                 variances.iter().any(|v| v.has_direct_usage());
-                            if has_reliable_rejection && !rejection_unreliable {
+                            if has_reliable_rejection && !rejection_unreliable && !has_any_arg {
                                 return SubtypeResult::False;
                             }
                             let s_eval = self.evaluate_type(source_type);
@@ -589,9 +1184,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // leads to false negatives. We detect cycles by tracking (source_base_DefId,
         // target_base_DefId) pairs — coinductive semantics assume the relation holds.
         // =======================================================================
-        let s_base_def = self.application_base_def_id(s_app.base);
-        let t_base_def = self.application_base_def_id(t_app.base);
-
         let app_def_pair = match (s_base_def, t_base_def) {
             (Some(s_def), Some(t_def)) => Some((s_def, t_def)),
             _ => None,
@@ -669,13 +1261,209 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
         };
-
         // Clean up cycle detection guard
         if let Some(def_pair) = app_def_pair {
             self.def_guard.leave(def_pair);
         }
 
         result
+    }
+
+    fn check_structural_application_against_generic_application(
+        &mut self,
+        source_app: &crate::types::TypeApplication,
+        target_app_id: TypeApplicationId,
+        target_def: Option<DefId>,
+    ) -> Option<SubtypeResult> {
+        let target_def = target_def?;
+        let type_params = self.resolver.get_lazy_type_params(target_def)?;
+        let source_struct =
+            self.instantiate_structural_application_base(source_app, &type_params)?;
+        let target_struct = self.try_expand_application(target_app_id)?;
+        Some(self.check_subtype(source_struct, target_struct))
+    }
+
+    fn check_generic_application_against_structural_application(
+        &mut self,
+        source_app_id: TypeApplicationId,
+        target_app: &crate::types::TypeApplication,
+        source_def: Option<DefId>,
+    ) -> Option<SubtypeResult> {
+        let source_def = source_def?;
+        let type_params = self.resolver.get_lazy_type_params(source_def)?;
+        let target_struct =
+            self.instantiate_structural_application_base(target_app, &type_params)?;
+        let source_struct = self.try_expand_application(source_app_id)?;
+        Some(self.check_subtype(source_struct, target_struct))
+    }
+
+    fn instantiate_structural_application_base(
+        &mut self,
+        app: &crate::types::TypeApplication,
+        type_params: &[TypeParamInfo],
+    ) -> Option<TypeId> {
+        if app.args.is_empty() || app.args.len() > type_params.len() {
+            return None;
+        }
+        if self.application_base_def_id(app.base).is_some() {
+            return None;
+        }
+        if !matches!(
+            self.interner.lookup(app.base),
+            Some(
+                TypeData::Callable(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+            )
+        ) {
+            return None;
+        }
+        if !self.structural_application_base_is_bounded(app.base) {
+            return None;
+        }
+
+        let substitution =
+            crate::TypeSubstitution::from_args(self.interner, type_params, &app.args);
+        let instantiated =
+            crate::instantiate_type_cached(self.interner, self.query_db, app.base, &substitution);
+        let evaluated = self.evaluate_type(instantiated);
+        Some(if evaluated != instantiated {
+            evaluated
+        } else {
+            instantiated
+        })
+    }
+
+    fn application_body_and_type_params(
+        &self,
+        app: &crate::types::TypeApplication,
+    ) -> Option<(Option<DefId>, Vec<TypeParamInfo>, TypeId)> {
+        if let Some(def_id) = self.application_base_def_id(app.base) {
+            let type_params = self.resolver.get_lazy_type_params(def_id)?;
+            let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
+            return Some((Some(def_id), type_params, resolved_body));
+        }
+
+        if !matches!(
+            self.interner.lookup(app.base),
+            Some(
+                TypeData::Callable(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+            )
+        ) {
+            return None;
+        }
+        if !self.structural_application_base_is_bounded(app.base) {
+            return None;
+        }
+
+        let type_params = self.collect_structural_type_params(app.base);
+        if type_params.is_empty() {
+            return None;
+        }
+        Some((None, type_params, app.base))
+    }
+
+    fn structural_application_base_is_bounded(&self, base: TypeId) -> bool {
+        const MAX_STRUCTURAL_APP_BASE_NODES: usize = 32;
+        const MAX_STRUCTURAL_APP_BASE_MEMBERS: usize = 8;
+
+        fn visit<R: TypeResolver>(
+            checker: &SubtypeChecker<'_, R>,
+            type_id: TypeId,
+            budget: &mut usize,
+            seen: &mut Vec<TypeId>,
+        ) -> bool {
+            if type_id.is_intrinsic() || seen.contains(&type_id) {
+                return true;
+            }
+            if *budget == 0 {
+                return false;
+            }
+            *budget -= 1;
+            seen.push(type_id);
+
+            match checker.interner.lookup(type_id) {
+                Some(TypeData::TypeParameter(_)) => true,
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                    let shape = checker.interner.object_shape(shape_id);
+                    if shape.properties.len() > MAX_STRUCTURAL_APP_BASE_MEMBERS {
+                        return false;
+                    }
+                    shape.properties.iter().all(|prop| {
+                        visit(checker, prop.type_id, budget, seen)
+                            && visit(checker, prop.write_type, budget, seen)
+                    })
+                }
+                Some(TypeData::Callable(shape_id)) => {
+                    let shape = checker.interner.callable_shape(shape_id);
+                    if shape.properties.len() > MAX_STRUCTURAL_APP_BASE_MEMBERS
+                        || shape.call_signatures.len() + shape.construct_signatures.len()
+                            > MAX_STRUCTURAL_APP_BASE_MEMBERS
+                    {
+                        return false;
+                    }
+                    shape.properties.iter().all(|prop| {
+                        visit(checker, prop.type_id, budget, seen)
+                            && visit(checker, prop.write_type, budget, seen)
+                    }) && shape
+                        .call_signatures
+                        .iter()
+                        .chain(shape.construct_signatures.iter())
+                        .all(|sig| {
+                            sig.params
+                                .iter()
+                                .all(|param| visit(checker, param.type_id, budget, seen))
+                                && visit(checker, sig.return_type, budget, seen)
+                        })
+                }
+                Some(TypeData::Function(shape_id)) => {
+                    let shape = checker.interner.function_shape(shape_id);
+                    shape
+                        .params
+                        .iter()
+                        .all(|param| visit(checker, param.type_id, budget, seen))
+                        && visit(checker, shape.return_type, budget, seen)
+                }
+                Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+                    let members = checker.interner.type_list(list_id);
+                    if members.len() > MAX_STRUCTURAL_APP_BASE_MEMBERS {
+                        return false;
+                    }
+                    members
+                        .iter()
+                        .all(|&member| visit(checker, member, budget, seen))
+                }
+                Some(TypeData::Array(element) | TypeData::ReadonlyType(element)) => {
+                    visit(checker, element, budget, seen)
+                }
+                Some(TypeData::Tuple(list_id)) => {
+                    let elements = checker.interner.tuple_list(list_id);
+                    if elements.len() > MAX_STRUCTURAL_APP_BASE_MEMBERS {
+                        return false;
+                    }
+                    elements
+                        .iter()
+                        .all(|element| visit(checker, element.type_id, budget, seen))
+                }
+                Some(TypeData::Application(app_id)) => {
+                    let app = checker.interner.type_application(app_id);
+                    visit(checker, app.base, budget, seen)
+                        && app
+                            .args
+                            .iter()
+                            .all(|&arg| visit(checker, arg, budget, seen))
+                }
+                _ => false,
+            }
+        }
+
+        let mut budget = MAX_STRUCTURAL_APP_BASE_NODES;
+        let mut seen = Vec::new();
+        visit(self, base, &mut budget, &mut seen)
     }
 
     /// Pre-evaluation variance fast path for Application types.
@@ -701,11 +1489,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let t_app = self.interner.type_application(t_app_id);
 
         // Must be the same base type (same generic definition)
-        if s_app.base != t_app.base {
+        let (same_base_family, source_def, target_def) =
+            self.application_bases_same_family(s_app.base, t_app.base);
+        if !same_base_family {
             return None;
         }
 
-        let def_id = self.application_base_def_id(s_app.base)?;
+        let def_id = source_def.or(target_def)?;
 
         // Arity normalization: when both applications share the same base but have
         // different arg counts (e.g., Generator<T, void, any> vs Generator<T>),
@@ -723,6 +1513,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             (s_app.args.clone(), t_app.args.clone())
         };
+
+        let any_dependency_type_params = self.resolver.get_lazy_type_params(def_id).or_else(|| {
+            let params = self.collect_structural_type_params(s_app.base);
+            (!params.is_empty()).then_some(params)
+        });
+        if let Some(type_params) = any_dependency_type_params.as_ref()
+            && self.application_args_are_any_dependent_compatible(type_params, &s_args, &t_args)
+        {
+            return Some(SubtypeResult::True);
+        }
 
         use crate::caches::db::QueryDatabase;
         let variances = self
@@ -759,6 +1559,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let needs_structural_fallback = variances.iter().any(|v| v.needs_structural_fallback());
+        let has_any_arg = s_args.iter().chain(t_args.iter()).any(|arg| arg.is_any());
+        let type_params_for_variance = if has_any_arg {
+            self.resolver.get_lazy_type_params(def_id)
+        } else {
+            None
+        };
         let mut all_ok = true;
         let mut any_checked = false;
 
@@ -766,30 +1572,46 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_arg = s_args[i];
             let t_arg = t_args[i];
 
+            let mut arg_ok = true;
             if variance.is_invariant() {
                 any_checked = true;
                 if !self.check_subtype(s_arg, t_arg).is_true()
                     || !self.check_subtype(t_arg, s_arg).is_true()
                 {
-                    all_ok = false;
-                    break;
+                    arg_ok = false;
                 }
             } else if variance.is_covariant() {
                 any_checked = true;
                 if !self.check_subtype(s_arg, t_arg).is_true() {
-                    all_ok = false;
-                    break;
+                    arg_ok = false;
                 }
             } else if variance.is_contravariant() {
                 any_checked = true;
                 if !self.check_subtype(t_arg, s_arg).is_true() {
+                    arg_ok = false;
+                }
+            }
+            if !arg_ok {
+                let any_dependent = type_params_for_variance
+                    .as_ref()
+                    .is_some_and(|type_params| {
+                        self.variance_arg_mismatch_is_any_dependent(
+                            type_params,
+                            i,
+                            &s_args,
+                            &t_args,
+                        )
+                    });
+                if any_dependent {
+                    continue;
+                } else {
                     all_ok = false;
                     break;
                 }
             }
         }
 
-        if any_checked && all_ok && !needs_structural_fallback {
+        if any_checked && all_ok && (!needs_structural_fallback || has_any_arg) {
             return Some(SubtypeResult::True);
         }
         // When structural fallback is needed (mapped types), variance failures
@@ -807,7 +1629,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // For non-mapped types with all-concrete args, variance failures are
         // definitive: incompatible type args means incompatible generic types.
         let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
-        if any_checked && !all_ok && !needs_structural_fallback && !rejection_unreliable {
+        if any_checked
+            && !all_ok
+            && !needs_structural_fallback
+            && !rejection_unreliable
+            && !has_any_arg
+        {
             let source_has_type_param = s_args
                 .iter()
                 .any(|arg| crate::contains_type_parameters(self.interner, *arg));
@@ -852,7 +1679,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Check if this Application has the same base as the source
                 let s_app = self.interner.type_application(s_app_id);
                 let t_app = self.interner.type_application(t_app_id);
-                if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+                let (same_base_family, _, _) =
+                    self.application_bases_same_family(s_app.base, t_app.base);
+                if same_base_family && s_app.args.len() == t_app.args.len() {
                     app_member_id = Some(t_app_id);
                 } else {
                     non_app_members.push(member);
@@ -921,13 +1750,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let app = self.interner.type_application(app_id);
 
-        let def_id = self.application_base_def_id(app.base)?;
-        let type_params = self.resolver.get_lazy_type_params(def_id)?;
-        let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
-        let effective_body = if matches!(
-            self.resolver.get_def_kind(def_id),
-            Some(crate::def::DefKind::Class)
-        ) {
+        let (def_id, type_params, resolved_body) = self.application_body_and_type_params(&app)?;
+        let effective_body = if def_id.is_some_and(|def_id| {
+            matches!(
+                self.resolver.get_def_kind(def_id),
+                Some(crate::def::DefKind::Class)
+            )
+        }) {
             match self.interner.lookup(resolved_body) {
                 Some(TypeData::Callable(cs_id)) => {
                     let shape = self.interner.callable_shape(cs_id);
@@ -942,7 +1771,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             resolved_body
         };
-
         // Skip if self-referential
         if let Some(resolved_app_id) = application_id(self.interner, effective_body)
             && resolved_app_id == app_id
@@ -1640,13 +2468,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let app = self.interner.type_application(app_id);
 
-        let def_id = self.application_base_def_id(app.base)?;
-        let type_params = self.resolver.get_lazy_type_params(def_id)?;
-        let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
-        let effective_body = if matches!(
-            self.resolver.get_def_kind(def_id),
-            Some(crate::def::DefKind::Class)
-        ) {
+        let (def_id, type_params, resolved_body) = self.application_body_and_type_params(&app)?;
+        let effective_body = if def_id.is_some_and(|def_id| {
+            matches!(
+                self.resolver.get_def_kind(def_id),
+                Some(crate::def::DefKind::Class)
+            )
+        }) {
             match self.interner.lookup(resolved_body) {
                 Some(TypeData::Callable(cs_id)) => {
                     let shape = self.interner.callable_shape(cs_id);
