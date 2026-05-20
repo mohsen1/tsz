@@ -45,7 +45,7 @@ pub struct RelationPolicy {
     ///
     /// This mirrors the legacy `RelationCacheKey.flags` layout so that older
     /// callers that still pass `u16` bitmasks interoperate without change.
-    pub flags: u16,
+    flags: u16,
     /// Enables additional strictness in the compatibility layer.
     pub strict_subtype_checking: bool,
     /// When true, `any` does NOT silence structural mismatches in the
@@ -160,6 +160,15 @@ impl RelationPolicy {
     pub const fn with_skip_weak_type_checks(mut self, skip: bool) -> Self {
         self.skip_weak_type_checks = skip;
         self
+    }
+
+    /// Return the packed legacy flags represented by this policy.
+    ///
+    /// This accessor is for compatibility edges and trace payloads that still
+    /// need the historical bit layout. Relation engines and cache keys should
+    /// prefer the typed accessors and [`RelationPolicy::cache_config`].
+    pub const fn legacy_packed_flags(self) -> u16 {
+        self.flags
     }
 
     /// Whether `null` and `undefined` are distinct types.

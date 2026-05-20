@@ -1525,7 +1525,7 @@ impl QueryDatabase for QueryCache<'_> {
                 SUBTYPE_POLICY_TRACE_OP,
                 source,
                 target,
-                policy.flags,
+                policy.legacy_packed_flags(),
             );
             query_id
         });
@@ -1613,7 +1613,7 @@ impl QueryDatabase for QueryCache<'_> {
                 ASSIGNABILITY_POLICY_TRACE_OP,
                 source,
                 target,
-                policy.flags,
+                policy.legacy_packed_flags(),
             );
             query_id
         });
