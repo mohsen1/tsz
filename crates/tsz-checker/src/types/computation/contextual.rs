@@ -166,17 +166,12 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
                             // Methods: sensitive if they reference `this` (whose type
                             // flows from the outer object's contextual type), have
                             // unannotated params, or have a context-sensitive return.
-                            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                                if state
-                                    .ctx
-                                    .arena
-                                    .get_method_decl(element)
-                                    .is_none_or(|method| {
-                                        method_decl_is_contextually_sensitive(state, method)
-                                    })
-                                {
-                                    return true;
-                                }
+                            k if k == syntax_kind_ext::METHOD_DECLARATION
+                                && state.ctx.arena.get_method_decl(element).is_none_or(
+                                    |method| method_decl_is_contextually_sensitive(state, method),
+                                ) =>
+                            {
+                                return true;
                             }
                             // Accessors are always sensitive
                             k if k == syntax_kind_ext::GET_ACCESSOR
