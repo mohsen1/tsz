@@ -561,7 +561,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn format_generic_display_name_with_interner(
         name: &str,
         type_params: &[tsz_solver::TypeParamInfo],
-        types: &dyn tsz_solver::QueryDatabase,
+        types: &dyn tsz_solver::construction::QueryDatabase,
     ) -> String {
         if type_params.is_empty() {
             return name.to_string();

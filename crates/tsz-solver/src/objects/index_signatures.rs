@@ -27,10 +27,11 @@
 //! }
 //! ```
 
+use crate::TypeId;
+use crate::construction::TypeDatabase;
 use crate::types::{CallableShapeId, IndexInfo, IndexSignature, ObjectShapeId, TypeData};
 use crate::utils;
 use crate::visitor::TypeVisitor;
-use crate::{TypeDatabase, TypeId};
 
 /// Distinguishes between string and numeric index signatures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -7,7 +7,7 @@ use super::accessors::get_object_shape;
 use super::content_predicates::{
     contains_infer_types_db, contains_type_parameters_db, get_intersection_members,
 };
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};

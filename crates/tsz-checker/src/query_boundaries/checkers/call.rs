@@ -1,7 +1,8 @@
 use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::operations::{AssignabilityChecker, CallResult};
 use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
-use tsz_solver::{FunctionShape, QueryDatabase, TypeDatabase, TypeId};
+use tsz_solver::{FunctionShape, TypeId};
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;
 pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter_type;

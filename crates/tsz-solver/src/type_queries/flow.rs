@@ -4,7 +4,7 @@
 //! (narrowing, type predicates, constructor instances) and advanced type queries
 //! (promise detection, comparability, contextual type parameter extraction).
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::type_queries::{
     StringLiteralKeyKind, classify_for_string_literal_keys, get_array_element_type,

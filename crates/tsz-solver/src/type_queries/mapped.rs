@@ -8,7 +8,7 @@
 //! - Modifier computation and property expansion
 
 use super::data::ExactLiteralPropertyKey;
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::types::{MappedModifier, PropertyInfo, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;

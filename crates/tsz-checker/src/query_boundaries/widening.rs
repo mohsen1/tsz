@@ -4,7 +4,8 @@
 //! `tsz_solver::*` directly (architecture rule: no inline solver function
 //! calls in checker modules).
 
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 /// Widen a type for inference resolution: deep-widens fresh literals while
 /// preserving function/callable parameter and return types unchanged.

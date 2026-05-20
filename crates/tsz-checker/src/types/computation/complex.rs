@@ -22,7 +22,7 @@ pub(crate) use super::contextual::{
 };
 
 fn should_preserve_contextual_application_shape(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     ty: TypeId,
 ) -> bool {
     if crate::query_boundaries::common::application_info(db, ty).is_some() {

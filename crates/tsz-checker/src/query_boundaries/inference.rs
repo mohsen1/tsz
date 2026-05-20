@@ -18,7 +18,7 @@ pub(crate) fn instantiate_type_with_infer(
 }
 
 pub(crate) fn collect_infer_bindings(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
 ) -> Vec<(Atom, TypeId)> {
     tsz_solver::collect_infer_bindings(db, type_id)

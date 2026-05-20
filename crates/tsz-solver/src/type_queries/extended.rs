@@ -7,8 +7,9 @@
 //! type-checking scenarios, allowing the checker layer to handle types
 //! without directly matching on `TypeData`.
 
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
-use crate::{LiteralValue, TypeData, TypeDatabase, TypeId};
+use crate::{LiteralValue, TypeData, TypeId};
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 

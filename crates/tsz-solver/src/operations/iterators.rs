@@ -5,7 +5,7 @@
 //! loop type checking.
 
 use super::property::PropertyAccessEvaluator;
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::types::{PropertyInfo, TypeData, TypeId};
 use crate::visitor::{
     array_element_type, object_shape_id, object_with_index_shape_id, readonly_inner_type,

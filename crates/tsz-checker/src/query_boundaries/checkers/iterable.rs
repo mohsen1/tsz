@@ -1,4 +1,5 @@
-use tsz_solver::{FunctionShape, TypeDatabase, TypeId};
+use tsz_solver::construction::TypeDatabase;
+use tsz_solver::{FunctionShape, TypeId};
 
 pub(crate) use super::super::common::{
     call_signatures_for_type, is_string_type, is_this_type, union_members as union_members_for_type,

@@ -1,4 +1,5 @@
-use tsz_solver::{QueryDatabase, TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 
 pub(crate) use super::common::{
     LiteralValueKind, PredicateSignatureKind, array_element_type as get_array_element_type,
