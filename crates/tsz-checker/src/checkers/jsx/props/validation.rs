@@ -220,7 +220,7 @@ impl<'a> CheckerState<'a> {
             let Some(expected_type) = expected_type else {
                 return false;
             };
-            !self.is_assignable_to(*attr_type, expected_type)
+            !self.diagnostic_relation_boolean_guard(*attr_type, expected_type)
         });
         let explicit_type = self.build_jsx_provided_attrs_object_type(&explicit_attrs);
         generic_spreads.push(explicit_type);
@@ -238,7 +238,9 @@ impl<'a> CheckerState<'a> {
                     &self.ctx.definition_store,
                     attrs_type,
                 );
-            if !source_retains_explicit_object && self.is_assignable_to(attrs_type, props_type) {
+            if !source_retains_explicit_object
+                && self.diagnostic_relation_boolean_guard(attrs_type, props_type)
+            {
                 return;
             }
         }
