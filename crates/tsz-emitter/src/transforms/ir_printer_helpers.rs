@@ -399,7 +399,11 @@ impl<'a> IRPrinter<'a> {
     }
 
     pub(super) fn write_indent(&mut self) {
-        for _ in 0..self.indent_level {
+        self.write_indent_level(self.indent_level);
+    }
+
+    pub(super) fn write_indent_level(&mut self, level: u32) {
+        for _ in 0..level {
             self.output.push_str(self.indent_str);
         }
     }
