@@ -1,5 +1,8 @@
 use crate::context::{CheckerContext, CheckerOptions, LibContext};
 use crate::query_boundaries::common::TypeInterner;
+use crate::query_boundaries::state::type_resolution::{
+    get_lazy_def_id, is_string_type, type_contains_string_literal,
+};
 use crate::state::CheckerState;
 use crate::test_utils::load_lib_files;
 use std::sync::Arc;
@@ -98,11 +101,26 @@ fn direct_declaration_file_type_alias_lowers_builtin_dom_alias_body() {
             .map(std::convert::AsRef::as_ref)
             .unwrap_or_else(|| panic!("{literal_union_alias} should have a delegate arena"));
 
+        let (ty, params) = state
+            .direct_declaration_file_type_alias_result(sym_id, delegate_arena)
+            .unwrap_or_else(|| panic!("{literal_union_alias} literal alias should lower directly"));
+        assert!(params.is_empty(), "{literal_union_alias} is non-generic");
+        let def_id = get_lazy_def_id(state.ctx.types, ty).unwrap_or_else(|| {
+            panic!("{literal_union_alias} direct alias result should preserve Lazy(DefId)")
+        });
+        let body = state
+            .ctx
+            .definition_store
+            .get_body(def_id)
+            .unwrap_or_else(|| panic!("{literal_union_alias} should register its alias body"));
         assert!(
-            state
-                .direct_declaration_file_type_alias_result(sym_id, delegate_arena)
-                .is_none(),
-            "{literal_union_alias} should stay on the normal cross-file path so recursive mapped inference preserves its string-like apparent shape",
+            is_string_type(state.ctx.types, body)
+                || type_contains_string_literal(state.ctx.types, body),
+            "{literal_union_alias} should preserve its string-like apparent body",
+        );
+        assert!(
+            state.ctx.lib_delegation_cache.symbol_type(sym_id).is_some(),
+            "{literal_union_alias} should populate the built-in lib delegation cache",
         );
     }
 }

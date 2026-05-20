@@ -4,6 +4,8 @@ pub(crate) use super::super::common::lazy_def_id as get_lazy_def_id;
 pub(crate) use super::super::common::{
     callable_shape_for_type, intersection_members, is_type_parameter_like,
 };
+#[cfg(test)]
+pub(crate) use super::super::common::{is_string_type, type_contains_string_literal};
 pub(crate) use tsz_solver::type_queries::{
     BaseInstanceMergeKind, ConstructorTypeKind, SignatureTypeKind, StaticPropertySource,
 };
