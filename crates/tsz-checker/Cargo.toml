@@ -1437,5 +1437,9 @@ path = "tests/stage3_lib_namespace_resolution_tests.rs"
 name = "ts2321_ts2859_tests"
 path = "tests/ts2321_ts2859_tests.rs"
 
+[[test]]
+name = "deeply_nested_conditional_mapped_recursion_tests"
+path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
+
 [lints]
 workspace = true
