@@ -916,6 +916,7 @@ impl<'a> TypeInstantiator<'a> {
 
                 let elements = self.interner.tuple_list(*elements);
                 let mut instantiated: Vec<TupleElement> = Vec::with_capacity(elements.len());
+                let mut represented_len = 0usize;
                 for e in elements.iter() {
                     let inst_type = self.instantiate(e.type_id);
                     if e.rest {
@@ -924,13 +925,12 @@ impl<'a> TypeInstantiator<'a> {
                         if let Some(TypeData::Tuple(inner_elems)) = self.interner.lookup(inst_type)
                         {
                             let inner = self.interner.tuple_list(inner_elems);
-                            if instantiated.len().saturating_add(inner.len()) > MAX_TUPLE_LENGTH {
+                            let represented_after = represented_len.saturating_add(inner.len());
+                            if represented_after > MAX_TUPLE_LENGTH {
                                 self.interner.mark_tuple_too_large();
                                 return TypeId::ERROR;
                             }
-                            if instantiated.len().saturating_add(inner.len())
-                                > MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS
-                            {
+                            if represented_after > MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS {
                                 instantiated.push(TupleElement {
                                     type_id: inst_type,
                                     name: e.name,
@@ -947,6 +947,7 @@ impl<'a> TypeInstantiator<'a> {
                                     });
                                 }
                             }
+                            represented_len = represented_after;
                         } else {
                             instantiated.push(TupleElement {
                                 type_id: inst_type,
@@ -954,6 +955,7 @@ impl<'a> TypeInstantiator<'a> {
                                 optional: e.optional,
                                 rest: true,
                             });
+                            represented_len = represented_len.saturating_add(1);
                         }
                     } else {
                         instantiated.push(TupleElement {
@@ -962,6 +964,7 @@ impl<'a> TypeInstantiator<'a> {
                             optional: e.optional,
                             rest: false,
                         });
+                        represented_len = represented_len.saturating_add(1);
                     }
                 }
                 self.interner.tuple(instantiated)
