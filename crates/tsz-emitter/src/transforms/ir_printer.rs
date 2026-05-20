@@ -785,7 +785,7 @@ impl<'a> IRPrinter<'a> {
                     if i > 0 {
                         if self.last_emit_ended_with_line_comment {
                             self.write_line();
-                            self.write_indent();
+                            self.write_indent_level(self.indent_level.saturating_sub(1));
                         }
                         self.last_emit_ended_with_line_comment = false;
                         self.write(",");
