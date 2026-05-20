@@ -9,14 +9,6 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-/// Facts extracted from a class component's construct signature in one walk:
-/// the instance `.props` field and the first constructor parameter type.
-#[derive(Default, Clone, Copy)]
-struct JsxClassComponentConstructFacts {
-    props_field: Option<TypeId>,
-    first_param: Option<TypeId>,
-}
-
 impl<'a> CheckerState<'a> {
     pub(in crate::checkers_domain::jsx) fn file_has_jsx_unicode_escape_parse_error(&self) -> bool {
         let Some(source) = self.current_jsx_source_text() else {
@@ -138,61 +130,6 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(managed)
         }
-    }
-
-    fn get_class_component_props_from_construct_return(
-        &mut self,
-        component_type: TypeId,
-    ) -> Option<TypeId> {
-        self.jsx_class_component_construct_return_facts(component_type)
-            .props_field
-    }
-
-    /// Walk the construct signatures of `component_type` and return both the
-    /// instance `.props` field type and the first constructor parameter type
-    /// from the same chosen signature. The JSX validator wants both signals to
-    /// decide whether to display the class.props wrapper or the LMA-projected
-    /// constructor parameter; folding them into one walk avoids walking
-    /// construct signatures twice per JSX element on the hot path.
-    fn jsx_class_component_construct_return_facts(
-        &mut self,
-        component_type: TypeId,
-    ) -> JsxClassComponentConstructFacts {
-        use crate::query_boundaries::common::PropertyAccessResult;
-
-        let mut facts = JsxClassComponentConstructFacts::default();
-
-        let Some(sigs) = crate::query_boundaries::common::construct_signatures_for_type(
-            self.ctx.types,
-            component_type,
-        )
-        .or_else(|| {
-            let evaluated = self.evaluate_type_with_env(component_type);
-            crate::query_boundaries::common::construct_signatures_for_type(
-                self.ctx.types,
-                evaluated,
-            )
-        }) else {
-            return facts;
-        };
-
-        for sig in sigs.iter().filter(|sig| !sig.params.is_empty()) {
-            let instance_type = sig.return_type;
-            let evaluated_instance = self.evaluate_type_with_env(instance_type);
-            let props_access = match self.resolve_property_access_with_env(instance_type, "props") {
-                success @ PropertyAccessResult::Success { .. } => success,
-                _ => self.resolve_property_access_with_env(evaluated_instance, "props"),
-            };
-            if let PropertyAccessResult::Success { type_id, .. } = props_access
-                && !matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
-            {
-                facts.props_field = Some(type_id);
-                facts.first_param = sig.params.first().map(|p| p.type_id);
-                return facts;
-            }
-        }
-
-        facts
     }
 
     fn compact_jsx_readonly_display(display: String) -> String {
