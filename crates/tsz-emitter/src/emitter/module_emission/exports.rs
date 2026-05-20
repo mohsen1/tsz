@@ -63,6 +63,10 @@ impl<'a> Printer<'a> {
     const fn is_commonjs_live_export_context(&self) -> bool {
         self.ctx.is_commonjs()
             || matches!(self.ctx.original_module_kind, Some(ModuleKind::CommonJS))
+            || matches!(
+                self.ctx.cjs_export_body_outer_module,
+                Some(ModuleKind::CommonJS)
+            )
     }
 
     /// Write `exports.name` or `exports["name"]` depending on whether the name

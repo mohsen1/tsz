@@ -220,10 +220,14 @@ fn downlevel_assign_typed_only_field_emits_nothing() {
     );
 }
 
+/// In native class-field mode (ES2022+ with `useDefineForClassFields`), TypeScript erases
+/// type annotations but keeps the field declaration itself. Only fields marked with `declare`
+/// are truly ambient and get erased entirely. This matches tsc behavior where
+/// `prop: number;` → `prop;` and `declare baz: boolean;` → nothing.
 #[test]
-fn native_define_typed_only_public_field_emits_nothing() {
+fn native_define_typed_public_field_emits_bare_field_declaration() {
     let output = print_with_printer_options(
-        "class Test {\n    prop: number;\n    bare;\n    #privateProp: number;\n}\n",
+        "class Test {\n    prop: number;\n    bare;\n    #privateProp: number;\n    declare ambient: string;\n}\n",
         PrinterOptions {
             target: ScriptTarget::ES2022,
             use_define_for_class_fields: true,
@@ -232,8 +236,8 @@ fn native_define_typed_only_public_field_emits_nothing() {
     );
 
     assert!(
-        !output.contains("prop;"),
-        "Typed-only public field should be erased in native class-field emit.\nOutput:\n{output}"
+        output.contains("prop;"),
+        "Typed public field should emit as a bare native field declaration (type erased).\nOutput:\n{output}"
     );
     assert!(
         output.contains("bare;"),
@@ -241,7 +245,11 @@ fn native_define_typed_only_public_field_emits_nothing() {
     );
     assert!(
         output.contains("#privateProp;"),
-        "Private fields remain runtime declarations even when annotated.\nOutput:\n{output}"
+        "Private typed field should remain a runtime class field declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("ambient"),
+        "`declare` fields are ambient-only and must be erased entirely.\nOutput:\n{output}"
     );
 }
 
