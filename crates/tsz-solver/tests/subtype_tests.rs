@@ -3736,7 +3736,7 @@ fn test_object_with_index_satisfies_numeric_property_number_index() {
 ///   `type Wrap<T> = T extends object ? { inner: Wrap<T> } : T`
 ///
 /// Two Applications of the same conditional alias base should terminate via
-/// the def_guard cycle detector rather than recursing indefinitely.
+/// the `def_guard` cycle detector rather than recursing indefinitely.
 #[test]
 fn test_same_base_conditional_alias_check_terminates() {
     let interner = TypeInterner::new();
