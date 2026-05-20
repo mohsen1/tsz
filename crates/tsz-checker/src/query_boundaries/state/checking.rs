@@ -8,7 +8,6 @@ pub(crate) use super::super::common::{
     array_element_type, callable_shape_for_type as callable_shape, intersection_members,
     is_mapped_type, is_string_type, is_type_parameter_like, is_unit_type,
     object_shape_for_type as object_shape, tuple_elements, union_members,
-    widen_recursive_intersection_member,
 };
 
 pub(crate) fn extract_string_literal_keys(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<Atom> {
@@ -25,6 +24,14 @@ pub(crate) fn keyof_target(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Typ
 
 pub(crate) fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::unwrap_readonly_deep(db, type_id)
+}
+
+pub(crate) fn widen_recursive_intersection_member(
+    db: &dyn TypeDatabase,
+    nested_target: TypeId,
+    outer_intersection: TypeId,
+) -> TypeId {
+    tsz_solver::utils::widen_if_recursive_intersection_member(db, nested_target, outer_intersection)
 }
 
 /// Strict type parameter check: matches `TypeParameter` and `Infer` only.

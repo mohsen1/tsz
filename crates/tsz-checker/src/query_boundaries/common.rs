@@ -534,14 +534,6 @@ pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     widening::widen_type(db, type_id)
 }
 
-pub(crate) fn widen_recursive_intersection_member(
-    db: &dyn TypeDatabase,
-    nested_target: TypeId,
-    outer_intersection: TypeId,
-) -> TypeId {
-    tsz_solver::utils::widen_if_recursive_intersection_member(db, nested_target, outer_intersection)
-}
-
 /// Widen a type for diagnostic display, preserving boolean literal intrinsics.
 ///
 /// Like `widen_type` but keeps `true`/`false` literals so narrowed types
