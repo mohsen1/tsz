@@ -18,11 +18,9 @@ impl<'a> CheckerState<'a> {
             expression,
             receiver_type,
         );
-        if recovery.is_some()
-            && self.is_this_expression(self.ctx.arena.skip_parenthesized(expression))
-        {
-            resolved = recovery;
-        } else if resolved.is_none() {
+        let recovery_is_lexical_this = recovery.is_some()
+            && self.is_this_expression(self.ctx.arena.skip_parenthesized(expression));
+        if recovery_is_lexical_this || resolved.is_none() {
             resolved = recovery;
         }
         let is_current = recovery.is_some()
