@@ -5024,6 +5024,71 @@ fn flat_weak_type_in_intersection_target_emits_ts2559() {
 }
 
 #[test]
+fn direct_object_literal_excess_prop_against_weak_intersection_emits_ts2353() {
+    // tsc emits TS2353 (excess property check) — NOT TS2559 — when a fresh object
+    // literal with an unrecognized property is assigned to a weak intersection target.
+    // EPC runs first for fresh literals; TS2559 applies to non-fresh sources only.
+    let source = r#"
+        interface A { x?: number }
+        interface B { y?: string }
+        const v: A & B = { z: 1 };
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2353 = has_diagnostic_code(&diagnostics, 2353);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    assert!(
+        has_ts2353,
+        "Expected TS2353 (excess property) for fresh literal with unrecognized property against weak intersection. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2559,
+        "Expected no TS2559 for a fresh object literal (EPC fires first). Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_object_literal_prop_matching_second_weak_intersection_member_no_ts2559() {
+    // `y` is a property of `Second` and therefore of the intersection `First & Second`.
+    // Having any property in common with ANY member is sufficient — no TS2559.
+    // This verifies that `violates_weak_type` collects ALL members' properties.
+    let source = r#"
+        interface First { x?: number }
+        interface Second { y?: string }
+        const v: First & Second = { y: "hello" };
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    assert!(
+        !has_ts2559,
+        "Source with property matching second intersection member should NOT emit TS2559. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_object_literal_excess_prop_against_single_weak_type_emits_ts2353() {
+    // tsc emits TS2353 (excess property check) when a fresh object literal with an
+    // unrecognized property is assigned to a single weak type. EPC fires first for
+    // fresh literals; TS2559 applies only to non-fresh sources.
+    let source = r#"
+        interface Opts { timeout?: number; retries?: number }
+        const v: Opts = { url: "x" };
+    "#;
+    let diagnostics = get_all_diagnostics(source);
+    let has_ts2353 = has_diagnostic_code(&diagnostics, 2353);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    assert!(
+        has_ts2353,
+        "Expected TS2353 (excess property) for fresh literal with unrecognized property against single weak type. Got: {diagnostics:?}"
+    );
+    assert!(
+        !has_ts2559,
+        "Expected no TS2559 for a fresh object literal (EPC fires first). Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn intersection_member_weak_type_suppression_still_works() {
     // When the source has properties that overlap with one intersection member
     // but not with a weak-type member, the assignment should still pass.

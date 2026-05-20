@@ -1444,9 +1444,7 @@ impl<'a> CheckerState<'a> {
                                     // Function initializer return elaboration emitted the canonical
                                     // nested TS2322 for a mismatching returned literal/expression.
                                 } else {
-                                    // Run excess property check first for object literal
-                                    // initializers. In tsc, TS2353 (excess property) takes
-                                    // priority over TS2741/TS2322 (missing property).
+                                    // TS2353 (excess property) takes priority over TS2741/TS2322.
                                     let diags_before = checker.ctx.diagnostics.len();
                                     checker.check_object_literal_excess_properties(
                                         checked_init_type,

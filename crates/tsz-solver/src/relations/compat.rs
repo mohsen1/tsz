@@ -1923,14 +1923,33 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
-        // For intersection targets, ALL members must be weak types.
-        // e.g., `string & { opt?: number }` is NOT weak because `string` is not weak.
-        // This matches tsc's isWeakType() which checks every() for intersections.
+        // For weak intersections, tsc gathers properties from ALL members before
+        // testing common-property overlap — a source that shares a name with any
+        // member does not violate the rule.
         if let Some(TypeData::Intersection(list_id)) = self.interner.lookup(target) {
             let members = self.interner.type_list(list_id);
+            // All members must be weak for the intersection to be considered weak.
+            // e.g., `string & { opt?: number }` is NOT weak because `string` is not weak.
             if members.iter().any(|m| !self.is_weak_type(*m)) {
                 return false;
             }
+            // Collect properties from all members. The intersection is weak iff
+            // source shares no property name with any member's property set.
+            let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+            let mut all_target_props: Vec<crate::types::PropertyInfo> = Vec::new();
+            for &member in members.iter() {
+                let Some(shape_id) = extractor.extract(member) else {
+                    continue;
+                };
+                let shape = self
+                    .interner
+                    .object_shape(crate::types::ObjectShapeId(shape_id));
+                all_target_props.extend_from_slice(&shape.properties);
+            }
+            if all_target_props.is_empty() {
+                return false;
+            }
+            return self.violates_weak_type_with_target_props(source, &all_target_props);
         }
 
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
@@ -1963,12 +1982,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // any property that arrays also have. If not, it's a weak type violation.
         //
         // IMPORTANT: Only apply this when the target is a standalone weak type
-        // (Object/ObjectWithIndex), NOT when it's part of an intersection.
-        // Intersections like `{ a?: string } & number[]` should not trigger
-        // weak type violations because the intersection includes array properties.
+        // (Object/ObjectWithIndex). Intersection targets are handled above with
+        // the combined-property path.
         if self.is_array_or_tuple_type(source) {
             // Only trigger the array weak-type check when the target is a
-            // standalone object shape, not an intersection or other compound type.
+            // standalone object shape, not another compound type.
             let target_is_standalone_object = matches!(
                 self.interner.lookup(target),
                 Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_))
@@ -1990,8 +2008,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 }
                 return true; // Non-empty array, target lacks array-like props → violation
             }
-            // For intersection/other compound targets, skip the array check
-            // and fall through to the standard weak type check.
+            // For other compound targets, skip the array check and fall through
+            // to the standard weak type check.
         }
 
         self.violates_weak_type_with_target_props(source, target_props)
