@@ -13,6 +13,10 @@ pub mod syntax;
 // Re-export key parser types at crate root for convenience
 pub use parser::base::{NodeIndex, NodeList, TextRange};
 pub use parser::flags::{modifier_flags, node_flags, transform_flags};
+pub use parser::incomplete_call::{
+    CallDelimiter, IncompleteCallContext, count_top_level_commas, find_incomplete_angle_call,
+    find_incomplete_paren_call, has_comma_between_offsets,
+};
 pub use parser::node::NodeArena;
 pub use parser::state::{ParseDiagnostic, ParserState};
 pub use parser::syntax_kind_ext;

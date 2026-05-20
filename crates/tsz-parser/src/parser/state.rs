@@ -69,7 +69,7 @@ pub const CONTEXT_FLAG_IN_BLOCK: u32 = 8192;
 /// Used to keep arrow-function/parenthesized recovery behavior consistent.
 pub const CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION: u32 = 16384;
 /// Context flag: parsing a class field initializer.
-/// Newline-separated postfix continuations like `\n[` do not attach across fields.
+/// Used for class-field-only recovery and keyword restrictions.
 pub const CONTEXT_FLAG_CLASS_FIELD_INITIALIZER: u32 = 32768;
 /// Context flag: parsing inside a tuple element where `?` is an optional marker.
 /// When set, postfix `?` should NOT be treated as JSDoc nullable (TS17019).
@@ -86,6 +86,10 @@ pub const CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION: u32 = 262144;
 pub const CONTEXT_FLAG_PARAMETER_BINDING_PATTERN: u32 = 524288;
 /// Context flag: parsing a function-like body.
 pub const CONTEXT_FLAG_FUNCTION_BODY: u32 = 1048576;
+/// Context flag: parsing an enum member initializer.
+/// Missing-comma recovery should keep a following bracketed line as the next
+/// enum member rather than an element-access continuation.
+pub const CONTEXT_FLAG_ENUM_MEMBER_INITIALIZER: u32 = 2097152;
 
 // =============================================================================
 // Parse Diagnostic

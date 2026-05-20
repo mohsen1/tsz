@@ -1039,7 +1039,7 @@ mod tests {
     use crate::context::{CheckerContext, CheckerOptions};
     use tsz_binder::BinderState;
     use tsz_parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     /// Resolving `Symbol::stable_value_declaration` for a class via the new
     /// `node_at_stable_location` helper must return the same class node

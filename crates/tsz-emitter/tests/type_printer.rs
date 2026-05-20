@@ -11,7 +11,7 @@ fn test_primitive_types() {
 
 #[test]
 fn object_type_flat_format_without_indent() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let name_x = interner.intern_string("x");
 
     let obj = interner.object(vec![tsz_solver::types::PropertyInfo::new(
@@ -27,7 +27,7 @@ fn object_type_flat_format_without_indent() {
 
 #[test]
 fn object_type_multiline_format_at_indent_zero() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let name_x = interner.intern_string("x");
 
     let obj = interner.object(vec![tsz_solver::types::PropertyInfo::new(
@@ -43,7 +43,7 @@ fn object_type_multiline_format_at_indent_zero() {
 
 #[test]
 fn object_type_multiline_format_at_indent_one() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let name_x = interner.intern_string("x");
 
     let obj = interner.object(vec![tsz_solver::types::PropertyInfo::new(
@@ -59,7 +59,7 @@ fn object_type_multiline_format_at_indent_one() {
 
 #[test]
 fn object_type_multiline_readonly_property() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let name_p = interner.intern_string("primaryPath");
 
     let obj = interner.object(vec![tsz_solver::types::PropertyInfo::readonly(
@@ -80,7 +80,7 @@ fn object_type_multiline_readonly_property() {
 fn readonly_spread_tuple_prints_spread_syntax() {
     use tsz_solver::types::{TupleElement, TypeData, TypeParamInfo};
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let unknown_array = interner.array(TypeId::UNKNOWN);
     let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
@@ -104,7 +104,7 @@ fn readonly_spread_tuple_prints_spread_syntax() {
 
 #[test]
 fn object_type_nested_multiline() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let name_inner = interner.intern_string("inner");
     let name_a = interner.intern_string("a");
 
@@ -126,7 +126,7 @@ fn object_type_nested_multiline() {
 
 #[test]
 fn recursive_printing_respects_max_depth() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let name_inner = interner.intern_string("inner");
     let name_leaf = interner.intern_string("leaf");
 
@@ -146,7 +146,7 @@ fn recursive_printing_respects_max_depth() {
 
 #[test]
 fn empty_object_type_stays_inline() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let obj = interner.object(vec![]);
 
     // Even with indent_level set, empty objects stay as {}
@@ -157,7 +157,7 @@ fn empty_object_type_stays_inline() {
 
 #[test]
 fn local_import_alias_uses_bare_name_when_alias_is_emitted() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let mut symbols = SymbolArena::new();
     let thing = symbols.alloc(symbol_flags::ALIAS, "Thing".to_string());
     symbols
@@ -181,7 +181,7 @@ fn local_import_alias_uses_bare_name_when_alias_is_emitted() {
 
 #[test]
 fn local_import_alias_falls_back_to_import_qualified_name_when_elided() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let mut symbols = SymbolArena::new();
     let thing = symbols.alloc(symbol_flags::ALIAS, "Thing".to_string());
     symbols
@@ -205,7 +205,7 @@ fn local_import_alias_falls_back_to_import_qualified_name_when_elided() {
 
 #[test]
 fn string_literal_type_escapes_double_quotes() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let lit_type = interner.literal_string("he said \"hi\"");
 
     let printer = TypePrinter::new(&interner);
@@ -218,7 +218,7 @@ fn string_literal_type_escapes_double_quotes() {
 
 #[test]
 fn string_literal_type_escapes_newline() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let lit_type = interner.literal_string("line1\nline2");
 
     let printer = TypePrinter::new(&interner);
@@ -231,7 +231,7 @@ fn string_literal_type_escapes_newline() {
 
 #[test]
 fn string_literal_type_escapes_backslash() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let lit_type = interner.literal_string("back\\slash");
 
     let printer = TypePrinter::new(&interner);
@@ -244,7 +244,7 @@ fn string_literal_type_escapes_backslash() {
 
 #[test]
 fn string_literal_type_escapes_tab() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let lit_type = interner.literal_string("col1\tcol2");
 
     let printer = TypePrinter::new(&interner);
@@ -257,7 +257,7 @@ fn string_literal_type_escapes_tab() {
 
 #[test]
 fn quoted_property_name_escapes_special_chars() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     // Create a property with a name containing a double quote
     let name = interner.intern_string("say \"hi\"");
     let obj = interner.object(vec![tsz_solver::types::PropertyInfo::new(
@@ -275,7 +275,7 @@ fn quoted_property_name_escapes_special_chars() {
 
 #[test]
 fn index_access_parenthesizes_union_container() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     // Create (string | number)[K] -- the union container needs parens
     let union_type = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let key_str = interner.literal_string("length");
@@ -291,7 +291,7 @@ fn index_access_parenthesizes_union_container() {
 
 #[test]
 fn external_module_symbol_is_not_treated_as_global() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let mut symbols = SymbolArena::new();
     let thing = symbols.alloc(0, "Thing".to_string());
 
@@ -309,7 +309,7 @@ fn external_module_symbol_is_not_treated_as_global() {
 
 #[test]
 fn reserved_keyword_property_names_are_not_quoted() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     // In ES5+ and TypeScript, reserved words are valid property names
     // and tsc emits them unquoted in .d.ts output.
     let name_delete = interner.intern_string("delete");
@@ -340,7 +340,7 @@ fn reserved_keyword_property_names_are_not_quoted() {
 
 #[test]
 fn mapped_type_multiline_format_with_indent() {
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
 
     let param_name = interner.intern_string("K");
     let mapped = interner.mapped(tsz_solver::types::MappedType {

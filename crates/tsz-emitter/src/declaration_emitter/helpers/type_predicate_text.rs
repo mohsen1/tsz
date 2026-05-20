@@ -108,7 +108,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// (in either order), confirming it is the non-nullish arm of the distributive
     /// `(T & undefined) | (T & {})` pattern.
     fn is_intersection_of_type_param_with_empty_object(
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
         type_id: tsz_solver::types::TypeId,
         expected_param: tsz_solver::types::TypeId,
     ) -> bool {

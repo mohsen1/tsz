@@ -72,7 +72,7 @@ mod tests {
     use std::sync::Arc;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn shared_actual_lib_delegation_hit_populates_file_local_symbol_cache() {

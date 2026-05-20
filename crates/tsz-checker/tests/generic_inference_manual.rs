@@ -9,7 +9,8 @@ use crate::state::CheckerState;
 use tsz_binder::BinderState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::ParserState;
-use tsz_solver::{TypeId, TypeInterner};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeInterner;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();

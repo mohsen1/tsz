@@ -1891,7 +1891,10 @@ impl<'a> CheckerState<'a> {
         self.ctx.diagnostics.len() > diag_count_before
     }
 
-    fn index_value_type_is_deferred(types: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+    fn index_value_type_is_deferred(
+        types: &dyn tsz_solver::construction::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
         crate::query_boundaries::common::is_index_access_type(types, type_id)
             || crate::query_boundaries::common::contains_type_parameters(types, type_id)
     }

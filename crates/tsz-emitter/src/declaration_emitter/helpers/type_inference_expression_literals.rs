@@ -423,9 +423,15 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     data.object_assignment_initializer
                 };
-                let type_text = self
-                    .preferred_object_member_initializer_type_text(initializer, depth)
-                    .unwrap_or_else(|| "any".to_string());
+                let type_text = if data.exclamation_token_pos != 0
+                    && data.object_assignment_initializer == NodeIndex::NONE
+                {
+                    self.reference_declared_non_nullish_type_annotation_text(data.name)
+                } else {
+                    None
+                }
+                .or_else(|| self.preferred_object_member_initializer_type_text(initializer, depth))
+                .unwrap_or_else(|| "any".to_string());
                 Some(Self::format_object_member_type_text(
                     name, &type_text, depth,
                 ))

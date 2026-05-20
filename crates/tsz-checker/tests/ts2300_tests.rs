@@ -9,7 +9,7 @@ use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     tsz_checker::test_utils::load_compiled_lib_files(&[
@@ -1337,5 +1337,38 @@ fn same_file_merging_interfaces_no_ts2300() {
     assert_eq!(
         ts2300, 0,
         "Two separate interface declarations merge — no TS2300 expected"
+    );
+}
+
+#[test]
+fn reexport_plus_own_augmentation_keeps_third_file_augmentation_conflict() {
+    let source_ts = r#"export interface User {
+    id: number;
+}
+"#;
+    let test_ts = r#"export { User } from "./source";
+declare module "./source" {
+    interface User {
+        email?: string;
+    }
+}
+"#;
+    let augment_test_ts = r#"import "./test";
+declare module "./test" {
+    type User = { external: true };
+}
+"#;
+
+    let ts2300 = check_for_ts2300_multi_file(
+        &[
+            ("source.ts", source_ts),
+            ("test.ts", test_ts),
+            ("augment-test.ts", augment_test_ts),
+        ],
+        "augment-test.ts",
+    );
+    assert!(
+        !ts2300.is_empty(),
+        "third-file augmentation of the current re-exported name must still produce TS2300"
     );
 }

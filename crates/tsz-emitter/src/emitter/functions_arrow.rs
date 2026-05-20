@@ -338,7 +338,105 @@ impl<'a> Printer<'a> {
         };
         let body_token_end = self.find_token_end_before_trivia(body_node.pos, body_node.end);
         let comment_end = std::cmp::max(body_node.end, arrow_end);
+        if let Some((defer_start, defer_end)) = self.arrow_concise_body_trailing_comment_defer_range
+            && body_token_end == defer_start
+            && self
+                .arrow_concise_body_deferred_comment_end(body_token_end, defer_end)
+                .is_some()
+        {
+            return;
+        }
         self.emit_comments_in_range(body_token_end, comment_end, true, false);
+    }
+
+    pub(crate) fn with_arrow_concise_body_trailing_comments_deferred<R>(
+        &mut self,
+        defer_start: u32,
+        defer_end: u32,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let prev = self.arrow_concise_body_trailing_comment_defer_range;
+        self.arrow_concise_body_trailing_comment_defer_range = Some((defer_start, defer_end));
+        let result = f(self);
+        self.arrow_concise_body_trailing_comment_defer_range = prev;
+        result
+    }
+
+    pub(crate) fn rightmost_concise_arrow_body_comment_start(&self, idx: NodeIndex) -> Option<u32> {
+        let node = self.arena.get(idx)?;
+        if node.kind == syntax_kind_ext::ARROW_FUNCTION {
+            let func = self.arena.get_function(node)?;
+            let body = self.arena.get(func.body)?;
+            if body.kind == syntax_kind_ext::BLOCK {
+                return None;
+            }
+            return Some(self.find_token_end_before_trivia(body.pos, body.end));
+        }
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = self.arena.get_parenthesized(node)?;
+            return self.rightmost_concise_arrow_body_comment_start(paren.expression);
+        }
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let binary = self.arena.get_binary_expr(node)?;
+            return self.rightmost_concise_arrow_body_comment_start(binary.right);
+        }
+
+        None
+    }
+
+    pub(crate) fn rightmost_concise_arrow_deferred_comment_range(
+        &self,
+        idx: NodeIndex,
+        scan_end: u32,
+    ) -> Option<(u32, u32)> {
+        let comment_start = self.rightmost_concise_arrow_body_comment_start(idx)?;
+        let comment_end = self.arrow_concise_body_deferred_comment_end(comment_start, scan_end)?;
+        Some((comment_start, comment_end))
+    }
+
+    fn arrow_concise_body_deferred_comment_end(
+        &self,
+        body_token_end: u32,
+        scan_end: u32,
+    ) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut i = std::cmp::min(body_token_end as usize, bytes.len());
+        let limit = std::cmp::min(scan_end as usize, bytes.len());
+        let mut saw_line_comment = false;
+        let mut last_comment_end = None;
+
+        while i < limit {
+            match bytes[i] {
+                b';' => return last_comment_end,
+                b' ' | b'\t' | b'\n' | b'\r' => i += 1,
+                b'/' if i + 1 < limit && bytes[i + 1] == b'/' => {
+                    saw_line_comment = true;
+                    i += 2;
+                    while i < limit && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                    last_comment_end = Some(i as u32);
+                }
+                b'/' if i + 1 < limit && bytes[i + 1] == b'*' => {
+                    i += 2;
+                    while i + 1 < limit && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    i = std::cmp::min(i + 2, limit);
+                    last_comment_end = Some(i as u32);
+                }
+                _ if saw_line_comment => return last_comment_end,
+                _ => return None,
+            }
+        }
+        if saw_line_comment {
+            last_comment_end
+        } else {
+            None
+        }
     }
 
     pub(in crate::emitter) fn pending_comment_before_pos_starts_after_newline(

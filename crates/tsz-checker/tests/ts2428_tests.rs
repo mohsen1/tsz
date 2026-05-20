@@ -193,6 +193,100 @@ interface B<T> {
 }
 
 #[test]
+fn self_referential_constraint_repeated_no_ts2428() {
+    // `<T extends Foo<T>>` declared twice. Each declaration's `T` resolves
+    // to a distinct underlying `TypeId` because the binder gives each
+    // declaration its own type-parameter symbol; without canonical-
+    // substitution merge compatibility would report TS2428 spuriously.
+    let source = r#"
+class Foo<T> {}
+interface I<T extends Foo<T>> {}
+interface I<T extends Foo<T>> {}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "Should NOT emit TS2428 for repeated `<T extends Foo<T>>` declarations"
+    );
+}
+
+#[test]
+fn self_referential_constraint_three_decls_no_ts2428() {
+    // Group merge: three declarations with self-referential constraints
+    // should be accepted, since each pair canonicalizes identically.
+    let source = r#"
+class Foo<T> {}
+interface I<T extends Foo<T>> {}
+interface I<T extends Foo<T>> {}
+interface I<T extends Foo<T>> {}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "Should NOT emit TS2428 for three self-referential merge group declarations"
+    );
+}
+
+#[test]
+fn two_param_self_referential_constraint_no_ts2428() {
+    // `<T, U extends T>` declared twice: U's constraint references position 0's
+    // parameter. Both declarations should canonicalize to the same shape.
+    let source = r#"
+interface I<T, U extends T> {}
+interface I<T, U extends T> {}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "Should NOT emit TS2428 when constraint references an earlier positional type parameter"
+    );
+}
+
+#[test]
+fn class_interface_merge_self_referential_constraint_no_ts2428() {
+    // Mixed class+interface merge with self-referential constraint should
+    // accept identical shapes despite distinct underlying TypeIds.
+    let source = r#"
+class Foo<T> {}
+interface I<T extends Foo<T>> {}
+class I<T extends Foo<T>> {}
+"#;
+    assert!(
+        !has_error_with_code(source, 2428),
+        "Should NOT emit TS2428 for class+interface merge with self-referential constraint"
+    );
+}
+
+#[test]
+fn renamed_self_referential_constraint_emits_ts2428() {
+    // Names must still match positionally. Renaming the iteration variable
+    // is a real divergence under tsc's interface-merge rule and must fire.
+    let source = r#"
+class Foo<T> {}
+interface I<T extends Foo<T>> {}
+interface I<S extends Foo<S>> {}
+"#;
+    assert!(
+        has_error_with_code(source, 2428),
+        "Should emit TS2428 when positional names differ across declarations"
+    );
+}
+
+#[test]
+fn divergent_self_referential_constraint_emits_ts2428() {
+    // Constraints with different shapes must still fire TS2428 — the
+    // canonicalization only rewrites self-references, not the constraint
+    // structure itself.
+    let source = r#"
+class Foo<T> {}
+class Bar<T> {}
+interface I<T extends Foo<T>> {}
+interface I<T extends Bar<T>> {}
+"#;
+    assert!(
+        has_error_with_code(source, 2428),
+        "Should emit TS2428 when constraint base differs (Foo vs Bar)"
+    );
+}
+
+#[test]
 fn class_interface_merge_different_arity_no_ts2428() {
     let source = r#"
 interface Component<P = {}, S = {}, SS = any> {}

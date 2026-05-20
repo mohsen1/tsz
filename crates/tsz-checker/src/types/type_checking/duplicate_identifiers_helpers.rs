@@ -371,15 +371,13 @@ impl<'a> CheckerState<'a> {
         let mut seen = FxHashSet::default();
 
         let mut push_remote_decl =
-            |file_idx: usize, decl_idx: NodeIndex, flags: u32, is_exported: bool| {
+            |file_idx: usize,
+             decl_idx: NodeIndex,
+             flags: u32,
+             is_exported: bool,
+             origin: DuplicateDeclarationOrigin| {
                 if seen.insert((file_idx, decl_idx.0)) {
-                    declarations.push((
-                        decl_idx,
-                        flags,
-                        false,
-                        is_exported,
-                        DuplicateDeclarationOrigin::TargetedModuleAugmentation,
-                    ));
+                    declarations.push((decl_idx, flags, false, is_exported, origin));
                 }
             };
 
@@ -407,7 +405,13 @@ impl<'a> CheckerState<'a> {
                         return;
                     };
                     let is_exported = self.is_declaration_exported(arena, augmentation.node);
-                    push_remote_decl(augmenting_file_idx, augmentation.node, flags, is_exported);
+                    push_remote_decl(
+                        augmenting_file_idx,
+                        augmentation.node,
+                        flags,
+                        is_exported,
+                        DuplicateDeclarationOrigin::TargetedModuleAugmentation,
+                    );
                     return;
                 }
 
@@ -415,7 +419,15 @@ impl<'a> CheckerState<'a> {
                     for (decl_idx, flags, is_exported) in
                         self.export_surface_declarations_in_file(target_idx, name)
                     {
-                        push_remote_decl(target_idx, decl_idx, flags, is_exported);
+                        push_remote_decl(
+                            target_idx,
+                            decl_idx,
+                            flags,
+                            is_exported,
+                            DuplicateDeclarationOrigin::CurrentFileAugmentationTargetExport(
+                                target_idx,
+                            ),
+                        );
                     }
                 }
             };

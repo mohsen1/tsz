@@ -1416,7 +1416,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// Produces the value form used in `declare const x = "abc"` style declarations.
     pub(crate) fn format_literal_initializer(
         lit: &tsz_solver::types::LiteralValue,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> String {
         match lit {
             tsz_solver::types::LiteralValue::String(atom) => {

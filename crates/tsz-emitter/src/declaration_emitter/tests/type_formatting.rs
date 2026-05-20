@@ -35,6 +35,46 @@ fn test_type_printer_preserves_union_display_origin() {
 }
 
 #[test]
+fn test_type_printer_deduplicates_identical_rendered_union_members() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+    let number_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::NUMBER)],
+        TypeId::NUMBER,
+    ));
+    let string_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::STRING)],
+        TypeId::STRING,
+    ));
+    let union = interner.union_preserve_members(vec![number_callback, string_callback]);
+    interner.replace_union_origin_for_display(union, vec![number_callback, number_callback]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner).print_type(union);
+
+    assert_eq!(printed, "(x: number) => number");
+}
+
+#[test]
+fn test_type_printer_keeps_distinct_rendered_union_members() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+    let number_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::NUMBER)],
+        TypeId::NUMBER,
+    ));
+    let string_callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(x, TypeId::STRING)],
+        TypeId::STRING,
+    ));
+    let union = interner.union_preserve_members(vec![number_callback, string_callback]);
+    interner.replace_union_origin_for_display(union, vec![number_callback, string_callback]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner).print_type(union);
+
+    assert_eq!(printed, "((x: number) => number) | ((x: string) => string)");
+}
+
+#[test]
 fn test_type_printer_prints_named_unique_symbol_as_typeof() {
     let source = "export const x = Symbol();\nexport const y = Symbol();\n";
     let (parser, root) = parse_test_source(source);
@@ -838,6 +878,204 @@ var methodValue = C.s2;
     assert!(
         output.contains("declare var methodValue: typeof C.s2;"),
         "Expected static method property access to emit typeof: {output}"
+    );
+}
+
+#[test]
+fn test_new_expression_uses_construct_return_from_intersection_constructor_alias() {
+    let source = r#"
+class C {}
+const Enhanced = C as typeof C & { enhanced: unknown };
+export default new Enhanced();
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let source_file = parser
+        .arena
+        .get_source_file_at(root)
+        .expect("missing source file");
+    let class_idx = source_file.statements.nodes[0];
+    let class_data = parser
+        .arena
+        .get_class_at(class_idx)
+        .expect("missing class declaration");
+    let local_decl = parser
+        .arena
+        .get_variable_at(source_file.statements.nodes[1])
+        .and_then(|stmt| parser.arena.get_variable_at(stmt.declarations.nodes[0]))
+        .and_then(|list| {
+            parser
+                .arena
+                .get_variable_declaration_at(list.declarations.nodes[0])
+        })
+        .expect("missing local declaration");
+    let export_assignment = parser
+        .arena
+        .get_export_decl_at(source_file.statements.nodes[2])
+        .expect("missing default export");
+    let new_expr = parser
+        .arena
+        .get_call_expr_at(export_assignment.export_clause)
+        .expect("missing new expression");
+
+    let interner = TypeInterner::new();
+    let c_instance = interner.object_with_index(ObjectShape {
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: binder
+            .get_node_symbol(class_data.name)
+            .or_else(|| binder.get_node_symbol(class_idx)),
+        flags: ObjectFlags::default(),
+    });
+    let c_constructor = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), c_instance)],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: binder
+            .get_node_symbol(class_data.name)
+            .or_else(|| binder.get_node_symbol(class_idx)),
+        is_abstract: false,
+    });
+    let enhanced_shape = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("enhanced"),
+        TypeId::UNKNOWN,
+    )]);
+    let enhanced_constructor = interner.intersection(vec![c_constructor, enhanced_shape]);
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(local_decl.name.0, enhanced_constructor);
+    type_cache
+        .node_types
+        .insert(new_expr.expression.0, enhanced_constructor);
+    type_cache
+        .node_types
+        .insert(export_assignment.export_clause.0, TypeId::ANY);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const _default: C;"),
+        "Expected default new expression to use construct return type: {output}"
+    );
+    assert!(
+        !output.contains("declare const _default: Enhanced;"),
+        "Default export must not reuse the enhanced constructor alias as an instance type: {output}"
+    );
+    assert!(
+        !output.contains("declare const _default: C &")
+            && !output.contains("declare const _default: typeof C"),
+        "Constructor augmentation properties must not leak into the instance type: {output}"
+    );
+}
+
+#[test]
+fn test_new_expression_uses_construct_return_from_renamed_intersection_constructor_alias() {
+    let source = r#"
+class Renamed {}
+const Mixed = Renamed as typeof Renamed & { marker: unknown };
+const value = new Mixed();
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let source_file = parser
+        .arena
+        .get_source_file_at(root)
+        .expect("missing source file");
+    let class_idx = source_file.statements.nodes[0];
+    let class_data = parser
+        .arena
+        .get_class_at(class_idx)
+        .expect("missing class declaration");
+    let alias_decl = parser
+        .arena
+        .get_variable_at(source_file.statements.nodes[1])
+        .and_then(|stmt| parser.arena.get_variable_at(stmt.declarations.nodes[0]))
+        .and_then(|list| {
+            parser
+                .arena
+                .get_variable_declaration_at(list.declarations.nodes[0])
+        })
+        .expect("missing alias declaration");
+    let value_decl = parser
+        .arena
+        .get_variable_at(source_file.statements.nodes[2])
+        .and_then(|stmt| parser.arena.get_variable_at(stmt.declarations.nodes[0]))
+        .and_then(|list| {
+            parser
+                .arena
+                .get_variable_declaration_at(list.declarations.nodes[0])
+        })
+        .expect("missing value declaration");
+    let new_expr = parser
+        .arena
+        .get_call_expr_at(value_decl.initializer)
+        .expect("missing new expression");
+
+    let interner = TypeInterner::new();
+    let instance = interner.object_with_index(ObjectShape {
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: binder
+            .get_node_symbol(class_data.name)
+            .or_else(|| binder.get_node_symbol(class_idx)),
+        flags: ObjectFlags::default(),
+    });
+    let constructor = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), instance)],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: binder
+            .get_node_symbol(class_data.name)
+            .or_else(|| binder.get_node_symbol(class_idx)),
+        is_abstract: false,
+    });
+    let marker_shape = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("marker"),
+        TypeId::UNKNOWN,
+    )]);
+    let mixed_constructor = interner.intersection(vec![constructor, marker_shape]);
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(alias_decl.name.0, mixed_constructor);
+    type_cache
+        .node_types
+        .insert(new_expr.expression.0, mixed_constructor);
+    type_cache.node_types.insert(value_decl.name.0, TypeId::ANY);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare const value: Renamed;"),
+        "Expected variable new expression to use construct return type: {output}"
+    );
+    assert!(
+        !output.contains("declare const value: Mixed;"),
+        "Variable declaration must not reuse the constructor alias as an instance type: {output}"
+    );
+    assert!(
+        !output.contains("declare const value: Renamed &")
+            && !output.contains("declare const value: typeof Renamed"),
+        "Renamed augmentation property must not leak into the instance type: {output}"
     );
 }
 

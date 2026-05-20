@@ -2003,7 +2003,10 @@ impl<'a> CheckerState<'a> {
             || Self::union_has_primitive_members_only(self.ctx.types, evaluated)
     }
 
-    fn union_has_primitive_members_only(types: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+    fn union_has_primitive_members_only(
+        types: &dyn tsz_solver::construction::TypeDatabase,
+        ty: TypeId,
+    ) -> bool {
         let Some(members) = query_common::union_members(types, ty) else {
             return false;
         };

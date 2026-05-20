@@ -45,6 +45,20 @@ export default function (eleventyConfig) {
       [latestWinnerArtifact]: "benchmark-data/latest.tsgo-winners.json",
     });
   }
+  eleventyConfig.on("eleventy.after", ({ dir }) => {
+    if (!latestBenchmarkArtifact) return;
+
+    const output = path.join(dir.output, "benchmark-data", "latest.json");
+    fs.mkdirSync(path.dirname(output), { recursive: true });
+    fs.copyFileSync(latestBenchmarkArtifact, output);
+
+    if (latestWinnerArtifact && fs.existsSync(latestWinnerArtifact)) {
+      fs.copyFileSync(
+        latestWinnerArtifact,
+        path.join(dir.output, "benchmark-data", "latest.tsgo-winners.json"),
+      );
+    }
+  });
 
   eleventyConfig.setServerOptions({
     watch: ["static/playground-app.js", "static/playground-app.js.map"],

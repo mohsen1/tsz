@@ -1415,7 +1415,7 @@ mod tests {
             .insert(".".to_string(), vec![aug]);
 
         // Set up CheckerState with the binder
-        let types = tsz_solver::TypeInterner::new();
+        let types = tsz_solver::construction::TypeInterner::new();
         let main_arena = Arc::new(NodeArena::new());
         let checker = CheckerState::new(
             &main_arena,
@@ -1468,7 +1468,7 @@ mod tests {
             .expect("fresh Arc")
             .insert(".".to_string(), vec![aug]);
 
-        let types = tsz_solver::TypeInterner::new();
+        let types = tsz_solver::construction::TypeInterner::new();
         let main_arena = Arc::new(NodeArena::new());
         let checker = CheckerState::new(
             &main_arena,

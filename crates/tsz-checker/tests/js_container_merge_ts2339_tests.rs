@@ -7,7 +7,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::context::LibContext;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn check_entry(
     files: &[(&str, &str)],

@@ -1132,16 +1132,8 @@ impl<'a> CheckerState<'a> {
         if args.nodes.first().copied() != Some(func_idx) {
             return false;
         }
-        let Some(callee) = self.ctx.arena.get(call.expression) else {
-            return false;
-        };
-        self.ctx
-            .arena
-            .get_identifier(callee)
-            .is_some_and(|i| i.escaped_text == "Promise")
-            && self
-                .resolve_identifier_symbol_without_tracking(call.expression)
-                .is_some_and(|sym_id| self.symbol_has_standard_lib_origin(sym_id))
+        self.resolve_identifier_symbol_without_tracking(call.expression)
+            .is_some_and(|sym_id| self.ctx.sym_id_is_lib_promise(sym_id))
     }
 
     /// Returns true when the parameter name belongs to a Promise executor callback.

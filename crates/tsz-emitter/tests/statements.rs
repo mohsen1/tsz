@@ -35,6 +35,36 @@ fn parse_and_emit_strict_es2015(source: &str, file_name: &str) -> String {
 }
 
 #[test]
+fn expression_statement_arrow_initializer_keeps_trailing_comment_after_semicolon() {
+    let output =
+        parse_and_emit_strict_es2015("declare let a: () => number;\na = () => 1 // ok\n", "a.ts");
+
+    assert!(
+        output.contains("a = () => 1; // ok"),
+        "Arrow assignment trailing comment should follow the statement semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("a = () => 1 // ok\n;"),
+        "Arrow body should not steal the statement trailing comment before the semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn variable_arrow_initializer_places_semicolon_before_following_comment() {
+    let output =
+        parse_and_emit_strict_es2015("var f = (a: any)\n=> a\n\n// Should be valid.\n;\n", "a.ts");
+
+    assert!(
+        output.contains("var f = (a) => a;\n// Should be valid."),
+        "Variable arrow initializer should own the semicolon before the following comment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("=> a\n\n// Should be valid.\n;"),
+        "Following comment should not remain between the arrow body and semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn recovered_jsx_unary_type_assertion_preserves_trailing_less_than() {
     let output = parse_and_emit_strict_es2015("~< <\n", "a.js");
     assert_eq!(output.trim_end(), "\"use strict\";\n~< /> <\n;");

@@ -5,6 +5,7 @@
 //! These tests verify that tsz follows tsc's behaviour for all variants.
 
 use super::*;
+use crate::computation::CompatChecker;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
 use crate::types::{

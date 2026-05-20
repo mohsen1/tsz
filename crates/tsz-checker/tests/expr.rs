@@ -1,7 +1,7 @@
 use super::*;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 use crate::CheckerState;
 use crate::context::{RequestCacheKey, TypingRequest};

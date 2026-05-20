@@ -1901,7 +1901,7 @@ mod tests {
     use super::*;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     #[test]
     fn resolve_jsdoc_assigned_value_type_sees_prototype_property_statement() {

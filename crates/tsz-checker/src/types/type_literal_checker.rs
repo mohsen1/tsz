@@ -318,7 +318,7 @@ impl<'a> CheckerState<'a> {
                 if !self.ctx.compiler_options.no_lib
                     && type_param.is_none()
                     && sym_id.is_none()
-                    && self.is_promise_like_name(name)
+                    && matches!(name, "Promise" | "PromiseLike")
                     && let Some(args) = &type_ref.type_arguments
                 {
                     let type_args: Vec<TypeId> = args
