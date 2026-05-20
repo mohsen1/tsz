@@ -1908,7 +1908,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn signature_const_type_params_require_readonly_argument_context(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         type_params: &[tsz_solver::TypeParamInfo],
     ) -> bool {
         type_params.iter().any(|type_param| {

@@ -9,7 +9,7 @@ use crate::state::CheckerState;
 use tsz_binder::BinderState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Set up a checker with `ESNext` module/target so that:
 /// - `import()` doesn't trigger TS1323 ("dynamic imports need --module esnext ...")

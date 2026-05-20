@@ -29,8 +29,8 @@ impl<'a> TypeLowering<'a> {
                 self.add_type_param_binding(name, type_id);
             }
             let true_type = self.lower_type(data.true_type);
-            let false_type = self.lower_type(data.false_type);
             self.pop_type_param_scope();
+            let false_type = self.lower_type(data.false_type);
 
             let cond = ConditionalType {
                 check_type,
@@ -589,7 +589,7 @@ impl<'a> TypeLowering<'a> {
                     && type_params[type_args.len()..]
                         .iter()
                         .all(|p| p.default.is_some())
-                    && let Some(defaulted_args) = tsz_solver::fill_application_defaults(
+                    && let Some(defaulted_args) = tsz_solver::computation::fill_application_defaults(
                         self.interner,
                         &type_args,
                         &type_params,
@@ -605,8 +605,11 @@ impl<'a> TypeLowering<'a> {
                 && let Some(type_params) = resolve_params(def_id)
                 && !type_params.is_empty()
                 && type_params.iter().all(|param| param.default.is_some())
-                && let Some(default_args) =
-                    tsz_solver::fill_application_defaults(self.interner, &[], &type_params)
+                && let Some(default_args) = tsz_solver::computation::fill_application_defaults(
+                    self.interner,
+                    &[],
+                    &type_params,
+                )
             {
                 return self.interner.application(base_type, default_args);
             }
@@ -1159,7 +1162,7 @@ mod numeric_helper_tests {
     use super::*;
     use std::borrow::Cow;
     use tsz_parser::parser::NodeArena;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     // ---- strip_numeric_separators ----
 

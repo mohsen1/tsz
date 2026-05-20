@@ -10,8 +10,9 @@
 //! 2. **Definite Assignments**: Which variables are definitely assigned at a point
 //! 3. **TDZ Violations**: Variables used before their declaration
 
+use crate::TypeId;
+use crate::construction::QueryDatabase;
 use crate::narrowing::NarrowingContext;
-use crate::{QueryDatabase, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Flow facts that represent the state of variables at a specific program point.

@@ -1120,6 +1120,38 @@ fn type_index_access() {
 }
 
 #[test]
+fn type_index_access_allows_line_break_before_bracket() {
+    let source = "type T = Foo\n[\"key\"];";
+    let (parser, root) = parse_source(source);
+    assert_no_errors(&parser, "line-broken index access type alias");
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let alias = arena.get_type_alias(stmt_node).expect("type alias");
+    let type_node = arena.get(alias.type_node).expect("type node");
+    assert_eq!(
+        type_node.kind,
+        syntax_kind_ext::INDEXED_ACCESS_TYPE,
+        "line-broken type alias should still parse as indexed access"
+    );
+}
+
+#[test]
+fn type_annotation_index_access_allows_line_break_before_bracket() {
+    let source = "let value: Foo\n[\"key\"];";
+    let (parser, root) = parse_source(source);
+    assert_no_errors(&parser, "line-broken index access type annotation");
+    let arena = parser.get_arena();
+    let type_annotation = get_var_type_annotation(arena, root);
+    let type_node = arena.get(type_annotation).expect("type node");
+    assert_eq!(
+        type_node.kind,
+        syntax_kind_ext::INDEXED_ACCESS_TYPE,
+        "line-broken type annotation should still parse as indexed access"
+    );
+}
+
+#[test]
 fn type_index_access_number() {
     // `type T = Arr[number]`
     let (parser, root) = parse_source("type T = Arr[number];");
@@ -1862,6 +1894,78 @@ fn class_computed_property() {
         name_node.kind,
         syntax_kind_ext::COMPUTED_PROPERTY_NAME,
         "name should be computed property"
+    );
+}
+
+#[test]
+fn computed_field_typed_initializer_continuation_reports_ts1005() {
+    let source = "class C {\n    [e]: number = 0\n    [e2]: number\n}";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+    let colon_pos = source
+        .rfind(": number")
+        .expect("expected second type annotation") as u32;
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED && diag.start == colon_pos),
+        "expected TS1005 at the continuation type annotation colon, got {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        ),
+        "continuation type annotation should not cascade into TS1068, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn computed_field_method_like_continuation_reports_ts1005_before_outer_block() {
+    let source = "class C {\n    [e] = 0\n    [e2]() { }\n}";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+    let block_pos = source.find("{ }").expect("expected recovered method body") as u32;
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED && diag.start == block_pos),
+        "expected TS1005 at the recovered method body brace, got {diagnostics:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "method-like continuation should still recover the body as an outer block, got {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+        ),
+        "method-like continuation should not cascade into TS1068, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn computed_field_followed_by_bare_block_reports_ts1068() {
+    let source = "class C {\n    ['a'] = 0\n    {}\n}";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<u32> = diagnostics.iter().map(|diag| diag.code).collect();
+    let block_pos = source.find("{}").expect("expected recovered block") as u32;
+
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED
+                && diag.start == block_pos
+        }),
+        "bare block after a computed field initializer should report TS1068, got {diagnostics:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPECTED),
+        "bare block recovery should not degrade to TS1005, got {diagnostics:?}"
     );
 }
 

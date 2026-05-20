@@ -1,4 +1,5 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::super::common::lazy_def_id as get_lazy_def_id;
 pub(crate) use super::super::common::{

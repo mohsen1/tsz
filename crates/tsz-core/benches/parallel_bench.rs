@@ -7,7 +7,8 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::sync::Arc;
 use std::time::Duration;
-use tsz_solver::{ObjectFlags, TypeId, TypeInterner};
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{ObjectFlags, TypeId};
 
 /// Benchmark type interning under concurrent load
 fn bench_concurrent_interning(c: &mut Criterion) {

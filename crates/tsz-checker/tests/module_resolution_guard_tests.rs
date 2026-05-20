@@ -10,7 +10,7 @@ use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 #[test]
 fn ambient_external_module_without_internal_import_declaration_has_no_errors() {

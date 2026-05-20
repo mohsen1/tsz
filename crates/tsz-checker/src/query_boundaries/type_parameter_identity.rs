@@ -1,4 +1,5 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) fn contains_type_parameter_identity_shallow(
     db: &dyn TypeDatabase,

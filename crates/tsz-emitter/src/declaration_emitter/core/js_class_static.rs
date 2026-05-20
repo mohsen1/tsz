@@ -97,7 +97,6 @@ impl<'a> DeclarationEmitter<'a> {
         let has_export_aliases = planned_members
             .iter()
             .any(|(_, _, _, export_alias)| export_alias.is_some());
-
         for (_member_text, initializer, local_name, export_alias) in planned_members {
             let emit_export = export_alias.is_none() && has_export_aliases;
             if let Some(init_node) = self.arena.get(initializer) {

@@ -550,6 +550,16 @@ pub struct DefinitionStore {
     /// the structural form (e.g., show "A" instead of "{ a: string }").
     type_to_def: DefDashMap<TypeId, DefId>,
 
+    /// Forward map: `DefId` -> `TypeId` for type-parameter declarations.
+    ///
+    /// Lets the checker reuse the canonical `TypeId` allocated for a
+    /// type-parameter declaration across reprocessings of the same
+    /// signature. Cross-declaration distinctness is still guaranteed
+    /// by `intern_fresh` because lookups key on the declaration's
+    /// `DefId`, not on `TypeParamInfo` content. See
+    /// `CheckerState::intern_type_param_for_decl` for the rationale.
+    type_param_for_def: DefDashMap<DefId, TypeId>,
+
     /// Authoritative `(SymbolId, file_idx)` -> `DefId` index.
     ///
     /// This replaces the per-context `symbol_to_def` cache as the single source of
@@ -824,6 +834,10 @@ impl DefinitionStore {
             next_id: AtomicU32::new(DefId::FIRST_VALID),
             generation: AtomicU64::new(1),
             type_to_def: DefDashMap::default(),
+            type_param_for_def: DefDashMap::with_capacity_and_hasher(
+                id_capacity,
+                Default::default(),
+            ),
             symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             symbol_only_index: DefDashMap::with_capacity_and_hasher(
                 id_capacity,
@@ -1204,6 +1218,7 @@ impl DefinitionStore {
     pub fn clear(&self) {
         self.definitions.clear();
         self.type_to_def.clear();
+        self.type_param_for_def.clear();
         self.symbol_def_index.clear();
         self.symbol_only_index.clear();
         self.body_to_alias.clear();
@@ -1268,6 +1283,29 @@ impl DefinitionStore {
     /// Returns `Some(def_id)` if a class/interface was registered for this type.
     pub fn find_def_for_type(&self, type_id: TypeId) -> Option<DefId> {
         self.type_to_def.get(&type_id).map(|r| *r)
+    }
+
+    /// Look up the canonical `TypeId` previously allocated for a
+    /// type-parameter declaration's `DefId`.
+    ///
+    /// Returns `Some(type_id)` if `register_type_param_for_def` has been
+    /// called for this `DefId`. Callers reuse the returned `TypeId`
+    /// instead of allocating a fresh non-deduped one so that two
+    /// processings of the same declaration produce a single canonical
+    /// type parameter.
+    pub fn find_type_param_for_def(&self, def_id: DefId) -> Option<TypeId> {
+        self.type_param_for_def.get(&def_id).map(|r| *r)
+    }
+
+    /// Register the canonical `TypeId` for a type-parameter declaration's
+    /// `DefId`.
+    ///
+    /// Subsequent calls overwrite the previous registration, which lets a
+    /// second-pass constraint refinement replace the first-pass
+    /// unconstrained `TypeId`. The downstream identity then converges on
+    /// the most recent `(name, constraint, default, is_const)` content.
+    pub fn register_type_param_for_def(&self, def_id: DefId, type_id: TypeId) {
+        self.type_param_for_def.insert(def_id, type_id);
     }
 
     /// Register a mapping from a `Class` `DefId` to its `ClassConstructor` companion `DefId`.
@@ -1488,7 +1526,7 @@ impl DefinitionStore {
             _ => return Vec::new(),
         };
 
-        let mut resolved = Vec::new();
+        let mut resolved = Vec::with_capacity(heritage_names.len());
         for name_str in &heritage_names {
             let name_atom = intern_fn(name_str);
             if let Some(candidates) = self.name_to_defs.get(&name_atom) {
@@ -1572,6 +1610,10 @@ impl DefinitionStore {
                 // Clean up type_to_def (reverse scan is expensive, but invalidation
                 // is rare and bounded by per-file definition count).
                 self.type_to_def.retain(|_, v| *v != *def_id);
+
+                // Clean up the type-parameter canonical cache. Direct
+                // key remove: the map is keyed by `DefId`, no scan needed.
+                self.type_param_for_def.remove(def_id);
 
                 // Clean up body_to_alias.
                 if info.kind == DefKind::TypeAlias
@@ -1988,7 +2030,7 @@ impl DefinitionStore {
 
             // Resolve implements_names → DefinitionInfo.implements
             if !entry.implements_names.is_empty() {
-                let mut resolved_implements = Vec::new();
+                let mut resolved_implements = Vec::with_capacity(entry.implements_names.len());
                 for name_str in &entry.implements_names {
                     if name_str.contains('.') {
                         continue;

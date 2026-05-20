@@ -4,7 +4,7 @@ use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// TSC treats `F.prototype[sym] = val` as "currently unsupported" late-bound declarations.
 /// Accessing `inst[sym]` should emit TS7053, even across CommonJS module boundaries.

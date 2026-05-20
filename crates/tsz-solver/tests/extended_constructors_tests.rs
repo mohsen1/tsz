@@ -17,7 +17,7 @@
 //! - `resolve_abstract_constructor_anchor`
 
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 use crate::type_queries::extended_constructors::{
     AbstractClassCheckKind, AbstractConstructorAnchor, BaseInstanceMergeKind, ClassDeclTypeKind,

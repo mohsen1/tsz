@@ -12,7 +12,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Set up a two-file scenario where file "a.ts" has `export = {}` and file "b.ts"
 /// re-exports from it. Returns diagnostics from checking file "b.ts".

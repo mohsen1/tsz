@@ -397,6 +397,9 @@ mod assertion_type_predicate_diagnostics_tests;
 #[path = "../tests/bigint_target_ts2737_tests.rs"]
 mod bigint_target_ts2737_tests;
 #[cfg(test)]
+#[path = "tests/builtin_iterator_implements_tests.rs"]
+mod builtin_iterator_implements_tests;
+#[cfg(test)]
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
@@ -442,6 +445,9 @@ mod cross_file_class_merge_tests;
 #[path = "../tests/cross_file_type_params_cache_tests.rs"]
 mod cross_file_type_params_cache_tests;
 #[cfg(test)]
+#[path = "tests/destructured_discriminant_source_narrowing_tests.rs"]
+mod destructured_discriminant_source_narrowing_tests;
+#[cfg(test)]
 #[path = "tests/direct_generic_return_tests.rs"]
 mod direct_generic_return_tests;
 #[cfg(test)]
@@ -474,6 +480,9 @@ mod generic_callback_outer_context_tests;
 #[cfg(test)]
 #[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]
 mod generic_class_constructor_literal_preservation_tests;
+#[cfg(test)]
+#[path = "tests/generic_class_self_ref_method_param_tests.rs"]
+mod generic_class_self_ref_method_param_tests;
 #[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
@@ -732,7 +741,7 @@ pub fn run_js_grammar_pass(
     if statements.is_empty() {
         return Vec::new();
     }
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
     checker.check_js_grammar_statements(&statements);
     checker.ctx.diagnostics
@@ -764,7 +773,7 @@ pub fn run_isolated_declarations_pass(
     if statements.is_empty() {
         return Vec::new();
     }
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
     checker.check_isolated_declarations(&statements);
     checker.check_isolated_decl_class_expressions(&statements);

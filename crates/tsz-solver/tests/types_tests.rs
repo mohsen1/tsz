@@ -1,5 +1,5 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 
 #[test]
 fn test_type_id_intrinsics() {

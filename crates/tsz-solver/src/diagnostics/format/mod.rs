@@ -17,7 +17,7 @@ pub mod test_tracing;
 mod tests;
 pub mod tracing_helpers;
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::{DefId, DefinitionStore};
 use crate::diagnostics::{
     DiagnosticArg, PendingDiagnostic, RelatedInformation, SourceSpan, TypeDiagnostic,
