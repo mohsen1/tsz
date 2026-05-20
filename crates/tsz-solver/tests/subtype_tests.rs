@@ -1,11 +1,11 @@
 use super::*;
 use crate::TypeInterner;
-use crate::TypeResolver;
 use crate::Visibility;
 use crate::construction::QueryCache;
 use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::TypeResolver;
 use tsz_binder::SymbolId;
 
 #[test]
@@ -26809,8 +26809,9 @@ fn test_explain_failure_resolves_typequery_to_structural_form() {
     //
     // Assignment `x5 = Outer` where `x5: typeof importInst` should produce
     // MissingProperty for 'C' (TS2741), not generic TypeMismatch (TS2322).
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
     use crate::types::TypeData;
-    use crate::{SymbolRef, TypeEnvironment};
 
     let interner = TypeInterner::new();
 

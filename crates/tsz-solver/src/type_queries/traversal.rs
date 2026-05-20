@@ -6,11 +6,12 @@
 //! and diagnostic property name collection — without directly matching on
 //! `TypeData` variants.
 
+use crate::TypeDatabase;
 use crate::def::DefId;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::TypeResolver;
 use crate::type_queries::data::{get_callable_shape, get_object_shape};
 use crate::types::{IntrinsicKind, TemplateSpan, TypeData, TypeId};
-use crate::{TypeDatabase, TypeResolver};
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 

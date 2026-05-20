@@ -80,7 +80,7 @@ pub trait AssignabilityChecker {
     /// This is used during inference constraint collection to compute the variance
     /// of type parameters in type alias Applications. The checker implements this
     /// to provide its full resolver context.
-    fn type_resolver(&self) -> Option<&dyn crate::TypeResolver> {
+    fn type_resolver(&self) -> Option<&dyn crate::relations::subtype::TypeResolver> {
         None
     }
 

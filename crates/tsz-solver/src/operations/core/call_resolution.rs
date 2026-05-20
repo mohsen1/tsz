@@ -1926,7 +1926,7 @@ pub fn compute_contextual_types_with_compat_checker<'a, R, F>(
     configure_checker: F,
 ) -> TypeSubstitution
 where
-    R: crate::TypeResolver,
+    R: crate::relations::subtype::TypeResolver,
     F: FnOnce(&mut crate::relations::compat::CompatChecker<'a, R>),
 {
     let mut checker = crate::relations::compat::CompatChecker::with_resolver(interner, resolver);

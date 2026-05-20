@@ -2919,7 +2919,7 @@ export const publicProcedure = trpc.procedure;
     .expect("batch-style args");
 
     tsz_solver::construction::clear_thread_local_cache();
-    tsz_solver::reset_subtype_thread_local_state();
+    tsz_solver::relations::subtype::reset_subtype_thread_local_state();
     tsz::checker::clear_all_thread_local_state();
 
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

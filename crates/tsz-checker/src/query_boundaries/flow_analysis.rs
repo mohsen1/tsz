@@ -40,7 +40,7 @@ pub(crate) fn enum_member_domain(db: &dyn TypeDatabase, type_id: TypeId) -> Type
 
 pub(crate) fn type_has_typeof_result(
     db: &dyn QueryDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     type_id: TypeId,
     typeof_result: &str,
 ) -> bool {
@@ -53,7 +53,7 @@ pub(crate) fn type_has_typeof_result(
 
 pub(crate) fn cases_exhaust_type(
     db: &dyn QueryDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     switch_type: TypeId,
     case_types: &[TypeId],
 ) -> bool {
@@ -78,7 +78,7 @@ pub(crate) fn cases_exhaust_type(
 
 fn resolve_assignment_reduction_type(
     db: &dyn TypeDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     type_id: TypeId,
 ) -> TypeId {
     let resolved = get_lazy_def_id(db, type_id)
@@ -91,7 +91,7 @@ fn resolve_assignment_reduction_type(
 
 fn assignment_source_assignable_to_member(
     db: &dyn TypeDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     source: TypeId,
     member: TypeId,
 ) -> bool {
@@ -104,7 +104,7 @@ fn assignment_source_assignable_to_member(
 
 fn assigned_value_preserves_enum_identity(
     db: &dyn TypeDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     assigned_type: TypeId,
     initial_enum_def: tsz_solver::def::DefId,
 ) -> bool {
@@ -131,7 +131,7 @@ fn assigned_value_preserves_enum_identity(
 /// later read still reports nominal enum mismatches.
 pub(crate) fn narrow_enum_assignment_target(
     db: &dyn TypeDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     initial_resolved: TypeId,
     assigned_resolved: TypeId,
     initial_type: TypeId,
@@ -154,7 +154,7 @@ pub(crate) fn narrow_enum_assignment_target(
 /// assigned type.
 pub(crate) fn narrow_assignment(
     db: &dyn TypeDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     initial_type: TypeId,
     assigned_type: TypeId,
 ) -> TypeId {
@@ -217,7 +217,8 @@ pub(crate) fn are_types_mutually_subtype(
     left: TypeId,
     right: TypeId,
 ) -> bool {
-    tsz_solver::is_subtype_of(db, left, right) || tsz_solver::is_subtype_of(db, right, left)
+    tsz_solver::relations::subtype::is_subtype_of(db, left, right)
+        || tsz_solver::relations::subtype::is_subtype_of(db, right, left)
 }
 
 pub(crate) fn is_assignable(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
@@ -297,7 +298,7 @@ pub(crate) fn is_promise_like_type(db: &dyn QueryDatabase, type_id: TypeId) -> b
 
 pub(crate) fn are_types_mutually_subtype_with_env(
     db: &dyn TypeDatabase,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     left: TypeId,
     right: TypeId,
     strict_null_checks: bool,
@@ -308,7 +309,7 @@ pub(crate) fn are_types_mutually_subtype_with_env(
 
 pub(crate) fn is_assignable_with_env(
     db: &dyn TypeDatabase,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     source: TypeId,
     target: TypeId,
     strict_null_checks: bool,
@@ -411,7 +412,7 @@ pub(crate) fn type_param_info(
 /// directly.
 pub(crate) fn evaluate_application_type(
     db: &dyn TypeDatabase,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     type_id: TypeId,
 ) -> TypeId {
     tsz_solver::computation::ApplicationEvaluator::new(db, env).evaluate_or_original(type_id)
@@ -419,7 +420,7 @@ pub(crate) fn evaluate_application_type(
 
 fn types_are_subtype_with_env(
     db: &dyn TypeDatabase,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     source: TypeId,
     target: TypeId,
     strict_null_checks: bool,

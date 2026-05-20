@@ -330,12 +330,13 @@ pub(crate) fn add_undefined_for_indexed_access(db: &dyn TypeDatabase, type_id: T
 /// behavior centralized in the boundary layer.
 pub(crate) fn resolve_lazy_def_with_env(
     db: &dyn TypeDatabase,
-    env: Option<&tsz_solver::TypeEnvironment>,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     type_id: TypeId,
 ) -> TypeId {
     if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(db, type_id)
         && let Some(environment) = env
-        && let Some(resolved) = tsz_solver::TypeResolver::resolve_lazy(environment, def_id, db)
+        && let Some(resolved) =
+            tsz_solver::relations::subtype::TypeResolver::resolve_lazy(environment, def_id, db)
     {
         return resolved;
     }

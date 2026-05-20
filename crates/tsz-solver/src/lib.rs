@@ -248,10 +248,6 @@ pub(crate) use operations::compound_assignment::{
 pub(crate) use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
 };
-pub use relations::subtype::{
-    AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
-    are_types_structurally_identical, is_subtype_of, reset_subtype_thread_local_state,
-};
 pub use type_queries::is_const_type_variable;
 pub use types::{
     CachedAnyMode, CallableShape, ConditionalType, ConditionalTypeId, FunctionShape,

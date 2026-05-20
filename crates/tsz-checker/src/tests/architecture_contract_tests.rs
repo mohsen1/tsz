@@ -976,7 +976,7 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "control-flow assignment should not use interner relation flags directly"
     );
     assert!(
-        !control_flow_assignment_src.contains("tsz_solver::is_subtype_of("),
+        !control_flow_assignment_src.contains("tsz_solver::relations::subtype::is_subtype_of("),
         "control-flow assignment subtype checks should route through query boundaries, not direct solver helpers"
     );
     assert!(

@@ -10,8 +10,9 @@
 //! - **Top**: T ≤ any (any is the top type)
 //! - **Bottom**: never ≤ T (never is the bottom type)
 
+use crate::relations::subtype::SubtypeChecker;
 use crate::types::{SymbolRef, TypeId, Visibility};
-use crate::{FunctionShape, ParamInfo, PropertyInfo, SubtypeChecker, TupleElement, TypeInterner};
+use crate::{FunctionShape, ParamInfo, PropertyInfo, TupleElement, TypeInterner};
 
 // =============================================================================
 // Reflexivity Tests (T ≤ T)
@@ -555,7 +556,7 @@ fn test_coinductive_recursive_type_reflexivity() {
     // Recursive types should be subtypes of themselves
     // This tests coinductive semantics (greatest fixed point)
     let interner = TypeInterner::new();
-    let mut env = crate::TypeEnvironment::new();
+    let mut env = crate::relations::subtype::TypeEnvironment::new();
 
     // Create a recursive type: interface A { x: A }
     let x = interner.intern_string("x");
@@ -594,7 +595,7 @@ fn test_coinductive_mutually_recursive_types() {
     // interface A { b: B }
     // interface B { a: A }
     let interner = TypeInterner::new();
-    let mut env = crate::TypeEnvironment::new();
+    let mut env = crate::relations::subtype::TypeEnvironment::new();
 
     let b_prop = interner.intern_string("b");
     let a_prop = interner.intern_string("a");

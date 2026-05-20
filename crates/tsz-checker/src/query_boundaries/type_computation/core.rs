@@ -1,5 +1,6 @@
 use tsz_solver::narrowing::NullishFilter;
-use tsz_solver::{PropertyInfo, TypeDatabase, TypeId, TypeResolver};
+use tsz_solver::relations::subtype::TypeResolver;
+use tsz_solver::{PropertyInfo, TypeDatabase, TypeId};
 
 /// Re-export of the solver's binary operation result type.
 ///

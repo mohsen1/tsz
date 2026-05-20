@@ -1924,22 +1924,31 @@ c = d;
         let variances = tsz_solver::QueryDatabase::get_type_param_variance(&query_cache, def_id)
             .map(|variances| format!("{variances:?}"))
             .unwrap_or_else(|| "<none>".to_string());
-        let params = tsz_solver::TypeResolver::get_lazy_type_params(&query_cache, def_id)
-            .map(|params| format!("{params:?}"))
-            .unwrap_or_else(|| "<none>".to_string());
-        let body =
-            tsz_solver::TypeResolver::resolve_lazy(&query_cache, def_id, &program.type_interner)
-                .map(|body| checker.format_type(body))
-                .unwrap_or_else(|| "<none>".to_string());
+        let params = tsz_solver::relations::subtype::TypeResolver::get_lazy_type_params(
+            &query_cache,
+            def_id,
+        )
+        .map(|params| format!("{params:?}"))
+        .unwrap_or_else(|| "<none>".to_string());
+        let body = tsz_solver::relations::subtype::TypeResolver::resolve_lazy(
+            &query_cache,
+            def_id,
+            &program.type_interner,
+        )
+        .map(|body| checker.format_type(body))
+        .unwrap_or_else(|| "<none>".to_string());
         let ctx_params = checker
             .ctx
             .get_def_type_params(def_id)
             .map(|params| format!("{params:?}"))
             .unwrap_or_else(|| "<none>".to_string());
-        let ctx_body =
-            tsz_solver::TypeResolver::resolve_lazy(&checker.ctx, def_id, &program.type_interner)
-                .map(|body| checker.format_type(body))
-                .unwrap_or_else(|| "<none>".to_string());
+        let ctx_body = tsz_solver::relations::subtype::TypeResolver::resolve_lazy(
+            &checker.ctx,
+            def_id,
+            &program.type_interner,
+        )
+        .map(|body| checker.format_type(body))
+        .unwrap_or_else(|| "<none>".to_string());
         let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
             checker.ctx.pack_relation_flags(),
         );

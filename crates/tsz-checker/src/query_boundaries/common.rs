@@ -11,14 +11,14 @@ pub(crate) use tsz_solver::narrowing::OptionalPropertyChainKey;
 pub(crate) use tsz_solver::objects::{IndexKind, IndexSignatureResolver};
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
+pub(crate) use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
 pub(crate) use tsz_solver::type_queries::{
     RemappedMappedIndexAccessResult, TypeTraversalKind, constraint_allows_mutable_array_like,
     is_remapped_mapped_index_access, remapped_mapped_index_access_result,
 };
 pub(crate) use tsz_solver::{
     FunctionShape, IntrinsicKind, MappedType, ObjectFlags, ParamInfo, PendingDiagnostic,
-    PendingDiagnosticBuilder, QueryDatabase, SourceLocation, SubtypeFailureReason, TypeEnvironment,
-    TypeFormatter, TypeResolver,
+    PendingDiagnosticBuilder, QueryDatabase, SourceLocation, SubtypeFailureReason, TypeFormatter,
     computation::{ContextualTypeContext, TypeSubstitution, instantiate_generic},
 };
 
