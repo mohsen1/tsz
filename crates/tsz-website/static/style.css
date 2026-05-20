@@ -379,6 +379,11 @@ tr:nth-child(even) { background: var(--table-stripe); }
   white-space: nowrap;
 }
 
+.compat-note {
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+}
+
 /* ── Alert ── */
 .alert {
   border-radius: 8px;

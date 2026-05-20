@@ -121,6 +121,11 @@ pub struct AsyncES5Transformer<'a> {
     lexical_this_capture: Cell<bool>,
     capture_this_references: Cell<bool>,
     loop_exit_placeholder_counter: Cell<u32>,
+    /// Pending hoisted-temp names accumulated by IR-conversion lowerings
+    /// (nullish coalescing, optional chaining, etc.) so callers can declare
+    /// them in the surrounding state-machine scope. Drained by every
+    /// `transform_*` entry point after the generator body is built.
+    pub(super) pending_lowering_hoists: RefCell<Vec<String>>,
     /// Whether this async body is emitted inside a derived ES5 class method.
     pub(super) class_has_super: bool,
     /// Generated super parameter name for the surrounding ES5 class IIFE.
@@ -147,10 +152,18 @@ impl<'a> AsyncES5Transformer<'a> {
             lexical_this_capture: Cell::new(false),
             capture_this_references: Cell::new(false),
             loop_exit_placeholder_counter: Cell::new(0),
+            pending_lowering_hoists: RefCell::new(Vec::new()),
             class_has_super: false,
             class_super_name: "_super".to_string(),
             class_super_is_static: false,
         }
+    }
+
+    /// Record a hoisted-temp name produced by an IR-conversion lowering
+    /// (`??`, `?.`, etc.) so the surrounding `transform_*` entry point can
+    /// declare it alongside the rest of the state-machine var hoists.
+    pub(super) fn push_lowering_hoist(&self, name: String) {
+        self.pending_lowering_hoists.borrow_mut().push(name);
     }
 
     pub const fn set_source_text(&mut self, source_text: &'a str) {
@@ -490,7 +503,7 @@ impl<'a> AsyncES5Transformer<'a> {
         // Hoist var declarations from generator cases to the awaiter wrapper scope.
         // In tsc output, var declarations inside async function bodies are placed
         // before `return __generator(...)`, not inside the switch/case statements.
-        let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
+        let hoisted_var_groups = self.extract_hoisted_var_groups(&mut generator_body);
 
         // Extract promise constructor from return type annotation
         let promise_constructor = self.extract_promise_constructor(type_annotation);
@@ -575,7 +588,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 self.fresh_arguments_capture_name(body_idx, &param_binding_names);
         }
         let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
-        let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
+        let hoisted_var_groups = self.extract_hoisted_var_groups(&mut generator_body);
         let ir_params: Vec<IRParam> = params.iter().map(|p| IRParam::new(p.clone())).collect();
         let mut body = Vec::new();
         for group in hoisted_var_groups {
@@ -651,7 +664,7 @@ impl<'a> AsyncES5Transformer<'a> {
         }
 
         let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
-        let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
+        let hoisted_var_groups = self.extract_hoisted_var_groups(&mut generator_body);
         let mut body = Vec::new();
         for group in hoisted_var_groups {
             let declarations = group
@@ -3778,6 +3791,17 @@ impl<'a> AsyncES5Transformer<'a> {
             current_statements.push(self.statement_to_ir(idx));
             return;
         }
+
+        // Correctness: the loop entry must be its own case, otherwise a
+        // `break-to-loop` from the body re-enters the prefix statements
+        // and re-executes them every iteration — an infinite-loop bug
+        // when the prefix initializes the loop variable.
+        Self::flush_preceding_case_for_new_label(
+            cases,
+            current_statements,
+            current_label,
+            &mut self.state,
+        );
 
         let loop_label = *current_label;
         let exit_placeholder = self.next_loop_exit_placeholder();
