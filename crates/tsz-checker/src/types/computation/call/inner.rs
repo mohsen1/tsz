@@ -191,6 +191,7 @@ impl<'a> CheckerState<'a> {
                 .and_then(|node| self.ctx.arena.get_expr_type_args(node))
                 .and_then(|expr_type_args| expr_type_args.type_arguments.clone())
         });
+        let mut circular_recursive_call_return_type = None;
 
         if self.callee_name_conflicts_with_namespace_module(call.expression) {
             self.error_not_callable_at(callee_type, call.expression);
@@ -291,54 +292,63 @@ impl<'a> CheckerState<'a> {
                             .collect()
                     })
                     .unwrap_or_default();
-                self.collect_call_argument_types_with_context(
-                    args,
-                    |_, _| Some(TypeId::ANY),
-                    false,
-                    None,
-                    CallableContext::none(),
-                );
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
                 let factory = self.ctx.types.factory();
                 let lazy = factory.lazy(def_id);
-                return if type_args.is_empty() {
+                let recursive_return_type = if type_args.is_empty() {
                     lazy
                 } else {
                     factory.application(lazy, type_args)
                 };
-            }
 
-            self.reemit_namespace_value_error_for_call_callee(call.expression);
-            // Still evaluate type arguments to catch TS2304 for unresolved type names
-            // (e.g., `this.super<T>(0)` where T is undeclared)
-            if let Some(ref type_args_list) = explicit_call_type_arguments {
-                for &arg_idx in &type_args_list.nodes {
-                    self.get_type_from_type_node(arg_idx);
+                if let Some(validation_callee_type) =
+                    self.fresh_function_like_variable_call_type(sym_id)
+                {
+                    circular_recursive_call_return_type = Some(recursive_return_type);
+                    callee_type = validation_callee_type;
+                } else {
+                    self.collect_call_argument_types_with_context(
+                        args,
+                        |_, _| Some(TypeId::ANY),
+                        false,
+                        None,
+                        CallableContext::none(),
+                    );
+                    return recursive_return_type;
                 }
-            }
-            // Still need to check arguments for definite assignment (TS2454) and other
-            // errors. When the callee itself failed name/value resolution, avoid
-            // fabricating contextual `any` for callback arguments because that would
-            // suppress real TS7006 diagnostics. Other callee errors still preserve the
-            // historical `any` fallback to avoid broader conformance regressions.
-            let check_excess_properties = false;
-            self.collect_call_argument_types_with_context(
-                args,
-                |i, _arg_count| {
-                    if !callee_missing_value {
-                        return Some(TypeId::ANY);
+            } else {
+                self.reemit_namespace_value_error_for_call_callee(call.expression);
+                // Still evaluate type arguments to catch TS2304 for unresolved type names
+                // (e.g., `this.super<T>(0)` where T is undeclared)
+                if let Some(ref type_args_list) = explicit_call_type_arguments {
+                    for &arg_idx in &type_args_list.nodes {
+                        self.get_type_from_type_node(arg_idx);
                     }
-                    args.get(i)
-                        .copied()
-                        .and_then(|arg_idx| self.ctx.arena.get(arg_idx))
-                        .filter(|arg_node| arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT)
-                        .map(|_| TypeId::ANY)
-                },
-                check_excess_properties,
-                None, // No skipping needed
-                CallableContext::none(),
-            );
-            return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
+                }
+                // Still need to check arguments for definite assignment (TS2454) and other
+                // errors. When the callee itself failed name/value resolution, avoid
+                // fabricating contextual `any` for callback arguments because that would
+                // suppress real TS7006 diagnostics. Other callee errors still preserve the
+                // historical `any` fallback to avoid broader conformance regressions.
+                let check_excess_properties = false;
+                self.collect_call_argument_types_with_context(
+                    args,
+                    |i, _arg_count| {
+                        if !callee_missing_value {
+                            return Some(TypeId::ANY);
+                        }
+                        args.get(i)
+                            .copied()
+                            .and_then(|arg_idx| self.ctx.arena.get(arg_idx))
+                            .filter(|arg_node| arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                            .map(|_| TypeId::ANY)
+                    },
+                    check_excess_properties,
+                    None, // No skipping needed
+                    CallableContext::none(),
+                );
+                return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
+            }
         }
 
         // Handle unknown/never callee types as early returns.
@@ -453,6 +463,9 @@ impl<'a> CheckerState<'a> {
                 None,
                 CallableContext::none(),
             );
+            if let Some(return_type) = circular_recursive_call_return_type {
+                return return_type;
+            }
             // Try to recover a return type for downstream type checking
             if let Some(return_type) =
                 crate::query_boundaries::checkers::call::stable_call_recovery_return_type(
@@ -3066,6 +3079,11 @@ impl<'a> CheckerState<'a> {
         // targets. Restore it after handle_call_result completes.
         let call_result = self.handle_call_result(result, call_context);
         self.ctx.generic_excess_skip = prev_generic_excess_skip;
+        if let Some(return_type) = circular_recursive_call_return_type
+            && call_result != TypeId::ERROR
+        {
+            return return_type;
+        }
         call_result
     }
 }

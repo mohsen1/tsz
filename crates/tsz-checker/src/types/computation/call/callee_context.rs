@@ -1,5 +1,6 @@
 use crate::context::{TypingRequest, speculation::DiagnosticSpeculationSnapshot};
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{FunctionShape, ParamInfo, TypeId};
@@ -53,6 +54,48 @@ impl<'a> CheckerState<'a> {
         if fresh_signature.type_params.is_empty() {
             return None;
         }
+
+        Some(self.ctx.types.factory().function(FunctionShape {
+            type_params: fresh_signature.type_params,
+            params: fresh_signature.params,
+            this_type: fresh_signature.this_type,
+            return_type: fresh_signature.return_type,
+            type_predicate: fresh_signature.type_predicate,
+            is_constructor: false,
+            is_method: fresh_signature.is_method,
+        }))
+    }
+
+    pub(super) fn fresh_function_like_variable_call_type(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol
+            .value_declaration
+            .into_option()
+            .or_else(|| symbol.primary_declaration())?;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(decl.initializer);
+        let init_node = self.ctx.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let func = self.ctx.arena.get_function(init_node).cloned()?;
+
+        let diagnostics_before = DiagnosticSpeculationSnapshot::new(&self.ctx);
+        let fresh_signature = self.call_signature_from_function(&func, initializer);
+        diagnostics_before.rollback(&mut self.ctx.diagnostic_state());
 
         Some(self.ctx.types.factory().function(FunctionShape {
             type_params: fresh_signature.type_params,

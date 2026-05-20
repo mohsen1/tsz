@@ -28,6 +28,14 @@ fn assert_no_ts7023(src: &str) {
     );
 }
 
+fn assert_diagnostic(src: &str, expected_code: u32) {
+    let codes = check_source_codes(src);
+    assert!(
+        codes.contains(&expected_code),
+        "expected TS{expected_code}, got: {codes:?}\nsrc:\n{src}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Basic: recursive const arrow function with explicit type arg
 // ---------------------------------------------------------------------------
@@ -130,5 +138,50 @@ const bad = <T extends object>(x: T): number => {
     assert!(
         codes.contains(&2322),
         "expected TS2322 for explicit return type mismatch. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn recursive_generic_const_arrow_bad_recursive_argument_still_errors() {
+    assert_diagnostic(
+        r#"
+const rec = <T extends object>(parent: T) => {
+    return {
+        result: parent,
+        deeper: () => rec<T>(123)
+    };
+};
+"#,
+        2345,
+    );
+}
+
+#[test]
+fn recursive_generic_const_arrow_bad_type_argument_constraint_still_errors() {
+    assert_diagnostic(
+        r#"
+const rec = <T extends object>(parent: T) => {
+    return {
+        result: parent,
+        deeper: () => rec<string>("nope")
+    };
+};
+"#,
+        2344,
+    );
+}
+
+#[test]
+fn recursive_generic_const_arrow_extra_type_argument_still_errors() {
+    assert_diagnostic(
+        r#"
+const rec = <Item extends object>(parent: Item) => {
+    return {
+        result: parent,
+        deeper: () => rec<Item, Item>(parent)
+    };
+};
+"#,
+        2558,
     );
 }
