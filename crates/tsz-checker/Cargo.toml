@@ -74,6 +74,10 @@ name = "object_literal_getter_widening_tests"
 path = "tests/object_literal_getter_widening_tests.rs"
 
 [[test]]
+name = "object_union_assignability_fast_path_tests"
+path = "tests/object_union_assignability_fast_path_tests.rs"
+
+[[test]]
 name = "optional_chain_literal_nullish_ts2339_tests"
 path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 
