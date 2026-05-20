@@ -69,8 +69,8 @@ impl<'a> CheckerState<'a> {
         if matches!(declared_element_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }
-        if !self.is_assignable_to(type_id, declared_element_type)
-            && !self.is_assignable_to(declared_element_type, type_id)
+        if !self.diagnostic_relation_boolean_guard(type_id, declared_element_type)
+            && !self.diagnostic_relation_boolean_guard(declared_element_type, type_id)
         {
             return None;
         }
@@ -124,8 +124,8 @@ impl<'a> CheckerState<'a> {
         if matches!(index_value_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }
-        if !self.is_assignable_to(actual_type, index_value_type)
-            && !self.is_assignable_to(index_value_type, actual_type)
+        if !self.diagnostic_relation_boolean_guard(actual_type, index_value_type)
+            && !self.diagnostic_relation_boolean_guard(index_value_type, actual_type)
         {
             return None;
         }
