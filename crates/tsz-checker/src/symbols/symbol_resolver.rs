@@ -1317,10 +1317,10 @@ impl<'a> CheckerState<'a> {
         if let Some(value_only) = value_only_candidate.get() {
             // A VALUE-only local does not occupy the type namespace; fall back
             // to the lib TYPE symbol recorded during merge.
-            if !ignore_libs {
-                if let Some(&lib_type_sym_id) = self.ctx.binder.lib_type_namespace.get(name) {
-                    return TypeSymbolResolution::Type(lib_type_sym_id);
-                }
+            if !ignore_libs
+                && let Some(&lib_type_sym_id) = self.ctx.binder.lib_type_namespace.get(name)
+            {
+                return TypeSymbolResolution::Type(lib_type_sym_id);
             }
             return TypeSymbolResolution::ValueOnly(value_only);
         }
