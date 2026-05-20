@@ -90,6 +90,39 @@ const SAMPLE_MEASUREMENT_PROFILE = {
   },
 };
 
+const SAMPLE_RUNNER_ENVIRONMENT = {
+  platform: "linux",
+  arch: "x64",
+  release: "6.8.0",
+  cpu_count: 32,
+  cpu_model: "Intel Xeon",
+  total_memory_bytes: 137438953472,
+  ci: true,
+  github_actions: {
+    run_id: "12345",
+    run_attempt: "1",
+    runner_os: "Linux",
+    runner_arch: "X64",
+    workflow: "Bench",
+    job: "bench",
+    ref: "refs/heads/main",
+    sha: "abcdef1234567890",
+  },
+  cloud_build: {
+    machine_type: "e2-highcpu-32",
+  },
+};
+
+const SAMPLE_RUN_METADATA = {
+  generated_at: "2026-05-19T01:02:03.000Z",
+  source_commit: "abcdef1234567890",
+  workflow_name: "Bench",
+  workflow_run_id: "12345",
+  workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/12345",
+  workflow_run_attempt: "1",
+  run_status: "completed",
+};
+
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -116,9 +149,9 @@ function writeInput(dir, name, results, extraPayload = {}) {
   return input;
 }
 
-function runMergeInputs(dir, inputs) {
+function runMergeInputs(dir, inputs, mergeArgs = []) {
   const output = path.join(dir, "merged.json");
-  const result = spawnSync(process.execPath, [MERGE_SCRIPT, output, ...inputs], {
+  const result = spawnSync(process.execPath, [MERGE_SCRIPT, output, ...mergeArgs, ...inputs], {
     cwd: ROOT,
     env: {
       ...process.env,
@@ -136,9 +169,9 @@ function runMergeInputs(dir, inputs) {
   return { ...result, output };
 }
 
-function runMerge(dir, results, extraPayload = {}) {
+function runMerge(dir, results, extraPayload = {}, mergeArgs = []) {
   const input = writeInput(dir, "input.json", results, extraPayload);
-  return runMergeInputs(dir, [input]);
+  return runMergeInputs(dir, [input], mergeArgs);
 }
 
 function projectRow(name, compatibility = SAMPLE_COMPATIBILITY) {
@@ -336,6 +369,134 @@ withTempDir((dir) => {
   assert.deepEqual(
     merged.validation.runner_environment_warnings[0].mismatched_fields,
     ["cpu_count", "total_memory_bytes", "cloud_build_machine_type"],
+  );
+});
+
+withTempDir((dir) => {
+  const first = writeInput(
+    dir,
+    "bench-results-a.json",
+    [projectRow("first")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+      shard: { label: "compiler-files", filter: "compiler" },
+      filter: "compiler",
+    },
+  );
+  const second = writeInput(
+    dir,
+    "bench-results-b.json",
+    [projectRow("second")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+      shard: { label: "synthetic", filter: "synthetic" },
+      filter: "synthetic",
+    },
+  );
+  const result = runMergeInputs(dir, [first, second], ["--require-runner-signature"]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.validation.runner_signature_required, true);
+  assert.deepEqual(merged.validation.runner_environment_warnings, []);
+});
+
+withTempDir((dir) => {
+  const input = writeInput(
+    dir,
+    "bench-results-missing-env.json",
+    [projectRow("standalone")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      shard: { label: "standalone", filter: "standalone" },
+      filter: "standalone",
+    },
+  );
+  const result = runMergeInputs(dir, [input], ["--require-runner-signature"]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /bench-results-missing-env\.json: missing runner_environment/);
+});
+
+withTempDir((dir) => {
+  const input = writeInput(
+    dir,
+    "bench-results-missing-shard.json",
+    [projectRow("standalone")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+      filter: "standalone",
+    },
+  );
+  const result = runMergeInputs(dir, [input], ["--require-runner-signature"]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /bench-results-missing-shard\.json: missing shard\.label/);
+  assert.match(result.stderr, /bench-results-missing-shard\.json: missing shard\.filter/);
+});
+
+withTempDir((dir) => {
+  const first = writeInput(
+    dir,
+    "bench-results-a.json",
+    [projectRow("first")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+      shard: { label: "duplicate", filter: "first" },
+      filter: "first",
+    },
+  );
+  const second = writeInput(
+    dir,
+    "bench-results-b.json",
+    [projectRow("second")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+      shard: { label: "duplicate", filter: "second" },
+      filter: "second",
+    },
+  );
+  const result = runMergeInputs(dir, [first, second], ["--require-runner-signature"]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /bench-results-b\.json: duplicate shard\.label "duplicate"/);
+});
+
+withTempDir((dir) => {
+  const changedRunnerEnvironment = {
+    ...SAMPLE_RUNNER_ENVIRONMENT,
+    cpu_count: 16,
+    total_memory_bytes: 68719476736,
+    cloud_build: { machine_type: "e2-highcpu-16" },
+  };
+  const first = writeInput(
+    dir,
+    "bench-results-a.json",
+    [projectRow("first")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+      shard: { label: "first", filter: "first" },
+      filter: "first",
+    },
+  );
+  const second = writeInput(
+    dir,
+    "bench-results-b.json",
+    [projectRow("second")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: changedRunnerEnvironment,
+      shard: { label: "second", filter: "second" },
+      filter: "second",
+    },
+  );
+  const result = runMergeInputs(dir, [first, second], ["--require-runner-signature"]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /bench-results-b\.json: runner_environment mismatch \(cpu_count, total_memory_bytes, cloud_build_machine_type\)/,
   );
 });
 

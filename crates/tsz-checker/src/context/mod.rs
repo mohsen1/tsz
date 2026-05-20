@@ -78,6 +78,25 @@ use tsz_parser::parser::node::NodeArena;
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
 
+/// Overflow state observed from relation checks that feed assignability
+/// diagnostics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RelationOverflowFlags {
+    pub depth_exceeded: bool,
+    pub iteration_exceeded: bool,
+}
+
+impl RelationOverflowFlags {
+    pub const fn has_overflow(self) -> bool {
+        self.depth_exceeded || self.iteration_exceeded
+    }
+
+    pub const fn merge(&mut self, depth_exceeded: bool, iteration_exceeded: bool) {
+        self.depth_exceeded |= depth_exceeded;
+        self.iteration_exceeded |= iteration_exceeded;
+    }
+}
+
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
@@ -490,7 +509,7 @@ pub struct CheckerContext<'a> {
 
     /// Shared cache for narrowing operations (type resolution, property lookup).
     /// Reused across flow analysis passes to prevent O(N^2) behavior in CFA chains.
-    pub narrowing_cache: tsz_solver::NarrowingCache,
+    pub narrowing_cache: tsz_solver::narrowing::NarrowingCache,
 
     /// Cache for `is_narrowable_identifier` results.
     /// This is pure (depends only on AST structure), so it never needs invalidation.
@@ -927,9 +946,9 @@ pub struct CheckerContext<'a> {
     /// Whether type instantiation depth was exceeded (for TS2589 emission).
     pub depth_exceeded: Cell<bool>,
 
-    /// Whether relation complexity was exceeded during an assignability check
-    /// (for TS2859 "Excessive complexity comparing types" emission).
-    pub relation_depth_exceeded: Cell<bool>,
+    /// Relation-check overflow state observed during assignability/subtype
+    /// checks that feed diagnostics.
+    pub relation_overflow: Cell<RelationOverflowFlags>,
 
     /// When true, `should_suppress_assignability_diagnostic` skips the callable-
     /// with-type-params suppression. Set by variable declaration checking to
@@ -940,7 +959,7 @@ pub struct CheckerContext<'a> {
     /// Explicit evaluation session state (replaces thread-local depth/fuel guards).
     /// Shared via `Rc` across parent/child contexts so counters survive cross-arena
     /// delegation without implicit global state.
-    pub eval_session: Rc<tsz_solver::EvaluationSession>,
+    pub eval_session: Rc<tsz_solver::evaluation::session::EvaluationSession>,
 
     /// General recursion depth counter for type checking.
     /// Prevents stack overflow by bailing out when depth exceeds the limit.

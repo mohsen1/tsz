@@ -19,7 +19,7 @@ use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Common test file name - interned once
 pub static TEST_FILE_NAME: Lazy<String> = Lazy::new(|| "test.ts".to_string());

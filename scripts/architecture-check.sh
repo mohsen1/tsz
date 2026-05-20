@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+set -o pipefail
+
 # Architecture Health Check
 #
 # Runs architecture contract tests and outputs a summary report.
@@ -6,7 +8,7 @@
 #
 # Usage:
 #   scripts/architecture-check.sh          # full check (tests + static analysis)
-#   scripts/architecture-check.sh --quick  # static analysis only (no cargo test)
+#   scripts/architecture-check.sh --quick  # static analysis only (no cargo nextest)
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CHECKER_SRC="$REPO_ROOT/crates/tsz-checker/src"
@@ -103,14 +105,14 @@ printf "Diagnostic leaks:     %3d calls outside error_reporter (target: 0)\n" "$
 printf "Cross-layer imports:  %3d violations (target: 0)\n" "$cross_layer"
 printf "Code smells:          %3d TODO/FIXME/HACK markers\n" "$code_smells"
 
-# --- Run cargo tests (unless --quick) ---
+# --- Run architecture tests (unless --quick) ---
 
 test_result="SKIPPED"
 test_exit=0
 if [ "$QUICK_MODE" = false ]; then
     echo ""
     echo "Running architecture contract tests..."
-    if cargo test -p tsz-checker -- architecture 2>&1 | tail -5; then
+    if cargo nextest run -p tsz-checker -- architecture 2>&1 | tail -5; then
         test_result="PASS"
     else
         test_result="FAIL"

@@ -1,5 +1,6 @@
 use super::*;
-use tsz_solver::{CallSignature, CallableShape, FunctionShape, TypeInterner};
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{CallSignature, CallableShape, FunctionShape};
 
 #[test]
 fn extracts_callable_shape_and_call_signatures() {

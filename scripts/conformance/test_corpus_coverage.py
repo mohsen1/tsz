@@ -13,6 +13,8 @@ DECLARATION_SUFFIXES = (".d.ts", ".d.mts", ".d.cts")
 
 def skipped_conformance_cache_reason(path: str):
     normalized = path.replace("\\", "/")
+    if Path(normalized).name.startswith("._"):
+        return "appledouble"
     if "/fourslash/" in f"/{normalized}":
         return "fourslash"
     if "APISample" in normalized or "APILibCheck" in normalized:
@@ -59,6 +61,12 @@ def discover_expected_cache_keys():
 
 
 class ConformanceCorpusCoverageTests(unittest.TestCase):
+    def test_appledouble_files_are_not_runnable_corpus_entries(self):
+        self.assertEqual(
+            "appledouble",
+            skipped_conformance_cache_reason("compiler/._stray.ts"),
+        )
+
     def test_checked_in_tsc_cache_has_no_known_unrunnable_entries(self):
         cache = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
         unrunnable = sorted(

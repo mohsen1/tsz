@@ -2729,14 +2729,11 @@ impl<'a> CheckerState<'a> {
             // Resolve the real Promise type from lib files when available,
             // so that the return type is structurally compatible with PromiseLike<T>.
             // Fall back to synthetic PROMISE_BASE only without lib files.
-            let promise_base = {
-                let lib_binders = self.get_lib_binders();
-                self.ctx
-                    .binder
-                    .get_global_type_with_libs("Promise", &lib_binders)
-                    .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
-                    .unwrap_or(TypeId::PROMISE_BASE)
-            };
+            let promise_base = self
+                .ctx
+                .lib_promise_sym_id()
+                .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
+                .unwrap_or(TypeId::PROMISE_BASE);
             final_return_type = self
                 .ctx
                 .types

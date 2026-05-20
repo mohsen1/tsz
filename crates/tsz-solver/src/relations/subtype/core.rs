@@ -12,12 +12,12 @@
 
 use std::sync::Arc;
 
-use crate::AssignabilityChecker;
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
 use crate::objects::{PropertyCollectionResult, collect_properties};
+use crate::operations::AssignabilityChecker;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
@@ -526,9 +526,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Whether the recursion depth was exceeded during subtype checking.
+    /// Whether any recursion limit (depth or iteration count) was exceeded.
+    ///
+    /// Use [`iteration_exceeded`] to distinguish complexity overflow (TS2859) from
+    /// stack-depth overflow (TS2321).
     pub const fn depth_exceeded(&self) -> bool {
         self.guard.is_exceeded()
+    }
+
+    /// Whether the iteration (relation-count) budget was exhausted.
+    ///
+    /// When true the caller should emit TS2859 "Excessive complexity comparing
+    /// types". When false but [`depth_exceeded`] is true, the stack depth was
+    /// exceeded and the caller should emit TS2321 "Excessive stack depth".
+    pub const fn iteration_exceeded(&self) -> bool {
+        self.guard.iteration_exceeded()
     }
 
     /// Run `f` with subtype flags configured for tsc's `isTypeIdenticalTo`
@@ -598,7 +610,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     pub(crate) fn bind_polymorphic_this(&self, receiver: TypeId, resolved: TypeId) -> TypeId {
         if crate::contains_this_type(self.interner, resolved) {
-            crate::substitute_this_type_cached(self.interner, self.query_db, resolved, receiver)
+            crate::instantiation::instantiate::substitute_this_type_cached(
+                self.interner,
+                self.query_db,
+                resolved,
+                receiver,
+            )
         } else {
             resolved
         }
@@ -1861,42 +1878,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_function_subtype(&s_fn, &t_fn);
         }
 
-        // Function intrinsic as source against function/callable target:
-        // In tsc, `Function` is structurally `(...args: any[]) => any`, so
-        // `Function extends (...args: any) => any ? T : F` takes the true branch.
-        // NOTE: This only handles `TypeId::FUNCTION` (the intrinsic). The Object
-        // representation of the Function interface is handled in the conditional
-        // type evaluator's infer pattern matching, not in general subtype checking,
-        // because tsc distinguishes between conditional extends (true branch) and
-        // generic constraint satisfaction (TS2344 for Parameters<Function>).
-        if source == TypeId::FUNCTION {
-            if let Some(t_fn_id) = function_shape_id(self.interner, target) {
-                let t_fn = self.interner.function_shape(t_fn_id);
-                let function_shape = crate::types::FunctionShape {
-                    params: vec![crate::types::ParamInfo {
-                        name: None,
-                        type_id: TypeId::ANY,
-                        optional: false,
-                        rest: true,
-                    }],
-                    this_type: None,
-                    return_type: TypeId::ANY,
-                    type_params: Vec::new(),
-                    type_predicate: None,
-                    is_constructor: false,
-                    is_method: false,
-                };
-                return self.check_function_subtype(&function_shape, &t_fn);
-            }
-            if let Some(t_callable_id) = callable_shape_id(self.interner, target) {
-                let t_shape = self.interner.callable_shape(t_callable_id);
-                if !t_shape.call_signatures.is_empty() {
-                    // Function is callable, check against last call signature
-                    return SubtypeResult::True;
-                }
-            }
-        }
-
         // Compatibility bridge: function-like values are assignable to interfaces
         // that only require Function members like `call`/`apply`.
         // This aligns with tsc behavior for:
@@ -2819,7 +2800,7 @@ mod intrinsic_object_tests;
 #[cfg(test)]
 mod with_identity_check_mode_tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
 
     #[test]
     fn restores_flags_after_closure() {

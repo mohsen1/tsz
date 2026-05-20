@@ -1,7 +1,8 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeDatabase;
+use crate::construction::TypeInterner;
 use crate::def::resolver::TypeResolver;
-use crate::{TypeDatabase, types::SymbolRef};
+use crate::types::SymbolRef;
 
 // =============================================================================
 // Discriminant Detection Tests
@@ -2146,4 +2147,110 @@ fn test_enum_narrowing_two_names_same_fix() {
             "narrow_to_type with DefId={def_raw} should produce Enum(D,10)"
         );
     }
+}
+
+// =============================================================================
+// Array.isArray narrowing - ReadonlyArray<T> application form
+// =============================================================================
+
+/// Register a dummy `ReadonlyArray` base in the interner and return its `TypeId`.
+fn register_readonly_array_base(interner: &TypeInterner) -> TypeId {
+    let base = interner.object(vec![]);
+    interner.set_readonly_array_base_type(base);
+    base
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_application_truthy() {
+    let interner = TypeInterner::new();
+    let base = register_readonly_array_base(&interner);
+    let readonly_numbers = interner.application(base, vec![TypeId::NUMBER]);
+    let union = interner.union2(readonly_numbers, TypeId::NUMBER);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Positive);
+
+    assert_eq!(
+        narrowed, readonly_numbers,
+        "Array.isArray truthy branch should keep ReadonlyArray<number>"
+    );
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_application_different_element_types() {
+    let interner = TypeInterner::new();
+    let base = register_readonly_array_base(&interner);
+    let ctx = NarrowingContext::new(&interner);
+
+    let readonly_strings = interner.application(base, vec![TypeId::STRING]);
+    let string_union = interner.union2(readonly_strings, TypeId::STRING);
+    let narrowed_strings = ctx.narrow_type(string_union, &TypeGuard::Array, GuardSense::Positive);
+    assert_eq!(
+        narrowed_strings, readonly_strings,
+        "Array.isArray truthy branch should keep ReadonlyArray<string>"
+    );
+
+    let readonly_booleans = interner.application(base, vec![TypeId::BOOLEAN]);
+    let boolean_union = interner.union2(readonly_booleans, TypeId::BOOLEAN);
+    let narrowed_booleans = ctx.narrow_type(boolean_union, &TypeGuard::Array, GuardSense::Positive);
+    assert_eq!(
+        narrowed_booleans, readonly_booleans,
+        "Array.isArray truthy branch should keep ReadonlyArray<boolean>"
+    );
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_application_falsy() {
+    let interner = TypeInterner::new();
+    let base = register_readonly_array_base(&interner);
+    let readonly_numbers = interner.application(base, vec![TypeId::NUMBER]);
+    let union = interner.union2(readonly_numbers, TypeId::NUMBER);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Negative);
+
+    assert_eq!(
+        narrowed,
+        TypeId::NUMBER,
+        "!Array.isArray should exclude ReadonlyArray<number>"
+    );
+}
+
+#[test]
+fn array_isarray_narrows_readonly_array_application_alone() {
+    let interner = TypeInterner::new();
+    let base = register_readonly_array_base(&interner);
+    let readonly_numbers = interner.application(base, vec![TypeId::NUMBER]);
+    let ctx = NarrowingContext::new(&interner);
+
+    let truthy = ctx.narrow_type(readonly_numbers, &TypeGuard::Array, GuardSense::Positive);
+    let falsy = ctx.narrow_type(readonly_numbers, &TypeGuard::Array, GuardSense::Negative);
+
+    assert_eq!(
+        truthy, readonly_numbers,
+        "Array.isArray should keep a bare ReadonlyArray<number>"
+    );
+    assert_eq!(
+        falsy,
+        TypeId::NEVER,
+        "!Array.isArray should exclude a bare ReadonlyArray<number>"
+    );
+}
+
+#[test]
+fn array_isarray_keeps_mutable_and_readonly_array_members() {
+    let interner = TypeInterner::new();
+    let mutable_numbers = interner.array(TypeId::NUMBER);
+    let base = register_readonly_array_base(&interner);
+    let readonly_strings = interner.application(base, vec![TypeId::STRING]);
+    let union = interner.union(vec![mutable_numbers, readonly_strings, TypeId::BOOLEAN]);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Positive);
+    let expected = interner.union2(mutable_numbers, readonly_strings);
+
+    assert_eq!(
+        narrowed, expected,
+        "Array.isArray should keep mutable and readonly array members"
+    );
 }

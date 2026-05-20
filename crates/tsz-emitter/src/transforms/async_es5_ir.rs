@@ -64,90 +64,23 @@ use tsz_parser::parser::syntax_kind_ext;
 mod bindings;
 #[path = "async_es5_ir_discovery.rs"]
 mod discovery;
+#[path = "async_es5_ir_loop_control.rs"]
+mod loop_control;
+#[path = "async_es5_ir_state.rs"]
+mod state;
+#[path = "async_es5_ir_try_region.rs"]
+mod try_region;
 
-/// State for tracking async function transformation
-#[derive(Debug, Default)]
-pub struct AsyncTransformState {
-    /// Current label counter for generator switch/case
-    pub label_counter: u32,
-    /// Whether we're currently inside an async function body
-    pub in_async_body: bool,
-    /// Whether any await expressions were found (determines if we need switch/case)
-    pub has_await: bool,
-    /// Whether the body references `arguments` (needs `var arguments_1 = arguments;`)
-    pub captures_arguments: bool,
-    /// Generated name used for captured `arguments` references.
-    pub arguments_capture_name: String,
-}
+use loop_control::AsyncLoopControlTargets;
+pub use state::AsyncTransformState;
+use state::{
+    ForInAssignmentTarget, ForInSuspendedElementIndex, ForInSuspendedObject,
+    SuspendedAssignmentTarget,
+};
+use try_region::{TryRegionPlaceholders, TryRegionResolution, patch_try_region_placeholders};
 
-enum SuspendedAssignmentTarget {
-    Property(String),
-    Element(Box<IRNode>),
-}
-
-enum ForInAssignmentTarget {
-    Direct(Box<IRNode>),
-    SuspendedProperty {
-        object_suspension: NodeIndex,
-        property: String,
-    },
-    SuspendedElement {
-        object: ForInSuspendedObject,
-        index: ForInSuspendedElementIndex,
-    },
-}
-
-enum ForInSuspendedObject {
-    Direct(Box<IRNode>),
-    Suspended(NodeIndex),
-}
-
-enum ForInSuspendedElementIndex {
-    Direct(Box<IRNode>),
-    Suspended(NodeIndex),
-}
-
-impl AsyncTransformState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Reset for a new async function
-    pub fn reset(&mut self) {
-        self.label_counter = 0;
-        self.in_async_body = false;
-        self.has_await = false;
-        self.captures_arguments = false;
-        self.arguments_capture_name.clear();
-    }
-
-    /// Get the next label number
-    pub const fn next_label(&mut self) -> u32 {
-        let label = self.label_counter;
-        self.label_counter += 1;
-        label
-    }
-}
-
-/// Generator opcodes for the __generator helper
-pub mod opcodes {
-    /// Resume execution
-    pub const NEXT: u32 = 0;
-    /// Throw an error
-    pub const THROW: u32 = 1;
-    /// Return (complete)
-    pub const RETURN: u32 = 2;
-    /// Break to label
-    pub const BREAK: u32 = 3;
-    /// Yield a value (used for await)
-    pub const YIELD: u32 = 4;
-    /// Yield* delegation
-    pub const YIELD_STAR: u32 = 5;
-    /// Catch
-    pub const CATCH: u32 = 6;
-    /// End finally
-    pub const END_FINALLY: u32 = 7;
-}
+#[path = "async_es5_ir_opcodes.rs"]
+pub mod opcodes;
 
 /// Pieces of an ES5 class factory broken out from a transformed
 /// `ES5ClassIIFE` so that callers can splice the body into a generator
@@ -188,6 +121,11 @@ pub struct AsyncES5Transformer<'a> {
     lexical_this_capture: Cell<bool>,
     capture_this_references: Cell<bool>,
     loop_exit_placeholder_counter: Cell<u32>,
+    /// Pending hoisted-temp names accumulated by IR-conversion lowerings
+    /// (nullish coalescing, optional chaining, etc.) so callers can declare
+    /// them in the surrounding state-machine scope. Drained by every
+    /// `transform_*` entry point after the generator body is built.
+    pub(super) pending_lowering_hoists: RefCell<Vec<String>>,
     /// Whether this async body is emitted inside a derived ES5 class method.
     pub(super) class_has_super: bool,
     /// Generated super parameter name for the surrounding ES5 class IIFE.
@@ -214,10 +152,18 @@ impl<'a> AsyncES5Transformer<'a> {
             lexical_this_capture: Cell::new(false),
             capture_this_references: Cell::new(false),
             loop_exit_placeholder_counter: Cell::new(0),
+            pending_lowering_hoists: RefCell::new(Vec::new()),
             class_has_super: false,
             class_super_name: "_super".to_string(),
             class_super_is_static: false,
         }
+    }
+
+    /// Record a hoisted-temp name produced by an IR-conversion lowering
+    /// (`??`, `?.`, etc.) so the surrounding `transform_*` entry point can
+    /// declare it alongside the rest of the state-machine var hoists.
+    pub(super) fn push_lowering_hoist(&self, name: String) {
+        self.pending_lowering_hoists.borrow_mut().push(name);
     }
 
     pub const fn set_source_text(&mut self, source_text: &'a str) {
@@ -557,7 +503,7 @@ impl<'a> AsyncES5Transformer<'a> {
         // Hoist var declarations from generator cases to the awaiter wrapper scope.
         // In tsc output, var declarations inside async function bodies are placed
         // before `return __generator(...)`, not inside the switch/case statements.
-        let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
+        let hoisted_var_groups = self.extract_hoisted_var_groups(&mut generator_body);
 
         // Extract promise constructor from return type annotation
         let promise_constructor = self.extract_promise_constructor(type_annotation);
@@ -642,7 +588,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 self.fresh_arguments_capture_name(body_idx, &param_binding_names);
         }
         let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
-        let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
+        let hoisted_var_groups = self.extract_hoisted_var_groups(&mut generator_body);
         let ir_params: Vec<IRParam> = params.iter().map(|p| IRParam::new(p.clone())).collect();
         let mut body = Vec::new();
         for group in hoisted_var_groups {
@@ -718,7 +664,7 @@ impl<'a> AsyncES5Transformer<'a> {
         }
 
         let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
-        let hoisted_var_groups = Self::extract_and_remove_var_decl_groups(&mut generator_body);
+        let hoisted_var_groups = self.extract_hoisted_var_groups(&mut generator_body);
         let mut body = Vec::new();
         for group in hoisted_var_groups {
             let declarations = group
@@ -2675,6 +2621,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 );
             }
 
+            k if k == syntax_kind_ext::DO_STATEMENT => {
+                self.process_do_while_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+            }
+
             k if k == syntax_kind_ext::FOR_STATEMENT => {
                 if !self.process_for_initializer_using_statement_in_async(
                     idx,
@@ -3837,15 +3792,23 @@ impl<'a> AsyncES5Transformer<'a> {
             return;
         }
 
+        // Correctness: the loop entry must be its own case, otherwise a
+        // `break-to-loop` from the body re-enters the prefix statements
+        // and re-executes them every iteration — an infinite-loop bug
+        // when the prefix initializes the loop variable.
+        Self::flush_preceding_case_for_new_label(
+            cases,
+            current_statements,
+            current_label,
+            &mut self.state,
+        );
+
         let loop_label = *current_label;
         let exit_placeholder = self.next_loop_exit_placeholder();
         let condition = self.expression_to_ir(loop_data.condition);
 
         current_statements.push(IRNode::IfBreak {
-            condition: Box::new(IRNode::PrefixUnaryExpr {
-                operator: "!".to_string().into(),
-                operand: Box::new(condition),
-            }),
+            condition: Box::new(Self::negated_condition(condition)),
             target_label: exit_placeholder,
         });
 
@@ -3873,6 +3836,79 @@ impl<'a> AsyncES5Transformer<'a> {
 
         let exit_label = self.state.next_label();
         Self::patch_if_break_target(cases, exit_placeholder, exit_label);
+        *current_label = exit_label;
+    }
+
+    /// Process a do-while statement inside an async function body.
+    ///
+    /// When the body suspends and the condition does not, the state machine must
+    /// enter through the body case first. Emitting a raw `do` statement would
+    /// leave `await` syntax inside the ES5 generator callback.
+    fn process_do_while_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(loop_data) = self.arena.get_loop(node) else {
+            return;
+        };
+
+        let condition_has_await = self.contains_await_recursive(loop_data.condition);
+        let body_has_await = self.contains_await_recursive(loop_data.statement);
+
+        if !body_has_await || condition_has_await {
+            current_statements.push(self.statement_to_ir(idx));
+            return;
+        }
+
+        let loop_label = *current_label;
+        let exit_placeholder = self.next_loop_exit_placeholder();
+        let has_loop_continue = self.contains_unlabeled_loop_local_continue(loop_data.statement);
+        let continue_placeholder = if has_loop_continue {
+            self.next_loop_exit_placeholder()
+        } else {
+            loop_label
+        };
+        let loop_control = AsyncLoopControlTargets {
+            break_label: exit_placeholder,
+            continue_label: continue_placeholder,
+        };
+
+        self.process_loop_body_statement_in_async(
+            loop_data.statement,
+            cases,
+            current_statements,
+            current_label,
+            loop_control,
+        );
+
+        let condition_label = has_loop_continue.then(|| {
+            let label = self.state.next_label();
+            current_statements.push(Self::generator_label_assignment(label));
+            label
+        });
+        let condition = self.expression_to_ir(loop_data.condition);
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(Self::negated_condition(condition)),
+            target_label: exit_placeholder,
+        });
+        current_statements.push(Self::generator_break_statement(loop_label));
+
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        let exit_label = self.state.next_label();
+        Self::patch_if_break_target(cases, exit_placeholder, exit_label);
+        if let Some(condition_label) = condition_label {
+            Self::patch_if_break_target(cases, continue_placeholder, condition_label);
+        }
         *current_label = exit_label;
     }
 
@@ -4437,6 +4473,22 @@ impl<'a> AsyncES5Transformer<'a> {
         IRNode::ExpressionStatement(Box::new(expression))
     }
 
+    fn negated_condition(condition: IRNode) -> IRNode {
+        let operand = match condition {
+            IRNode::BinaryExpr { .. }
+            | IRNode::LogicalOr { .. }
+            | IRNode::LogicalAnd { .. }
+            | IRNode::ConditionalExpr { .. }
+            | IRNode::CommaExpr(_)
+            | IRNode::CommaExprMultiline(_) => IRNode::Parenthesized(Box::new(condition)),
+            _ => condition,
+        };
+        IRNode::PrefixUnaryExpr {
+            operator: "!".into(),
+            operand: Box::new(operand),
+        }
+    }
+
     fn generator_label_assignment(label: u32) -> IRNode {
         Self::expression_statement(IRNode::assign(
             IRNode::GeneratorLabel,
@@ -4607,43 +4659,6 @@ impl<'a> AsyncES5Transformer<'a> {
         crate::transforms::ir_printer::IRPrinter::emit_to_string(&ir)
     }
 
-    fn patch_if_break_target(
-        cases: &mut [IRGeneratorCase],
-        placeholder_label: u32,
-        target_label: u32,
-    ) {
-        for case in cases {
-            for statement in &mut case.statements {
-                Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
-            }
-        }
-    }
-
-    fn patch_if_break_target_in_statements(
-        statements: &mut [IRNode],
-        placeholder_label: u32,
-        target_label: u32,
-    ) {
-        for statement in statements {
-            Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
-        }
-    }
-
-    const fn patch_if_break_target_in_node(
-        node: &mut IRNode,
-        placeholder_label: u32,
-        target_label: u32,
-    ) {
-        if let IRNode::IfBreak {
-            target_label: candidate,
-            ..
-        } = node
-            && *candidate == placeholder_label
-        {
-            *candidate = target_label;
-        }
-    }
-
     /// Process a try/catch/finally statement inside an async function body.
     ///
     /// When none of the blocks contain await, falls through to raw IR emission.
@@ -4679,92 +4694,63 @@ impl<'a> AsyncES5Transformer<'a> {
         let has_finally =
             try_data.finally_block.is_some() && self.arena.get(try_data.finally_block).is_some();
 
-        // Reserve labels
-        let catch_label = if has_catch {
-            Some(self.state.next_label())
-        } else {
-            None
-        };
-        let finally_label = if has_finally {
-            Some(self.state.next_label())
-        } else {
-            None
-        };
-        let end_label = self.state.next_label();
-
-        // Build try-op instruction: _a.trys.push([currentLabel, catchLabel, finallyLabel, endLabel])
-        let mut try_op_labels = vec![IRNode::NumericLiteral(current_label.to_string().into())];
-        if let Some(cl) = catch_label {
-            try_op_labels.push(IRNode::NumericLiteral(cl.to_string().into()));
+        if !has_catch && !has_finally {
+            self.process_block_or_statement_in_async(
+                try_data.try_block,
+                cases,
+                current_statements,
+                current_label,
+            );
+            return;
         }
-        if let Some(fl) = finally_label {
-            if catch_label.is_none() {
-                try_op_labels.push(IRNode::Undefined); // placeholder for missing catch
-            }
-            try_op_labels.push(IRNode::NumericLiteral(fl.to_string().into()));
-        }
-        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::CallExpr {
-            callee: Box::new(IRNode::PropertyAccess {
-                object: Box::new(IRNode::PropertyAccess {
-                    object: Box::new(IRNode::Identifier("_a".to_string().into())),
-                    property: "trys".to_string().into(),
-                }),
-                property: "push".to_string().into(),
-            }),
-            arguments: vec![IRNode::ArrayLiteral(try_op_labels)],
-        })));
 
-        // Process try block
+        // Sentinels share `next_loop_exit_placeholder` so the patch sweep cannot
+        // collide with loop-exit placeholders still living in a surrounding loop.
+        let placeholders = TryRegionPlaceholders {
+            catch_slot: self.next_loop_exit_placeholder(),
+            finally_slot: self.next_loop_exit_placeholder(),
+            end_slot: self.next_loop_exit_placeholder(),
+            exit_break: self.next_loop_exit_placeholder(),
+        };
+        let start_label = *current_label;
+        let cases_start = cases.len();
+
+        current_statements.push(IRNode::generator_try_push(
+            start_label,
+            has_catch.then_some(placeholders.catch_slot),
+            has_finally.then_some(placeholders.finally_slot),
+            placeholders.end_slot,
+        ));
+
         self.process_block_or_statement_in_async(
             try_data.try_block,
             cases,
             current_statements,
             current_label,
         );
+        current_statements.push(Self::generator_break_statement(placeholders.exit_break));
 
-        // Break to finally or end
-        let jump_target = finally_label.unwrap_or(end_label);
-        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
-            IRNode::GeneratorOp {
-                opcode: opcodes::BREAK,
-                value: Some(Box::new(IRNode::NumericLiteral(
-                    jump_target.to_string().into(),
-                ))),
-                comment: Some("break".to_string().into()),
-            },
-        ))));
-
-        // Catch block
-        if let Some(cl) = catch_label {
+        let catch_label = if has_catch {
+            let cl = self.state.next_label();
             cases.push(IRGeneratorCase {
                 label: *current_label,
                 statements: std::mem::take(current_statements),
             });
             *current_label = cl;
 
-            // Extract catch variable name
             if let Some(catch_node) = self.arena.get(try_data.catch_clause)
                 && let Some(catch_data) = self.arena.get_catch_clause(catch_node)
             {
-                // Declare catch variable: e_1 = _a.sent()
                 if catch_data.variable_declaration.is_some() {
                     let catch_var_name =
                         self.get_catch_variable_name(catch_data.variable_declaration);
                     if !catch_var_name.is_empty() {
+                        // tsc binds the exception via `_a.sent()`, not `_a[1]`.
                         current_statements.push(IRNode::ExpressionStatement(Box::new(
-                            IRNode::BinaryExpr {
-                                left: Box::new(IRNode::Identifier(catch_var_name.into())),
-                                operator: "=".to_string().into(),
-                                right: Box::new(IRNode::ElementAccess {
-                                    object: Box::new(IRNode::Identifier("_a".to_string().into())),
-                                    index: Box::new(IRNode::NumericLiteral("1".to_string().into())),
-                                }),
-                            },
+                            IRNode::assign(IRNode::id(catch_var_name), IRNode::GeneratorSent),
                         )));
                     }
                 }
-
-                // Process catch block body
                 self.process_block_or_statement_in_async(
                     catch_data.block,
                     cases,
@@ -4773,28 +4759,20 @@ impl<'a> AsyncES5Transformer<'a> {
                 );
             }
 
-            // Break to finally or end
-            let jump_target = finally_label.unwrap_or(end_label);
-            current_statements.push(IRNode::ReturnStatement(Some(Box::new(
-                IRNode::GeneratorOp {
-                    opcode: opcodes::BREAK,
-                    value: Some(Box::new(IRNode::NumericLiteral(
-                        jump_target.to_string().into(),
-                    ))),
-                    comment: Some("break".to_string().into()),
-                },
-            ))));
-        }
+            current_statements.push(Self::generator_break_statement(placeholders.exit_break));
+            Some(cl)
+        } else {
+            None
+        };
 
-        // Finally block
-        if let Some(fl) = finally_label {
+        let finally_label = if has_finally {
+            let fl = self.state.next_label();
             cases.push(IRGeneratorCase {
                 label: *current_label,
                 statements: std::mem::take(current_statements),
             });
             *current_label = fl;
 
-            // Process finally block body
             self.process_block_or_statement_in_async(
                 try_data.finally_block,
                 cases,
@@ -4802,7 +4780,6 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_label,
             );
 
-            // End finally: return [7]
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
                     opcode: opcodes::END_FINALLY,
@@ -4810,9 +4787,38 @@ impl<'a> AsyncES5Transformer<'a> {
                     comment: Some("endfinally".to_string().into()),
                 },
             ))));
+            Some(fl)
+        } else {
+            None
+        };
+
+        // End label is allocated last so its number is past every interior resume.
+        let end_label = self.state.next_label();
+
+        let resolution = TryRegionResolution {
+            placeholders,
+            catch_label,
+            finally_label,
+            end_label,
+            // Breaks from try/catch must target the region's end label even when
+            // a finally exists; tsc's `__generator` driver detects the active try
+            // entry on a `[3 /*break*/, end]` op, pushes the pending break onto
+            // `_.ops`, then jumps to the finally label. After `[7 /*endfinally*/]`
+            // pops `_.ops`, the driver resumes the original break against an
+            // empty `_.trys` stack and lands at `end`. Breaking directly to the
+            // finally label would jump there without pushing onto `_.ops`, so
+            // `endfinally` would pop an empty stack and the state machine would
+            // wedge.
+            exit_target: end_label,
+        };
+        let cases_tail = cases[cases_start..]
+            .iter_mut()
+            .flat_map(|case| case.statements.iter_mut())
+            .chain(current_statements.iter_mut());
+        for stmt in cases_tail {
+            patch_try_region_placeholders(stmt, &resolution);
         }
 
-        // Flush and start end label
         if !current_statements.is_empty() {
             cases.push(IRGeneratorCase {
                 label: *current_label,

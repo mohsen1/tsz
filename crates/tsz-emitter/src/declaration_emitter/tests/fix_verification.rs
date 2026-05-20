@@ -1742,6 +1742,45 @@ let gResult3 = g(helloOrWorld);
 }
 
 #[test]
+fn fix_short_circuit_string_literal_overload_operands_match_tsc_dts_widening() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const explicitString: "string" = "string";
+const explicitNumber: "number" = "number";
+const explicitBoolean: "boolean" = "boolean";
+const explicitStringOrNumber = explicitString || explicitNumber;
+const explicitStringOrBoolean = explicitString || explicitBoolean;
+const explicitBooleanOrNumber = explicitNumber || explicitBoolean;
+const explicitStringOrBooleanOrNumber = explicitStringOrBoolean || explicitNumber;
+
+const inferredString = "string";
+const inferredNumber = "number";
+const inferredBoolean = "boolean";
+const inferredStringOrNumber = inferredString || inferredNumber;
+const inferredStringOrBoolean = inferredString || inferredBoolean;
+const inferredBooleanOrNumber = inferredNumber || inferredBoolean;
+const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumber;
+"#,
+    );
+
+    for expected in [
+        r#"declare const explicitStringOrNumber: "string" | "number";"#,
+        r#"declare const explicitStringOrBoolean: "string" | "boolean";"#,
+        r#"declare const explicitBooleanOrNumber: "number" | "boolean";"#,
+        r#"declare const explicitStringOrBooleanOrNumber: "string" | "number" | "boolean";"#,
+        "declare const inferredStringOrNumber: string;",
+        "declare const inferredStringOrBoolean: string;",
+        "declare const inferredBooleanOrNumber: string;",
+        "declare const inferredStringOrBooleanOrNumber: string;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected short-circuit operand type `{expected}`: {output}"
+        );
+    }
+}
+
+#[test]
 fn fix_generic_call_constructor_return_object_formats_multiline() {
     let output = emit_dts(
         r#"
@@ -1930,7 +1969,8 @@ fn fix_symbol_types_fallback_used_when_node_types_is_any() {
     use tsz_binder::BinderState;
     use tsz_parser::parser::NodeIndex;
     use tsz_parser::parser::syntax_kind_ext;
-    use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypeInterner};
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{FunctionShape, ParamInfo, TypeId};
 
     let source = "export const isNonNull = (x: number | null) => x !== null;";
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
@@ -2002,8 +2042,9 @@ fn fix_predicate_pattern2_does_not_rewrite_unrelated_union_shapes() {
     // (T & undefined) | string must NOT be rewritten as T & ({} | undefined).
     // Only (T & undefined) | (T & {}) qualifies — both arms must be verified.
     use crate::type_cache_view::TypeCacheView;
+    use tsz_solver::construction::TypeInterner;
     use tsz_solver::{
-        FunctionShape, ParamInfo, TypeId, TypeInterner,
+        FunctionShape, ParamInfo, TypeId,
         types::{TypeParamInfo, TypePredicate, TypePredicateTarget},
     };
 

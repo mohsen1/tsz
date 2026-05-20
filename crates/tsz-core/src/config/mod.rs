@@ -193,6 +193,15 @@ pub struct CompilerOptions {
     /// Enable experimental Sound Mode checks.
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub sound: Option<bool>,
+    /// Opt first-party declaration files (.d.ts) into sound checking.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub sound_check_declarations: Option<bool>,
+    /// Report sound diagnostics without failing the build.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub sound_report_only: Option<bool>,
+    /// Enable pedantic sound heuristics beyond the core sound bundle.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub sound_pedantic: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit: Option<bool>,
     /// Emit a UTF-8 Byte Order Mark (BOM) in the beginning of output files.
@@ -999,6 +1008,15 @@ pub fn resolve_compiler_options(
 
     if let Some(sound) = options.sound {
         resolved.checker.sound_mode = sound;
+    }
+    if let Some(v) = options.sound_check_declarations {
+        resolved.checker.sound_check_declarations = v;
+    }
+    if let Some(v) = options.sound_report_only {
+        resolved.checker.sound_report_only = v;
+    }
+    if let Some(v) = options.sound_pedantic {
+        resolved.checker.sound_pedantic = v;
     }
 
     // tsc 6.0 defaults: strict-family options are true when not explicitly set.
@@ -3105,6 +3123,10 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "rewriteRelativeImportExtensions"
         | "skipDefaultLibCheck"
         | "skipLibCheck"
+        | "sound"
+        | "soundCheckDeclarations"
+        | "soundPedantic"
+        | "soundReportOnly"
         | "sourceMap"
         | "strict"
         | "strictBindCallApply"
@@ -3299,6 +3321,10 @@ const KNOWN_COMPILER_OPTION_CANONICAL_NAMES: &[&str] = &[
     "rootDirs",
     "skipDefaultLibCheck",
     "skipLibCheck",
+    "sound",
+    "soundCheckDeclarations",
+    "soundPedantic",
+    "soundReportOnly",
     "sourceMap",
     "sourceRoot",
     "strict",
@@ -3432,6 +3458,10 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "rootdirs" => Some("rootDirs"),
         "skipdefaultlibcheck" => Some("skipDefaultLibCheck"),
         "skiplibcheck" => Some("skipLibCheck"),
+        "sound" => Some("sound"),
+        "soundcheckdeclarations" => Some("soundCheckDeclarations"),
+        "soundpedantic" => Some("soundPedantic"),
+        "soundreportonly" => Some("soundReportOnly"),
         "sourcemap" => Some("sourceMap"),
         "sourceroot" => Some("sourceRoot"),
         "strict" => Some("strict"),
@@ -3466,6 +3496,22 @@ pub fn load_tsconfig(path: &Path) -> Result<TsConfig> {
 pub fn load_tsconfig_with_diagnostics(path: &Path) -> Result<ParsedTsConfig> {
     let mut visited = FxHashSet::default();
     load_tsconfig_inner_with_diagnostics(path, &mut visited, false)
+}
+
+fn config_ignore_deprecations_silences_6_0(config: &TsConfig) -> bool {
+    matches!(
+        config
+            .compiler_options
+            .as_ref()
+            .and_then(|options| options.ignore_deprecations.as_deref()),
+        Some("6.0")
+    )
+}
+
+const fn is_ts60_deprecation_diagnostic_code(code: u32) -> bool {
+    code == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+        || code
+            == diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
 }
 
 fn load_tsconfig_inner(
@@ -3610,6 +3656,12 @@ fn load_tsconfig_inner_with_diagnostics(
                 ));
             }
         }
+    }
+
+    if config_ignore_deprecations_silences_6_0(&parsed.config) {
+        parsed
+            .diagnostics
+            .retain(|diag| !is_ts60_deprecation_diagnostic_code(diag.code));
     }
 
     visited.remove(&canonical);
@@ -5281,7 +5333,6 @@ mod tests {
     fn test_tsz_only_compiler_options_report_unknown_from_tsconfig() {
         let source = r#"{
   "compilerOptions": {
-    "sound": true,
     "inlineConstants": true,
     "disableSolutionTypeCheck": true,
     "disableSolutionCaching": true,
@@ -5292,8 +5343,8 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert_eq!(
             codes.len(),
-            5,
-            "tsz-only options should be rejected with tsc-compatible diagnostics, got: {:?}",
+            4,
+            "unrecognized options should produce tsc-compatible diagnostics, got: {:?}",
             parsed.diagnostics
         );
         assert_eq!(
@@ -5301,8 +5352,8 @@ mod tests {
                 .iter()
                 .filter(|&&code| code == diagnostic_codes::UNKNOWN_COMPILER_OPTION)
                 .count(),
-            3,
-            "expected three TS5023 diagnostics, got: {:?}",
+            2,
+            "expected two TS5023 diagnostics, got: {:?}",
             parsed.diagnostics
         );
         assert_eq!(
@@ -5323,11 +5374,121 @@ mod tests {
             "disableSolution typo diagnostics should suggest disableSolutionSearching, got: {:?}",
             parsed.diagnostics
         );
+    }
+
+    #[test]
+    fn test_sound_tsconfig_option_enables_sound_mode() {
+        let source = r#"{"compilerOptions":{"sound":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "`sound` should be accepted as a known option, got: {:?}",
+            parsed.diagnostics
+        );
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+        assert!(
+            resolved.checker.sound_mode,
+            "sound: true in tsconfig should enable sound_mode"
+        );
+    }
+
+    #[test]
+    fn test_sound_tsconfig_option_false_keeps_sound_mode_off() {
+        let source = r#"{"compilerOptions":{"sound":false}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "`sound: false` should be accepted without diagnostics, got: {:?}",
+            parsed.diagnostics
+        );
         let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
         assert!(
             !resolved.checker.sound_mode,
-            "unknown `sound` in tsconfig should not enable sound mode"
+            "false must not flip sound_mode on"
         );
+    }
+
+    #[test]
+    fn test_sound_tsconfig_invalid_value_emits_ts5024() {
+        let source = r#"{"compilerOptions":{"sound":"yes_please"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE),
+            "non-boolean `sound` value should emit TS5024, got: {:?}",
+            parsed.diagnostics
+        );
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+        assert!(
+            !resolved.checker.sound_mode,
+            "invalid `sound` value should not enable sound_mode"
+        );
+    }
+
+    #[test]
+    fn test_sound_family_tsconfig_options_accepted() {
+        let source = r#"{
+  "compilerOptions": {
+    "sound": true,
+    "soundCheckDeclarations": true,
+    "soundReportOnly": true,
+    "soundPedantic": true
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            parsed.diagnostics.is_empty(),
+            "sound family options should all be accepted, got: {:?}",
+            parsed.diagnostics
+        );
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+        assert!(
+            resolved.checker.sound_mode,
+            "sound: true should set sound_mode"
+        );
+        assert!(
+            resolved.checker.sound_check_declarations,
+            "soundCheckDeclarations: true should set sound_check_declarations"
+        );
+        assert!(
+            resolved.checker.sound_report_only,
+            "soundReportOnly: true should set sound_report_only"
+        );
+        assert!(
+            resolved.checker.sound_pedantic,
+            "soundPedantic: true should set sound_pedantic"
+        );
+    }
+
+    #[test]
+    fn test_sound_family_tsconfig_options_miscased_emit_did_you_mean() {
+        // All-uppercase-suffix spellings (e.g. soundPEDANTIC) still fall within
+        // the Levenshtein threshold for getSpellingSuggestion, so they get TS5025
+        // rather than a bare TS5023.
+        let cases = [
+            ("Sound", "sound"),
+            ("soundCheckdeclarations", "soundCheckDeclarations"),
+            ("soundreportonly", "soundReportOnly"),
+            ("soundPEDANTIC", "soundPedantic"),
+        ];
+        for (typo, canonical) in cases {
+            let source = format!(r#"{{"compilerOptions":{{"{typo}":true}}}}"#);
+            let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+            let diag = parsed
+                .diagnostics
+                .iter()
+                .find(|d| d.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN);
+            assert!(
+                diag.is_some(),
+                "typo `{typo}` should emit TS5025, got: {:?}",
+                parsed.diagnostics
+            );
+            assert!(
+                diag.unwrap().message_text.contains(canonical),
+                "TS5025 for `{typo}` should suggest `{canonical}`, got: {}",
+                diag.unwrap().message_text
+            );
+        }
     }
 
     #[test]
@@ -7196,6 +7357,45 @@ mod tests {
                 .diagnostics
                 .iter()
                 .map(|d| d.code)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_child_ignore_deprecations_suppresses_inherited_ts5107() {
+        let temp = tempdir().expect("create temp dir");
+        let base_path = temp.path().join("base.json");
+        std::fs::write(
+            &base_path,
+            r#"{
+  "compilerOptions": {
+    "moduleResolution": "node"
+  }
+}"#,
+        )
+        .expect("write base");
+
+        let child_path = temp.path().join("tsconfig.json");
+        std::fs::write(
+            &child_path,
+            r#"{
+  "extends": "./base.json",
+  "compilerOptions": {
+    "ignoreDeprecations": "6.0"
+  },
+  "files": ["a.ts"]
+}"#,
+        )
+        .expect("write child");
+
+        let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load child");
+        assert!(
+            !parsed.diagnostics.iter().any(|d| d.code == 5107),
+            "child ignoreDeprecations=6.0 should suppress inherited TS5107, got: {:?}",
+            parsed
+                .diagnostics
+                .iter()
+                .map(|d| (&d.file, d.code, &d.message_text))
                 .collect::<Vec<_>>()
         );
     }

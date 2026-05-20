@@ -7,7 +7,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::{PropertyInfo, TypeId};
 
 fn order_preserving_union(
-    factory: tsz_solver::TypeFactory<'_>,
+    factory: tsz_solver::construction::TypeFactory<'_>,
     mut members: Vec<TypeId>,
 ) -> TypeId {
     let mut seen = rustc_hash::FxHashSet::default();

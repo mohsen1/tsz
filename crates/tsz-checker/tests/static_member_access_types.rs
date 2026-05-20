@@ -5,7 +5,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, ParserState};
 use tsz_parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn variable_declaration_initializer_at(
     parser: &ParserState,

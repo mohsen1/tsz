@@ -655,7 +655,7 @@ jobs:
       - name: Build dist-fast binaries
         run: scripts/ci/github-suite.sh dist-binaries
       - name: Pack dist-fast binaries
-        run: tar -C .target/dist-fast -cf dist-fast-binaries.tar tsz tsz-server tsz-conformance generate-tsc-cache
+        run: tar -C .target/dist-fast -cf dist-fast-binaries.tar tsz tsz-lsp tsz-server tsz-conformance generate-tsc-cache
       - name: Upload dist-fast binaries
         uses: actions/upload-artifact@v4
         with:
@@ -664,6 +664,28 @@ jobs:
           retention-days: 1
           if-no-files-found: error
           compression-level: 1
+
+  lsp-e2e:
+    name: lsp-e2e
+    needs: [gate, dist-binaries]
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 10
+    env:
+      TSZ_CI_CACHE_SAVE: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
+      - name: Run LSP protocol smoke
+        run: scripts/ci/github-suite.sh lsp-e2e
 
   project-compile-guard:
     name: project-compile-guard
@@ -701,8 +723,6 @@ jobs:
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
             .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
-            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-template-manifest.json
-            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-test-cases-manifest.json
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
@@ -756,8 +776,6 @@ jobs:
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
             .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
-            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-template-manifest.json
-            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-test-cases-manifest.json
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
@@ -931,7 +949,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: conformance-shard-${{ matrix.shard }}
-          path: .ci-metrics/conformance.json
+          path: |
+            .ci-metrics/conformance.json
+            .ci-metrics/conformance-failures-*.txt
           if-no-files-found: warn
           retention-days: 1
 
@@ -1163,6 +1183,7 @@ jobs:
       - cargo-deny
       - project-corpus-pr-body
       - dist-binaries
+      - lsp-e2e
       - project-compile-guard
       - wasm
       - wasm-web
@@ -1258,6 +1279,7 @@ jobs:
               required.update({
                   "wasm",
                   "wasm-web",
+                  "lsp-e2e",
                   "node-harness-prep",
                   "conformance-aggregate",
                   "emit",

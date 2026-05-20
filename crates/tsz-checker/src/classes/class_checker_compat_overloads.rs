@@ -6,7 +6,7 @@ use tsz_parser::parser::syntax_kind_ext::METHOD_SIGNATURE;
 use tsz_solver::TypeId;
 
 fn overload_method_wrapper_value_type(
-    types: &dyn tsz_solver::QueryDatabase,
+    types: &dyn tsz_solver::construction::QueryDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
     if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(types, type_id)
@@ -16,6 +16,56 @@ fn overload_method_wrapper_value_type(
         return Some(shape.properties[0].type_id);
     }
     None
+}
+
+fn function_signature_uses_own_type_params(
+    checker: &CheckerState<'_>,
+    shape: &tsz_solver::FunctionShape,
+) -> bool {
+    let own_type_params = shape
+        .type_params
+        .iter()
+        .map(|param| checker.ctx.types.type_param(*param))
+        .collect::<Vec<_>>();
+    if own_type_params.is_empty() {
+        return false;
+    }
+
+    let contains_own_param = |type_id: TypeId| {
+        own_type_params.iter().copied().any(|param_type| {
+            crate::query_boundaries::common::contains_type_by_id(
+                checker.ctx.types,
+                type_id,
+                param_type,
+            )
+        })
+    };
+
+    shape
+        .params
+        .iter()
+        .any(|param| contains_own_param(param.type_id))
+        || shape.this_type.is_some_and(contains_own_param)
+        || contains_own_param(shape.return_type)
+}
+
+fn can_use_fresh_generic_overload_assignability(
+    checker: &CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let (Some(source_shape), Some(target_shape)) = (
+        crate::query_boundaries::common::function_shape_for_type(checker.ctx.types, source),
+        crate::query_boundaries::common::function_shape_for_type(checker.ctx.types, target),
+    ) else {
+        return false;
+    };
+
+    !source_shape.type_params.is_empty()
+        && source_shape.type_params.len() == target_shape.type_params.len()
+        && source_shape.params.len() == target_shape.params.len()
+        && function_signature_uses_own_type_params(checker, &source_shape)
+        && function_signature_uses_own_type_params(checker, &target_shape)
 }
 
 impl<'a> CheckerState<'a> {
@@ -250,14 +300,18 @@ impl<'a> CheckerState<'a> {
                     _ => (derived_trailing_sig, base_trailing_sig),
                 };
 
-            // When the no-erase check fails, fall back to standard assignability
-            // (which fresh-instantiates generic type params). This is needed for
-            // generic overloads like `concat<C>` where the locally-scoped `C` in
-            // the derived and base functions have different TypeIds but are
-            // structurally the same generic parameter.
-            let assignable = self
-                .is_assignable_to_no_erase_generics(derived_compare_sig, base_compare_sig)
-                || self.is_assignable_to(derived_compare_sig, base_compare_sig);
+            // When the no-erase check fails for equivalent generic trailing
+            // overload signatures, allow the normal relation to fresh-instantiate
+            // the method-local type params. Keep this gated to matching generic
+            // shapes so ordinary TS2430 overload mismatches still report.
+            let strict_assignable =
+                self.is_assignable_to_no_erase_generics(derived_compare_sig, base_compare_sig);
+            let assignable = strict_assignable
+                || (can_use_fresh_generic_overload_assignability(
+                    self,
+                    derived_compare_sig,
+                    base_compare_sig,
+                ) && self.is_assignable_to(derived_compare_sig, base_compare_sig));
             if !assignable
                 && !self.should_suppress_assignability_for_parse_recovery(
                     derived_trailing_idx,

@@ -310,6 +310,9 @@ impl<'a> CheckerState<'a> {
                     let constraint_is_callable = query::is_callable_type(
                         self.ctx.types.as_type_database(),
                         constraint_resolved,
+                    ) || query::constraint_expands_to_callable_union(
+                        self.ctx.types.as_type_database(),
+                        constraint_resolved,
                     ) || self
                         .is_function_constraint(param.constraint.unwrap_or(TypeId::NEVER));
                     let generic_indexed_type_arg = self.generic_indexed_access_subject(type_arg);
@@ -665,7 +668,11 @@ impl<'a> CheckerState<'a> {
                                 }
 
                                 let constraint_is_callable =
-                                    query::is_callable_type(db, constraint_resolved);
+                                    query::is_callable_type(db, constraint_resolved)
+                                        || query::constraint_expands_to_callable_union(
+                                            db,
+                                            constraint_resolved,
+                                        );
                                 if !constraint_is_callable {
                                     continue;
                                 }
@@ -817,12 +824,16 @@ impl<'a> CheckerState<'a> {
                                 // tsc reports TS2344 in this case because callability
                                 // is not provable at definition time.
                                 let constraint_resolved = self.resolve_lazy_type(constraint);
-                                let constraint_is_callable = query::is_callable_type(
-                                    self.ctx.types.as_type_database(),
-                                    constraint_resolved,
-                                ) || self.is_function_constraint(
-                                    param.constraint.unwrap_or(TypeId::NEVER),
-                                );
+                                let constraint_is_callable =
+                                    query::is_callable_type(
+                                        self.ctx.types.as_type_database(),
+                                        constraint_resolved,
+                                    ) || query::constraint_expands_to_callable_union(
+                                        self.ctx.types.as_type_database(),
+                                        constraint_resolved,
+                                    ) || self.is_function_constraint(
+                                        param.constraint.unwrap_or(TypeId::NEVER),
+                                    );
                                 let generic_indexed_type_arg =
                                     self.generic_indexed_access_subject(type_arg);
                                 let keep_eager_check = constraint_is_callable
@@ -869,6 +880,10 @@ impl<'a> CheckerState<'a> {
                             // because 'Boat' is concrete and all its values are callable.
                             let constraint_is_callable =
                                 query::is_callable_type(db, inst_constraint)
+                                    || query::constraint_expands_to_callable_union(
+                                        db,
+                                        inst_constraint,
+                                    )
                                     || self.is_function_constraint(original_constraint);
                             if constraint_is_callable
                                 && generic_indexed_type_arg.is_some()
@@ -944,7 +959,14 @@ impl<'a> CheckerState<'a> {
                                 || self.infer_result_satisfies_via_referenced_constraints(
                                     type_arg,
                                     inst_constraint,
-                                );
+                                )
+                                || type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
+                                    self.type_arg_satisfies_via_hidden_infer_constraints(
+                                        type_arg,
+                                        arg_idx,
+                                        inst_constraint,
+                                    )
+                                });
                             if !is_satisfied {
                                 // When the constraint is a function type (e.g., `(...args: any) => any`),
                                 // accept any callable base type. For type parameters with callable
@@ -1115,6 +1137,10 @@ impl<'a> CheckerState<'a> {
                                 let constraint_is_callable =
                                     query::is_callable_type(db, constraint_resolved)
                                         || query::is_callable_type(db, constraint_evaluated)
+                                        || query::constraint_expands_to_callable_union(
+                                            db,
+                                            constraint_evaluated,
+                                        )
                                         || self.is_function_constraint(constraint)
                                         || self.is_function_constraint(constraint_resolved);
                                 // For indexed access types like `T[M]` where T's constraint
@@ -1491,7 +1517,14 @@ impl<'a> CheckerState<'a> {
                             || self.array_element_infer_alias_satisfies_constraint(
                                 type_arg,
                                 inst_constraint,
-                            );
+                            )
+                            || type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
+                                self.type_arg_satisfies_via_hidden_infer_constraints(
+                                    type_arg,
+                                    arg_idx,
+                                    inst_constraint,
+                                )
+                            });
                         if !is_satisfied {
                             // When the constraint is a function type, accept callable bases.
                             // The `Function` interface may be lowered as an Object type

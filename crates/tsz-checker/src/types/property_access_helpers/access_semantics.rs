@@ -840,7 +840,7 @@ impl<'a> CheckerState<'a> {
         }
 
         fn signature_params_as_tuple(
-            factory: tsz_solver::TypeFactory<'_>,
+            factory: tsz_solver::construction::TypeFactory<'_>,
             params: &[tsz_solver::ParamInfo],
         ) -> TypeId {
             let tuple_elements: Vec<tsz_solver::TupleElement> = params
@@ -856,7 +856,7 @@ impl<'a> CheckerState<'a> {
         }
 
         fn bound_callable_return_type(
-            factory: tsz_solver::TypeFactory<'_>,
+            factory: tsz_solver::construction::TypeFactory<'_>,
             sig: &tsz_solver::CallSignature,
             remaining_params: Vec<tsz_solver::ParamInfo>,
             is_constructor: bool,

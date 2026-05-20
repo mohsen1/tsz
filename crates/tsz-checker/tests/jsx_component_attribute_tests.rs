@@ -10,7 +10,7 @@ use tsz_checker::test_utils::load_compiled_lib_files;
 use tsz_common::checker_options::{CheckerOptions, JsxMode};
 use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Compile JSX source with inline JSX namespace and return diagnostics.
 fn jsx_diagnostics(source: &str) -> Vec<(u32, String)> {
@@ -2513,6 +2513,67 @@ fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
         !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "real react16 fixture should not emit TS7006, got: {diags:?}"
     );
+}
+
+#[test]
+fn jsx_generic_spread_optional_write_surface_still_rejects_mismatched_value() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class Component<P> {{ props: P; }}
+interface SelectProps<T> {{ value?: T; flag?: boolean; }}
+declare class Select<T extends string> extends Component<SelectProps<T>> {{}}
+
+function wrap<T extends string>(props: {{ value?: T }}) {{
+    return <Select<T> {{...props}} value={{123}} flag={{false}} />;
+}}
+"#
+    );
+
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "mismatched explicit JSX value should still emit TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_complex_signature_react16_fixture_accepts_optional_value_attr() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let Some(mut source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/jsxComplexSignatureHasApplicabilityError.tsx",
+    ) else {
+        return;
+    };
+    source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
+
+    let renamed = source.replace("WrappedProps", "W");
+    for (label, source) in [("original", source.as_str()), ("renamed", renamed.as_str())] {
+        let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(
+            &react_types,
+            source,
+            CheckerOptions {
+                jsx_mode: JsxMode::React,
+                strict: true,
+                strict_null_checks: true,
+                no_implicit_any: true,
+                strict_function_types: true,
+                strict_bind_call_apply: true,
+                strict_property_initialization: true,
+                no_implicit_this: true,
+                always_strict: true,
+                ..CheckerOptions::default()
+            },
+            true,
+        );
+
+        assert!(
+            !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            "`jsxComplexSignatureHasApplicabilityError.tsx` ({label}) should not emit TS2322, got: {diags:?}"
+        );
+    }
 }
 
 #[test]

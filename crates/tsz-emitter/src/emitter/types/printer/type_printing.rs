@@ -368,9 +368,11 @@ impl<'a> TypePrinter<'a> {
         }
 
         // Type-literal and interface accessors have no parent class symbol, so
-        // the parent_id check below cannot detect them; use the structural
-        // split-accessor encoding instead.
-        if property.has_split_accessor() {
+        // the parent_id check below cannot detect them. Synthetic structural
+        // setter-only properties use an undefined read type as an absent-read
+        // sentinel; keep those in property-signature form so the write type is
+        // used as the declaration surface.
+        if property.has_split_accessor() && property.type_id != TypeId::UNDEFINED {
             return true;
         }
 
@@ -2619,7 +2621,7 @@ impl<'a> TypePrinter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
     use tsz_solver::types::{TupleElement, TypeId, TypeParamInfo};
 
     use super::TypePrinter;

@@ -314,8 +314,8 @@ pub struct Printer<'a> {
     /// Emit `void 0` for missing initializers during recovery.
     pub(crate) emit_missing_initializer_as_void_0: bool,
 
-    /// Function depth whose loop body should reset initializerless lexical bindings.
-    pub(crate) loop_body_missing_initializer_function_depth: Option<u32>,
+    /// Function depth whose ES5 lexical block should reset initializerless bindings.
+    pub(crate) lexical_block_missing_initializer_function_depth: Option<u32>,
 
     /// Current declaration list is being printed in a `for` header.
     pub(crate) in_for_initializer: bool,
@@ -559,6 +559,10 @@ pub struct Printer<'a> {
     /// newline. The next `write()` call should insert a space before non-whitespace text.
     /// This avoids double-spacing with expression emitters that handle their own comment spacing.
     pub(crate) pending_block_comment_space: bool,
+
+    /// Source range end where concise-arrow trailing comments should be deferred
+    /// to an owning semicolon when the source semicolon follows the arrow body.
+    pub(crate) arrow_concise_body_trailing_comment_defer_range: Option<(u32, u32)>,
 
     /// When true, suppress namespace identifier qualification (emitting a declaration name).
     pub(crate) suppress_ns_qualification: bool,
@@ -1097,7 +1101,7 @@ impl<'a> Printer<'a> {
             transforms: TransformContext::new(), // Empty by default, can be set later
             emit_plan,
             emit_missing_initializer_as_void_0: false,
-            loop_body_missing_initializer_function_depth: None,
+            lexical_block_missing_initializer_function_depth: None,
             in_for_initializer: false,
             source_text: None,
             jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts::default(),
@@ -1163,6 +1167,7 @@ impl<'a> Printer<'a> {
             deferred_local_export_bindings_all: None,
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
+            arrow_concise_body_trailing_comment_defer_range: None,
             pending_class_field_inits: Vec::new(),
             pending_auto_accessor_inits: Vec::new(),
             next_auto_accessor_name_index: 0,
@@ -1628,6 +1633,26 @@ impl<'a> Printer<'a> {
         self.scoped_static_super_base_alias = prev_super_alias;
         self.scoped_static_super_index_alias = prev_super_index_alias;
         self.scoped_static_super_index_value_access = prev_super_index_value;
+    }
+
+    /// Enter the CommonJS-export-body mask while emitting `f`: clear
+    /// `options.module` to `None` (so inner statements do not re-apply
+    /// module-level transforms) and save the outer module on
+    /// `cjs_export_body_outer_module` (so dynamic-import lowering, helper
+    /// detection, and sub-emitters still see the outer kind through the
+    /// `outer_module_kind()` / `is_effectively_commonjs()` predicates).
+    pub(in crate::emitter) fn with_cjs_export_body_mask<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let prev_module = self.ctx.options.module;
+        let prev_outer = self.ctx.cjs_export_body_outer_module;
+        self.ctx.options.module = ModuleKind::None;
+        self.ctx.cjs_export_body_outer_module = Some(prev_module);
+        let result = f(self);
+        self.ctx.options.module = prev_module;
+        self.ctx.cjs_export_body_outer_module = prev_outer;
+        result
     }
 
     pub(in crate::emitter) fn with_scoped_static_initializer_context_cleared<R>(

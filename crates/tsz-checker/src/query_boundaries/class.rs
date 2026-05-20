@@ -1,7 +1,8 @@
 use crate::class_checker::ClassMemberInfo;
 use crate::state::CheckerState;
 use tsz_parser::NodeIndex;
-use tsz_solver::{QueryDatabase, TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 
 pub(crate) fn maybe_substitute_this_type(
     db: &dyn QueryDatabase,

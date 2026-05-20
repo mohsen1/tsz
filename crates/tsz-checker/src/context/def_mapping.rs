@@ -1532,7 +1532,7 @@ impl<'a> CheckerContext<'a> {
             return 0;
         }
 
-        let mappings = self.definition_store.all_symbol_mappings();
+        let mappings = self.definition_store.all_symbol_mappings_snapshot();
         let mut count = 0;
 
         // Hold both RefCell borrows for the entire loop. The previous
@@ -1552,8 +1552,8 @@ impl<'a> CheckerContext<'a> {
             d2s.reserve(additional);
         }
 
-        for (raw_sym_id, def_id) in &mappings {
-            let sym_id = tsz_binder::SymbolId(*raw_sym_id);
+        for &(raw_sym_id, def_id) in mappings.iter() {
+            let sym_id = tsz_binder::SymbolId(raw_sym_id);
 
             // Skip if already in local cache (e.g., from a prior warm pass).
             if s2d.contains_key(&sym_id) {
@@ -1574,8 +1574,8 @@ impl<'a> CheckerContext<'a> {
                 continue;
             }
 
-            s2d.insert(sym_id, *def_id);
-            d2s.insert(*def_id, sym_id);
+            s2d.insert(sym_id, def_id);
+            d2s.insert(def_id, sym_id);
 
             // NOTE: DefKind registration is intentionally skipped here.
             // The TypeEnvironment is rebuilt from scratch in build_type_environment()
@@ -1725,10 +1725,11 @@ impl<'a> CheckerContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::super::{CheckerContext, CheckerOptions};
-    use crate::query_boundaries::common::{TypeEnvironment, TypeInterner};
     use std::sync::Arc;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
+    use tsz_solver::computation::TypeEnvironment;
+    use tsz_solver::construction::TypeInterner;
     use tsz_solver::def::DefinitionInfo;
 
     fn minimal_checker_ctx() -> (

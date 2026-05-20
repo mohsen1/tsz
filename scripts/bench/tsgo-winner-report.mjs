@@ -87,6 +87,80 @@ function lossClosureForRow(row) {
   return LOSS_CLOSURE_BY_ROW.get(row.name) ?? null;
 }
 
+function measurementProfileStatus(input) {
+  const profile = input?.measurement_profile;
+  if (!profile || typeof profile !== "object") {
+    return {
+      present: false,
+      mode: null,
+      warning: "measurement_profile missing",
+    };
+  }
+
+  const mode = typeof profile.mode === "string" && profile.mode ? profile.mode : null;
+  return {
+    present: true,
+    mode,
+    warning: mode ? null : "measurement_profile.mode missing",
+  };
+}
+
+function pickAttributionArtifact(row) {
+  return (
+    row?.attribution_artifact ??
+    row?.performance_attribution ??
+    row?.attribution ??
+    row?.compatibility?.attribution_artifact ??
+    row?.compatibility?.performance_attribution ??
+    row?.compatibility?.attribution ??
+    null
+  );
+}
+
+function attributionStatusForRow(row) {
+  const artifact = pickAttributionArtifact(row);
+  if (!artifact) {
+    return {
+      present: false,
+      path: null,
+      url: null,
+      generated_at: null,
+      mode: null,
+      dominant_subsystem: null,
+      warning: "attribution artifact missing",
+    };
+  }
+
+  if (typeof artifact === "string") {
+    return {
+      present: true,
+      path: artifact,
+      url: null,
+      generated_at: null,
+      mode: null,
+      dominant_subsystem: null,
+      warning: "attribution dominant_subsystem missing",
+    };
+  }
+
+  const pathValue = artifact.path ?? artifact.file ?? artifact.artifact ?? null;
+  const urlValue = artifact.url ?? null;
+  const dominantSubsystem = artifact.dominant_subsystem ?? artifact.dominantSubsystem ?? null;
+  return {
+    present: true,
+    path: pathValue,
+    url: urlValue,
+    generated_at: artifact.generated_at ?? artifact.generatedAt ?? null,
+    mode: artifact.mode ?? null,
+    dominant_subsystem: dominantSubsystem,
+    warning: dominantSubsystem ? null : "attribution dominant_subsystem missing",
+  };
+}
+
+function hasCompleteAttribution(status) {
+  return Boolean(status?.present && status?.dominant_subsystem);
+}
+
 // Null factors sort last (treated as the lowest possible value) so that rows
 // with a real factor always appear before rows with an unknown factor.
 function factorForSort(value) {
@@ -119,14 +193,22 @@ export function createTsgoWinnerReport(input, inputPath) {
       lines: asNumber(row.lines),
       kb: asNumber(row.kb),
       project_files: asNumber(row.project_files),
+      files_reached: asNumber(row.compatibility?.files_reached ?? row.project_files),
+      peak_memory_bytes: asNumber(row.compatibility?.peak_memory_bytes),
+      exit_class: row.compatibility?.exit_class ?? null,
       semantic_owner_family: row.compatibility?.semantic_owner_family ?? null,
       loss_closure: lossClosureForRow(row),
+      attribution_status: attributionStatusForRow(row),
     }))
     .sort(compareWinnersByFactorDesc);
 
   const projects = winners.filter((row) => row.semantic_owner_family);
   const missingLossClosureRows = winners
     .filter((row) => !row.loss_closure)
+    .map((row) => row.name)
+    .sort();
+  const missingAttributionRows = winners
+    .filter((row) => !hasCompleteAttribution(row.attribution_status))
     .map((row) => row.name)
     .sort();
   const byOwnerFamily = new Map();
@@ -158,8 +240,11 @@ export function createTsgoWinnerReport(input, inputPath) {
       project_green_tsgo_winners: projects.length,
       green_tsgo_winners_with_closure: winners.length - missingLossClosureRows.length,
       missing_loss_closure_rows: missingLossClosureRows,
+      green_tsgo_winners_with_attribution: winners.length - missingAttributionRows.length,
+      missing_attribution_rows: missingAttributionRows,
       incomplete_compat_excluded: incompleteCompatExcluded,
     },
+    measurement_profile: measurementProfileStatus(input),
     worst: winners[0] ?? null,
     by_owner_family: [...byOwnerFamily.values()].sort(compareFamiliesByWorstFactorDesc),
     rows: winners,

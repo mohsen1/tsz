@@ -223,6 +223,45 @@ assert.deepEqual(
 );
 
 assert.deepEqual(
+  validate([
+    (() => {
+      const row = validRow({
+        category: "generated",
+        generated_by: "scripts/bench/generate-vite-app-fixture.mjs",
+        guard_set: null,
+      });
+      delete row.repo;
+      delete row.repo_env;
+      delete row.ref;
+      delete row.ref_env;
+      return row;
+    })(),
+  ]),
+  [
+    "example-project: required generated benchmark row with generated_by must set guard_set required",
+  ],
+);
+
+assert.deepEqual(
+  validate([
+    (() => {
+      const row = validRow({
+        category: "generated",
+        generated_by: "scripts/bench/generate-missing-fixture.mjs",
+      });
+      delete row.repo;
+      delete row.repo_env;
+      delete row.ref;
+      delete row.ref_env;
+      return row;
+    })(),
+  ]),
+  [
+    "example-project: generated_by script does not exist: scripts/bench/generate-missing-fixture.mjs",
+  ],
+);
+
+assert.deepEqual(
   validate([validRow()], {
     requiredProjectRows: ["missing-required"],
     compileGuardRequiredRows: ["missing-guard-required"],

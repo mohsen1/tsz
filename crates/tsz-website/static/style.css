@@ -379,6 +379,11 @@ tr:nth-child(even) { background: var(--table-stripe); }
   white-space: nowrap;
 }
 
+.compat-note {
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+}
+
 /* ── Alert ── */
 .alert {
   border-radius: 8px;
@@ -816,11 +821,71 @@ tr:nth-child(even) { background: var(--table-stripe); }
   border-top: 1px solid var(--border-subtle);
 }
 
+.compat-table-wrap {
+  overflow-x: auto;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.compat-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.compat-table th,
+.compat-table td {
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+
+.compat-table th {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.compat-sort-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: 0;
+}
+
+.compat-sort-button::after {
+  content: "+";
+  margin-left: 0.25rem;
+  opacity: 0.45;
+}
+
+.compat-sort-button[aria-sort="ascending"]::after {
+  content: "^";
+  opacity: 0.85;
+}
+
+.compat-sort-button[aria-sort="descending"]::after {
+  content: "v";
+  opacity: 0.85;
+}
+
 .compat-item {
   padding: 0.45rem 0;
   border-bottom: 1px solid var(--border-subtle);
   font-size: 0.9rem;
   line-height: 1.45;
+}
+
+.compat-table .compat-item {
+  padding: 0;
+  border-bottom: 0;
+  font-size: inherit;
 }
 
 .compat-row-main,

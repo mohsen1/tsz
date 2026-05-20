@@ -924,10 +924,13 @@ impl<'a> EnumES5Transformer<'a> {
                 }
             }
 
-            // Arrow function / function expression: use raw source text
-            k if k == syntax_kind_ext::ARROW_FUNCTION
-                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
-            {
+            // Arrow functions need normal AST printing so parser-recovered
+            // arrows are emitted in canonical form instead of preserving an
+            // illegal source line break before `=>`.
+            k if k == syntax_kind_ext::ARROW_FUNCTION => IRNode::ASTRef(idx),
+
+            // Function expression: use raw source text
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
                 if let Some(text) = self.source_text {
                     let start = node.pos as usize;
                     // Use body end as a tighter bound - node.end may extend

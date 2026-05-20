@@ -409,7 +409,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     fn resolve_ref(
         &self,
         symbol: tsz_solver::SymbolRef,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         let sym_id = tsz_binder::SymbolId(symbol.0);
         self.symbol_types.get(&sym_id).copied()
@@ -432,7 +432,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     fn resolve_lazy(
         &self,
         def_id: tsz_solver::DefId,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         use tsz_binder::symbol_flags;
 
@@ -528,7 +528,19 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                             | tsz_solver::def::DefKind::Interface
                             | tsz_solver::def::DefKind::TypeAlias
                     ) {
-                        return Some(*instance_type);
+                        let type_alias_self_wrapper = kind == tsz_solver::def::DefKind::TypeAlias
+                            && crate::query_boundaries::definition_identity::is_lazy_def_identity(
+                                self.types,
+                                *instance_type,
+                                def_id,
+                            );
+                        // A type-alias self wrapper is its public identity,
+                        // not a structural body. Let inference/evaluation
+                        // fall through to the type environment or
+                        // DefinitionStore body for transparent aliases.
+                        if !type_alias_self_wrapper {
+                            return Some(*instance_type);
+                        }
                     }
                 } else {
                     // Fallback: look up symbol flags from binder (primary binder only,
@@ -731,7 +743,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
 
     fn resolve_this_type(
         &self,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         // Prefer the active `this` binding from the checker stack. Class-member
         // checking pushes the concrete receiver type here, which is more precise
@@ -848,7 +860,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     fn get_base_type(
         &self,
         type_id: tsz_solver::TypeId,
-        interner: &dyn tsz_solver::TypeDatabase,
+        interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         use crate::query_boundaries::common::callable_shape_id;
         use crate::query_boundaries::common::{lazy_def_id, object_symbol};
@@ -1145,7 +1157,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     fn is_enum_type(
         &self,
         type_id: tsz_solver::TypeId,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> bool {
         use tsz_binder::symbol_flags;
 

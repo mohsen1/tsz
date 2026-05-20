@@ -7,7 +7,7 @@ use super::accessors::get_object_shape;
 use super::content_predicates::{
     contains_infer_types_db, contains_type_parameters_db, get_intersection_members,
 };
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
@@ -361,6 +361,21 @@ pub fn construct_return_type_for_type(db: &dyn TypeDatabase, type_id: TypeId) ->
                 None
             }
         }
+        InstanceTypeKind::Intersection(members) => {
+            let returns = members
+                .into_iter()
+                .filter_map(|member| construct_return_type_for_type(db, member))
+                .collect::<Vec<_>>();
+            (!returns.is_empty()).then(|| crate::utils::intersection_or_single(db, returns))
+        }
+        InstanceTypeKind::Union(members) => {
+            let mut returns = Vec::with_capacity(members.len());
+            for member in members {
+                returns.push(construct_return_type_for_type(db, member)?);
+            }
+            (!returns.is_empty()).then(|| crate::utils::union_or_single(db, returns))
+        }
+        InstanceTypeKind::Readonly(inner) => construct_return_type_for_type(db, inner),
         _ => None,
     }
 }
@@ -1246,7 +1261,7 @@ pub(crate) fn narrow_keyof_intersection_member_by_literal_discriminants(
                     return true;
                 };
                 !crate::type_queries::is_unit_type(db, prop.type_id)
-                    || crate::is_subtype_of(db, disc_type, prop.type_id)
+                    || crate::relations::subtype::is_subtype_of(db, disc_type, prop.type_id)
             })
         })
         .collect();
@@ -1287,8 +1302,8 @@ fn intersection_has_impossible_literal_discriminants(
 
             let seen = discriminants.entry(prop.name).or_default();
             if seen.iter().any(|&other| {
-                !crate::is_subtype_of(db, prop.type_id, other)
-                    && !crate::is_subtype_of(db, other, prop.type_id)
+                !crate::relations::subtype::is_subtype_of(db, prop.type_id, other)
+                    && !crate::relations::subtype::is_subtype_of(db, other, prop.type_id)
             }) {
                 return true;
             }
@@ -1348,7 +1363,8 @@ fn unit_intersection_is_impossible(db: &dyn TypeDatabase, type_id: TypeId) -> bo
             continue;
         }
         if units.iter().any(|&other| {
-            !crate::is_subtype_of(db, member, other) && !crate::is_subtype_of(db, other, member)
+            !crate::relations::subtype::is_subtype_of(db, member, other)
+                && !crate::relations::subtype::is_subtype_of(db, other, member)
         }) {
             return true;
         }
@@ -1460,11 +1476,13 @@ fn resolve_concrete_conditional_result(
         return None;
     }
 
-    Some(if crate::is_subtype_of(db, check_type, extends_type) {
-        cond.true_type
-    } else {
-        cond.false_type
-    })
+    Some(
+        if crate::relations::subtype::is_subtype_of(db, check_type, extends_type) {
+            cond.true_type
+        } else {
+            cond.false_type
+        },
+    )
 }
 
 /// Find the private brand name for a type.

@@ -3,7 +3,7 @@ use super::flow_dp::{DpMemo, DpState};
 use tsz_binder::{FlowNodeId, flow_flags};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeofKind;
+use tsz_solver::narrowing::TypeofKind;
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) const ALL_TYPEOF_EXCLUSIONS: u8 = 0b1111_1111;

@@ -389,6 +389,7 @@ run_lint() {
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
   python3 scripts/ci/test_ci_resources.py || return $?
+  python3 scripts/ci/test_gcp_full_ci_conformance_artifacts.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
@@ -651,6 +652,7 @@ build_test_binaries() {
   ci_section "Build dist-fast test binaries"
   local binaries=(
     .target/dist-fast/tsz
+    .target/dist-fast/tsz-lsp
     .target/dist-fast/tsz-server
     .target/dist-fast/tsz-conformance
     .target/dist-fast/generate-tsc-cache
@@ -682,6 +684,7 @@ build_test_binaries() {
     echo "Using cached dist-fast binaries"
     ls -lh "${binaries[@]}"
     mkdir -p .target/release
+    ln -sf "$ROOT_DIR/.target/dist-fast/tsz-lsp" .target/release/tsz-lsp
     ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
     return 0
   fi
@@ -702,6 +705,7 @@ build_test_binaries() {
     -p tsz-cli \
     -p tsz-conformance \
     --bin tsz \
+    --bin tsz-lsp \
     --bin tsz-server \
     --bin tsz-conformance \
     --bin generate-tsc-cache
@@ -713,6 +717,7 @@ build_test_binaries() {
     return "$cargo_rc"
   fi
   mkdir -p .target/release
+  ln -sf "$ROOT_DIR/.target/dist-fast/tsz-lsp" .target/release/tsz-lsp
   ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
   ls -lh "${binaries[@]}"
 }
@@ -896,6 +901,8 @@ for path in test_dir.rglob("*"):
     if not path.is_file():
         continue
     path_str = path.as_posix()
+    if path.name.startswith("._"):
+        continue
     if path.suffix not in source_suffixes:
         continue
     if path_str.endswith(declaration_suffixes):
@@ -1073,6 +1080,11 @@ run_conformance() {
   echo "Conformance aggregate: ${total_passed}/${total_tests}"
   echo "Conformance skipped: ${skipped_tests}"
 
+  local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
+  grep -a '^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
+    | sed 's/^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
+    | sort -u > "$failures_file" 2>/dev/null || true
+
   if [[ "$rc" -ne 0 ]]; then
     echo "error: conformance wrapper failed" >&2
     show_log_tail "$log_file"
@@ -1107,10 +1119,6 @@ run_conformance() {
       fi
 
       # Upload per-shard FAIL list so aggregate can show which tests regressed.
-      local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
-      grep -a '^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
-        | sed 's/^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
-        | sort -u > "$failures_file" 2>/dev/null || true
       if [[ -s "$failures_file" ]]; then
         gsutil -q cp "$failures_file" \
           "${bucket%/}/conformance-runs/${run_key}/failures-shard-${shard_index}.txt" 2>/dev/null \
@@ -1166,6 +1174,10 @@ run_conformance_aggregate() {
       local shard_name
       shard_name="$(basename "$shard_dir")"
       cp "$json" "$tmp_dir/shard-${shard_name#conformance-shard-}.json"
+      local artifact_failure_list="$shard_dir/.ci-metrics/conformance-failures-${shard_name#conformance-shard-}.txt"
+      if [[ -f "$artifact_failure_list" ]]; then
+        cp "$artifact_failure_list" "$tmp_dir/failures-shard-${shard_name#conformance-shard-}.txt"
+      fi
       found=$(( found + 1 ))
     done
     if [[ "$found" -gt 0 ]]; then
@@ -1299,7 +1311,9 @@ _check_conformance_regression_allowlist() {
     return 1
   fi
 
-  if [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+  if compgen -G "$tmp_dir/failures-shard-*.txt" >/dev/null; then
+    :
+  elif [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
     echo "error: conformance regression deficit ${expected_deficit}, but per-shard failure lists are unavailable" >&2
     return 1
   fi
@@ -1368,7 +1382,9 @@ _show_conformance_regressions() {
   local snapshot="scripts/conformance/conformance-detail.json"
 
   # Download all per-shard failure lists (best-effort; non-fatal if missing).
-  if [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+  if compgen -G "$tmp_dir/failures-shard-*.txt" >/dev/null; then
+    :
+  elif [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
     echo "(no per-shard failure lists available — upload may have been skipped)" >&2
     return
   fi
@@ -1919,6 +1935,16 @@ run_node_harness_prep() {
   timed prep_node_artifacts prep_node_artifacts
 }
 
+run_lsp_e2e_smoke() {
+  ci_section "LSP protocol smoke"
+  local bin="$ROOT_DIR/.target/dist-fast/tsz-lsp"
+  if [[ ! -x "$bin" ]]; then
+    echo "error: expected executable dist-fast LSP binary at $bin" >&2
+    return 1
+  fi
+  node scripts/lsp/e2e-smoke.mjs "$bin"
+}
+
 run_build() {
   ci_section "Build dist-fast binaries (upload for parallel jobs)"
   timed build_test_binaries build_test_binaries
@@ -2017,6 +2043,9 @@ main() {
       ;;
     unit-shard)
       timed run_unit_shard run_unit_shard
+      ;;
+    lsp-e2e)
+      timed run_lsp_e2e_smoke run_lsp_e2e_smoke
       ;;
     wasm)
       timed build_wasm build_wasm

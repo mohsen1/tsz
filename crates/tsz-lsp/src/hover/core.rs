@@ -4,7 +4,7 @@
 //! building display strings, and extracting symbol metadata.
 
 use super::{HoverInfo, HoverProvider, format};
-use crate::jsdoc::{jsdoc_for_node, parse_jsdoc};
+use crate::jsdoc::{escape_markdown_label, format_inline_code, jsdoc_for_node, parse_jsdoc};
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::utils::{
     find_symbol_query_node_at_or_before, is_comment_context, should_backtrack_to_previous_symbol,
@@ -1847,14 +1847,14 @@ impl<'a> HoverProvider<'a> {
 
         let parsed = parse_jsdoc(doc);
         if parsed.is_empty() {
-            return Some(doc.to_string());
+            return Some(escape_markdown_label(doc));
         }
 
         let mut sections = Vec::new();
         if let Some(summary) = parsed.summary.as_ref()
             && !summary.is_empty()
         {
-            sections.push(summary.clone());
+            sections.push(escape_markdown_label(summary));
         }
 
         if !parsed.params.is_empty() {
@@ -1864,10 +1864,11 @@ impl<'a> HoverProvider<'a> {
             lines.push("Parameters:".to_string());
             for name in names {
                 let desc = parsed.params.get(name).map_or("", |s| s.as_str());
+                let name_code = format_inline_code(name);
                 if desc.is_empty() {
-                    lines.push(format!("- `{name}`"));
+                    lines.push(format!("- {name_code}"));
                 } else {
-                    lines.push(format!("- `{name}` {desc}"));
+                    lines.push(format!("- {name_code} {}", escape_markdown_label(desc)));
                 }
             }
             sections.push(lines.join("\n"));
@@ -1877,30 +1878,37 @@ impl<'a> HoverProvider<'a> {
         for tag in &parsed.tags {
             match tag.name.as_str() {
                 "returns" if !tag.text.is_empty() => {
-                    sections.push(format!("Returns: {}", tag.text));
+                    sections.push(format!("Returns: {}", escape_markdown_label(&tag.text)));
                 }
                 "example" => {
+                    // Fenced code blocks render `tag.text` verbatim, so they
+                    // do not need inline escaping. Re-fence with enough
+                    // backticks to outlast any fence in the example.
                     if tag.text.is_empty() {
                         sections.push("Example:".to_string());
                     } else {
-                        sections.push(format!("Example:\n```\n{}\n```", tag.text));
+                        let fence: String = "`".repeat(pick_example_fence_length(&tag.text));
+                        sections.push(format!("Example:\n{fence}\n{}\n{fence}", tag.text));
                     }
                 }
                 "deprecated" => {
                     if tag.text.is_empty() {
                         sections.push("**@deprecated**".to_string());
                     } else {
-                        sections.push(format!("**@deprecated** {}", tag.text));
+                        sections.push(format!(
+                            "**@deprecated** {}",
+                            escape_markdown_label(&tag.text)
+                        ));
                     }
                 }
                 "see" if !tag.text.is_empty() => {
-                    sections.push(format!("See: {}", tag.text));
+                    sections.push(format!("See: {}", escape_markdown_label(&tag.text)));
                 }
                 "throws" | "exception" if !tag.text.is_empty() => {
-                    sections.push(format!("Throws: {}", tag.text));
+                    sections.push(format!("Throws: {}", escape_markdown_label(&tag.text)));
                 }
                 "since" if !tag.text.is_empty() => {
-                    sections.push(format!("Since: {}", tag.text));
+                    sections.push(format!("Since: {}", escape_markdown_label(&tag.text)));
                 }
                 _ => {}
             }
@@ -1908,9 +1916,22 @@ impl<'a> HoverProvider<'a> {
 
         let formatted = sections.join("\n\n");
         if formatted.is_empty() {
-            Some(doc.to_string())
+            Some(escape_markdown_label(doc))
         } else {
             Some(formatted)
         }
     }
+}
+
+/// Pick a fence length for an `@example` code block. `CommonMark` §4.5 requires
+/// the closing fence to be at least as long as the opening fence, so the
+/// returned length must exceed every backtick-only line prefix inside `text`.
+/// The minimum is three to match the conventional ` ``` ` fence.
+fn pick_example_fence_length(text: &str) -> usize {
+    let longest_inner_fence = text
+        .lines()
+        .map(|line| line.chars().take_while(|c| *c == '`').count())
+        .max()
+        .unwrap_or(0);
+    (longest_inner_fence + 1).max(3)
 }

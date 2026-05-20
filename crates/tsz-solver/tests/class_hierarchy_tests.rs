@@ -4,7 +4,7 @@ use tsz_binder::SymbolId;
 
 #[test]
 fn test_merge_properties() {
-    let interner = crate::TypeInterner::new();
+    let interner = crate::construction::TypeInterner::new();
 
     let name_atom = interner.intern_string("name");
     let age_atom = interner.intern_string("age");

@@ -1,6 +1,7 @@
 use super::*;
 use crate::parallel::residency::{MemoryPressure, ResidencyBudget};
 use crate::parallel::skeleton::diff_skeletons;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fs;
 use std::path::Path;
 use tsz_common::common::ModuleKind;
@@ -131,6 +132,38 @@ fn test_normalize_lib_reference_name_handles_legacy_and_nested_lib_names() {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_rayon_worker_count_for_work_items_caps_only_small_implicit_workloads() {
+    assert_eq!(rayon_worker_count_for_work_items(4, 16, false), Some(4));
+    assert_eq!(rayon_worker_count_for_work_items(4, 2, false), Some(2));
+    assert_eq!(rayon_worker_count_for_work_items(0, 16, false), None);
+    assert_eq!(rayon_worker_count_for_work_items(33, 16, false), None);
+    assert_eq!(rayon_worker_count_for_work_items(4, 16, true), None);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_small_workload_rayon_pool_does_not_cap_global_pool() {
+    if std::env::var_os("RAYON_NUM_THREADS").is_some() {
+        return;
+    }
+    let available = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1);
+    let small_threads = run_with_rayon_pool_for_work_items(4, rayon::current_num_threads);
+    assert_eq!(small_threads, available.clamp(1, 4));
+
+    ensure_rayon_global_pool();
+    let global_threads = rayon::current_num_threads();
+    if available > 4 {
+        assert!(
+            global_threads > small_threads,
+            "small workload runner must use a scoped pool, not permanently cap the global pool"
+        );
+    }
+}
+
 #[test]
 fn test_resolve_lib_reference_path_prefers_available_candidate_names() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
@@ -150,6 +183,95 @@ fn test_resolve_lib_reference_path_prefers_available_candidate_names() {
     assert_eq!(wrapped_path, lib_dir.join("lib.custom.d.ts"));
 
     assert!(resolve_lib_reference_path(base_path, "nonexistent").is_none());
+}
+
+#[test]
+fn test_resolve_lib_reference_path_uses_embedded_virtual_root_without_disk_probe_shape() {
+    let base_path = Path::new("/embedded-lib/es2020.d.ts");
+
+    let es5 = resolve_lib_reference_path(base_path, "lib.es5.d.ts").expect("resolve es5");
+    assert_eq!(es5, Path::new("/embedded-lib/es5.d.ts"));
+
+    let dom = resolve_lib_reference_path(base_path, "dom.generated").expect("resolve dom");
+    assert_eq!(dom, Path::new("/embedded-lib/dom.d.ts"));
+
+    assert!(resolve_lib_reference_path(base_path, "definitely-not-a-lib").is_none());
+}
+
+#[test]
+fn test_resolve_generated_embedded_lib_reference_path_uses_normalized_refs() {
+    let dom = resolve_generated_embedded_lib_reference_path("dom");
+    assert_eq!(dom, Path::new("/embedded-lib/dom.d.ts"));
+
+    let es5 = resolve_generated_embedded_lib_reference_path("lib.d.ts");
+    assert_eq!(es5, Path::new("/embedded-lib/es5.d.ts"));
+}
+
+#[test]
+fn test_collect_lib_files_recursive_cached_reads_embedded_virtual_root_as_static() {
+    let mut loaded = FxHashSet::default();
+    let mut file_contents = Vec::new();
+    let file_cache = FxHashMap::default();
+
+    collect_lib_files_recursive_cached(
+        Path::new("/embedded-lib/es2020.d.ts"),
+        &mut loaded,
+        &mut file_contents,
+        &file_cache,
+    )
+    .expect("collect embedded lib files");
+
+    let (_, source_text) = file_contents
+        .iter()
+        .find(|(name, _)| name == "/embedded-lib/es2020.d.ts")
+        .expect("es2020 entry");
+    assert!(matches!(
+        source_text,
+        LibSourceText::Static {
+            text: _,
+            content_hash: _
+        }
+    ));
+    assert!(loaded.iter().all(|path| path.starts_with("/embedded-lib")));
+}
+
+#[test]
+fn test_collect_lib_files_recursive_cached_uses_owned_references_for_physical_libs() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let es2020_path = temp_dir.path().join("lib.es2020.d.ts");
+    let custom_path = temp_dir.path().join("lib.custom.d.ts");
+    fs::write(&es2020_path, "").expect("write es2020 lib");
+    fs::write(&custom_path, "").expect("write custom lib");
+
+    let es2020_path = es2020_path.canonicalize().expect("canonical es2020");
+    let custom_path = custom_path.canonicalize().expect("canonical custom");
+    let mut file_cache = FxHashMap::default();
+    file_cache.insert(
+        es2020_path.clone(),
+        "/// <reference lib=\"custom\" />\ninterface PhysicalEs2020 {}\n".to_string(),
+    );
+    file_cache.insert(
+        custom_path.clone(),
+        "interface PhysicalCustom {}\n".to_string(),
+    );
+
+    let mut loaded = FxHashSet::default();
+    let mut file_contents = Vec::new();
+    collect_lib_files_recursive_cached(&es2020_path, &mut loaded, &mut file_contents, &file_cache)
+        .expect("collect physical lib files");
+
+    assert!(
+        file_contents
+            .iter()
+            .any(|(name, _)| name == custom_path.to_string_lossy().as_ref()),
+        "physical lib references should be parsed from owned source text"
+    );
+    assert!(
+        file_contents
+            .iter()
+            .all(|(name, _)| !name.starts_with("/embedded-lib")),
+        "physical libs must not use embedded reference metadata"
+    );
 }
 
 #[test]
@@ -502,6 +624,32 @@ fn test_load_lib_files_for_binding_strict_recurses_reference_libs() {
         "Expected at least 3 loaded lib files, got {}",
         names.len()
     );
+}
+
+#[test]
+fn clone_lib_files_for_checker_creates_distinct_parsed_bound_copies() {
+    let lib = std::sync::Arc::new(tsz_binder::lib_loader::LibFile::from_source(
+        "lib.test.d.ts".to_string(),
+        "interface Array<T> { length: number; }\ninterface Promise<T> { then(): Promise<T>; }\n"
+            .to_string(),
+    ));
+
+    let cloned = clone_lib_files_for_checker(&[std::sync::Arc::clone(&lib)], false);
+
+    assert_eq!(cloned.len(), 1);
+    let cloned_lib = &cloned[0];
+    assert_eq!(cloned_lib.file_name, lib.file_name);
+    assert_eq!(cloned_lib.root_index, lib.root_index);
+    assert!(
+        !std::sync::Arc::ptr_eq(&cloned_lib.arena, &lib.arena),
+        "checker lib clone must have independent arena identity",
+    );
+    assert!(
+        !std::sync::Arc::ptr_eq(&cloned_lib.binder, &lib.binder),
+        "checker lib clone must have independent binder identity",
+    );
+    assert_eq!(cloned_lib.arena.len(), lib.arena.len());
+    assert_eq!(cloned_lib.binder.symbols.len(), lib.binder.symbols.len());
 }
 
 #[test]
@@ -1921,32 +2069,44 @@ c = d;
                 tsz_solver::visitor::lazy_def_id(&program.type_interner, app.base)
             },
         ) {
-        let variances = tsz_solver::QueryDatabase::get_type_param_variance(&query_cache, def_id)
-            .map(|variances| format!("{variances:?}"))
-            .unwrap_or_else(|| "<none>".to_string());
-        let params = tsz_solver::TypeResolver::get_lazy_type_params(&query_cache, def_id)
-            .map(|params| format!("{params:?}"))
-            .unwrap_or_else(|| "<none>".to_string());
-        let body =
-            tsz_solver::TypeResolver::resolve_lazy(&query_cache, def_id, &program.type_interner)
-                .map(|body| checker.format_type(body))
+        let variances =
+            tsz_solver::construction::QueryDatabase::get_type_param_variance(&query_cache, def_id)
+                .map(|variances| format!("{variances:?}"))
                 .unwrap_or_else(|| "<none>".to_string());
+        let params = tsz_solver::relations::subtype::TypeResolver::get_lazy_type_params(
+            &query_cache,
+            def_id,
+        )
+        .map(|params| format!("{params:?}"))
+        .unwrap_or_else(|| "<none>".to_string());
+        let body = tsz_solver::relations::subtype::TypeResolver::resolve_lazy(
+            &query_cache,
+            def_id,
+            &program.type_interner,
+        )
+        .map(|body| checker.format_type(body))
+        .unwrap_or_else(|| "<none>".to_string());
         let ctx_params = checker
             .ctx
             .get_def_type_params(def_id)
             .map(|params| format!("{params:?}"))
             .unwrap_or_else(|| "<none>".to_string());
-        let ctx_body =
-            tsz_solver::TypeResolver::resolve_lazy(&checker.ctx, def_id, &program.type_interner)
-                .map(|body| checker.format_type(body))
-                .unwrap_or_else(|| "<none>".to_string());
-        let policy = tsz_solver::RelationPolicy::from_flags(checker.ctx.pack_relation_flags());
-        let context = tsz_solver::RelationContext {
+        let ctx_body = tsz_solver::relations::subtype::TypeResolver::resolve_lazy(
+            &checker.ctx,
+            def_id,
+            &program.type_interner,
+        )
+        .map(|body| checker.format_type(body))
+        .unwrap_or_else(|| "<none>".to_string());
+        let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
+            checker.ctx.pack_relation_flags(),
+        );
+        let context = tsz_solver::relations::relation_queries::RelationContext {
             query_db: Some(&query_cache),
             inheritance_graph: Some(&checker.ctx.inheritance_graph),
             class_check: None,
         };
-        let solver_variance = tsz_solver::check_application_variance(
+        let solver_variance = tsz_solver::relations::relation_queries::check_application_variance(
             &program.type_interner,
             &checker.ctx,
             Some(&query_cache),
@@ -2101,7 +2261,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
     let source_type = checker.get_type_of_node(decl.initializer);
     let target_type = checker.get_type_from_type_node(decl.type_annotation);
     let read_constraint_type =
-        |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
+        |object_type| match tsz_solver::construction::QueryDatabase::resolve_property_access(
             &query_cache,
             object_type,
             "constraint",
@@ -2114,8 +2274,10 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
     let source_constraint_type =
         read_constraint_type(source_type).expect("Num.constraint should resolve through self type");
     let evaluated_target_type = {
-        let mut evaluator =
-            tsz_solver::TypeEvaluator::with_resolver(&program.type_interner, &checker.ctx);
+        let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(
+            &program.type_interner,
+            &checker.ctx,
+        );
         evaluator.evaluate(target_type)
     };
     let target_constraint_type = read_constraint_type(evaluated_target_type)
@@ -7621,7 +7783,7 @@ fn single_file_definition_store_from_binder() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let store = create_definition_store_from_binder(&binder, &interner);
 
     // All 6 top-level declarations should have DefIds
@@ -7688,7 +7850,7 @@ type LocalType = number;
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let store = create_definition_store_from_binder(&binder, &interner);
 
     // AugmentedGlobal should have is_global_augmentation = true
@@ -8936,7 +9098,7 @@ fn solver_from_semantic_defs_matches_core_helper() {
     let mut binder = crate::binder::BinderState::new();
     binder.bind_source_file(&parsed.arena, parsed.source_file);
 
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
 
     // Path A: core helper (delegates to solver factory internally)
     let store_a = crate::parallel::create_definition_store_from_binder(&binder, &interner);
