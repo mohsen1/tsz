@@ -297,14 +297,32 @@ impl<'a> AsyncES5Emitter<'a> {
 
         let mut directives = Vec::new();
         while let Some(IRNode::ExpressionStatement(expr)) = first_case.statements.first() {
-            let directive = match expr.as_ref() {
-                IRNode::StringLiteral(text) | IRNode::RawStringLiteral(text) => text.to_string(),
-                _ => break,
+            let Some(directive) = Self::directive_prologue_text(expr) else {
+                break;
             };
             directives.push(directive);
             first_case.statements.remove(0);
         }
         directives
+    }
+
+    fn directive_prologue_text(expr: &IRNode) -> Option<String> {
+        match expr {
+            IRNode::StringLiteral(text) | IRNode::RawStringLiteral(text) => Some(text.to_string()),
+            IRNode::Raw(text) => {
+                let trimmed = text.trim();
+                let mut chars = trimmed.chars();
+                let quote = chars.next()?;
+                if quote != '"' && quote != '\'' {
+                    return None;
+                }
+                if !trimmed.ends_with(quote) || trimmed.len() < 2 {
+                    return None;
+                }
+                Some(trimmed[quote.len_utf8()..trimmed.len() - quote.len_utf8()].to_string())
+            }
+            _ => None,
+        }
     }
 
     /// Emit a complete async function transformation

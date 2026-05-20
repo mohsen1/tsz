@@ -1616,6 +1616,37 @@ fn test_async_function_awaiter() {
 }
 
 #[test]
+fn async_es5_use_strict_prologue_stays_in_awaiter_callback() {
+    let output = emit_es5(
+        r#"declare var a: boolean;
+declare var p: Promise<boolean>;
+async function func(): Promise<void> {
+    "use strict";
+    var b = await p || a;
+}
+"#,
+    );
+
+    let directive_pos = output
+        .find("\"use strict\";")
+        .expect("async function directive prologue should be emitted");
+    let hoisted_var_pos = output
+        .find("var b;")
+        .expect("async function local should be hoisted");
+    let generator_pos = output
+        .find("return __generator")
+        .expect("async ES5 generator body should be emitted");
+    assert!(
+        directive_pos < hoisted_var_pos && hoisted_var_pos < generator_pos,
+        "Async ES5 directive prologue should be emitted before hoisted locals in the __awaiter callback.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("case 0:\n                    \"use strict\";"),
+        "Async ES5 directive prologue should not remain inside the generator switch case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_arrow_hoisted_locals_share_var_statement() {
     let output = emit_es5(
         "(async () => {\n\
