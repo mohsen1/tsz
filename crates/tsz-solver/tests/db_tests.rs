@@ -137,6 +137,11 @@ fn relation_cache_stats_track_hits_and_misses() {
         TypeId::STRING,
         RelationPolicy::from_flags(0).cache_config(),
     );
+    let assignability_key = RelationCacheKey::for_assignability(
+        hello,
+        TypeId::STRING,
+        RelationPolicy::from_flags(0).cache_config(),
+    );
 
     assert_eq!(
         db.probe_subtype_cache(key),
@@ -144,11 +149,17 @@ fn relation_cache_stats_track_hits_and_misses() {
     );
     assert!(db.is_subtype_of(hello, TypeId::STRING));
     assert_eq!(db.probe_subtype_cache(key), RelationCacheProbe::Hit(true));
+    assert_eq!(db.lookup_assignability_cache(assignability_key), None);
+    assert!(db.is_assignable_to(hello, TypeId::STRING));
+    assert_eq!(db.lookup_assignability_cache(assignability_key), Some(true));
 
     let stats = db.relation_cache_stats();
     assert!(stats.subtype_hits >= 1);
     assert!(stats.subtype_misses >= 1);
     assert!(stats.subtype_entries >= 1);
+    assert!(stats.assignability_hits >= 1);
+    assert!(stats.assignability_misses >= 1);
+    assert!(stats.assignability_entries >= 1);
 }
 
 /// Test that `is_subtype_of` and `is_assignable_to` both handle `any` correctly.
