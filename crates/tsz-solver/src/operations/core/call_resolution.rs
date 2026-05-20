@@ -11,6 +11,7 @@ use super::call_evaluator::{
 };
 use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::operations::GenericCallResult;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, IntrinsicKind, ParamInfo, TupleElement, TypeData,
     TypeId, TypeListId, TypeParamInfo,
@@ -1474,6 +1475,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    fn cache_generic_result(&mut self, mut r: GenericCallResult) -> CallResult {
+        self.last_instantiated_predicate = r.take_instantiated_predicate();
+        self.last_instantiated_params = r.take_instantiated_params();
+        r.into_call_result()
+    }
+
     /// Resolve a call to a simple function type.
     pub(crate) fn resolve_function_call(
         &mut self,
@@ -1486,9 +1493,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 return result;
             }
             if let Some(func) = self.generic_function_shape_for_inference(func, arg_types) {
-                return self.resolve_generic_call(&func, arg_types);
+                let r = self.resolve_generic_call(&func, arg_types);
+                return self.cache_generic_result(r);
             }
-            return self.resolve_generic_call(func, arg_types);
+            let r = self.resolve_generic_call(func, arg_types);
+            return self.cache_generic_result(r);
         }
 
         // Check `this` context if specified by the function shape.

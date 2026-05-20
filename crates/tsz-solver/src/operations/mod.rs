@@ -62,6 +62,8 @@ pub use self::core::{
     resolve_call_with_checker, resolve_call_with_checker_and_arg_sources, resolve_new_with_checker,
 };
 
+pub use generic_call::{GenericCallRequest, GenericCallResult};
+
 // Re-exports from submodules
 pub use binary_ops::{BinaryOpEvaluator, BinaryOpResult};
 pub use compound_assignment::*;

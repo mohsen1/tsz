@@ -683,64 +683,25 @@ impl<'a> CheckerState<'a> {
             result = self.resolve_property_access_via_boundary(pruned_object_type, prop_name);
         }
 
-        // If the solver returned PropertyNotFound or a bare Success{ANY} for a
-        // TypeParameter whose constraint is a Lazy type reference (e.g.
-        // `T extends Box` where Box is an interface, or `P extends Partial<Foo>`),
-        // the solver's NoopResolver couldn't expand the constraint body and
-        // falls back to ANY. Evaluate the constraint through the checker's
-        // TypeEnvironment and retry to recover the real property type.
-        //
-        // Restrict the Success{ANY} case to direct `Lazy(DefId)` constraints
-        // to avoid retriggering on unconstrained type parameters participating
-        // in generic inference (which can loop when the evaluated constraint
-        // still contains type parameters).
-        // TODO: Move this resolution into the solver's PropertyAccessEvaluator
-        // once it gains full TypeEnvironment/TypeResolver awareness.
-        let retry_for_not_found = matches!(
-            result,
-            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
-        );
-        let retry_for_any = matches!(
-            result,
-            tsz_solver::operations::property::PropertyAccessResult::Success {
-                type_id: TypeId::ANY,
-                from_index_signature: false,
-                ..
-            }
-        );
-        if (retry_for_not_found || retry_for_any)
+        // For a TypeParameter whose constraint is a cross-file `Lazy(DefId)` reference
+        // (e.g. `T extends Box` where `Box` is defined in another file), the solver's
+        // `evaluate_type_with_options` cannot resolve the constraint because it uses a
+        // noop `TypeResolver`. Evaluate through the checker's full `TypeEnvironment` and
+        // retry. Non-Lazy constraints are handled by the solver's TypeParameter branch.
+        if result.is_degenerate()
             && let Some(constraint) =
                 crate::query_boundaries::state::checking::type_parameter_constraint(
                     self.ctx.types,
                     resolved_object_type,
                 )
+            && crate::query_boundaries::common::is_lazy_type(self.ctx.types, constraint)
         {
-            let should_retry = retry_for_not_found
-                || crate::query_boundaries::common::is_lazy_type(self.ctx.types, constraint);
-            if should_retry {
-                let evaluated = self.evaluate_type_with_env(constraint);
-                if evaluated != constraint && evaluated != TypeId::ANY && evaluated != TypeId::ERROR
-                {
-                    let retry_result =
-                        self.resolve_property_access_via_boundary(evaluated, prop_name);
-                    // Only accept the retry if it produced a concrete Success
-                    // (not another bare Success{ANY}), so we don't mask genuine
-                    // TypeParameter-with-any-constraint cases.
-                    let retry_improved = match retry_result {
-                        tsz_solver::operations::property::PropertyAccessResult::Success {
-                            type_id,
-                            from_index_signature,
-                            ..
-                        } => type_id != TypeId::ANY || from_index_signature,
-                        tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
-                            ..
-                        } => false,
-                        _ => true,
-                    };
-                    if retry_improved {
-                        result = retry_result;
-                        resolved_object_type = evaluated;
-                    }
+            let evaluated = self.evaluate_type_with_env(constraint);
+            if evaluated != constraint && evaluated != TypeId::ANY && evaluated != TypeId::ERROR {
+                let retry_result = self.resolve_property_access_via_boundary(evaluated, prop_name);
+                if retry_result.is_improved_over_any() {
+                    result = retry_result;
+                    resolved_object_type = evaluated;
                 }
             }
         }
