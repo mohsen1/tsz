@@ -1,19 +1,16 @@
 //! Class member declaration and accessibility validation helpers.
-
 use crate::context::TypingRequest;
 use crate::state::{CheckerState, MemberAccessLevel, MemberLookup};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_async_modifier_on_declaration(
         &mut self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) {
         use crate::diagnostics::diagnostic_codes;
-
         if let Some(async_mod_idx) = self.find_async_modifier(modifiers) {
             self.error_at_node(
                 async_mod_idx,
