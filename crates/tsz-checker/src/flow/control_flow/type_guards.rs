@@ -367,6 +367,45 @@ impl<'a> FlowAnalyzer<'a> {
         NodeIndex::NONE
     }
 
+    fn reference_crosses_class_initializer_boundary(
+        &self,
+        reference: NodeIndex,
+        boundary_function: NodeIndex,
+    ) -> bool {
+        let mut current = reference;
+        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+            if current == boundary_function {
+                return false;
+            }
+
+            let Some(node) = self.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                || node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            {
+                return true;
+            }
+
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+
+        false
+    }
+
+    fn reference_is_in_class_initializer_boundary(&self, reference: NodeIndex) -> bool {
+        self.reference_crosses_class_initializer_boundary(
+            reference,
+            self.find_enclosing_function_node(reference),
+        )
+    }
+
     /// Check if a variable is captured from an outer scope (vs declared locally).
     ///
     /// Bug #1.2: Rule #42 should only apply to captured variables, not local variables.
@@ -392,7 +431,10 @@ impl<'a> FlowAnalyzer<'a> {
 
         let decl_fn = self.find_enclosing_function_node(decl_id);
         let reference_fn = self.find_enclosing_function_node(reference);
-        if decl_fn.is_some() && decl_fn == reference_fn {
+        if decl_fn.is_some()
+            && decl_fn == reference_fn
+            && !self.reference_is_in_class_initializer_boundary(reference)
+        {
             return false;
         }
 

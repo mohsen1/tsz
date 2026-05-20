@@ -164,6 +164,78 @@ fn get_function_body_statement_expression(
     extract_expression_from_statement(arena, stmt_idx)
 }
 
+fn get_function_class_field_initializer_reference(
+    arena: &NodeArena,
+    root: NodeIndex,
+    fn_index: usize,
+    stmt_index: usize,
+    member_index: usize,
+) -> NodeIndex {
+    let root_node = arena.get(root).expect("root node");
+    let source_file = arena.get_source_file(root_node).expect("source file");
+    let fn_idx = *source_file
+        .statements
+        .nodes
+        .get(fn_index)
+        .expect("function statement");
+    let fn_node = arena.get(fn_idx).expect("function node");
+    let function = arena.get_function(fn_node).expect("function data");
+    let body_node = arena.get(function.body).expect("function body node");
+    let body = arena.get_block(body_node).expect("function body");
+    let stmt_idx = *body
+        .statements
+        .nodes
+        .get(stmt_index)
+        .expect("body statement");
+    let stmt_node = arena.get(stmt_idx).expect("body statement node");
+
+    let class_idx = if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION {
+        stmt_idx
+    } else {
+        let variable = arena.get_variable(stmt_node).expect("variable statement");
+        let mut decl_idx = *variable
+            .declarations
+            .nodes
+            .first()
+            .expect("variable declaration");
+        let decl_node = arena.get(decl_idx).expect("variable declaration node");
+        if decl_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            let decl_list = arena
+                .get_variable(decl_node)
+                .expect("variable declaration list");
+            decl_idx = *decl_list
+                .declarations
+                .nodes
+                .first()
+                .expect("variable declaration");
+        }
+        let decl_node = arena.get(decl_idx).expect("variable declaration node");
+        arena
+            .get_variable_declaration(decl_node)
+            .expect("variable declaration data")
+            .initializer
+    };
+
+    let class_node = arena.get(class_idx).expect("class node");
+    let class_data = arena.get_class(class_node).expect("class data");
+    let member_idx = *class_data
+        .members
+        .nodes
+        .get(member_index)
+        .expect("class member");
+    let member_node = arena.get(member_idx).expect("class member node");
+    let property = arena
+        .get_property_decl(member_node)
+        .expect("property declaration");
+    let initializer_node = arena
+        .get(property.initializer)
+        .expect("property initializer");
+
+    arena
+        .get_access_expr(initializer_node)
+        .map_or(property.initializer, |access| access.expression)
+}
+
 fn get_method_call_receiver_identifier(
     arena: &NodeArena,
     root: NodeIndex,
@@ -5246,6 +5318,58 @@ function f(value: string) {
     assert!(
         !analyzer.is_captured_variable(parameter_reference),
         "parameter reads in their declaring function body are not closure captures"
+    );
+}
+
+#[test]
+fn test_class_field_parameter_use_is_captured() {
+    let source = r#"
+function f(value: string | undefined) {
+    class C {
+        field = value.length;
+    }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+    let field_reference = get_function_class_field_initializer_reference(arena, root, 0, 0, 0);
+
+    assert!(
+        analyzer.is_captured_variable(field_reference),
+        "class field initializers inside a function still capture outer parameters"
+    );
+}
+
+#[test]
+fn test_class_expression_field_parameter_use_is_captured() {
+    let source = r#"
+function f(value: string | undefined) {
+    const C = class {
+        field = value.length;
+    };
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+    let field_reference = get_function_class_field_initializer_reference(arena, root, 0, 0, 0);
+
+    assert!(
+        analyzer.is_captured_variable(field_reference),
+        "class expression field initializers inside a function still capture outer parameters"
     );
 }
 
