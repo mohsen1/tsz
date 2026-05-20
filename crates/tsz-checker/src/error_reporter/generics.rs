@@ -730,10 +730,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let prop_value = self.evaluate_type_for_assignability(prop.type_id);
-            if !self.is_assignable_to(prop_value, resolved_constraint)
-                && !self.is_assignable_to(prop.type_id, constraint)
-                && !self.is_assignable_to(prop_value, constraint)
-                && !self.is_assignable_to(prop.type_id, resolved_constraint)
+            if !self.diagnostic_relation_boolean_guard(prop_value, resolved_constraint)
+                && !self.diagnostic_relation_boolean_guard(prop.type_id, constraint)
+                && !self.diagnostic_relation_boolean_guard(prop_value, constraint)
+                && !self.diagnostic_relation_boolean_guard(prop.type_id, resolved_constraint)
             {
                 return false;
             }
