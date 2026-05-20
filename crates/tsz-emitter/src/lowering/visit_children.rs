@@ -133,10 +133,13 @@ impl<'a> LoweringPass<'a> {
                     if is_destructuring_assignment
                         && self.ctx.target_es5
                         && self.ctx.options.downlevel_iteration
-                        && self
-                            .arena
-                            .get(bin.left)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                        && self.arena.get(bin.left).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                && self
+                                    .arena
+                                    .get_literal_expr(n)
+                                    .is_some_and(|lit| !lit.elements.nodes.is_empty())
+                        })
                     {
                         self.transforms.helpers_mut().mark_read();
                     }
