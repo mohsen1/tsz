@@ -242,7 +242,8 @@ impl<'a> CheckerState<'a> {
                                 Some(attr_type) => {
                                     *attr_type == TypeId::ANY
                                         || *attr_type == TypeId::ERROR
-                                        || self.is_assignable_to(*attr_type, expected)
+                                        || self
+                                            .diagnostic_relation_boolean_guard(*attr_type, expected)
                                 }
                                 None => expected != TypeId::NEVER && expected != TypeId::ERROR,
                             }
@@ -1188,7 +1189,9 @@ impl<'a> CheckerState<'a> {
                     spread_type,
                 ) {
                     spread_covers_all = true;
-                } else if !skip_prop_checks && self.is_assignable_to(spread_type, props_type) {
+                } else if !skip_prop_checks
+                    && self.diagnostic_relation_boolean_guard(spread_type, props_type)
+                {
                     // The solver reports the spread is structurally assignable to the
                     // whole props type, so all required members are satisfied — including
                     // ones inherited from Object.prototype (toString, valueOf, …) that
@@ -1922,7 +1925,7 @@ impl<'a> CheckerState<'a> {
                         if *attr_type == TypeId::ANY || *attr_type == TypeId::ERROR {
                             return true;
                         }
-                        self.is_assignable_to(*attr_type, expected)
+                        self.diagnostic_relation_boolean_guard(*attr_type, expected)
                     }
                     // PropertyNotFound or other results: still compatible
                     // (excess property checking is separate)
