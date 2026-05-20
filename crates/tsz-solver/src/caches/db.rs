@@ -49,7 +49,37 @@ impl<T: TypeDatabase + ?Sized> TypeStore for T {
 ///
 /// This keeps solver components generic and prevents them from reaching
 /// into concrete storage structures directly.
-pub trait TypeDatabase {
+pub trait SolverOverflowFlags {
+    /// Atomically read and clear the "union too complex" flag.
+    ///
+    /// Returns `true` if a union construction was aborted due to complexity
+    /// since the last call. The checker uses this to emit TS2590.
+    fn take_union_too_complex(&self) -> bool {
+        false
+    }
+
+    /// Mark the current operation as having produced a too-complex union.
+    ///
+    /// This mirrors `take_union_too_complex` for solver paths that discover the
+    /// complexity limit during evaluation rather than initial construction.
+    fn mark_union_too_complex(&self) {}
+
+    /// Atomically read and clear the "tuple too large" flag.
+    ///
+    /// Returns `true` if a tuple synthesis path aborted because the resulting
+    /// tuple would exceed `MAX_TUPLE_LENGTH` elements since the last call.
+    /// The checker uses this to emit TS2799 / TS2800.
+    fn take_tuple_too_large(&self) -> bool {
+        false
+    }
+
+    /// Mark that the current tuple synthesis path exceeded the representable
+    /// cardinality. Synthesis sites that call this must also short-circuit to
+    /// `TypeId::ERROR` so the unbounded `Vec<TupleElement>` is not allocated.
+    fn mark_tuple_too_large(&self) {}
+}
+
+pub trait TypeDatabase: SolverOverflowFlags {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
     fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {
@@ -211,34 +241,6 @@ pub trait TypeDatabase {
         None
     }
 
-    /// Atomically read and clear the "union too complex" flag.
-    ///
-    /// Returns `true` if a union construction was aborted due to complexity
-    /// since the last call. The checker uses this to emit TS2590.
-    fn take_union_too_complex(&self) -> bool {
-        false
-    }
-
-    /// Mark the current operation as having produced a too-complex union.
-    ///
-    /// This mirrors `take_union_too_complex` for solver paths that discover the
-    /// complexity limit during evaluation rather than initial construction.
-    fn mark_union_too_complex(&self) {}
-
-    /// Atomically read and clear the "tuple too large" flag.
-    ///
-    /// Returns `true` if a tuple synthesis path aborted because the resulting
-    /// tuple would exceed `MAX_TUPLE_LENGTH` elements since the last call.
-    /// The checker uses this to emit TS2799 / TS2800.
-    fn take_tuple_too_large(&self) -> bool {
-        false
-    }
-
-    /// Mark that the current tuple synthesis path exceeded the representable
-    /// cardinality. Synthesis sites that call this must also short-circuit to
-    /// `TypeId::ERROR` so the unbounded `Vec<TupleElement>` is not allocated.
-    fn mark_tuple_too_large(&self) {}
-
     /// Get the base class type for a symbol (class/interface).
     /// Returns the `TypeId` of the extends clause, or None if the symbol doesn't extend anything.
     /// This is used by the BCT algorithm to find common base classes.
@@ -363,6 +365,24 @@ pub trait TypeDatabase {
     /// `TypeInterner` and `QueryCache`.
     fn exact_optional_property_types(&self) -> bool {
         false
+    }
+}
+
+impl SolverOverflowFlags for TypeInterner {
+    fn take_union_too_complex(&self) -> bool {
+        Self::take_union_too_complex(self)
+    }
+
+    fn mark_union_too_complex(&self) {
+        self.set_union_too_complex();
+    }
+
+    fn take_tuple_too_large(&self) -> bool {
+        Self::take_tuple_too_large(self)
+    }
+
+    fn mark_tuple_too_large(&self) {
+        self.set_tuple_too_large();
     }
 }
 
@@ -674,22 +694,6 @@ impl TypeDatabase for TypeInterner {
 
     fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
         Self::get_union_origin(self, type_id)
-    }
-
-    fn take_union_too_complex(&self) -> bool {
-        Self::take_union_too_complex(self)
-    }
-
-    fn mark_union_too_complex(&self) {
-        self.set_union_too_complex();
-    }
-
-    fn take_tuple_too_large(&self) -> bool {
-        Self::take_tuple_too_large(self)
-    }
-
-    fn mark_tuple_too_large(&self) {
-        self.set_tuple_too_large();
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {

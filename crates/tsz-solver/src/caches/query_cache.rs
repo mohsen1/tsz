@@ -4,7 +4,7 @@
 //! relation, property, and element access queries. This is the concrete
 //! database implementation used by the checker at runtime.
 
-use crate::caches::db::{QueryDatabase, TypeDatabase};
+use crate::caches::db::{QueryDatabase, SolverOverflowFlags, TypeDatabase};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_trace;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
@@ -830,6 +830,24 @@ impl<'a> QueryCache<'a> {
     }
 }
 
+impl SolverOverflowFlags for QueryCache<'_> {
+    fn take_union_too_complex(&self) -> bool {
+        self.interner.take_union_too_complex()
+    }
+
+    fn mark_union_too_complex(&self) {
+        self.interner.set_union_too_complex();
+    }
+
+    fn take_tuple_too_large(&self) -> bool {
+        self.interner.take_tuple_too_large()
+    }
+
+    fn mark_tuple_too_large(&self) {
+        self.interner.set_tuple_too_large();
+    }
+}
+
 impl TypeDatabase for QueryCache<'_> {
     fn intern(&self, key: TypeData) -> TypeId {
         self.interner.intern(key)
@@ -1134,22 +1152,6 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
         self.interner.get_union_origin(type_id)
-    }
-
-    fn take_union_too_complex(&self) -> bool {
-        self.interner.take_union_too_complex()
-    }
-
-    fn mark_union_too_complex(&self) {
-        self.interner.set_union_too_complex();
-    }
-
-    fn take_tuple_too_large(&self) -> bool {
-        self.interner.take_tuple_too_large()
-    }
-
-    fn mark_tuple_too_large(&self) {
-        self.interner.set_tuple_too_large();
     }
 
     fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId> {
