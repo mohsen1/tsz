@@ -31,6 +31,7 @@ use crate::types::{
 };
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_common::interner::Atom;
 
 /// Controls which subtype direction makes a member redundant when simplifying
 /// a union or intersection.
@@ -1749,7 +1750,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn collect_type_params(
         &self,
         type_id: TypeId,
-        seen: &mut FxHashSet<tsz_common::interner::Atom>,
+        seen: &mut FxHashSet<Atom>,
         params: &mut Vec<TypeParamInfo>,
     ) {
         if type_id.is_intrinsic() {
