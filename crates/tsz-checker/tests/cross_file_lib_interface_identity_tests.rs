@@ -246,11 +246,11 @@ const b: number = second();
 
 // Regression coverage for issue #8476: a class declared in another file that
 // extends a lib type retains its full heritage chain across the import edge.
-// Before the named-import-alias fix in `get_cross_file_symbol`/
+// Before the import-alias pin in `get_cross_file_symbol` /
 // `get_symbol_globally`, the foreign-file's symbol at the colliding raw
 // `SymbolId` would replace the local alias, and the imported binding's type
-// rendered as `typeof instance` instead of `MyElement` — dropping the
-// `Element`/`Node` properties.
+// rendered as `typeof instance` instead of `MyElement`, dropping the
+// `Element` / `Node` properties.
 
 #[test]
 fn imported_element_class_extension_unifies_with_lib_html_element() {
@@ -325,6 +325,84 @@ const n: Node = anchor;
             ("reexport.d.ts", reexporter),
             ("main.ts", consumer),
         ],
+        "main.ts",
+    );
+    assert!(codes.is_empty(), "Diagnostics: {codes:?}");
+}
+
+#[test]
+fn default_imported_class_extension_keeps_lib_heritage() {
+    // Adjacent import shape: default import aliases are local `ALIAS` symbols
+    // with `import_module`; they must stay local while their default target is
+    // resolved through the import chain.
+    let leaf = r#"
+export default class DefaultWidget extends HTMLDivElement {
+    extra(): void;
+}
+"#;
+    let consumer = r#"
+import DefaultWidget from "./component";
+const widget = new DefaultWidget();
+const div: HTMLDivElement = widget;
+const he: HTMLElement = widget;
+const e: Element = widget;
+const n: Node = widget;
+"#;
+
+    let codes = compile_codes(
+        &[("component.d.ts", leaf), ("main.ts", consumer)],
+        "main.ts",
+    );
+    assert!(codes.is_empty(), "Diagnostics: {codes:?}");
+}
+
+#[test]
+fn namespace_imported_class_extension_keeps_lib_heritage() {
+    // Adjacent import shape: namespace import aliases are local aliases too.
+    // Members resolve through the namespace export path, not by rebinding the
+    // namespace alias to a same-id symbol in the source file.
+    let leaf = r#"
+export class NamespaceWidget extends HTMLDivElement {
+    extra(): void;
+}
+export const widget: NamespaceWidget;
+"#;
+    let consumer = r#"
+import * as component from "./component";
+const div: HTMLDivElement = component.widget;
+const he: HTMLElement = component.widget;
+const e: Element = component.widget;
+const n: Node = component.widget;
+"#;
+
+    let codes = compile_codes(
+        &[("component.d.ts", leaf), ("main.ts", consumer)],
+        "main.ts",
+    );
+    assert!(codes.is_empty(), "Diagnostics: {codes:?}");
+}
+
+#[test]
+fn type_only_imported_class_extension_keeps_lib_heritage() {
+    // Adjacent import shape: type-only aliases are still local aliases. Their
+    // value restrictions are checked elsewhere; type lookup must keep the
+    // alias local before following the imported target.
+    let leaf = r#"
+export class TypeOnlyWidget extends HTMLDivElement {
+    extra(): void;
+}
+"#;
+    let consumer = r#"
+import type { TypeOnlyWidget } from "./component";
+declare const widget: TypeOnlyWidget;
+const div: HTMLDivElement = widget;
+const he: HTMLElement = widget;
+const e: Element = widget;
+const n: Node = widget;
+"#;
+
+    let codes = compile_codes(
+        &[("component.d.ts", leaf), ("main.ts", consumer)],
         "main.ts",
     );
     assert!(codes.is_empty(), "Diagnostics: {codes:?}");
