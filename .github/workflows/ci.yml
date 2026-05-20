@@ -927,7 +927,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: conformance-shard-${{ matrix.shard }}
-          path: .ci-metrics/conformance.json
+          path: |
+            .ci-metrics/conformance.json
+            .ci-metrics/conformance-failures-*.txt
           if-no-files-found: warn
           retention-days: 1
 
