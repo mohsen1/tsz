@@ -1063,6 +1063,30 @@ impl<'a> CheckerState<'a> {
         self.get_type_of_node_with_request(idx, &TypingRequest::NONE)
     }
 
+    /// Compute the receiver type that should be bound to `this:` when a
+    /// callee expression is a property or element access.
+    ///
+    /// Used by call sites that mirror tsc's `getThisArgumentOfCall` for
+    /// callee shapes that bypass the regular call-expression path —
+    /// decorators and tagged templates. Callers may pass the raw callee
+    /// node; parentheses, non-null assertions, and type assertions are
+    /// unwrapped before inspecting the kind.
+    ///
+    /// Returns `None` for bare identifiers, call expressions, and other
+    /// shapes with no receiver — letting the call resolver apply the default
+    /// `void` receiver.
+    pub(crate) fn access_receiver_type(&mut self, callee_idx: NodeIndex) -> Option<TypeId> {
+        let unwrapped = self.ctx.arena.skip_parenthesized_and_assertions(callee_idx);
+        let node = self.ctx.arena.get(unwrapped)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+        Some(self.get_type_of_node(access.expression))
+    }
+
     /// Compute the type of a node using an explicit [`TypingRequest`] instead of
     /// mutating ambient context fields.
     pub fn get_type_of_node_with_request(

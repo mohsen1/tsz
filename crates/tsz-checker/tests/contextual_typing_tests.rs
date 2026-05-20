@@ -511,6 +511,39 @@ h(v => v ? (abc) => { } : Promise.reject());
 }
 
 #[test]
+fn test_async_contextual_return_uses_canonical_lib_promise_identity() {
+    let source = r#"
+const increment: (
+  num: number,
+  str: string
+) => Promise<((s: string) => any) | string> | string = async (num, str) => {
+  return a => a.length;
+};
+
+const increment2: (
+  num: number,
+  str: string
+) => Promise<((s: string) => any) | string> = async (num, str) => {
+  return a => a.length;
+};
+"#;
+
+    let diagnostics = check_with_libs(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322_errors.is_empty(),
+        "Expected async Promise wrapper to keep the canonical lib Promise identity, got diagnostics={diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_deferred_mapped_intersection_preserves_contextual_property_types() {
     let source = r#"
 type Action<TEvent extends { type: string }> = (ev: TEvent) => void;

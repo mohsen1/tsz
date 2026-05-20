@@ -15,6 +15,22 @@ const fn decorator_type_is_unchecked(t: TypeId) -> bool {
     matches!(t, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
 }
 
+/// Trivial `this:` constraints that don't require a real receiver — any
+/// receiver is assignable to them, so binding `actual_this_type` adds no
+/// information to the call resolver and can be safely skipped.
+#[inline]
+const fn is_explicit_this_constraint(this_type: TypeId) -> bool {
+    !matches!(
+        this_type,
+        TypeId::ANY
+            | TypeId::UNKNOWN
+            | TypeId::VOID
+            | TypeId::UNDEFINED
+            | TypeId::NULL
+            | TypeId::ERROR
+    )
+}
+
 impl<'a> CheckerState<'a> {
     /// TS1240 for ES class-member decorators (TC39 stage 3).
     ///
@@ -35,6 +51,7 @@ impl<'a> CheckerState<'a> {
         decorator_node: NodeIndex,
         decorator_type: TypeId,
         first_arg: TypeId,
+        actual_this_type: Option<TypeId>,
     ) {
         if decorator_type_is_unchecked(decorator_type) {
             return;
@@ -55,7 +72,7 @@ impl<'a> CheckerState<'a> {
             &[first_arg, TypeId::ANY],
             false,
             None,
-            None,
+            actual_this_type,
         );
 
         if !matches!(result, CallResult::Success(_)) {
@@ -158,6 +175,39 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.create_lazy_type_ref(sym_id))
     }
 
+    /// True when the decorator type carries an explicit, non-trivial `this:`
+    /// parameter that requires a real receiver binding.
+    ///
+    /// Threading `actual_this_type` from a property/element-access decorator
+    /// receiver is only meaningful when the callee actually constrains
+    /// `this:`. For the common case of `this`-less decorators (or
+    /// `this: any` / `this: unknown`), the receiver binding has no effect on
+    /// the solver's call resolution but does flow through generic inference
+    /// — so gating on this predicate avoids touching the call-resolution
+    /// inputs for the dominant case while still fixing the explicit-`this:`
+    /// case targeted by #8717.
+    ///
+    /// Returns `true` when the resolved decorator type's function shape (or
+    /// any signature in a callable shape) has `this_type: Some(t)` with `t`
+    /// not equal to `any`, `unknown`, `void`, `undefined`, or `null` —
+    /// matching tsc's "explicit this" filter for receiver binding.
+    pub(crate) fn decorator_has_explicit_this(&self, decorator_type: TypeId) -> bool {
+        let db = self.ctx.types;
+        if let Some(shape) = crate::query_boundaries::class_type::function_shape(db, decorator_type)
+        {
+            return shape.this_type.is_some_and(is_explicit_this_constraint);
+        }
+        if let Some(callable) =
+            crate::query_boundaries::class_type::callable_shape_for_type(db, decorator_type)
+        {
+            return callable
+                .call_signatures
+                .iter()
+                .any(|sig| sig.this_type.is_some_and(is_explicit_this_constraint));
+        }
+        false
+    }
+
     /// Resolve `ClassAccessorDecoratorTarget<any, any>` from the lib globals.
     ///
     /// Returns `None` if the lib is not available (e.g. `--noLib`); callers
@@ -185,6 +235,7 @@ impl<'a> CheckerState<'a> {
         decorator_node: NodeIndex,
         member_node: NodeIndex,
         experimental_decorators: bool,
+        actual_this_type: Option<TypeId>,
     ) {
         if decorator_type_is_unchecked(decorator_type) {
             return;
@@ -225,8 +276,13 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| vec![TypeId::ANY, TypeId::OBJECT])
         };
 
-        let (result, _, _) =
-            self.resolve_call_with_checker_adapter(resolved, &arg_types, false, None, None);
+        let (result, _, _) = self.resolve_call_with_checker_adapter(
+            resolved,
+            &arg_types,
+            false,
+            None,
+            actual_this_type,
+        );
 
         let return_type = match result {
             CallResult::Success(return_type) => Some(return_type),
@@ -584,6 +640,7 @@ impl<'a> CheckerState<'a> {
         decorator_node: NodeIndex,
         decorator_type: TypeId,
         is_auto_accessor: bool,
+        actual_this_type: Option<TypeId>,
     ) {
         if decorator_type_is_unchecked(decorator_type) {
             return;
@@ -604,8 +661,13 @@ impl<'a> CheckerState<'a> {
         } else {
             &[TypeId::ANY, TypeId::STRING]
         };
-        let (result, _, _) =
-            self.resolve_call_with_checker_adapter(resolved, arg_types, false, None, None);
+        let (result, _, _) = self.resolve_call_with_checker_adapter(
+            resolved,
+            arg_types,
+            false,
+            None,
+            actual_this_type,
+        );
 
         let return_type = match result {
             CallResult::Success(return_type) => Some(return_type),
@@ -704,6 +766,7 @@ impl<'a> CheckerState<'a> {
         decorator_node: NodeIndex,
         decorator_type: TypeId,
         is_constructor_parameter: bool,
+        actual_this_type: Option<TypeId>,
     ) {
         if decorator_type_is_unchecked(decorator_type) {
             return;
@@ -732,7 +795,7 @@ impl<'a> CheckerState<'a> {
             &[TypeId::ANY, key_arg, TypeId::NUMBER],
             false,
             None,
-            None,
+            actual_this_type,
         );
 
         if !matches!(result, CallResult::Success(_)) {

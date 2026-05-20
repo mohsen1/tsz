@@ -74,6 +74,17 @@ tsz_project_fixture_sources "${rowName}"
   return result.stdout.trim().split(/\r?\n/).filter(Boolean);
 }
 
+function sharedConfigWriterName(row) {
+  if (row.generated_by !== undefined) return null;
+  if (row.guard_set === null || row.guard_set === undefined) return null;
+  if (typeof row.fixture_dir !== "string") return null;
+
+  const writerStem = row.fixture_dir
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return `tsz_write_${writerStem}_config`;
+}
+
 function extractAll(text, pattern) {
   return [...text.matchAll(pattern)].map((match) => match[1]);
 }
@@ -143,6 +154,8 @@ assert.deepEqual(
 );
 
 const benchRunnerScript = readRepoFile("scripts/bench/bench-vs-tsgo.sh");
+const projectFixturesScript = readRepoFile("scripts/bench/project-fixtures.sh");
+const projectCompileGuardScript = readRepoFile("scripts/ci/project-compile-guard.sh");
 const benchRows = extractBenchRunnerRows(benchRunnerScript);
 assert.doesNotMatch(
   benchRunnerScript,
@@ -168,7 +181,7 @@ assert.deepEqual(
 );
 
 const projectCompileGuardRows = extractCompileGuardRows(
-  readRepoFile("scripts/ci/project-compile-guard.sh"),
+  projectCompileGuardScript,
 );
 assert.deepEqual(
   projectCompileGuardRows,
@@ -177,7 +190,7 @@ assert.deepEqual(
 );
 
 const fixtureSourceRows = extractFixtureSourceRows(
-  readRepoFile("scripts/bench/project-fixtures.sh"),
+  projectFixturesScript,
 );
 assert.deepEqual(
   fixtureSourceRows,
@@ -189,6 +202,29 @@ assert.deepEqual(
   [],
   "project-fixtures.sh fixture source rows must be defined in scripts/bench/project-rows.mjs",
 );
+
+for (const row of PROJECT_ROW_DEFINITIONS) {
+  const writer = sharedConfigWriterName(row);
+  if (writer === null) continue;
+
+  assert.match(
+    projectFixturesScript,
+    new RegExp(`^${writer}\\(\\) \\{`, "m"),
+    `${row.name} shared config writer must be defined in project-fixtures.sh`,
+  );
+  assert.match(
+    projectCompileGuardScript,
+    new RegExp(`\\b${writer}\\b`),
+    `${row.name} project-compile-guard must use the shared ${writer} writer`,
+  );
+  if (!BENCH_RUNNER_EXCLUDED_ROWS.has(row.name)) {
+    assert.match(
+      benchRunnerScript,
+      new RegExp(`\\b${writer}\\b`),
+      `${row.name} bench-vs-tsgo must use the shared ${writer} writer`,
+    );
+  }
+}
 
 for (const rowName of pinnedSourceRows) {
   const row = projectRowsByName.get(rowName);

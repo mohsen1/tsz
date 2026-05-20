@@ -1398,8 +1398,16 @@ name = "static_readonly_unique_symbol_tests"
 path = "tests/static_readonly_unique_symbol_tests.rs"
 
 [[test]]
+name = "ts2542_readonly_index_coemission_tests"
+path = "tests/ts2542_readonly_index_coemission_tests.rs"
+
+[[test]]
 name = "issue_7681_super_decorator_tests"
 path = "tests/issue_7681_super_decorator_tests.rs"
+
+[[test]]
+name = "decorator_this_binding_tests"
+path = "tests/decorator_this_binding_tests.rs"
 
 [[test]]
 name = "index_signature_argument_assignability_tests"
