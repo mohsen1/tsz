@@ -27,6 +27,8 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
+use super::portability_check::{PortabilityCollectState, PortabilityVisitState};
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn next_import_type_text(
         text: &str,
@@ -491,22 +493,28 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
 
-        let mut visited_symbols = rustc_hash::FxHashSet::default();
-        let mut visited_declaration_symbols = rustc_hash::FxHashSet::default();
-        let mut visited_nodes = rustc_hash::FxHashSet::default();
-        let mut visited_types = rustc_hash::FxHashSet::default();
+        let mut v_types = rustc_hash::FxHashSet::default();
+        let mut v_symbols = rustc_hash::FxHashSet::default();
+        let mut v_decl_syms = rustc_hash::FxHashSet::default();
+        let mut v_nodes = rustc_hash::FxHashSet::default();
+        let mut visit = PortabilityVisitState {
+            visited_types: &mut v_types,
+            visited_symbols: &mut v_symbols,
+            visited_declaration_symbols: &mut v_decl_syms,
+            visited_nodes: &mut v_nodes,
+        };
         let mut seen = rustc_hash::FxHashSet::default();
-        let mut references = Vec::new();
+        let mut references: Vec<(String, String)> = Vec::new();
+        let mut collect = PortabilityCollectState {
+            results: &mut references,
+            seen: &mut seen,
+        };
         self.collect_non_portable_references_in_type_node(
             arena,
             node_idx,
             &source_path,
-            &mut references,
-            &mut seen,
-            &mut visited_types,
-            &mut visited_symbols,
-            &mut visited_declaration_symbols,
-            &mut visited_nodes,
+            &mut collect,
+            &mut visit,
         );
         let mut indexed_access_object_names = rustc_hash::FxHashSet::default();
         let mut visited_indexed_access_nodes = rustc_hash::FxHashSet::default();
@@ -1298,7 +1306,6 @@ impl<'a> DeclarationEmitter<'a> {
         visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
         visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
     ) -> Option<(String, String)> {
-        #[allow(clippy::too_many_arguments)]
         fn check_named_type(
             emitter: &DeclarationEmitter<'_>,
             interner: &tsz_solver::construction::TypeInterner,
@@ -1306,33 +1313,18 @@ impl<'a> DeclarationEmitter<'a> {
             current_file_path: &str,
             cache: &crate::type_cache_view::TypeCacheView,
             candidate_type_id: tsz_solver::types::TypeId,
-            visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
-            visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-            visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-            visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+            visit: &mut PortabilityVisitState<'_>,
         ) -> Option<(String, String)> {
             if let Some(def_id) = tsz_solver::lazy_def_id(interner, candidate_type_id)
                 && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
             {
-                if let Some(result) = emitter.check_symbol_portability(
-                    sym_id,
-                    binder,
-                    current_file_path,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
-                ) {
+                if let Some(result) =
+                    emitter.check_symbol_portability(sym_id, binder, current_file_path, visit)
+                {
                     return Some(result);
                 }
                 if let Some(result) = emitter
-                    .collect_non_portable_references_in_symbol_declaration_with_state(
-                        sym_id,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
-                    )
+                    .collect_non_portable_references_in_symbol_declaration_with_state(sym_id, visit)
                     .into_iter()
                     .next()
                 {
@@ -1343,15 +1335,8 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(shape_id) = tsz_solver::object_shape_id(interner, candidate_type_id) {
                 let shape = interner.object_shape(shape_id);
                 if let Some(sym_id) = shape.symbol
-                    && let Some(result) = emitter.check_symbol_portability(
-                        sym_id,
-                        binder,
-                        current_file_path,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
-                    )
+                    && let Some(result) =
+                        emitter.check_symbol_portability(sym_id, binder, current_file_path, visit)
                 {
                     return Some(result);
                 }
@@ -1362,15 +1347,8 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 let shape = interner.callable_shape(callable_id);
                 if let Some(sym_id) = shape.symbol
-                    && let Some(result) = emitter.check_symbol_portability(
-                        sym_id,
-                        binder,
-                        current_file_path,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
-                    )
+                    && let Some(result) =
+                        emitter.check_symbol_portability(sym_id, binder, current_file_path, visit)
                 {
                     return Some(result);
                 }
@@ -1379,12 +1357,19 @@ impl<'a> DeclarationEmitter<'a> {
             None
         }
 
+        let mut visit = PortabilityVisitState {
+            visited_types,
+            visited_symbols,
+            visited_declaration_symbols,
+            visited_nodes,
+        };
+
         let interner = self.type_interner?;
         let binder = self.binder?;
         let current_file_path = self.current_file_path.as_deref()?;
         let cache = self.type_cache.as_ref()?;
 
-        if !visited_types.insert(type_id) {
+        if !visit.visited_types.insert(type_id) {
             return None;
         }
 
@@ -1395,21 +1380,12 @@ impl<'a> DeclarationEmitter<'a> {
             current_file_path,
             cache,
             type_id,
-            visited_types,
-            visited_symbols,
-            visited_declaration_symbols,
-            visited_nodes,
+            &mut visit,
         ) {
             return Some(result);
         }
 
-        if self.type_has_public_surface_reference_with_portable_arguments(
-            type_id,
-            visited_types,
-            visited_symbols,
-            visited_declaration_symbols,
-            visited_nodes,
-        ) {
+        if self.type_has_public_surface_reference_with_portable_arguments(type_id, &mut visit) {
             return None;
         }
 
@@ -1423,10 +1399,7 @@ impl<'a> DeclarationEmitter<'a> {
                 current_file_path,
                 cache,
                 alias_type_id,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
+                &mut visit,
             ) {
                 return Some(result);
             }
@@ -1439,20 +1412,12 @@ impl<'a> DeclarationEmitter<'a> {
                     current_file_path,
                     cache,
                     app.base,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    &mut visit,
                 ) {
                     return Some(result);
                 }
                 if self.type_application_has_public_surface_reference_with_portable_arguments(
-                    app.base,
-                    &app.args,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    app.base, &app.args, &mut visit,
                 ) {
                     return None;
                 }
@@ -1468,20 +1433,12 @@ impl<'a> DeclarationEmitter<'a> {
                 current_file_path,
                 cache,
                 app.base,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
+                &mut visit,
             ) {
                 return Some(result);
             }
             if self.type_application_has_public_surface_reference_with_portable_arguments(
-                app.base,
-                &app.args,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
+                app.base, &app.args, &mut visit,
             ) {
                 return None;
             }
@@ -1498,10 +1455,7 @@ impl<'a> DeclarationEmitter<'a> {
                         current_file_path,
                         cache,
                         param.type_id,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
+                        &mut visit,
                     ) {
                         return Some(result);
                     }
@@ -1513,10 +1467,7 @@ impl<'a> DeclarationEmitter<'a> {
                     current_file_path,
                     cache,
                     sig.return_type,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    &mut visit,
                 ) {
                     return Some(result);
                 }
@@ -1530,10 +1481,7 @@ impl<'a> DeclarationEmitter<'a> {
                         current_file_path,
                         cache,
                         param.type_id,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
+                        &mut visit,
                     ) {
                         return Some(result);
                     }
@@ -1545,10 +1493,7 @@ impl<'a> DeclarationEmitter<'a> {
                     current_file_path,
                     cache,
                     sig.return_type,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    &mut visit,
                 ) {
                     return Some(result);
                 }
@@ -1564,15 +1509,8 @@ impl<'a> DeclarationEmitter<'a> {
                     .symbols
                     .get(SymbolId(symbol_ref.0))
                     .map(|_| SymbolId(symbol_ref.0))
-                && let Some(result) = self.check_symbol_portability(
-                    sym_id,
-                    binder,
-                    current_file_path,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
-                )
+                && let Some(result) =
+                    self.check_symbol_portability(sym_id, binder, current_file_path, &mut visit)
             {
                 return Some(result);
             }
@@ -1583,15 +1521,8 @@ impl<'a> DeclarationEmitter<'a> {
                     .symbols
                     .get(SymbolId(symbol_ref.0))
                     .map(|_| SymbolId(symbol_ref.0))
-                && let Some(result) = self.check_symbol_portability(
-                    sym_id,
-                    binder,
-                    current_file_path,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
-                )
+                && let Some(result) =
+                    self.check_symbol_portability(sym_id, binder, current_file_path, &mut visit)
             {
                 return Some(result);
             }
@@ -1603,10 +1534,7 @@ impl<'a> DeclarationEmitter<'a> {
                 current_file_path,
                 cache,
                 ref_type_id,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
+                &mut visit,
             ) {
                 return Some(result);
             }
@@ -1618,10 +1546,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn type_has_public_surface_reference_with_portable_arguments(
         &self,
         type_id: tsz_solver::types::TypeId,
-        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
-        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+        visit: &mut PortabilityVisitState<'_>,
     ) -> bool {
         let Some(interner) = self.type_interner else {
             return false;
@@ -1629,12 +1554,7 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) {
             let app = interner.type_application(app_id);
             return self.type_application_has_public_surface_reference_with_portable_arguments(
-                app.base,
-                &app.args,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
+                app.base, &app.args, visit,
             );
         }
         false
@@ -1644,10 +1564,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         base: tsz_solver::types::TypeId,
         args: &[tsz_solver::types::TypeId],
-        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
-        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+        visit: &mut PortabilityVisitState<'_>,
     ) -> bool {
         if !self.type_id_is_public_package_export(base) {
             return false;
@@ -1655,10 +1572,10 @@ impl<'a> DeclarationEmitter<'a> {
         args.iter().copied().all(|arg| {
             self.find_non_portable_type_reference_inner(
                 arg,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
+                visit.visited_types,
+                visit.visited_symbols,
+                visit.visited_declaration_symbols,
+                visit.visited_nodes,
             )
             .is_none()
         })
@@ -1701,16 +1618,12 @@ impl<'a> DeclarationEmitter<'a> {
     /// Returns `Some((from_path, type_name))` if the symbol is non-portable, where:
     /// - `from_path` is the problematic module path for the diagnostic message
     /// - `type_name` is the symbol name that can't be referenced
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::declaration_emitter) fn check_symbol_portability(
         &self,
         sym_id: SymbolId,
         binder: &BinderState,
         current_file_path: &str,
-        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
-        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+        visit: &mut PortabilityVisitState<'_>,
     ) -> Option<(String, String)> {
         use std::path::{Component, Path};
 
@@ -1750,7 +1663,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let sym_id = self.resolve_portability_symbol(sym_id, binder);
-        if !visited_symbols.insert(sym_id) {
+        if !visit.visited_symbols.insert(sym_id) {
             return None;
         }
         let symbol = binder.symbols.get(sym_id)?;
@@ -2043,10 +1956,10 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(&symbol_type_id) = cache.symbol_types.get(&sym_id)
             && let Some(result) = self.find_non_portable_type_reference_inner(
                 symbol_type_id,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
+                visit.visited_types,
+                visit.visited_symbols,
+                visit.visited_declaration_symbols,
+                visit.visited_nodes,
             )
         {
             return Some(result);
