@@ -107,27 +107,26 @@ pub(crate) fn contextual_function_callable_union_member_candidates(
     }
 
     let evaluated_target = tsz_solver::evaluate_type(db, target);
-    [target, evaluated_target]
-        .into_iter()
-        .filter_map(|candidate| tsz_solver::type_queries::get_union_members(db, candidate))
-        .flat_map(|members| {
-            members.iter().filter_map(|&member| {
-                let evaluated_member = tsz_solver::evaluate_type(db, member);
-                if tsz_solver::type_queries::get_callable_shape_for_type(db, member)
+    let mut candidates = Vec::new();
+    for candidate in [target, evaluated_target] {
+        let Some(members) = tsz_solver::type_queries::get_union_members(db, candidate) else {
+            continue;
+        };
+        for &member in members {
+            let evaluated_member = tsz_solver::evaluate_type(db, member);
+            if tsz_solver::type_queries::get_callable_shape_for_type(db, member)
+                .is_some_and(|shape| !shape.call_signatures.is_empty())
+            {
+                candidates.push(member);
+            } else if evaluated_member != member
+                && tsz_solver::type_queries::get_callable_shape_for_type(db, evaluated_member)
                     .is_some_and(|shape| !shape.call_signatures.is_empty())
-                {
-                    Some(member)
-                } else if evaluated_member != member
-                    && tsz_solver::type_queries::get_callable_shape_for_type(db, evaluated_member)
-                        .is_some_and(|shape| !shape.call_signatures.is_empty())
-                {
-                    Some(evaluated_member)
-                } else {
-                    None
-                }
-            })
-        })
-        .collect()
+            {
+                candidates.push(evaluated_member);
+            }
+        }
+    }
+    candidates
 }
 
 // ---------------------------------------------------------------------------
