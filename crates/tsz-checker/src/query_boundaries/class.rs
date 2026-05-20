@@ -2,63 +2,21 @@ use crate::class_checker::ClassMemberInfo;
 use crate::state::CheckerState;
 use tsz_parser::NodeIndex;
 use tsz_solver::TypeId;
-use tsz_solver::construction::TypeDatabase;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 
-fn collect_signature_return_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
-    if let Some(signatures) = crate::query_boundaries::common::call_signatures_for_type(db, type_id)
-    {
-        return signatures
-            .into_iter()
-            .map(|signature| signature.return_type)
-            .collect();
+pub(crate) fn maybe_substitute_this_type(
+    db: &dyn QueryDatabase,
+    type_id: TypeId,
+    self_type: Option<TypeId>,
+) -> TypeId {
+    let Some(st) = self_type else {
+        return type_id;
+    };
+    if crate::query_boundaries::common::contains_this_type(db.as_type_database(), type_id) {
+        crate::query_boundaries::common::substitute_this_type(db, type_id, st)
+    } else {
+        type_id
     }
-    if let Some(shape_id) = tsz_solver::function_shape_id(db, type_id) {
-        return vec![db.function_shape(shape_id).return_type];
-    }
-    if let Some(shape_id) = tsz_solver::callable_shape_id(db, type_id) {
-        return db
-            .callable_shape(shape_id)
-            .call_signatures
-            .iter()
-            .map(|signature| signature.return_type)
-            .collect();
-    }
-    if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, type_id)
-        && shape.properties.len() == 1
-    {
-        let prop = &shape.properties[0];
-        if prop.is_method {
-            return collect_signature_return_types(db, prop.type_id);
-        }
-    }
-    Vec::new()
-}
-
-fn has_polymorphic_this_return_mismatch(
-    checker: &CheckerState<'_>,
-    source: TypeId,
-    target: TypeId,
-) -> bool {
-    let source_returns = collect_signature_return_types(checker.ctx.types, source);
-    let target_returns = collect_signature_return_types(checker.ctx.types, target);
-    if source_returns.is_empty() || target_returns.is_empty() {
-        return false;
-    }
-    // Only apply this fast mismatch rule for single-signature comparisons.
-    // Overload sets need full compatibility checks (including trailing overload
-    // matching) and this shortcut would produce false TS2430s.
-    if source_returns.len() != 1 || target_returns.len() != 1 {
-        return false;
-    }
-
-    let source_has_polymorphic_this = source_returns
-        .iter()
-        .any(|&ret| tsz_solver::is_this_type(checker.ctx.types, ret));
-    let target_has_polymorphic_this = target_returns
-        .iter()
-        .any(|&ret| tsz_solver::is_this_type(checker.ctx.types, ret));
-
-    target_has_polymorphic_this && !source_has_polymorphic_this
 }
 
 fn has_own_signature_type_params(checker: &CheckerState<'_>, type_id: TypeId) -> bool {
@@ -391,9 +349,6 @@ pub(crate) fn should_report_member_type_mismatch(
     node_idx: NodeIndex,
 ) -> bool {
     let source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
-    if has_polymorphic_this_return_mismatch(checker, source, target) {
-        return true;
-    }
     if checker.should_suppress_assignability_diagnostic(source, target) {
         return false;
     }
@@ -445,9 +400,6 @@ pub(crate) fn should_report_own_member_type_mismatch(
     node_idx: NodeIndex,
 ) -> bool {
     let source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
-    if has_polymorphic_this_return_mismatch(checker, source, target) {
-        return true;
-    }
     if checker.should_suppress_member_assignability(source, target) {
         return false;
     }
@@ -574,9 +526,6 @@ pub(crate) fn should_report_property_type_mismatch(
     node_idx: NodeIndex,
 ) -> bool {
     let narrowed_source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
-    if has_polymorphic_this_return_mismatch(checker, narrowed_source, target) {
-        return true;
-    }
     let relation_source = unwrap_single_property_value_type(checker, narrowed_source);
     let relation_target = unwrap_single_property_value_type(checker, target);
     // TS2430 property compatibility is still a member-compatibility check, even

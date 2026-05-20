@@ -73,6 +73,14 @@ default_cargo_build_jobs() {
       # box where memory isn't the constraint.
       mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-24576}"
       ;;
+    dist-binaries)
+      # sccache is disabled for dist-binaries (TSZ_CI_DISABLE_SCCACHE=1 in
+      # GitHub CI) so every codegen unit compiles from scratch. The observed
+      # peak RSS per cargo job is slightly higher than the sccache-assisted
+      # path; budget 8192 MiB/job instead of the default 7168 to keep total
+      # cargo RSS below ~87% of RAM before OS overhead.
+      mem_per_job_mb="${TSZ_CI_DIST_CARGO_MB_PER_JOB:-8192}"
+      ;;
     *)
       mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
       ;;
@@ -164,4 +172,45 @@ default_conformance_workers() {
     workers=128
   fi
   cap_workers "$workers"
+}
+
+# Returns free-for-allocation memory in MB from /proc/meminfo (Linux) or
+# vm_stat (macOS). Returns 0 if the information is unavailable.
+ci_available_memory_mb() {
+  if [[ -r /proc/meminfo ]]; then
+    awk '/MemAvailable:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo
+  elif command -v sysctl >/dev/null 2>&1; then
+    local pages pagesize
+    pages="$(sysctl -n vm.page_free_count 2>/dev/null || echo 0)"
+    pagesize="$(sysctl -n hw.pagesize 2>/dev/null || echo 4096)"
+    if [[ "$pages" =~ ^[0-9]+$ && "$pagesize" =~ ^[0-9]+$ && "$pages" -gt 0 ]]; then
+      printf '%d\n' $(( pages * pagesize / 1024 / 1024 ))
+    else
+      printf '0\n'
+    fi
+  else
+    printf '0\n'
+  fi
+}
+
+# Prints a one-line memory status summary for CI diagnostic logs.
+# Optional argument is a label tag prepended to the line.
+ci_report_memory() {
+  local prefix="${1:+[${1}] }"
+  if [[ -r /proc/meminfo ]]; then
+    local mem_total mem_available swap_total swap_free
+    read -r mem_total mem_available swap_total swap_free < <(
+      awk '/MemTotal:/{t=$2} /MemAvailable:/{a=$2} /SwapTotal:/{st=$2} /SwapFree:/{sf=$2}
+           END{printf "%d %d %d %d\n", t/1024, a/1024, st/1024, sf/1024}' /proc/meminfo
+    )
+    echo "${prefix}mem: total=${mem_total}MB available=${mem_available}MB swap_used=$(( swap_total - swap_free ))MB"
+  elif command -v vm_stat >/dev/null 2>&1; then
+    local pages_free pagesize avail_mb
+    pages_free="$(vm_stat | awk '/Pages free:/ { gsub("\\.",""); print $3 }')"
+    pagesize="$(sysctl -n hw.pagesize 2>/dev/null || echo 4096)"
+    if [[ "$pages_free" =~ ^[0-9]+$ && "$pagesize" =~ ^[0-9]+$ ]]; then
+      avail_mb=$(( pages_free * pagesize / 1024 / 1024 ))
+      echo "${prefix}mem: available≈${avail_mb}MB"
+    fi
+  fi
 }
