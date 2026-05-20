@@ -208,38 +208,13 @@ impl TypeSubstitution {
         self.map.len()
     }
 
-    /// Check if this substitution is an identity mapping (every type parameter maps to itself).
-    ///
-    /// **WARNING**: This check only verifies name equality, which is insufficient when
-    /// different type parameters share the same name (e.g., alias `T` vs function
-    /// `T extends object`). Callers that have access to the original `TypeParamInfo`
-    /// (like `instantiate_generic`) should use `is_identity_for` instead.
-    pub fn is_identity(&self, interner: &dyn TypeDatabase) -> bool {
-        self.map.iter().all(|(&name, &type_id)| {
-            // Check that the substitution maps a name to the UNCONSTRAINED
-            // TypeParameter with that name. If the target has a constraint or
-            // default, it may differ from the TypeParameter in the body being
-            // instantiated, so the substitution is NOT identity.
-            //
-            // This prevents false identity when a type alias's unconstrained `T`
-            // (the body) would be substituted with a constrained `T extends C`
-            // (from the caller). Without this check, `{ "T" → T_constrained }`
-            // would be treated as identity, leaving the body's unconstrained T
-            // unsubstituted.
-            if let Some(TypeData::TypeParameter(info)) = interner.lookup(type_id) {
-                info.name == name && info.constraint.is_none() && info.default.is_none()
-            } else {
-                false
-            }
-        })
-    }
-
     /// Check if this substitution is an identity mapping against specific type parameters.
     ///
-    /// Unlike `is_identity`, this correctly handles same-name type parameters by
-    /// comparing the interned TypeId of each declared type parameter against the
-    /// substituted value. This is the only correct identity check when the body
-    /// being instantiated may use different type parameters than the substitution source.
+    /// Compares the interned `TypeId` of each declared type parameter against
+    /// its substituted value, which is the only sound identity check when the
+    /// body being instantiated may use different `TypeId`s for same-named
+    /// `TypeParameter`s (declaration-scoped fresh params share name but not
+    /// `TypeId`).
     pub fn is_identity_for(
         &self,
         interner: &dyn TypeDatabase,
@@ -2046,7 +2021,7 @@ pub(crate) fn instantiate_type_with_shadowed(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
@@ -2101,7 +2076,7 @@ pub fn instantiate_type_cached(
     }
 
     // Empty/identity short-circuit — no cache key construction needed.
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
 
@@ -2222,7 +2197,7 @@ pub fn instantiate_type_preserving_cached(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
     if let Some(db) = query_db {
@@ -2271,7 +2246,7 @@ pub fn instantiate_type_with_depth_status(
     if type_id.is_intrinsic() {
         return (type_id, false);
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return (type_id, false);
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
@@ -2311,7 +2286,7 @@ pub fn instantiate_type_preserving_meta_cached(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
     if let Some(db) = query_db {
@@ -2366,7 +2341,7 @@ pub fn instantiate_type_with_infer_cached(
     if type_id.is_intrinsic() {
         return type_id;
     }
-    if substitution.is_empty() || substitution.is_identity(interner) {
+    if substitution.is_empty() {
         return type_id;
     }
     if let Some(db) = query_db {
