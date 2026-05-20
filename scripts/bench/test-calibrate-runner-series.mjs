@@ -108,6 +108,9 @@ assert.equal(report.rows.find((entry) => entry.name === "utility-types-project")
 
 const md = markdownReport(report);
 assert.match(md, /Benchmark Runner Calibration Report/);
+assert.match(md, /Runner Signatures/);
+assert.match(md, /AMD Cloud Run/);
+assert.match(md, /e2-highcpu-32/);
 assert.match(md, /Family Summary/);
 assert.match(md, /utility-types-project/);
 assert.doesNotMatch(md, /yellow-project/);
