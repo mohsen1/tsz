@@ -631,13 +631,22 @@ impl<'a> CheckerState<'a> {
             .generic_excess_skip
             .as_ref()
             .is_some_and(|skip| mismatch_index < skip.len() && skip[mismatch_index]);
-        if let Some(expected) = self.generic_application_literal_expected_for_mismatch(
-            callee_has_declared_generic_signature || parameter_was_generic_target,
-            arg_types,
-            args,
-            expected,
-        ) {
-            return expected;
+        let allow_generic_literal_display =
+            callee_has_declared_generic_signature || parameter_was_generic_target;
+        if allow_generic_literal_display {
+            let initializer_literal_types: Vec<_> = args
+                .iter()
+                .filter_map(|&arg_idx| self.literal_type_from_initializer(arg_idx))
+                .collect();
+            if let Some(expected) = expr_ops::generic_application_literal_expected_for_mismatch(
+                self.ctx.types,
+                true,
+                expected,
+                arg_types,
+                &initializer_literal_types,
+            ) {
+                return expected;
+            }
         }
         let actual_display_type = common::widen_argument_type_for_display(self.ctx.types, actual);
         if !common::is_primitive_type(self.ctx.types, actual_display_type) {
@@ -666,57 +675,6 @@ impl<'a> CheckerState<'a> {
                     })
             })
             .unwrap_or(expected)
-    }
-
-    fn generic_application_literal_expected_for_mismatch(
-        &self,
-        allow_generic_literal_display: bool,
-        arg_types: &[TypeId],
-        args: &[NodeIndex],
-        expected: TypeId,
-    ) -> Option<TypeId> {
-        if !allow_generic_literal_display {
-            return None;
-        }
-        let display_expected = self
-            .ctx
-            .types
-            .get_display_alias(expected)
-            .unwrap_or(expected);
-        let (base, type_args) = common::application_info(self.ctx.types, display_expected)?;
-        if type_args.len() != 1 {
-            return None;
-        }
-        let expected_arg = type_args[0];
-        let expected_arg_base = common::widen_literal_type(self.ctx.types, expected_arg);
-        if !common::is_primitive_type(self.ctx.types, expected_arg_base) {
-            return None;
-        }
-
-        let mut candidates = Vec::new();
-        let mut seen = FxHashSet::default();
-        for candidate in arg_types.iter().copied().chain(
-            args.iter()
-                .filter_map(|&arg_idx| self.literal_type_from_initializer(arg_idx)),
-        ) {
-            if common::literal_value(self.ctx.types, candidate).is_some()
-                && common::widen_literal_type(self.ctx.types, candidate) == expected_arg_base
-                && seen.insert(candidate)
-            {
-                candidates.push(candidate);
-            }
-        }
-        if candidates.len() < 2 {
-            return None;
-        }
-
-        let literal_arg = self.ctx.types.factory().union(candidates);
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .application(base, vec![literal_arg]),
-        )
     }
 
     fn is_generic_callable_against_nongeneric_target(
