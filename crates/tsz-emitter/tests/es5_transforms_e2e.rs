@@ -148,6 +148,66 @@ fn new_target_es5_class_constructor_and_invalid_method_use_tsc_recovery() {
 }
 
 #[test]
+fn new_target_es5_object_literal_methods_and_accessors_get_invalid_capture() {
+    let output = emit_es5(
+        "const O = {\n\
+             [new.target]: undefined,\n\
+             k() { return new.target; },\n\
+             get l() { return new.target; },\n\
+             set m(_) { _ = new.target; },\n\
+             n: new.target,\n\
+         };\n",
+    );
+
+    assert!(
+        output.contains(
+            "_a.k = function () {\n        var _newTarget = void 0;\n        return _newTarget;\n    }"
+        ),
+        "Object-literal methods own invalid `new.target` and should not close over the outer computed-name binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "get: function () {\n        var _newTarget = void 0;\n        return _newTarget;\n    }"
+        ),
+        "Object-literal getters own invalid `new.target` through the accessor descriptor function.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "set: function (_) {\n        var _newTarget = void 0;\n        _ = _newTarget;\n    }"
+        ),
+        "Object-literal setters own invalid `new.target` through the accessor descriptor function.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_target_es5_derived_constructor_body_capture_precedes_super_capture() {
+    let output = emit_es5(
+        "class A {}\n\
+         class B extends A {\n\
+             constructor() {\n\
+                 super();\n\
+                 const e = new.target;\n\
+                 const f = () => new.target;\n\
+             }\n\
+         }\n",
+    );
+
+    let new_target_capture = output
+        .find("var _newTarget = this.constructor;")
+        .unwrap_or_else(|| {
+            panic!("Derived constructor body should capture `new.target`.\nOutput:\n{output}")
+        });
+    let super_capture = output.find("var _this = _super.call(this) || this;").unwrap_or_else(|| {
+        panic!("Derived constructor should still capture the super return value.\nOutput:\n{output}")
+    });
+
+    assert!(
+        new_target_capture < super_capture,
+        "Constructor-body `new.target` capture should precede the super return capture, matching tsc.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn new_target_es5_class_field_initializers_capture_default_constructor() {
     let output = emit_es5(
         "class C {\n\
