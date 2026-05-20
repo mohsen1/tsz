@@ -68,6 +68,39 @@ impl<'a> DeclarationEmitter<'a> {
                     inner_type_param_renames,
                     return_expr,
                 )?
+            } else if return_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || return_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                // The inner function directly returns another function expression.
+                // Recurse: build the full set of in-scope type-parameter names at
+                // this level (outer's params + inner's renamed params) and delegate
+                // to `source_nested_function_type_text`, which handles the next
+                // level's signature, shadowing renames, and further recursion.
+                let returned_func = self.arena.get_function(return_node)?;
+                let mut names_in_scope = outer_func
+                    .type_parameters
+                    .as_ref()
+                    .map(|tp| self.collect_type_param_names(tp))
+                    .unwrap_or_default();
+                if let Some(type_params) = inner_func.type_parameters.as_ref() {
+                    for name in self.collect_type_param_names(type_params) {
+                        let renamed =
+                            Self::renamed_type_param_name(&name, inner_type_param_renames);
+                        if !names_in_scope.contains(&renamed) {
+                            names_in_scope.push(renamed);
+                        }
+                    }
+                }
+                let type_text = self.source_nested_function_type_text(
+                    Some(inner_func),
+                    return_expr,
+                    returned_func,
+                    &names_in_scope,
+                )?;
+                // Apply inner_func's type-param renames so that free references to
+                // inner's type params in the returned function's type text are
+                // updated to their renamed form (e.g. T → T_1).
+                Self::rename_type_text_identifiers(&type_text, inner_type_param_renames)
             } else {
                 if return_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
                     return None;
