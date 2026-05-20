@@ -3134,6 +3134,10 @@ impl<'a> CheckerState<'a> {
             &self.ctx.inheritance_graph,
             self.ctx.sound_mode(),
         );
+        self.propagate_overflow_flags(
+            relation_result.depth_exceeded,
+            relation_result.iteration_exceeded,
+        );
         let result = relation_result.is_related();
 
         // Cache the result for non-inference types
