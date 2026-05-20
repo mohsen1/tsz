@@ -79,6 +79,42 @@ export function bar() {
 }
 
 #[test]
+fn system_dotted_namespace_keeps_header_comments_inside_execute() {
+    let output = emit_system_es2015(
+        r#"// @target: es2015
+// @module: system
+export namespace A.B.C {
+    export function foo() {}
+}
+
+export function bar() {
+    return A.B.C.foo();
+}
+"#,
+    );
+
+    let execute_pos = output
+        .find("execute: function () {")
+        .expect("System execute body should be emitted");
+    let target_comment_pos = output
+        .find("// @target: es2015")
+        .expect("header target comment should be preserved");
+    let module_comment_pos = output
+        .find("// @module: system")
+        .expect("header module comment should be preserved");
+    let namespace_iife_pos = output
+        .find("(function (A) {")
+        .expect("namespace IIFE should be emitted");
+
+    assert!(
+        execute_pos < target_comment_pos
+            && target_comment_pos < module_comment_pos
+            && module_comment_pos < namespace_iife_pos,
+        "System header comments should stay inside execute before the namespace IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_es5_default_class_export_uses_hoisted_assignment_iife() {
     let source = "export default class A { method() { return 42; } }\n";
     let (parser, root) = parse_test_source(source);

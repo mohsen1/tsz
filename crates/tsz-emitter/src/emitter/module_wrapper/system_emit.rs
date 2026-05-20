@@ -20,6 +20,47 @@ fn push_system_reexport_name(
 }
 
 impl<'a> Printer<'a> {
+    fn initialize_system_wrapper_comments(&mut self) {
+        if self.ctx.options.remove_comments
+            || !self.all_comments.is_empty()
+            || self.source_comment_ranges.is_empty()
+        {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        self.all_comments = self
+            .source_comment_ranges
+            .iter()
+            .filter(|comment| {
+                let content = comment.get_text(text);
+                if content.contains("<amd-dependency") {
+                    return false;
+                }
+                let trimmed = content.trim_start_matches('/');
+                let trimmed = trimmed.trim_start();
+                !trimmed.starts_with("<reference")
+            })
+            .cloned()
+            .collect();
+        self.comment_emit_idx = 0;
+    }
+
+    fn undo_system_leading_comments_if_unclaimed(
+        &mut self,
+        before_len: usize,
+        pre_comment_writer_len: usize,
+        pre_comment_idx: usize,
+    ) {
+        if self.writer.len() == before_len && before_len > pre_comment_writer_len {
+            self.writer.truncate(pre_comment_writer_len);
+            self.comment_emit_idx = pre_comment_idx;
+        }
+    }
+
     pub(super) fn emit_system_setters(
         &mut self,
         dependencies: &[String],
@@ -340,6 +381,7 @@ impl<'a> Printer<'a> {
         if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
             self.jsx_dev_file_name = Some(system_jsx_dev_file_name(&source.file_name));
         }
+        self.initialize_system_wrapper_comments();
         self.register_system_import_substitutions(source, dep_vars, system_plan);
 
         let mut reexported_names: FxHashMap<String, String> = FxHashMap::default();
@@ -510,6 +552,9 @@ impl<'a> Printer<'a> {
             {
                 continue;
             }
+            let pre_comment_writer_len = self.writer.len();
+            let pre_comment_idx = self.comment_emit_idx;
+            self.emit_comments_before_pos(stmt_node.pos);
             let before_len = self.writer.len();
 
             if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
@@ -517,6 +562,12 @@ impl<'a> Printer<'a> {
             {
                 if self.writer.len() > before_len {
                     self.write_line();
+                } else {
+                    self.undo_system_leading_comments_if_unclaimed(
+                        before_len,
+                        pre_comment_writer_len,
+                        pre_comment_idx,
+                    );
                 }
                 continue;
             }
@@ -542,6 +593,11 @@ impl<'a> Printer<'a> {
                                 stmt_idx,
                                 &module_name,
                                 export_names,
+                            );
+                            self.undo_system_leading_comments_if_unclaimed(
+                                before_len,
+                                pre_comment_writer_len,
+                                pre_comment_idx,
                             );
                             self.system_folded_export_names.insert(module_name);
                             continue;
@@ -600,6 +656,12 @@ impl<'a> Printer<'a> {
                         .is_some_and(|cn| cn.kind == syntax_kind_ext::MODULE_DECLARATION));
             if self.writer.len() > before_len && !skip_newline {
                 self.write_line();
+            } else {
+                self.undo_system_leading_comments_if_unclaimed(
+                    before_len,
+                    pre_comment_writer_len,
+                    pre_comment_idx,
+                );
             }
         }
 
