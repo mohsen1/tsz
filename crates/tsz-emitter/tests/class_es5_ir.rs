@@ -425,7 +425,10 @@ fn test_computed_method_name() {
 }
 
 #[test]
-fn type_only_computed_field_side_effect_emits_inside_iife() {
+fn type_only_computed_field_side_effect_emits_after_iife() {
+    // When a class has only an instance computed property that is erased
+    // (type annotation, no value), the key expression is a side-effect
+    // statement. tsc emits it *after* the class IIFE, not inside it.
     let source = r#"class C {
             [Symbol.isRegExp]: string;
         }"#;
@@ -433,17 +436,20 @@ fn type_only_computed_field_side_effect_emits_inside_iife() {
     let output = transform_class(source).expect("transform should succeed in test");
 
     assert!(
-        output.contains("Symbol.isRegExp;\n    return C;"),
-        "type-only computed field side effect should emit inside the class IIFE.\nOutput:\n{output}"
+        output.contains("return C;\n}());\nSymbol.isRegExp;"),
+        "type-only computed field side effect should be deferred after the class IIFE.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("return C;\n}());\nSymbol.isRegExp;"),
-        "type-only computed field side effect should not be deferred after the class IIFE.\nOutput:\n{output}"
+        !output.contains("Symbol.isRegExp;\n    return C;"),
+        "type-only computed field side effect should not be emitted inside the class IIFE.\nOutput:\n{output}"
     );
 }
 
 #[test]
-fn computed_field_temp_assignment_emits_inside_iife() {
+fn computed_field_temp_assignment_emits_outside_iife() {
+    // When a class has only instance computed-property fields (no static
+    // computed value), tsc places `var _a;` before the IIFE and `_a = key;`
+    // after the IIFE so the constructor can close over the outer binding.
     let source = r#"class C {
             [Symbol.toStringTag]: string = "";
         }"#;
@@ -451,16 +457,20 @@ fn computed_field_temp_assignment_emits_inside_iife() {
     let output = transform_class(source).expect("transform should succeed in test");
 
     assert!(
-        output.contains("function C() {\n        this[_a] = \"\";\n    }\n    var _a;\n    _a = Symbol.toStringTag;\n    return C;"),
-        "computed field temp should be declared and assigned inside the class IIFE.\nOutput:\n{output}"
-    );
-    assert!(
         output.contains("this[_a] = \"\";"),
         "constructor should reference the computed field temp.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("}());\n_a = Symbol.toStringTag;"),
-        "computed field temp assignment should not be deferred after the class IIFE.\nOutput:\n{output}"
+        output.contains("var _a;\nvar C"),
+        "computed field temp var should be declared before the class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("}());\n_a = Symbol.toStringTag;"),
+        "computed field temp assignment should be deferred after the class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;\n    _a = Symbol.toStringTag;\n    return C;"),
+        "computed field temp should not be inside the class IIFE.\nOutput:\n{output}"
     );
 }
 
