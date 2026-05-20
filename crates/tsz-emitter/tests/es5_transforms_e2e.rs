@@ -1986,3 +1986,102 @@ fn test_type_alias_stripped() {
         "Type alias should be stripped from JS output.\nOutput:\n{output}"
     );
 }
+
+// Structural rule: when an async function targeting ES5 contains a dynamic
+// import call and the module system is CommonJS, the IR transformer must lower
+// `import("mod")` to `Promise.resolve().then(function () { return
+// __importStar(require("mod")); })` — the same form the regular printer emits.
+// The name of the specifier and the presence/absence of other awaits are
+// irrelevant to the lowering rule; any string-literal specifier must produce
+// the same pattern.
+
+#[test]
+fn async_es5_cjs_dynamic_import_lowered_to_promise_resolve_require() {
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"./mod\"); }",
+        ModuleKind::CommonJS,
+    );
+    assert!(
+        output.contains("Promise.resolve().then("),
+        "CJS async ES5: import() must become Promise.resolve().then(...).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("require(\"./mod\")"),
+        "CJS async ES5: require() with the original specifier must appear.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("import("),
+        "CJS async ES5: raw import() call must not remain in output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_cjs_dynamic_import_different_specifier_also_lowered() {
+    // Prove the rule operates on the specifier value, not just "mod".
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"@scope/package\"); }",
+        ModuleKind::CommonJS,
+    );
+    assert!(
+        output.contains("require(\"@scope/package\")"),
+        "CJS async ES5: specifier must be preserved verbatim in require().\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("import("),
+        "CJS async ES5: raw import() call must not remain.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_amd_dynamic_import_lowered_to_new_promise_require() {
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"./amd-mod\"); }",
+        ModuleKind::AMD,
+    );
+    assert!(
+        output.contains("new Promise("),
+        "AMD async ES5: import() must be wrapped in new Promise(...).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("require([\"./amd-mod\"]"),
+        "AMD async ES5: AMD-style require([specifier]) must appear.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("import("),
+        "AMD async ES5: raw import() must not remain in output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_umd_dynamic_import_lowered_same_as_amd() {
+    // UMD and AMD share the same promise-based require wrapper.
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"./umd-lib\"); }",
+        ModuleKind::UMD,
+    );
+    assert!(
+        output.contains("new Promise("),
+        "UMD async ES5: import() must be wrapped in new Promise(...).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("require([\"./umd-lib\"]"),
+        "UMD async ES5: AMD-style require() must appear.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("import("),
+        "UMD async ES5: raw import() must not remain.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_no_dynamic_import_lowering_for_esnext() {
+    // ESNext does not lower dynamic imports — import() must pass through.
+    let output = emit_es5_with_module(
+        "async function load() { return await import(\"./esm\"); }",
+        ModuleKind::ESNext,
+    );
+    assert!(
+        output.contains("import("),
+        "ESNext async ES5: import() must pass through unchanged.\nOutput:\n{output}"
+    );
+}

@@ -116,6 +116,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if let Some(source_text) = self.source_text {
             transformer.set_source_text(source_text);
         }
+        transformer.set_module_kind(self.module_kind);
         self.configure_async_disposable_context(&mut transformer);
         let inner = transformer.transform_async_generator_inner_function(
             inner_name,
@@ -463,6 +464,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        async_transformer.set_module_kind(self.module_kind);
                         self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
@@ -605,6 +607,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        async_transformer.set_module_kind(self.module_kind);
                         self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =

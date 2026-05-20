@@ -64,6 +64,7 @@ use crate::transforms::enum_es5_ir::transform_enum_to_ir;
 use crate::transforms::ir::{EnumMemberValue, IRNode, IRParam, IRPropertyKey};
 use crate::transforms::ir_printer::IRPrinter;
 use rustc_hash::FxHashMap;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -93,6 +94,7 @@ use tsz_scanner::SyntaxKind;
 pub struct NamespaceES5Transformer<'a> {
     arena: &'a NodeArena,
     is_commonjs: bool,
+    module_kind: ModuleKind,
     source_text: Option<&'a str>,
     comment_ranges: Vec<tsz_common::comments::CommentRange>,
     /// Exported variable names from prior blocks of the same namespace.
@@ -122,6 +124,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         Self {
             arena,
             is_commonjs: false,
+            module_kind: ModuleKind::None,
             source_text: None,
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
@@ -141,6 +144,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         Self {
             arena,
             is_commonjs,
+            module_kind: ModuleKind::None,
             source_text: None,
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
@@ -175,6 +179,10 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Set `CommonJS` mode
     pub const fn set_commonjs(&mut self, is_commonjs: bool) {
         self.is_commonjs = is_commonjs;
+    }
+
+    pub fn set_module_kind(&mut self, kind: ModuleKind) {
+        self.module_kind = kind;
     }
 
     pub fn set_default_exported_func_names(&mut self, names: std::collections::HashSet<String>) {
@@ -1723,7 +1731,12 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .has_modifier(&func_data.modifiers, SyntaxKind::ExportKeyword);
 
         let func_decl = if func_data.is_async && !func_data.asterisk_token {
-            AsyncES5Transformer::new(self.arena).transform_async_function(func_idx)
+            let mut async_transformer = AsyncES5Transformer::new(self.arena);
+            async_transformer.set_module_kind(self.module_kind);
+            if let Some(src) = self.source_text {
+                async_transformer.set_source_text(src);
+            }
+            async_transformer.transform_async_function(func_idx)
         } else {
             let body_source_range = self.arena.pos_end_at(func_data.body);
 

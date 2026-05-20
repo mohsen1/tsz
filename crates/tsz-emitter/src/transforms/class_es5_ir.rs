@@ -3567,6 +3567,7 @@ impl<'a> ES5ClassTransformer<'a> {
         if let Some(source_text) = self.source_text {
             async_transformer.set_source_text(source_text);
         }
+        async_transformer.set_module_kind(self.module_kind);
         self.configure_async_disposable_context(&mut async_transformer);
         let has_await = async_transformer.body_contains_await(arrow.body);
         let mut generator_body = async_transformer.transform_generator_body(arrow.body, has_await);

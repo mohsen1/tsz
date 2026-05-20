@@ -40,6 +40,7 @@ use crate::emitter::ScopedConstEnum;
 use crate::transforms::ir_printer::IRPrinter;
 use crate::transforms::namespace_es5_ir::NamespaceES5Transformer;
 use rustc_hash::FxHashMap;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
@@ -184,6 +185,10 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     pub fn set_commonjs_export_name(&mut self, name: Option<String>) {
         self.transformer.set_commonjs_export_name(name);
+    }
+
+    pub fn set_module_kind(&mut self, kind: ModuleKind) {
+        self.transformer.set_module_kind(kind);
     }
 
     pub(crate) fn set_const_enum_facts(

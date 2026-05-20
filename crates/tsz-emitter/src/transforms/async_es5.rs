@@ -68,6 +68,7 @@
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir::IRNode;
 use crate::transforms::ir_printer::IRPrinter;
+use tsz_common::common::ModuleKind;
 use tsz_common::source_map::Mapping;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -126,6 +127,10 @@ impl<'a> AsyncES5Emitter<'a> {
 
     pub const fn set_system_import_meta(&mut self, enabled: bool) {
         self.system_import_meta = enabled;
+    }
+
+    pub fn set_module_kind(&mut self, kind: ModuleKind) {
+        self.transformer.set_module_kind(kind);
     }
 
     pub fn set_temp_var_counter(&mut self, counter: u32) {

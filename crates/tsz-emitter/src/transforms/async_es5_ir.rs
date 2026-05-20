@@ -55,6 +55,7 @@ use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::helpers::HelpersNeeded;
 use crate::transforms::ir::{IRCatchClause, IRGeneratorCase, IRNode, IRParam};
 use rustc_hash::FxHashSet;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::node_flags;
@@ -133,6 +134,10 @@ pub struct AsyncES5Transformer<'a> {
     pub(super) class_super_name: String,
     /// Whether the surrounding class member is static.
     pub(super) class_super_is_static: bool,
+    /// Module kind for dynamic `import()` lowering inside generator bodies.
+    pub(super) module_kind: ModuleKind,
+    /// Counter for AMD/UMD dynamic import promise callback identifiers.
+    pub(super) dynamic_import_promise_counter: Cell<u32>,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -157,6 +162,8 @@ impl<'a> AsyncES5Transformer<'a> {
             class_has_super: false,
             class_super_name: "_super".to_string(),
             class_super_is_static: false,
+            module_kind: ModuleKind::None,
+            dynamic_import_promise_counter: Cell::new(1),
         }
     }
 
@@ -181,6 +188,12 @@ impl<'a> AsyncES5Transformer<'a> {
         self.class_super_name = super_name;
         self.class_super_is_static = is_static;
         self
+    }
+
+    /// Set the module kind so dynamic `import()` calls inside the generator
+    /// body are lowered to the appropriate module-system form.
+    pub fn set_module_kind(&mut self, kind: ModuleKind) {
+        self.module_kind = kind;
     }
 
     pub(crate) fn set_lexical_this_capture(&self, capture: bool) {
