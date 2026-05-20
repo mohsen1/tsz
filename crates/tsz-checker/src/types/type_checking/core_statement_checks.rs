@@ -361,12 +361,39 @@ impl<'a> CheckerState<'a> {
                 );
                 false
             } else {
-                let ok = self.check_assignable_or_report_at_exact_anchor(
-                    return_type,
-                    expected_type,
-                    source_error_node,
-                    fallback_error_node,
-                );
+                let can_defer_contextual_callable_union = return_data.expression.is_some()
+                    && self
+                        .ctx
+                        .arena
+                        .get(return_data.expression)
+                        .is_some_and(|node| node.is_function_expression_or_arrow())
+                    && self
+                        .ctx
+                        .arena
+                        .get(return_data.expression)
+                        .and_then(|expr| self.ctx.arena.get_function(expr))
+                        .and_then(|func| self.ctx.arena.get(func.body))
+                        .is_some_and(|body| body.kind == syntax_kind_ext::BLOCK)
+                    && {
+                        let evaluated_expected = self.evaluate_type_with_env(expected_type);
+                        crate::query_boundaries::assignability::contextual_function_can_defer_callable_union_relation(
+                                self.ctx.types,
+                                return_type,
+                                expected_type,
+                            ) || (evaluated_expected != expected_type
+                                && crate::query_boundaries::assignability::contextual_function_can_defer_callable_union_relation(
+                                    self.ctx.types,
+                                    return_type,
+                                    evaluated_expected,
+                                ))
+                    };
+                let ok = can_defer_contextual_callable_union
+                    || self.check_assignable_or_report_at_exact_anchor(
+                        return_type,
+                        expected_type,
+                        source_error_node,
+                        fallback_error_node,
+                    );
                 if !ok {
                     // TS2409: In constructors, also emit the constructor-specific diagnostic
                     // alongside the TS2322 already emitted by check_assignable_or_report.
