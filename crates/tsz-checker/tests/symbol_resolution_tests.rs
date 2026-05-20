@@ -3,7 +3,7 @@
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use tsz_binder::BinderState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {

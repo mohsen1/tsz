@@ -968,14 +968,17 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn normalize_contextual_signature_with_env(&mut self, expected: TypeId) -> TypeId {
         fn should_preserve_contextual_param_type(
-            db: &dyn tsz_solver::TypeDatabase,
+            db: &dyn tsz_solver::construction::TypeDatabase,
             ty: TypeId,
         ) -> bool {
             // Delegate to solver query: checks if any union member is constructor-like
             crate::query_boundaries::common::is_constructor_like_type(db, ty)
         }
 
-        fn is_tuple_like_rest_param(db: &dyn tsz_solver::TypeDatabase, ty: TypeId) -> bool {
+        fn is_tuple_like_rest_param(
+            db: &dyn tsz_solver::construction::TypeDatabase,
+            ty: TypeId,
+        ) -> bool {
             crate::query_boundaries::common::tuple_elements(db, ty).is_some()
                 || crate::query_boundaries::common::union_members(db, ty).is_some_and(|members| {
                     !members.is_empty()

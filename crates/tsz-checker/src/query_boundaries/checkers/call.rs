@@ -1,8 +1,8 @@
-use tsz_solver::operations::CallResult;
-use tsz_solver::{
-    AssignabilityChecker, ContextualTypeContext, FunctionShape, QueryDatabase, TypeDatabase,
-    TypeEnvironment, TypeId, TypeResolver, TypeSubstitution,
-};
+use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::operations::{AssignabilityChecker, CallResult};
+use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
+use tsz_solver::{FunctionShape, TypeId};
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;
 pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter_type;
@@ -20,7 +20,7 @@ pub(crate) fn get_contextual_signature(
     db: &dyn QueryDatabase,
     type_id: TypeId,
 ) -> Option<FunctionShape> {
-    tsz_solver::get_contextual_signature_cached_with_compat_checker(db, type_id)
+    tsz_solver::operations::get_contextual_signature_cached_with_compat_checker(db, type_id)
 }
 
 pub(crate) fn get_contextual_signature_for_arity(
@@ -28,7 +28,7 @@ pub(crate) fn get_contextual_signature_for_arity(
     type_id: TypeId,
     arg_count: usize,
 ) -> Option<FunctionShape> {
-    tsz_solver::get_contextual_signature_for_arity_cached_with_compat_checker(
+    tsz_solver::operations::get_contextual_signature_for_arity_cached_with_compat_checker(
         db, type_id, arg_count,
     )
 }
@@ -250,7 +250,7 @@ pub(crate) fn resolve_new<C: AssignabilityChecker>(
 pub(crate) fn compute_contextual_types_with_context(
     db: &dyn QueryDatabase,
     ctx: &crate::context::CheckerContext<'_>,
-    env: &tsz_solver::TypeEnvironment,
+    env: &tsz_solver::relations::subtype::TypeEnvironment,
     shape: &tsz_solver::FunctionShape,
     arg_types: &[TypeId],
     contextual_type: Option<TypeId>,
@@ -275,7 +275,7 @@ pub(crate) fn expanded_this_type_from_application(
     let def_id = tsz_solver::type_queries::get_lazy_def_id(db, app.base)?;
     let body = env.resolve_lazy(def_id, db)?;
     let type_params = env.get_lazy_type_params(def_id).unwrap_or_default();
-    let expanded = tsz_solver::instantiate_generic(db, body, &type_params, &app.args);
+    let expanded = tsz_solver::computation::instantiate_generic(db, body, &type_params, &app.args);
     let expanded_ctx =
         ContextualTypeContext::with_expected_and_options(db, expanded, no_implicit_any);
     expanded_ctx.get_this_type_from_marker()

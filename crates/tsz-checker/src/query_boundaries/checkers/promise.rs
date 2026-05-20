@@ -1,4 +1,5 @@
-use tsz_solver::{CallSignature, FunctionShape, TypeDatabase, TypeId};
+use tsz_solver::construction::TypeDatabase;
+use tsz_solver::{CallSignature, FunctionShape, TypeId};
 
 pub(crate) use super::super::common::{application_info, lazy_def_id, union_members};
 pub(crate) use tsz_solver::type_queries::PromiseTypeKind;

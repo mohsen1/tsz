@@ -4,7 +4,7 @@ use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn check_commonjs_file(file_name: &str, source: &str) -> Vec<(u32, String)> {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());

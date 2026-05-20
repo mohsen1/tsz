@@ -2,7 +2,8 @@
 //! Tests performance of `reduce_union_subtypes` for large unions of tuples/arrays.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use tsz_solver::{TupleElement, TypeId, TypeInterner};
+use tsz_solver::construction::TypeInterner;
+use tsz_solver::{TupleElement, TypeId};
 
 /// Create N distinct tuple types like [Lit0, Lit1], [Lit2, Lit3], etc.
 /// This simulates enumLiteralsSubtypeReduction.ts which has 512 return types.

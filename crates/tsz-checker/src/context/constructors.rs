@@ -109,7 +109,7 @@ impl<'a> CheckerContext<'a> {
             flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             symbol_last_assignment_pos: RefCell::new(FxHashMap::default()),
             symbol_flow_confirmed: RefCell::new(FxHashMap::default()),
-            narrowing_cache: tsz_solver::NarrowingCache::new(),
+            narrowing_cache: tsz_solver::narrowing::NarrowingCache::new(),
             call_type_predicates: crate::control_flow::CallPredicateMap::default(),
             daa_error_nodes: FxHashSet::default(),
             deferred_ts2454_errors: Vec::new(),
@@ -206,7 +206,7 @@ impl<'a> CheckerContext<'a> {
             depth_exceeded: Cell::new(false),
             relation_overflow: Cell::new(crate::context::RelationOverflowFlags::default()),
             skip_callable_type_param_suppression: Cell::new(false),
-            eval_session: Rc::new(tsz_solver::EvaluationSession::new()),
+            eval_session: Rc::new(tsz_solver::evaluation::session::EvaluationSession::new()),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
                 tsz_solver::recursion::RecursionProfile::CheckerRecursion,
             )),

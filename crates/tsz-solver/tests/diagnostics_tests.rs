@@ -1,7 +1,7 @@
 //! Tests for diagnostic generation.
 
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };

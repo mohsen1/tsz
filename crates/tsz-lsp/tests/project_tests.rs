@@ -5874,10 +5874,11 @@ fn test_project_residency_stats_includes_type_interner() {
     );
     // The interner size should be at least the struct overhead
     assert!(
-        stats.type_interner_estimated_bytes >= std::mem::size_of::<tsz_solver::TypeInterner>(),
+        stats.type_interner_estimated_bytes
+            >= std::mem::size_of::<tsz_solver::construction::TypeInterner>(),
         "interner estimate ({}) should be >= struct size ({})",
         stats.type_interner_estimated_bytes,
-        std::mem::size_of::<tsz_solver::TypeInterner>(),
+        std::mem::size_of::<tsz_solver::construction::TypeInterner>(),
     );
 }
 
