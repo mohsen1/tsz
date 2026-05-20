@@ -1849,7 +1849,6 @@ fn types_have_common_properties(
 /// Used for TS2502 detection (circular reference in type annotation).
 /// Traverses the type structure, expanding top-level lazy aliases via the provided callback.
 /// Stops recursion at Function, Object, and Mapped types which break the "direct" reference cycle.
-#[allow(clippy::match_same_arms)]
 pub fn has_type_query_for_symbol(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -1908,14 +1907,12 @@ pub fn has_type_query_for_symbol(
                 TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) => {
                     worklist.push(inner);
                 }
-                TypeData::Function(_)
-                | TypeData::Object(_)
-                | TypeData::ObjectWithIndex(_)
-                | TypeData::Mapped(_) => {
-                    // These types break the "direct" reference cycle logic for TS2502.
-                    // Recursive types via function return/params or object properties are allowed.
+                _ => {
+                    // `Function`, `Object`, `ObjectWithIndex`, and `Mapped` intentionally stop
+                    // traversal here: they break the "direct" reference cycle check for TS2502,
+                    // because recursive types via function return/params or object properties
+                    // are allowed.
                 }
-                _ => {}
             }
         }
         false
