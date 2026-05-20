@@ -697,7 +697,8 @@ jobs:
                     "${manifest_pgo_optimized}" == "1" ]]; then
                 exit 0
               fi
-              echo "Cloud Build manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; waiting for ${target_sha}."
+              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
+              exit 1
             fi
             case "$status" in
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
@@ -847,7 +848,8 @@ jobs:
               if [[ "${BENCH_TARGET_SHA:-}" == "${{ env.BENCH_TARGET_SHA }}" ]]; then
                 exit 0
               fi
-              echo "Cloud Build manifest artifact is for ${BENCH_TARGET_SHA:-unknown}; waiting for ${{ env.BENCH_TARGET_SHA }}."
+              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${BENCH_TARGET_SHA:-unknown}; expected ${{ env.BENCH_TARGET_SHA }}."
+              exit 1
             fi
             case "$status" in
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
