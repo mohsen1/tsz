@@ -317,8 +317,8 @@ fn callable_type_satisfies_application_callable_union_constraint_no_ts2344() {
 
 #[test]
 fn intersection_non_callable_with_type_param_against_application_callable_union_ts2344() {
-    // `AnyComponent & C` is an intersection with a type parameter — simulates
-    // the `AnyStyledComponent & C` pattern from the conformance test.
+    // `AnyComponent & C` is an intersection with a type parameter — C is already
+    // constrained to `ComponentType<any>`, so no TS2344 at the declaration site.
     let codes = check_source_codes(&with_component_prelude(
         r#"
 declare function styled<C extends ComponentType<any>>(
