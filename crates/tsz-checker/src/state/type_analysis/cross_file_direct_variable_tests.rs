@@ -3,7 +3,9 @@ use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId};
+use tsz_parser::NodeIndex;
 use tsz_parser::parser::ParserState;
+use tsz_solver::TypeId;
 
 fn parse_bound_source_with_name(
     file_name: &str,
@@ -24,6 +26,30 @@ fn parse_bound_source_with_name(
     )
 }
 
+fn interface_decl_and_members(
+    binder: &BinderState,
+    arena: &tsz_parser::parser::node::NodeArena,
+    name: &str,
+) -> (SymbolId, NodeIndex, Vec<NodeIndex>) {
+    let sym_id = binder
+        .file_locals
+        .get(name)
+        .expect("fixture interface symbol");
+    let symbol = binder
+        .get_symbol(sym_id)
+        .expect("fixture interface symbol data");
+    let decl_idx = symbol.declarations[0];
+    let members = arena
+        .get(decl_idx)
+        .and_then(|node| arena.get_interface(node))
+        .expect("fixture interface declaration")
+        .members
+        .nodes
+        .clone();
+
+    (sym_id, decl_idx, members)
+}
+
 #[test]
 fn direct_builtin_lib_variable_annotation_accepts_non_generic_interfaces() {
     let (arena, binder, types) = parse_bound_source_with_name(
@@ -42,7 +68,7 @@ fn direct_builtin_lib_variable_annotation_accepts_non_generic_interfaces() {
         "fixture.ts".to_string(),
         CheckerOptions::default(),
     );
-    let state = CheckerState { ctx };
+    let mut state = CheckerState { ctx };
 
     for name in ["documentFixture", "navigatorFixture"] {
         let sym_id = binder
@@ -82,7 +108,7 @@ fn direct_builtin_lib_variable_annotation_rejects_alias_and_generic_refs() {
         "fixture.ts".to_string(),
         CheckerOptions::default(),
     );
-    let state = CheckerState { ctx };
+    let mut state = CheckerState { ctx };
 
     for name in ["aliasFixture", "boxedFixture"] {
         let sym_id = binder
@@ -118,7 +144,7 @@ fn direct_builtin_lib_variable_annotation_rejects_non_builtin_arena() {
         "fixture.ts".to_string(),
         CheckerOptions::default(),
     );
-    let state = CheckerState { ctx };
+    let mut state = CheckerState { ctx };
     let sym_id = binder
         .file_locals
         .get("leafFixture")
@@ -142,7 +168,7 @@ fn delegate_cross_arena_builtin_variable_annotation_caches_lazy_interface() {
     );
     let (requester_arena, mut requester_binder, _) =
         parse_bound_source_with_name("fixture.ts", "let value;");
-    let document_sym: SymbolId = target_binder
+    let document_sym = target_binder
         .file_locals
         .get("documentFixture")
         .expect("fixture variable symbol");
@@ -204,4 +230,212 @@ fn delegate_cross_arena_builtin_variable_annotation_caches_lazy_interface() {
         (ty, Vec::new()),
         "cache hits should preserve the lazy builtin variable result",
     );
+}
+
+#[test]
+fn direct_source_file_interface_lowering_accepts_readonly_array_option_bag_member() {
+    let (arena, binder, types) = parse_bound_source_with_name(
+        "target.ts",
+        r#"
+                interface DashboardInputFixture {
+                    title: string;
+                    logos: readonly string[];
+                }
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "target.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let sym_id = binder
+        .file_locals
+        .get("DashboardInputFixture")
+        .expect("fixture interface symbol");
+
+    let (ty, params) = state
+        .direct_cross_file_interface_lowering(sym_id, binder.as_ref(), arena.as_ref(), false, true)
+        .expect("readonly array option-bag interface should lower directly");
+
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert!(params.is_empty());
+}
+
+#[test]
+fn direct_source_file_interface_lowering_rejects_non_readonly_type_operator() {
+    let (arena, binder, types) = parse_bound_source_with_name(
+        "target.ts",
+        r#"
+                interface KeysFixture { value: string; }
+                interface QueryFixture { key: keyof KeysFixture; }
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "target.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let sym_id = binder
+        .file_locals
+        .get("QueryFixture")
+        .expect("fixture interface symbol");
+
+    assert!(
+        state
+            .direct_cross_file_interface_lowering(
+                sym_id,
+                binder.as_ref(),
+                arena.as_ref(),
+                false,
+                true,
+            )
+            .is_none(),
+    );
+}
+
+#[test]
+fn direct_source_file_interface_lowering_merges_simple_heritage() {
+    let (arena, binder, types) = parse_bound_source_with_name(
+        "target.ts",
+        r#"
+                interface DashboardBaseFixture {
+                    title: string;
+                    logos: readonly string[];
+                }
+                interface DashboardModelFixture extends DashboardBaseFixture {
+                    heroUrl: string;
+                }
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let sym_id = binder
+        .file_locals
+        .get("DashboardModelFixture")
+        .expect("fixture interface symbol");
+
+    let (ty, params) = state
+        .direct_cross_file_interface_lowering(sym_id, binder.as_ref(), arena.as_ref(), false, true)
+        .expect("simple source-file heritage should direct-lower");
+
+    assert!(params.is_empty());
+    for name in ["title", "logos", "heroUrl"] {
+        let prop = types.intern_string(name);
+        assert!(
+            crate::query_boundaries::common::raw_property_type(
+                state.ctx.types.as_type_database(),
+                ty,
+                prop,
+            )
+            .is_some(),
+            "{name} should be present after source heritage merge",
+        );
+    }
+}
+
+#[test]
+fn direct_source_file_interface_member_simple_types_accept_option_bag_members() {
+    let (arena, binder, types) = parse_bound_source_with_name(
+        "target.ts",
+        r#"
+                interface DashboardInputFixture {
+                    title: string;
+                    logos: readonly string[];
+                    heroUrl: string;
+                }
+                interface SeriesSummaryFixture {
+                    mean: number;
+                    p95: number;
+                }
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+
+    for name in ["DashboardInputFixture", "SeriesSummaryFixture"] {
+        let (_sym_id, decl_idx, members) = interface_decl_and_members(&binder, &arena, name);
+        let results = state
+            .direct_cross_file_interface_member_simple_types(
+                decl_idx,
+                &members,
+                arena.as_ref(),
+                binder.as_ref(),
+                None,
+                true,
+            )
+            .expect("simple source-file option-bag members should lower directly");
+
+        assert_eq!(
+            results.len(),
+            members.len(),
+            "{name} should lower every requested member directly",
+        );
+        assert!(
+            results
+                .values()
+                .all(|ty| !matches!(*ty, TypeId::UNKNOWN | TypeId::ERROR))
+        );
+    }
+}
+
+#[test]
+fn direct_source_file_interface_member_simple_types_reject_complex_members() {
+    let (arena, binder, types) = parse_bound_source_with_name(
+        "target.ts",
+        r#"
+                function summarizeFixture(): { mean: number } {
+                    return { mean: 0 };
+                }
+                interface ReturnTypeFixture {
+                    summary: ReturnType<typeof summarizeFixture>;
+                }
+                interface MethodFixture {
+                    format(): string;
+                }
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+
+    for name in ["ReturnTypeFixture", "MethodFixture"] {
+        let (_sym_id, decl_idx, members) = interface_decl_and_members(&binder, &arena, name);
+        assert!(
+            state
+                .direct_cross_file_interface_member_simple_types(
+                    decl_idx,
+                    &members,
+                    arena.as_ref(),
+                    binder.as_ref(),
+                    None,
+                    true,
+                )
+                .is_none(),
+            "{name} should stay on the normal cross-file member path",
+        );
+    }
 }

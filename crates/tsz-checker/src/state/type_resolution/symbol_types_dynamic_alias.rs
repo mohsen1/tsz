@@ -2,6 +2,33 @@ use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn same_named_type_alias_for_value_symbol(
+        &self,
+        value_sym_id: SymbolId,
+    ) -> Option<SymbolId> {
+        let value_symbol = self.get_cross_file_symbol(value_sym_id)?;
+        let file_idx = self.ctx.resolve_symbol_file_index(value_sym_id)?;
+        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        binder
+            .symbols
+            .find_all_by_name(&value_symbol.escaped_name)
+            .iter()
+            .copied()
+            .find_map(|candidate_id| {
+                if candidate_id == value_sym_id {
+                    return None;
+                }
+                let candidate = binder.symbols.get(candidate_id)?;
+                if candidate.flags & symbol_flags::TYPE_ALIAS == 0
+                    || candidate.escaped_name != value_symbol.escaped_name
+                {
+                    return None;
+                }
+                self.ctx.register_symbol_file_target(candidate_id, file_idx);
+                Some(candidate_id)
+            })
+    }
+
     pub(crate) fn should_delegate_dynamic_type_alias_owner(
         &self,
         sym_id: SymbolId,

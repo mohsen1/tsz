@@ -3,7 +3,6 @@
 //! and cross-file interface declaration merging.
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::expression_name_text_in_arena;
-use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::perf_counters::{
     CrossArenaAliasShortcutOutcome, CrossArenaSymbolMissKind, CrossArenaSymbolMissSource,
@@ -14,162 +13,7 @@ use tsz_solver::TypeId;
 
 pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
 
-thread_local! {
-    static CROSS_ARENA_INTERFACE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
 impl<'a> CheckerState<'a> {
-    pub(crate) fn enter_cross_arena_interface_delegation() {
-        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.set(c.get() + 1));
-    }
-
-    pub(crate) fn leave_cross_arena_interface_delegation() {
-        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
-    }
-
-    pub(crate) fn in_cross_arena_interface_delegation() -> bool {
-        CROSS_ARENA_INTERFACE_DEPTH.with(|c| c.get() > 0)
-    }
-
-    fn resolve_cross_file_global_type_symbol(&self, name: &str) -> Option<tsz_binder::SymbolId> {
-        let normalized = name.strip_prefix("globalThis.").unwrap_or(name);
-        let lib_binders = self.get_lib_binders();
-        self.ctx
-            .binder
-            .file_locals
-            .get(normalized)
-            .or_else(|| {
-                self.ctx
-                    .binder
-                    .get_global_type_with_libs(normalized, &lib_binders)
-            })
-            .or_else(|| {
-                normalized
-                    .rsplit('.')
-                    .next()
-                    .filter(|tail| *tail != normalized)
-                    .and_then(|tail| {
-                        self.ctx.binder.file_locals.get(tail).or_else(|| {
-                            self.ctx
-                                .binder
-                                .get_global_type_with_libs(tail, &lib_binders)
-                        })
-                    })
-            })
-    }
-
-    fn resolve_cross_file_heritage_type_arg(
-        &mut self,
-        arena: &tsz_parser::NodeArena,
-        node_idx: NodeIndex,
-    ) -> TypeId {
-        let Some(node) = arena.get(node_idx) else {
-            return TypeId::UNKNOWN;
-        };
-
-        if let Some(builtin) = keyword_syntax_to_type_id(node.kind) {
-            return builtin;
-        }
-
-        let name = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
-            arena
-                .get_type_ref(node)
-                .and_then(|type_ref| expression_name_text_in_arena(arena, type_ref.type_name))
-        } else {
-            expression_name_text_in_arena(arena, node_idx)
-        };
-
-        let Some(name) = name else {
-            return TypeId::UNKNOWN;
-        };
-        if name == "BuiltinIteratorReturn" {
-            return self.builtin_iterator_return_intrinsic_type();
-        }
-        if let Some(&type_id) = self.ctx.type_parameter_scope.get(&name) {
-            return type_id;
-        }
-        if let Some(sym_id) = self.resolve_cross_file_global_type_symbol(&name) {
-            return self.get_type_of_symbol(sym_id);
-        }
-
-        let atom = self.ctx.types.intern_string(&name);
-        self.ctx.types.type_param(tsz_solver::TypeParamInfo {
-            name: atom,
-            constraint: None,
-            default: None,
-            is_const: false,
-        })
-    }
-
-    /// Get a symbol from the current binder, lib binders, or other file binders.
-    /// This ensures we can resolve symbols from lib.d.ts and other files.
-    pub(crate) fn get_symbol_globally(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
-        // If the import/export resolver has already tied this raw SymbolId to a
-        // specific source file, use that binder before the current file. Raw
-        // SymbolIds are only file-local; checking the current binder first can
-        // accidentally pick an unrelated same-id symbol while resolving
-        // cross-file aliases.
-        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
-            && file_idx != self.ctx.current_file_idx
-            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
-            && let Some(sym) = binder.get_symbol(sym_id)
-        {
-            return Some(sym);
-        }
-
-        // 1. Check current file
-        if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
-            return Some(sym);
-        }
-        // 2. Check lib files (lib.d.ts, etc.)
-        for lib in self.ctx.lib_contexts.iter() {
-            if let Some(sym) = lib.binder.get_symbol(sym_id) {
-                return Some(sym);
-            }
-        }
-        // 3. O(1) fast-path: if this SymbolId was already resolved to a specific
-        //    file via resolve_symbol_file_index, go directly to that binder.
-        {
-            let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
-            if let Some(file_idx) = file_idx
-                && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
-                && let Some(sym) = binder.get_symbol(sym_id)
-            {
-                return Some(sym);
-            }
-        }
-        // 4. Fallback: O(N) scan over all binders
-        if let Some(binders) = &self.ctx.all_binders {
-            for binder in binders.iter() {
-                if let Some(sym) = binder.get_symbol(sym_id) {
-                    return Some(sym);
-                }
-            }
-        }
-        None
-    }
-
-    /// Get a symbol, preferring the cross-file binder for known cross-file `SymbolIds`.
-    ///
-    /// Unlike `get_symbol_globally` (which checks the local binder first and may find
-    /// a WRONG symbol due to `SymbolId` collisions), this method checks
-    /// `cross_file_symbol_targets` FIRST. If the `SymbolId` is known to belong to another
-    /// file, the target file's binder is used directly, avoiding the collision.
-    ///
-    /// Falls back to `get_symbol_globally` for non-cross-file symbols.
-    pub(crate) fn get_cross_file_symbol(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
-        // Check if this is a known cross-file symbol
-        let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
-        if let Some(file_idx) = file_idx
-            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
-            && let Some(sym) = binder.get_symbol(sym_id)
-        {
-            return Some(sym);
-        }
-        // Fall back to global search
-        self.get_symbol_globally(sym_id)
-    }
-
     fn cross_arena_symbol_miss_kind(&self, sym_id: SymbolId) -> CrossArenaSymbolMissKind {
         let Some(flags) = self
             .get_cross_file_symbol(sym_id)
@@ -731,40 +575,70 @@ impl<'a> CheckerState<'a> {
                 delegate_arena,
                 needs_cross_file_delegation,
             ) {
+                if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                    self.cache_final_actual_lib_interface_type(sym_id, shared_name, result.0);
+                    self.cache_shared_actual_lib_delegation(shared_name, result.0);
+                }
                 return Some(result);
             }
 
-            let direct_target = if let Some(file_idx) = cross_file_idx {
-                let arena = self.ctx.get_arena_for_file(file_idx as u32);
-                let binder = self
-                    .ctx
-                    .get_binder_for_file(file_idx)
-                    .unwrap_or(self.ctx.binder);
-                Some((arena, binder, Some(file_idx)))
+            let current_binder = self.ctx.binder;
+            let all_arenas = self.ctx.all_arenas.clone();
+            let all_binders = self.ctx.all_binders.clone();
+            let direct_target_owned = if let Some(file_idx) = cross_file_idx {
+                all_arenas
+                    .as_ref()
+                    .and_then(|arenas| arenas.get(file_idx).cloned())
+                    .map(|arena| {
+                        let binder = all_binders
+                            .as_ref()
+                            .and_then(|binders| binders.get(file_idx).cloned());
+                        (arena, binder, Some(file_idx))
+                    })
             } else {
-                delegate_arena.map(|arena| {
-                    let binder = if std::ptr::eq(arena, self.ctx.arena) {
-                        self.ctx.binder
-                    } else {
-                        self.ctx
-                            .get_binder_for_arena(arena)
-                            .unwrap_or(self.ctx.binder)
-                    };
+                delegate_arena.and_then(|arena| {
                     let file_idx = if std::ptr::eq(arena, self.ctx.arena) {
                         Some(self.ctx.current_file_idx)
                     } else {
                         self.ctx.get_file_idx_for_arena(arena)
                     };
-                    (arena, binder, file_idx)
+                    let arena_arc = file_idx
+                        .and_then(|idx| {
+                            all_arenas
+                                .as_ref()
+                                .and_then(|arenas| arenas.get(idx).cloned())
+                        })
+                        .or_else(|| self.ctx.binder.symbol_arenas.get(&sym_id).cloned())
+                        .or_else(|| {
+                            self.ctx.binder.declaration_arenas.iter().find_map(
+                                |((candidate_sym, _), arenas)| {
+                                    (*candidate_sym == sym_id).then(|| {
+                                        arenas.iter().find_map(|candidate| {
+                                            std::ptr::eq(candidate.as_ref(), arena)
+                                                .then(|| candidate.clone())
+                                        })
+                                    })?
+                                },
+                            )
+                        });
+                    let binder = file_idx.and_then(|idx| {
+                        all_binders
+                            .as_ref()
+                            .and_then(|binders| binders.get(idx).cloned())
+                    });
+                    arena_arc.map(|arena| (arena, binder, file_idx))
                 })
             };
-            if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) = direct_target
-                && let Some(direct_type) = self.direct_builtin_lib_variable_annotation_type(
-                    sym_id,
-                    delegate_binder,
-                    symbol_arena,
-                )
-            {
+            let direct_builtin_variable_type = direct_target_owned.as_ref().and_then(
+                |(symbol_arena, delegate_binder, _delegate_file_idx)| {
+                    self.direct_builtin_lib_variable_annotation_type(
+                        sym_id,
+                        delegate_binder.as_deref().unwrap_or(current_binder),
+                        symbol_arena.as_ref(),
+                    )
+                },
+            );
+            if let Some(direct_type) = direct_builtin_variable_type {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {
                     if symbol_type_cache_from_symbol_arena {
@@ -788,15 +662,24 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .lib_delegation_cache
                         .insert_symbol_type(sym_id, (direct_type, Vec::new()));
+                    if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                        self.cache_final_actual_lib_interface_type(
+                            sym_id,
+                            shared_name,
+                            direct_type,
+                        );
+                        self.cache_shared_actual_lib_delegation(shared_name, direct_type);
+                    }
                 }
                 return Some((direct_type, Vec::new()));
             }
-            if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) = direct_target
+            if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) =
+                direct_target_owned.as_ref()
                 && let Some((direct_type, direct_params)) = self
                     .direct_cross_file_interface_lowering(
                         sym_id,
-                        delegate_binder,
-                        symbol_arena,
+                        delegate_binder.as_deref().unwrap_or(current_binder),
+                        symbol_arena.as_ref(),
                         false,
                         symbol_type_cache_from_symbol_arena,
                     )
@@ -824,15 +707,32 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .lib_delegation_cache
                         .insert_symbol_type(sym_id, (direct_type, direct_params.clone()));
+                    if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                        self.cache_final_actual_lib_interface_type(
+                            sym_id,
+                            shared_name,
+                            direct_type,
+                        );
+                        self.cache_shared_actual_lib_delegation(shared_name, direct_type);
+                    }
                 }
                 return Some((direct_type, direct_params));
             }
 
-            if let Some(direct_type) = self.direct_source_file_variable_annotation_result(
-                sym_id,
-                direct_target,
-                symbol_type_cache_from_symbol_arena,
-            ) {
+            let direct_variable_type = direct_target_owned.as_ref().and_then(
+                |(symbol_arena, delegate_binder, delegate_file_idx)| {
+                    self.direct_source_file_variable_annotation_result(
+                        sym_id,
+                        Some((
+                            symbol_arena.as_ref(),
+                            delegate_binder.as_deref().unwrap_or(current_binder),
+                            *delegate_file_idx,
+                        )),
+                        symbol_type_cache_from_symbol_arena,
+                    )
+                },
+            );
+            if let Some(direct_type) = direct_variable_type {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {
                     self.ctx.cache_stable_source_file_symbol_arena_type(
@@ -845,7 +745,56 @@ impl<'a> CheckerState<'a> {
                 }
                 return Some((direct_type, Vec::new()));
             }
-
+            let declaration_alias_arena = direct_target_owned
+                .as_ref()
+                .map(|(arena, _, _)| std::sync::Arc::clone(arena))
+                .or_else(|| {
+                    if let Some(file_idx) = cross_file_idx {
+                        self.ctx
+                            .all_arenas
+                            .as_ref()
+                            .and_then(|arenas| arenas.get(file_idx).cloned())
+                    } else {
+                        self.ctx.binder.symbol_arenas.get(&sym_id).cloned()
+                    }
+                });
+            let declaration_alias_file_idx = declaration_alias_arena
+                .as_deref()
+                .and_then(|arena| self.ctx.get_file_idx_for_arena(arena));
+            if let Some(symbol_arena) = declaration_alias_arena
+                && let Some((direct_type, direct_params)) =
+                    self.direct_declaration_file_type_alias_result(sym_id, symbol_arena.as_ref())
+            {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx.or(declaration_alias_file_idx)
+                    && direct_params.is_empty()
+                {
+                    if symbol_type_cache_from_symbol_arena {
+                        self.ctx.cache_stable_source_file_symbol_arena_type(
+                            sym_id,
+                            file_idx as u32,
+                            source_cache_scope,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    } else {
+                        self.ctx.cache_cross_file_symbol_type(
+                            sym_id,
+                            file_idx as u32,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    }
+                }
+                if symbol_type_cache_file_idx.is_none()
+                    && !needs_cross_file_delegation
+                    && let Some(shared_name) = shared_actual_lib_delegation_name.as_deref()
+                {
+                    self.cache_final_actual_lib_interface_type(sym_id, shared_name, direct_type);
+                    self.cache_shared_actual_lib_delegation(shared_name, direct_type);
+                }
+                return Some((direct_type, direct_params));
+            }
             let direct_target_file_idx =
                 if symbol_type_cache_from_symbol_arena || needs_cross_file_delegation {
                     symbol_type_cache_file_idx
@@ -879,6 +828,30 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 return Some((direct_type, direct_params));
+            }
+            if let Some(direct_type) =
+                direct_target_owned
+                    .as_ref()
+                    .and_then(|(arena, binder, file_idx)| {
+                        let binder = binder.as_deref().unwrap_or(current_binder);
+                        self.direct_source_file_function_declaration_result(
+                            sym_id,
+                            Some((arena.as_ref(), binder, *file_idx)),
+                            true,
+                        )
+                    })
+            {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx {
+                    self.ctx.cache_stable_source_file_symbol_arena_type(
+                        sym_id,
+                        file_idx as u32,
+                        source_cache_scope,
+                        direct_type,
+                        Vec::new(),
+                    );
+                }
+                return Some((direct_type, Vec::new()));
             }
 
             if let Some(p) = perf {
@@ -1146,6 +1119,7 @@ impl<'a> CheckerState<'a> {
                     .lib_delegation_cache
                     .insert_symbol_type(sym_id, (result, result_params.clone()));
                 if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                    self.cache_final_actual_lib_interface_type(sym_id, shared_name, result);
                     self.cache_shared_actual_lib_delegation(shared_name, result);
                 }
             }
@@ -1336,15 +1310,11 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         // Prefer the symbol's declared arena, but fall back to explicit
         // cross-file ownership when the current binder does not know it.
-        let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref);
+        let mut delegate_arena = self.ctx.binder.symbol_arenas.get(&sym_id).cloned();
         let mut delegate_file_idx = None;
 
         let needs_cross_file_delegation = delegate_arena
+            .as_deref()
             .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && self
                 .ctx
@@ -1358,11 +1328,17 @@ impl<'a> CheckerState<'a> {
             let file_idx = self.ctx.resolve_symbol_file_index(sym_id).expect(
                 "needs_cross_file_delegation derived from has_symbol_file_index returning true",
             );
-            delegate_arena = Some(self.ctx.get_arena_for_file(file_idx as u32));
+            delegate_arena = self
+                .ctx
+                .all_arenas
+                .as_ref()
+                .and_then(|arenas| arenas.get(file_idx).cloned());
             delegate_file_idx = Some(file_idx);
         }
 
-        let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
+        let symbol_arena_arc =
+            delegate_arena.filter(|arena| !std::ptr::eq(arena.as_ref(), self.ctx.arena))?;
+        let symbol_arena = symbol_arena_arc.as_ref();
         let query_file_idx =
             delegate_file_idx.or_else(|| self.ctx.get_file_idx_for_arena(symbol_arena));
         if let Some(file_idx) = query_file_idx
@@ -1377,25 +1353,21 @@ impl<'a> CheckerState<'a> {
                 .register_type_to_def(cached_type, def_id);
             return Some(cached_type);
         }
-        let delegate_binder = if let Some(file_idx) = delegate_file_idx {
+        let current_binder = self.ctx.binder;
+        let delegate_binder_owned = delegate_file_idx.or(query_file_idx).and_then(|file_idx| {
             self.ctx
-                .get_binder_for_file(file_idx)
-                .unwrap_or(self.ctx.binder)
-        } else {
-            // Use the target arena's binder so that node→symbol lookups
-            // (e.g. `get_node_symbol` for private member `parent_id`)
-            // resolve correctly instead of returning `None`.
-            self.ctx
-                .get_binder_for_arena(symbol_arena)
-                .unwrap_or(self.ctx.binder)
-        };
+                .all_binders
+                .as_ref()
+                .and_then(|binders| binders.get(file_idx).cloned())
+        });
+        let delegate_binder = delegate_binder_owned.as_deref().unwrap_or(current_binder);
 
         if let Some((direct_type, direct_params)) = self.direct_cross_file_interface_lowering(
             sym_id,
             delegate_binder,
             symbol_arena,
             false,
-            false,
+            true,
         ) {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
             if !direct_params.is_empty() {
@@ -1592,7 +1564,7 @@ impl<'a> CheckerState<'a> {
             interface_arena,
             delegate_binder,
             type_args,
-            false,
+            true,
         ) {
             if type_args.is_none()
                 && let Some(file_idx) = delegate_file_idx

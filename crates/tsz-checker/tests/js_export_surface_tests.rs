@@ -2760,11 +2760,10 @@ function A() {
 }
 module.exports.bothAfter = "string";
 "#,
-        "consumer.js",
+        "consumer.ts",
         r#"
-/** @param {number} value */
-function takesNumber(value) {}
-var mod1 = require("./mod1");
+import mod1 = require("./mod1");
+declare function takesNumber(value: number): void;
 takesNumber(mod1.justExport);
 takesNumber(mod1.bothBefore);
 takesNumber(mod1.bothAfter);
@@ -2796,11 +2795,10 @@ module.exports = {
 module.exports.bothAfter = "string";
 module.exports.justProperty = "string";
 "#,
-        "consumer.js",
+        "consumer.ts",
         r#"
-/** @param {number} value */
-function takesNumber(value) {}
-var mod1 = require("./mod1");
+import mod1 = require("./mod1");
+declare function takesNumber(value: number): void;
 takesNumber(mod1.justExport);
 takesNumber(mod1.bothBefore);
 takesNumber(mod1.bothAfter);

@@ -300,6 +300,14 @@ impl<'a> CheckerState<'a> {
                             .register_type_to_def(structural_type, def_id);
                     }
                     let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                    // Cross-file source interfaces use per-file SymbolIds. Return
+                    // the delegated body directly when no generic application is
+                    // needed so the importing checker cannot resolve a lazy ref
+                    // against a same-number local/lib symbol.
+                    if prefer_cross_file_interface && type_params.is_empty() {
+                        self.ctx.leave_recursion();
+                        return structural_type;
+                    }
                     let all_have_defaults =
                         !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some());
                     if all_have_defaults {
@@ -612,30 +620,6 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(result);
         self.ctx.leave_recursion();
         result
-    }
-
-    fn same_named_type_alias_for_value_symbol(&self, value_sym_id: SymbolId) -> Option<SymbolId> {
-        let value_symbol = self.get_cross_file_symbol(value_sym_id)?;
-        let file_idx = self.ctx.resolve_symbol_file_index(value_sym_id)?;
-        let binder = self.ctx.get_binder_for_file(file_idx)?;
-        binder
-            .symbols
-            .find_all_by_name(&value_symbol.escaped_name)
-            .iter()
-            .copied()
-            .find_map(|candidate_id| {
-                if candidate_id == value_sym_id {
-                    return None;
-                }
-                let candidate = binder.symbols.get(candidate_id)?;
-                if candidate.flags & symbol_flags::TYPE_ALIAS == 0
-                    || candidate.escaped_name != value_symbol.escaped_name
-                {
-                    return None;
-                }
-                self.ctx.register_symbol_file_target(candidate_id, file_idx);
-                Some(candidate_id)
-            })
     }
 
     fn keyof_array_to_enum_alias_type(

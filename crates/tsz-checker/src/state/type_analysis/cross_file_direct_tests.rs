@@ -1,45 +1,12 @@
-use super::{is_builtin_lib_file_name, is_external_package_declaration_file_name};
 use crate::context::{CheckerContext, CheckerOptions, LibContext};
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
 use crate::test_utils::load_lib_files;
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_common::perf_counters::{CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome};
 use tsz_parser::parser::{ParserState, syntax_kind_ext};
 use tsz_solver::TypeId;
-use tsz_solver::def::DefinitionStore;
-
-#[test]
-fn direct_actual_lib_alias_admission_list_is_track7_ratchet() {
-    const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSION_CEILING: usize = 28;
-
-    let admitted = super::DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS;
-    assert_eq!(
-        admitted.len(),
-        DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSION_CEILING,
-        "Track 7 actual-lib alias admissions are transitional; replace \
-         name-only admissions with stable lib identity queries before growing \
-         this ceiling.",
-    );
-    assert!(
-        admitted.windows(2).all(|pair| pair[0] < pair[1]),
-        "Keep actual-lib alias admissions sorted so additions are reviewable: {admitted:?}",
-    );
-    for name in admitted {
-        assert!(
-            super::is_direct_actual_lib_alias_body_admitted(name),
-            "{name} must be admitted by the shared classifier",
-        );
-    }
-    for name in ["Array", "Date", "Iterator", "Promise", "ReadonlyArray"] {
-        assert!(
-            !super::is_direct_actual_lib_alias_body_admitted(name),
-            "{name} is an interface/value helper, not a type-alias body admission",
-        );
-    }
-}
 
 fn parse_interface_declarations(
     source: &str,
@@ -146,53 +113,6 @@ fn interface_member_by_name(
 }
 
 #[test]
-fn detects_npm_and_source_tree_builtin_lib_names() {
-    assert!(is_builtin_lib_file_name("lib.es2024.d.ts"));
-    assert!(is_builtin_lib_file_name("lib.dom.d.ts"));
-    assert!(is_builtin_lib_file_name("es2024.d.ts"));
-    assert!(is_builtin_lib_file_name("es2024.full.d.ts"));
-    assert!(is_builtin_lib_file_name("dom.generated.d.ts"));
-    assert!(is_builtin_lib_file_name("dom.iterable.generated.d.ts"));
-    assert!(is_builtin_lib_file_name("webworker.asynciterable.d.ts"));
-    assert!(is_builtin_lib_file_name("decorators.legacy.d.ts"));
-    assert!(is_builtin_lib_file_name(
-        r"C:\repo\node_modules\typescript\lib\lib.es2020.symbol.wellknown.d.ts"
-    ));
-}
-
-#[test]
-fn does_not_treat_arbitrary_declaration_files_as_builtin_libs() {
-    assert!(!is_builtin_lib_file_name("react/index.d.ts"));
-    assert!(!is_builtin_lib_file_name(
-        "node_modules/@types/node/fs.d.ts"
-    ));
-    assert!(!is_builtin_lib_file_name("packages/foo/src/types.d.ts"));
-}
-
-#[test]
-fn detects_external_package_declaration_paths() {
-    assert!(is_external_package_declaration_file_name(
-        "node_modules/react/index.d.ts"
-    ));
-    assert!(is_external_package_declaration_file_name(
-        "/repo/node_modules/@types/node/fs.d.ts"
-    ));
-    assert!(is_external_package_declaration_file_name(
-        r"C:\repo\node_modules\@types\node\fs.d.ts"
-    ));
-}
-
-#[test]
-fn does_not_treat_local_declaration_paths_as_external_packages() {
-    assert!(!is_external_package_declaration_file_name(
-        "packages/foo/src/types.d.ts"
-    ));
-    assert!(!is_external_package_declaration_file_name(
-        "/repo/fixtures/node-modules-like/types.d.ts"
-    ));
-}
-
-#[test]
 fn source_file_direct_interface_lowering_accepts_scope_independent_members() {
     let (arena, binder, _types) = parse_bound_source(
         r#"
@@ -211,6 +131,38 @@ fn source_file_direct_interface_lowering_accepts_scope_independent_members() {
             &declarations,
             binder.as_ref(),
         )
+    );
+}
+
+#[test]
+fn direct_interface_lowering_accepts_well_known_symbol_computed_names() {
+    let (arena, declarations) = parse_interface_declarations(
+        r#"
+            interface IterableLike {
+                [Symbol.iterator](): Iterator<string>;
+            }
+            interface LocalComputed {
+                [local](): void;
+            }
+        "#,
+    );
+
+    let well_known = vec![(declarations[0], &arena)];
+    assert!(CheckerState::interface_declarations_have_computed_names(
+        &well_known
+    ));
+    assert!(
+        !CheckerState::interface_declarations_have_unsupported_computed_names(&well_known),
+        "well-known Symbol.* computed names are lowered structurally by TypeLowering",
+    );
+
+    let local = vec![(declarations[1], &arena)];
+    assert!(CheckerState::interface_declarations_have_computed_names(
+        &local
+    ));
+    assert!(
+        CheckerState::interface_declarations_have_unsupported_computed_names(&local),
+        "arbitrary computed names still need the normal checker path",
     );
 }
 
@@ -441,7 +393,7 @@ fn direct_source_file_variable_annotation_accepts_same_file_simple_interface() {
         "fixture.ts".to_string(),
         CheckerOptions::default(),
     );
-    let state = CheckerState { ctx };
+    let mut state = CheckerState { ctx };
     let leaf_sym = binder.file_locals.get("leaf").expect("leaf symbol");
 
     let result = state
@@ -474,7 +426,7 @@ fn direct_source_file_variable_annotation_rejects_type_alias_reference() {
         "fixture.ts".to_string(),
         CheckerOptions::default(),
     );
-    let state = CheckerState { ctx };
+    let mut state = CheckerState { ctx };
     let leaf_sym = binder.file_locals.get("leaf").expect("leaf symbol");
 
     assert!(
@@ -540,144 +492,6 @@ fn direct_source_file_type_alias_lowers_scope_independent_alias_body() {
             .len(),
         params.len(),
         "alias type parameters should be available from the definition store",
-    );
-}
-
-#[test]
-fn delegate_source_file_type_alias_caches_generic_params() {
-    let (target_arena, target_binder, types) = parse_bound_source_with_name(
-        "target.ts",
-        r#"
-                export type Leaf<T> = { value: T };
-            "#,
-    );
-    let (requester_arena, mut requester_binder, _) = parse_bound_source_with_name(
-        "requester.ts",
-        "// synthetic requester with no same-id local symbol",
-    );
-    let leaf_sym = target_binder.file_locals.get("Leaf").expect("Leaf symbol");
-    let leaf_decl = target_binder
-        .get_symbol(leaf_sym)
-        .expect("Leaf symbol data")
-        .declarations[0];
-    {
-        let requester_binder = Arc::make_mut(&mut requester_binder);
-        Arc::make_mut(&mut requester_binder.symbol_arenas)
-            .insert(leaf_sym, Arc::clone(&target_arena));
-        Arc::make_mut(&mut requester_binder.declaration_arenas)
-            .entry((leaf_sym, leaf_decl))
-            .or_default()
-            .push(Arc::clone(&target_arena));
-    }
-
-    let mut ctx = CheckerContext::new_with_shared_def_store(
-        requester_arena.as_ref(),
-        requester_binder.as_ref(),
-        &types,
-        "requester.ts".to_string(),
-        CheckerOptions::default(),
-        Arc::new(DefinitionStore::new()),
-    );
-    ctx.share_owner_symbol_type_results = true;
-    ctx.set_all_arenas(Arc::new(vec![
-        Arc::clone(&requester_arena),
-        Arc::clone(&target_arena),
-    ]));
-    ctx.set_all_binders(Arc::new(vec![
-        Arc::clone(&requester_binder),
-        Arc::clone(&target_binder),
-    ]));
-    let mut state = CheckerState { ctx };
-    let scope = state.ctx.source_file_symbol_type_cache_scope();
-    let target_file_idx = state
-        .ctx
-        .get_file_idx_for_arena(target_arena.as_ref())
-        .expect("target arena should be indexed") as u32;
-
-    let (ty, params) = state
-        .delegate_cross_arena_symbol_resolution(leaf_sym)
-        .expect("source-file generic alias should delegate through the target arena");
-
-    assert_ne!(ty, TypeId::UNKNOWN);
-    assert_ne!(ty, TypeId::ERROR);
-    assert_eq!(
-        params.len(),
-        1,
-        "Leaf<T> should preserve one type parameter"
-    );
-    assert_eq!(
-        state
-            .ctx
-            .cached_stable_source_file_symbol_arena_type(leaf_sym, target_file_idx, scope),
-        Some((ty, params)),
-        "stable source-file symbol-arena cache hits must preserve generic params",
-    );
-}
-
-fn assert_explicit_cross_file_source_alias_lowers(alias_name: &str, source: &str) {
-    let (target_arena, target_binder, types) = parse_bound_source_with_name("target.ts", source);
-    let (requester_arena, requester_binder, _) = parse_bound_source_with_name(
-        "requester.ts",
-        "// synthetic requester with explicit symbol-file ownership only",
-    );
-    let alias_sym = target_binder
-        .file_locals
-        .get(alias_name)
-        .unwrap_or_else(|| panic!("{alias_name} symbol"));
-
-    let mut ctx = CheckerContext::new_with_shared_def_store(
-        requester_arena.as_ref(),
-        requester_binder.as_ref(),
-        &types,
-        "requester.ts".to_string(),
-        CheckerOptions::default(),
-        Arc::new(DefinitionStore::new()),
-    );
-    ctx.share_owner_symbol_type_results = true;
-    ctx.set_all_arenas(Arc::new(vec![
-        Arc::clone(&requester_arena),
-        Arc::clone(&target_arena),
-    ]));
-    ctx.set_all_binders(Arc::new(vec![
-        Arc::clone(&requester_binder),
-        Arc::clone(&target_binder),
-    ]));
-    let mut symbol_file_index = FxHashMap::default();
-    symbol_file_index.insert(alias_sym, 1);
-    ctx.set_global_symbol_file_index(Arc::new(symbol_file_index));
-    let mut state = CheckerState { ctx };
-
-    let (ty, params) = state
-        .delegate_cross_arena_symbol_resolution(alias_sym)
-        .unwrap_or_else(|| panic!("{alias_name} should resolve through explicit file target"));
-
-    assert_ne!(ty, TypeId::UNKNOWN);
-    assert_ne!(ty, TypeId::ERROR);
-    assert_eq!(
-        params.len(),
-        2,
-        "{alias_name} should preserve both generic type parameters",
-    );
-    assert_eq!(
-        state.ctx.cached_cross_file_symbol_type(alias_sym, 1),
-        Some((ty, params)),
-        "explicit cross-file alias result should be cached by file target",
-    );
-}
-
-#[test]
-fn delegate_explicit_cross_file_source_alias_lowers_generic_conditionals() {
-    assert_explicit_cross_file_source_alias_lowers(
-        "ExcludeLike",
-        r#"
-                export type ExcludeLike<T, U> = T extends U ? never : T;
-            "#,
-    );
-    assert_explicit_cross_file_source_alias_lowers(
-        "Drop",
-        r#"
-                export type Drop<A, B> = A extends B ? never : A;
-            "#,
     );
 }
 
@@ -1256,17 +1070,113 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         .get(&heritage_sym_id)
         .map(std::convert::AsRef::as_ref)
         .expect("AddEventListenerOptions should have a delegate arena");
+    let (heritage_ty, heritage_params) = state
+        .direct_cross_file_interface_lowering(
+            heritage_sym_id,
+            state.ctx.binder,
+            heritage_arena,
+            false,
+            false,
+        )
+        .expect("builtin dom interfaces with simple one-level heritage should lower directly");
+    assert!(heritage_params.is_empty());
+    let once = state.ctx.types.intern_string("once");
     assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            heritage_ty,
+            once,
+        )
+        .is_some(),
+        "AddEventListenerOptions should include its own members",
+    );
+    let capture = state.ctx.types.intern_string("capture");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            heritage_ty,
+            capture,
+        )
+        .is_some(),
+        "AddEventListenerOptions should include inherited EventListenerOptions members",
+    );
+    assert_eq!(
         state
-            .direct_cross_file_interface_lowering(
-                heritage_sym_id,
-                state.ctx.binder,
-                heritage_arena,
-                false,
-                false,
-            )
-            .is_none(),
-        "builtin dom interfaces with heritage stay on the fallback path",
+            .ctx
+            .lib_type_resolution_cache
+            .get("AddEventListenerOptions")
+            .copied()
+            .flatten(),
+        Some(heritage_ty),
+        "direct simple builtin heritage lowering should publish the heritage-merged lib type",
+    );
+
+    let deep_heritage_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("HTMLElement")
+        .expect("HTMLElement should resolve to a dom lib symbol");
+    let deep_heritage_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&deep_heritage_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("HTMLElement should have a delegate arena");
+    let (deep_heritage_ty, deep_heritage_params) = state
+        .direct_cross_file_interface_lowering(
+            deep_heritage_sym_id,
+            state.ctx.binder,
+            deep_heritage_arena,
+            false,
+            false,
+        )
+        .expect("builtin dom interfaces with same-lib deep heritage should lower directly");
+    assert!(deep_heritage_params.is_empty());
+    let tag_name = state.ctx.types.intern_string("tagName");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            deep_heritage_ty,
+            tag_name,
+        )
+        .is_some(),
+        "HTMLElement should include inherited Element members",
+    );
+
+    let iterable_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("DOMTokenList")
+        .expect("DOMTokenList should resolve to a dom lib symbol");
+    let iterable_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&iterable_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("DOMTokenList should have a delegate arena");
+    let (iterable_ty, iterable_params) = state
+        .direct_cross_file_interface_lowering(
+            iterable_sym_id,
+            state.ctx.binder,
+            iterable_arena,
+            false,
+            false,
+        )
+        .expect("builtin dom interfaces with well-known Symbol.* members should lower directly");
+    assert!(iterable_params.is_empty());
+    let iterator = state.ctx.types.intern_string("[Symbol.iterator]");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            iterable_ty,
+            iterator,
+        )
+        .is_some(),
+        "DOMTokenList should preserve its well-known Symbol.iterator member",
     );
 }
 
@@ -1553,6 +1463,169 @@ fn direct_actual_lib_symbol_type_handles_property_key_alias_body_query() {
     assert_ne!(ty, TypeId::UNKNOWN);
     assert_ne!(ty, TypeId::ERROR);
     assert!(params.is_empty(), "PropertyKey should remain non-generic");
+}
+
+#[test]
+fn direct_declaration_file_type_alias_lowers_builtin_dom_alias_body() {
+    let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut source_binder = BinderState::new();
+    source_binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(source_binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let sym_id = binder
+        .file_locals
+        .get("CanvasImageSource")
+        .expect("CanvasImageSource should resolve to a DOM lib type alias");
+    let delegate_arena = binder
+        .symbol_arenas
+        .get(&sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("CanvasImageSource should have a delegate arena");
+
+    let (ty, params) = state
+        .direct_declaration_file_type_alias_result(sym_id, delegate_arena)
+        .expect("non-generic DOM declaration type alias should lower directly");
+
+    assert!(params.is_empty(), "CanvasImageSource is non-generic");
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert!(
+        crate::query_boundaries::common::union_members(&types, ty).is_some(),
+        "CanvasImageSource should lower to its union body",
+    );
+    let (cached_ty, cached_params) = state
+        .ctx
+        .lib_delegation_cache
+        .symbol_type(sym_id)
+        .expect("builtin declaration alias should populate the lib delegation cache");
+    assert_eq!(cached_ty, ty);
+    assert!(cached_params.is_empty());
+
+    let value_merged_sym_id = binder
+        .file_locals
+        .get("NodeFilter")
+        .expect("NodeFilter should resolve to a DOM lib type alias");
+    let value_merged_delegate_arena = binder
+        .symbol_arenas
+        .get(&value_merged_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("NodeFilter should have a delegate arena");
+
+    let (value_merged_ty, value_merged_params) = state
+        .direct_declaration_file_type_alias_result(value_merged_sym_id, value_merged_delegate_arena)
+        .expect("value-merged DOM declaration type alias should lower directly");
+
+    assert!(value_merged_params.is_empty(), "NodeFilter is non-generic",);
+    assert_ne!(value_merged_ty, TypeId::UNKNOWN);
+    assert_ne!(value_merged_ty, TypeId::ERROR);
+    assert!(
+        crate::query_boundaries::common::union_members(&types, value_merged_ty).is_some(),
+        "NodeFilter should lower to its type-alias union body",
+    );
+    let (cached_value_merged_ty, cached_value_merged_params) = state
+        .ctx
+        .lib_delegation_cache
+        .symbol_type(value_merged_sym_id)
+        .expect("value-merged builtin declaration alias should populate the lib delegation cache");
+    assert_eq!(cached_value_merged_ty, value_merged_ty);
+    assert!(cached_value_merged_params.is_empty());
+
+    let generic_sym_id = binder
+        .file_locals
+        .get("ReadableStreamReadResult")
+        .expect("ReadableStreamReadResult should resolve to a DOM lib type alias");
+    let generic_delegate_arena = binder
+        .symbol_arenas
+        .get(&generic_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("ReadableStreamReadResult should have a delegate arena");
+
+    let (generic_ty, generic_params) = state
+        .direct_declaration_file_type_alias_result(generic_sym_id, generic_delegate_arena)
+        .expect("generic DOM declaration type alias should lower directly");
+
+    assert_eq!(generic_params.len(), 1);
+    assert_ne!(generic_ty, TypeId::UNKNOWN);
+    assert_ne!(generic_ty, TypeId::ERROR);
+    assert!(
+        crate::query_boundaries::common::union_members(&types, generic_ty).is_some(),
+        "ReadableStreamReadResult<T> should lower to its union body",
+    );
+    let (cached_generic_ty, cached_generic_params) = state
+        .ctx
+        .lib_delegation_cache
+        .symbol_type(generic_sym_id)
+        .expect("generic builtin declaration alias should populate the lib delegation cache");
+    assert_eq!(cached_generic_ty, generic_ty);
+    assert_eq!(cached_generic_params.len(), 1);
+}
+
+#[test]
+fn direct_declaration_file_type_alias_preserves_generic_type_params() {
+    let (arena, binder, types) = parse_bound_source_with_name(
+        "node_modules/pkg/index.d.ts",
+        r#"
+                export type MaybeValue<X> = X | null;
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "node_modules/pkg/index.d.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let sym_id = binder
+        .file_locals
+        .get("MaybeValue")
+        .expect("MaybeValue should bind");
+
+    let (ty, params) = state
+        .direct_declaration_file_type_alias_result(sym_id, arena.as_ref())
+        .expect("generic external declaration alias should lower directly");
+
+    assert_eq!(params.len(), 1);
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert!(
+        crate::query_boundaries::common::union_members(&types, ty).is_some(),
+        "MaybeValue<X> should lower to its union body",
+    );
+    let def_id = state
+        .ctx
+        .get_existing_def_id(sym_id)
+        .expect("generic alias DefId should be registered");
+    assert_eq!(
+        state
+            .ctx
+            .get_def_type_params(def_id)
+            .unwrap_or_default()
+            .len(),
+        1,
+        "generic declaration alias parameters should be stored for lazy resolution",
+    );
 }
 
 #[test]

@@ -169,6 +169,7 @@ fn assert_imported_user_interface_keeps_user_shape(interface_name: &str) {
 #[test]
 fn missing_interface_lib_row_names_do_not_capture_imported_user_interfaces() {
     assert_imported_user_interface_keeps_user_shape("PropertyDescriptor");
+    assert_imported_user_interface_keeps_user_shape("PropertyDescriptorMap");
 }
 
 #[test]

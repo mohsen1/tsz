@@ -181,10 +181,13 @@ impl JsExportSurface {
             return Some(checker.ctx.types.factory().callable(merged_shape));
         }
 
-        if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+        if let Some(shape) = crate::query_boundaries::common::get_merged_object_shape_for_type(
             checker.ctx.types,
             direct_export_type,
         ) {
+            if shape.symbol.is_some() {
+                return None;
+            }
             let mut merged_props = Vec::new();
             for existing in &shape.properties {
                 if let Some(overlay) = overlay_by_name.remove(&existing.name) {
@@ -218,6 +221,13 @@ impl JsExportSurface {
         }
 
         None
+    }
+
+    fn push_unique_named_export(props: &mut Vec<PropertyInfo>, prop: PropertyInfo) {
+        if props.iter().any(|existing| existing.name == prop.name) {
+            return;
+        }
+        props.push(prop);
     }
 
     pub const fn empty() -> Self {
@@ -675,6 +685,13 @@ impl<'a> CheckerState<'a> {
         let mut props =
             self.all_direct_module_export_object_literal_seed_props_for_file(target_file_idx);
         let seed_count = props.len();
+        if let Some((_, rhs_expr)) = last_direct_export {
+            for prop in
+                self.direct_new_expression_instance_member_props_for_file(target_file_idx, rhs_expr)
+            {
+                JsExportSurface::push_unique_named_export(&mut props, prop);
+            }
+        }
         self.augment_namespace_props_with_commonjs_exports_for_file_after(
             target_file_idx,
             &mut props,
@@ -705,6 +722,79 @@ impl<'a> CheckerState<'a> {
             || has_define_property_call;
 
         surface
+    }
+
+    fn direct_new_expression_instance_member_props_for_file(
+        &mut self,
+        target_file_idx: usize,
+        rhs_expr: NodeIndex,
+    ) -> Vec<PropertyInfo> {
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
+        let target_binder = self
+            .ctx
+            .get_binder_for_file(target_file_idx)
+            .unwrap_or(self.ctx.binder)
+            .clone();
+        let Some(rhs_node) = target_arena.get(rhs_expr) else {
+            return Vec::new();
+        };
+        if rhs_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return Vec::new();
+        }
+        let Some(new_expr) = target_arena.get_call_expr(rhs_node) else {
+            return Vec::new();
+        };
+        let Some(ctor_name) = crate::symbols_domain::name_text::expression_name_text_in_arena(
+            &target_arena,
+            new_expr.expression,
+        ) else {
+            return Vec::new();
+        };
+        let Some(class_sym_id) = target_binder.file_locals.get(&ctor_name) else {
+            return Vec::new();
+        };
+        let Some(class_symbol) = target_binder.get_symbol(class_sym_id) else {
+            return Vec::new();
+        };
+        if class_symbol.flags & symbol_flags::CLASS == 0 {
+            return Vec::new();
+        }
+        let Some(members) = class_symbol.members.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut props = Vec::new();
+        for (idx, (member_name, member_sym_id)) in members.iter().enumerate() {
+            let Some(member_symbol) = target_binder.get_symbol(*member_sym_id) else {
+                continue;
+            };
+            if member_symbol.flags & symbol_flags::PRIVATE != 0 {
+                continue;
+            }
+            let member_type = self.get_type_of_symbol(*member_sym_id);
+            let member_type = if matches!(member_type, TypeId::ERROR | TypeId::UNKNOWN) {
+                TypeId::ANY
+            } else {
+                member_type
+            };
+            let name = self.ctx.types.intern_string(member_name);
+            props.push(PropertyInfo {
+                name,
+                type_id: member_type,
+                write_type: member_type,
+                optional: false,
+                readonly: false,
+                is_method: member_symbol.flags & symbol_flags::METHOD != 0,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: Some(*member_sym_id),
+                declaration_order: idx as u32 + 1,
+                is_string_named: false,
+                is_symbol_named: false,
+                single_quoted_name: false,
+            });
+        }
+        props
     }
 
     /// Compute the direct `module.exports = X` type for a target file.

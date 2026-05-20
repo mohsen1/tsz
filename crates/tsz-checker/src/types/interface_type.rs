@@ -324,7 +324,14 @@ impl<'a> CheckerState<'a> {
                         let (is_string_named, single_quoted_name) =
                             self.ctx.arena.string_property_name_flags(sig.name);
                         let type_id = if sig.type_annotation.is_some() {
-                            self.get_type_from_type_node_in_type_literal(sig.type_annotation)
+                            let raw =
+                                self.get_type_from_type_node_in_type_literal(sig.type_annotation);
+                            self.wrap_readonly_property_signature_unique_symbol_type(
+                                member_idx,
+                                sig.type_annotation,
+                                &sig.modifiers,
+                                raw,
+                            )
                         } else {
                             TypeId::ANY
                         };

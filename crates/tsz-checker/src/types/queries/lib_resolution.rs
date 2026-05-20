@@ -822,31 +822,32 @@ impl<'a> CheckerState<'a> {
         // Collect lowered types from the symbol's declarations.
         // The main file's binder already has merged declarations from all lib files.
         let mut lib_types: Vec<TypeId> = Vec::new();
-
         let lib_binders = self.get_lib_binders();
-        let sym_id = if self.ctx.file_local_type_shadow_for_lib_name(name) {
-            None
-        } else {
-            self.ctx.binder.file_locals.get(name)
-        }
-        .or_else(|| {
-            self.ctx
-                .binder
-                .get_global_type_with_libs(name, &lib_binders)
-        })
-        .or_else(|| {
-            resolve_name_to_lib_symbol(
-                name,
-                self.ctx.binder,
-                self.ctx.global_file_locals_index.as_deref(),
-                self.ctx
-                    .all_binders
-                    .as_ref()
-                    .map(|binders| binders.as_ref().as_slice()),
-                &self.ctx.lib_contexts,
-            )
-        });
-
+        let file_local_type_shadow = self.ctx.file_local_type_shadow_for_lib_name(name);
+        let sym_id = (!file_local_type_shadow)
+            .then(|| {
+                self.ctx.binder.file_locals.get(name).or_else(|| {
+                    self.ctx
+                        .binder
+                        .get_global_type_with_libs(name, &lib_binders)
+                })
+            })
+            .flatten()
+            .or_else(|| {
+                if file_local_type_shadow {
+                    return None;
+                }
+                resolve_name_to_lib_symbol(
+                    name,
+                    self.ctx.binder,
+                    self.ctx.global_file_locals_index.as_deref(),
+                    self.ctx
+                        .all_binders
+                        .as_ref()
+                        .map(|binders| binders.as_ref().as_slice()),
+                    &self.ctx.lib_contexts,
+                )
+            });
         let selected_symbol = selected_lib_symbol_for_name(&self.ctx, name, sym_id, &lib_binders);
 
         if let Some((sym_id, selected_binder_arc)) = selected_symbol {
@@ -871,6 +872,7 @@ impl<'a> CheckerState<'a> {
                     Some(self.ctx.arena),
                 );
                 let mut prewarmed_lazy_type_params = rustc_hash::FxHashMap::default();
+                let mut child_buffer = Vec::new();
                 for (decl_idx, decl_arena) in &decls_with_arenas {
                     let mut stack = vec![*decl_idx];
                     while let Some(node_idx) = stack.pop() {
@@ -903,7 +905,7 @@ impl<'a> CheckerState<'a> {
                                     })
                                     .map(|symbol| symbol.escaped_name.clone());
                                 if let Some(ref_name) = ref_name {
-                                    let _ = self.resolve_lib_type_by_name(&ref_name);
+                                    self.prime_lib_type_params(&ref_name);
                                 }
                             }
                             if !has_type_args
@@ -923,7 +925,9 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         }
-                        stack.extend(decl_arena.get_children(node_idx));
+                        child_buffer.clear();
+                        decl_arena.get_children_into(node_idx, &mut child_buffer);
+                        stack.extend(child_buffer.iter().copied());
                     }
                 }
 
@@ -1565,6 +1569,10 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "lib_resolution_promise_tests.rs"]
+mod promise_tests;
 
 #[cfg(test)]
 mod integration_tests {

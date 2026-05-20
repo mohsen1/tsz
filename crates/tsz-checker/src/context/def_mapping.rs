@@ -49,10 +49,7 @@ impl<'a> CheckerContext<'a> {
                 && symbol.import_module.is_none()
                 && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
         });
-        let symbol_name = self
-            .binder
-            .symbols
-            .get(sym_id)
+        let symbol_name = local_symbol
             .or_else(|| {
                 self.lib_contexts
                     .iter()
@@ -67,6 +64,7 @@ impl<'a> CheckerContext<'a> {
 
         // ---- Step 1: local cache fast path ----
         if let Some(def_id) = self.symbol_to_def.borrow().get(&sym_id).copied() {
+            let cached_info = self.definition_store.get(def_id);
             let authoritative = authoritative_file_idx.and_then(|file_idx| {
                 self.get_binder_for_file(file_idx).and_then(|binder| {
                     binder.get_symbol(sym_id).and_then(|_| {
@@ -75,12 +73,11 @@ impl<'a> CheckerContext<'a> {
                     })
                 })
             });
-            let cached_file_idx = self
-                .definition_store
-                .get(def_id)
+            let cached_file_idx = cached_info
+                .as_ref()
                 .and_then(|info| info.file_id)
                 .map(|file_idx| file_idx as usize);
-            let cached_matches_name = self.definition_store.get(def_id).is_some_and(|info| {
+            let cached_matches_name = cached_info.as_ref().is_some_and(|info| {
                 symbol_name
                     .as_ref()
                     .is_some_and(|name| self.types.resolve_atom(info.name) == *name)
@@ -1049,6 +1046,9 @@ impl<'a> CheckerContext<'a> {
             return Some(result.clone());
         }
         drop(params);
+        if self.def_no_type_params.borrow().contains(&def_id) {
+            return None;
+        }
 
         // ---- Step 2: DefinitionStore direct lookup (O(1)) ----
         // The store has type params for this exact DefId if they were set via
@@ -1079,6 +1079,7 @@ impl<'a> CheckerContext<'a> {
             return Some(canonical_params);
         }
 
+        self.def_no_type_params.borrow_mut().insert(def_id);
         None
     }
 

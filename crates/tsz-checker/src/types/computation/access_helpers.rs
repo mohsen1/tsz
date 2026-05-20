@@ -588,7 +588,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn same_type_param_identity(&self, left: TypeId, right: TypeId) -> bool {
+    pub(crate) fn same_type_param_identity(&self, left: TypeId, right: TypeId) -> bool {
         left == right
             || crate::query_boundaries::common::type_param_info(self.ctx.types, left)
                 .zip(crate::query_boundaries::common::type_param_info(

@@ -219,7 +219,6 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-
         let declared_read_target =
             self.declared_property_read_type_for_write_target(write_target_idx);
         let read_target = if let Some(declared) = declared_read_target.filter(|&declared| {
