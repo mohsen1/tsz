@@ -790,7 +790,7 @@ impl<'a> CheckerState<'a> {
                 element_type,
                 TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
             ) {
-                if self.is_assignable_to(component_type, element_type) {
+                if self.diagnostic_relation_boolean_guard(component_type, element_type) {
                     return;
                 }
                 self.report_invalid_jsx_component_return_type(tag_name_idx);
