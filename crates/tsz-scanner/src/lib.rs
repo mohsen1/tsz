@@ -5,6 +5,9 @@
 // Scanner implementation - tokenization logic
 pub mod scanner_impl;
 
+// Contextual rescan operations (parser-driven mode shifts).
+pub mod rescan;
+
 // Character code constants used by the scanner
 pub mod char_codes;
 

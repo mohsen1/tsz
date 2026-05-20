@@ -55,16 +55,32 @@ export function extractCompileGuardRows(scriptText) {
   return [...new Set([...literalRows, ...extractCaseArmRows(scriptText)])].sort();
 }
 
+function extractShellArrayRows(scriptText, arrayName) {
+  const escapedName = arrayName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = scriptText.match(new RegExp(`${escapedName}=\\(\\n([\\s\\S]*?)\\n\\)`, "m"));
+  if (!match) return [];
+  return [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+}
+
+export function extractCompileGuardFallbackRows(scriptText) {
+  return [...new Set([
+    ...extractShellArrayRows(scriptText, "TSZ_COMPILE_GUARD_REQUIRED_ROWS"),
+    ...extractShellArrayRows(scriptText, "TSZ_COMPILE_GUARD_CANARY_ROWS"),
+  ])].sort();
+}
+
 export function extractFixtureSourceRows(scriptText) {
   return [...new Set(extractCaseArmRows(scriptText))].sort();
 }
 
 export function readSurfaceData() {
   const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
+  const fixtureScript = read("scripts/bench/project-fixtures.sh");
   return {
     benchRunnerRows: extractBenchRunnerRows(read("scripts/bench/bench-vs-tsgo.sh")),
     compileGuardRows: extractCompileGuardRows(read("scripts/ci/project-compile-guard.sh")),
-    fixtureSourceRows: extractFixtureSourceRows(read("scripts/bench/project-fixtures.sh")),
+    compileGuardFallbackRows: extractCompileGuardFallbackRows(fixtureScript),
+    fixtureSourceRows: extractFixtureSourceRows(fixtureScript),
     compatCorpusRows: COMPATIBILITY_CORPUS_ROWS.map((r) => r.name).sort(),
     requiredRows: [...REQUIRED_PROJECT_ROWS].sort(),
     canaryRows: [...COMPILE_CANARY_PROJECT_ROWS].sort(),
@@ -76,6 +92,7 @@ export function computeCoverage(surfaces) {
   const {
     benchRunnerRows,
     compileGuardRows,
+    compileGuardFallbackRows = [],
     fixtureSourceRows,
     compatCorpusRows,
     requiredRows,
@@ -85,6 +102,7 @@ export function computeCoverage(surfaces) {
 
   const benchRunnerSet = new Set(benchRunnerRows);
   const compileGuardSet = new Set(compileGuardRows);
+  const compileGuardFallbackSet = new Set(compileGuardFallbackRows);
   const fixtureSourceSet = new Set(fixtureSourceRows);
   const compatCorpusSet = new Set(compatCorpusRows);
   const requiredSet = new Set(requiredRows);
@@ -105,6 +123,9 @@ export function computeCoverage(surfaces) {
     if (isTracked && !COMPILE_GUARD_EXCLUDED_ROWS.has(name) && !compileGuardSet.has(name)) {
       drift.push(`${name}: present in project-rows.mjs but missing from scripts/ci/project-compile-guard.sh`);
     }
+    if (isTracked && !COMPILE_GUARD_EXCLUDED_ROWS.has(name) && !compileGuardFallbackSet.has(name)) {
+      drift.push(`${name}: present in project-rows.mjs but missing from project-fixtures.sh compile-guard fallback rows`);
+    }
     if (hasPinnedSource && !fixtureSourceSet.has(name)) {
       drift.push(`${name}: has repo/ref pin in project-rows.mjs but missing from scripts/bench/project-fixtures.sh`);
     }
@@ -122,6 +143,11 @@ export function computeCoverage(surfaces) {
   for (const name of compileGuardSet) {
     if (!definedNames.has(name)) {
       drift.push(`${name}: present in scripts/ci/project-compile-guard.sh but not defined in project-rows.mjs`);
+    }
+  }
+  for (const name of compileGuardFallbackSet) {
+    if (!definedNames.has(name)) {
+      drift.push(`${name}: present in project-fixtures.sh compile-guard fallback rows but not defined in project-rows.mjs`);
     }
   }
   for (const name of fixtureSourceSet) {
@@ -149,6 +175,9 @@ export function computeCoverage(surfaces) {
       inCompileGuard: compileGuardSet.has(name)
         ? "✓"
         : (COMPILE_GUARD_EXCLUDED_ROWS.has(name) ? "—" : "✗"),
+      inCompileGuardFallback: compileGuardFallbackSet.has(name)
+        ? "✓"
+        : (COMPILE_GUARD_EXCLUDED_ROWS.has(name) ? "—" : "✗"),
       inFixtureSource: fixtureSourceSet.has(name)
         ? "✓"
         : (hasPinnedSource ? "✗" : "—"),
@@ -165,12 +194,12 @@ export function formatMarkdown(coverage) {
 
   lines.push("## Project Row Coverage");
   lines.push("");
-  lines.push("| Row | Bench Set | Guard Set | Category | Bench Runner | Compile Guard | Fixture Source | Compat Corpus |");
-  lines.push("|-----|-----------|-----------|----------|:------------:|:-------------:|:--------------:|:-------------:|");
+  lines.push("| Row | Bench Set | Guard Set | Category | Bench Runner | Compile Guard | Guard Fallback | Fixture Source | Compat Corpus |");
+  lines.push("|-----|-----------|-----------|----------|:------------:|:-------------:|:--------------:|:--------------:|:-------------:|");
 
   for (const r of rows) {
     lines.push(
-      `| \`${r.name}\` | ${r.benchmarkSet} | ${r.guardSet} | ${r.category} | ${r.inBenchRunner} | ${r.inCompileGuard} | ${r.inFixtureSource} | ${r.inCompatCorpus} |`,
+      `| \`${r.name}\` | ${r.benchmarkSet} | ${r.guardSet} | ${r.category} | ${r.inBenchRunner} | ${r.inCompileGuard} | ${r.inCompileGuardFallback} | ${r.inFixtureSource} | ${r.inCompatCorpus} |`,
     );
   }
 
@@ -195,7 +224,7 @@ export function formatPlainText(coverage) {
   const { rows, drift } = coverage;
   const lines = [];
 
-  const COL = { name: 44, benchSet: 9, guardSet: 9, category: 9, runner: 6, compileGuard: 6, fixture: 7 };
+  const COL = { name: 44, benchSet: 9, guardSet: 9, category: 9, runner: 6, compileGuard: 6, fallback: 8, fixture: 7 };
   const header = [
     "Row".padEnd(COL.name),
     "Bench".padEnd(COL.benchSet),
@@ -203,6 +232,7 @@ export function formatPlainText(coverage) {
     "Category".padEnd(COL.category),
     "Runner".padEnd(COL.runner),
     "Guard".padEnd(COL.compileGuard),
+    "Fallback".padEnd(COL.fallback),
     "Fixture".padEnd(COL.fixture),
     "Compat",
   ].join("  ");
@@ -222,6 +252,7 @@ export function formatPlainText(coverage) {
         r.category.padEnd(COL.category),
         r.inBenchRunner.padEnd(COL.runner),
         r.inCompileGuard.padEnd(COL.compileGuard),
+        r.inCompileGuardFallback.padEnd(COL.fallback),
         r.inFixtureSource.padEnd(COL.fixture),
         r.inCompatCorpus,
       ].join("  "),
