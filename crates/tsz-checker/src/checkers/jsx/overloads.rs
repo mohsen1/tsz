@@ -4,6 +4,7 @@
 //! tries each overload against the provided JSX attributes. If no overload
 //! matches, emits TS2769 ("No overload matches this call.").
 
+use crate::context::speculation::FullSpeculationSnapshot;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -78,7 +79,7 @@ impl<'a> CheckerState<'a> {
         // implicit_any_checked_closures) must be rolled back with each failed probe —
         // a diagnostic-only snapshot leaks TS7006 from attr type computation even when
         // an overload matches. TS2698 is emitted before this point, so it survives.
-        let snap = self.ctx.snapshot_full();
+        let snap = FullSpeculationSnapshot::new(&self.ctx);
 
         // Collect JSX attributes: explicit + spread-merged, with override tracking
         let mut attrs_info = self.collect_jsx_provided_attrs(attributes_idx);
@@ -112,7 +113,7 @@ impl<'a> CheckerState<'a> {
         if attrs_info.has_any_spread {
             let has_non_zero_param = sigs.iter().any(|s| !s.params.is_empty());
             if has_non_zero_param {
-                self.ctx.rollback_full(&snap);
+                snap.rollback(&mut self.ctx.speculation_state());
                 return;
             }
         }
@@ -129,7 +130,7 @@ impl<'a> CheckerState<'a> {
             // overloads fail on arg count when any attributes exist.
             if sig.params.is_empty() {
                 if !has_any_attrs {
-                    self.ctx.rollback_full(&snap);
+                    snap.rollback(&mut self.ctx.speculation_state());
                     self.check_jsx_sfc_return_type(instantiated_return, tag_name_idx);
                     return;
                 }
@@ -176,7 +177,7 @@ impl<'a> CheckerState<'a> {
             ) {
                 // Found a matching overload — done.
                 // Roll back speculative diagnostics from attribute collection.
-                self.ctx.rollback_full(&snap);
+                snap.rollback(&mut self.ctx.speculation_state());
                 self.check_jsx_sfc_return_type(instantiated_return, tag_name_idx);
                 return;
             }
@@ -200,7 +201,7 @@ impl<'a> CheckerState<'a> {
         // No overload matched — roll back speculative diagnostics and emit TS2769.
         // tsc often anchors at the tag name, but when every non-0-param overload
         // fails on the same explicit attribute, anchor that attribute instead.
-        self.ctx.rollback_full(&snap);
+        snap.rollback(&mut self.ctx.speculation_state());
         let anchor_idx =
             if considered_overload_failures > 0 && all_overload_failures_share_explicit_anchor {
                 shared_explicit_anchor_name
