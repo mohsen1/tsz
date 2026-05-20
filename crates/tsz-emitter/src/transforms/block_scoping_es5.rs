@@ -57,6 +57,8 @@ pub struct BlockScopeState {
     /// same emitted name, while collisions with block-scoped `let`/`const`
     /// still trigger renaming.
     var_registrations: FxHashMap<String, String>,
+    /// Saved `var` registrations for outer function scopes.
+    var_registration_stack: Vec<FxHashMap<String, String>>,
 }
 
 impl BlockScopeState {
@@ -74,13 +76,17 @@ impl BlockScopeState {
     pub fn enter_function_scope(&mut self) {
         self.scope_stack.push(FxHashMap::default());
         self.function_scope_marks.push(true);
+        self.var_registration_stack
+            .push(std::mem::take(&mut self.var_registrations));
         self.var_registrations.clear();
     }
 
     /// Exit the current block scope
     pub fn exit_scope(&mut self) {
         self.scope_stack.pop();
-        self.function_scope_marks.pop();
+        if self.function_scope_marks.pop().unwrap_or(false) {
+            self.var_registrations = self.var_registration_stack.pop().unwrap_or_default();
+        }
     }
 
     /// Register a variable declaration in the current scope
@@ -308,6 +314,7 @@ impl BlockScopeState {
         self.reserved_names.clear();
         self.function_scope_marks.clear();
         self.var_registrations.clear();
+        self.var_registration_stack.clear();
     }
 }
 

@@ -190,3 +190,44 @@ fn test_var_declaration_no_parent_conflict() {
 
     state.exit_scope();
 }
+
+#[test]
+fn nested_function_scope_restores_outer_var_registrations() {
+    let mut state = BlockScopeState::new();
+
+    state.enter_function_scope();
+    assert_eq!(state.register_var_declaration("x"), "x");
+
+    state.enter_function_scope();
+    assert_eq!(state.register_var_declaration("x"), "x");
+    state.exit_scope();
+
+    assert_eq!(
+        state.register_var_declaration("x"),
+        "x",
+        "Returning to the outer function should reuse its original var binding"
+    );
+    state.exit_scope();
+}
+
+#[test]
+fn class_decl_at_loop_capture_function_level_keeps_local_name() {
+    let mut state = BlockScopeState::new();
+
+    state.enter_scope();
+    assert_eq!(state.register_variable("row"), "row");
+
+    state.enter_function_scope();
+    state.register_function_parameter("row");
+    assert_eq!(state.register_block_scoped_class("RowClass"), "RowClass");
+    state.enter_scope();
+    assert_eq!(
+        state.register_block_scoped_class("NestedClass"),
+        "NestedClass_1"
+    );
+    state.exit_scope();
+    state.exit_scope();
+
+    assert_eq!(state.get_emitted_name("row"), Some("row".to_string()));
+    state.exit_scope();
+}

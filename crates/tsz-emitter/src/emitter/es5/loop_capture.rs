@@ -455,12 +455,17 @@ impl<'a> Printer<'a> {
         let block_scoped_temp_line = self.writer.current_line();
 
         // Emit the body statements inside the IIFE
+        self.ctx.block_scope_state.enter_function_scope();
+        for var in captured_vars {
+            self.ctx.block_scope_state.register_function_parameter(var);
+        }
         let prev_lexical_block_missing_initializer_function_depth =
             self.lexical_block_missing_initializer_function_depth;
         self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
         self.emit_loop_body_for_iife(body_idx, body_info, captured_vars, _init_vars);
         self.lexical_block_missing_initializer_function_depth =
             prev_lexical_block_missing_initializer_function_depth;
+        self.ctx.block_scope_state.exit_scope();
 
         if !self.block_scoped_private_temps.is_empty() {
             let indent = " ".repeat(self.writer.indent_width() as usize);
