@@ -26,7 +26,7 @@ use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::NodeList;
 use tsz_parser::parser::node::NodeArena;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 pub(crate) type JsNestedModuleExportNamespaces = FxHashMap<NodeIndex, Vec<(NodeIndex, NodeIndex)>>;
 

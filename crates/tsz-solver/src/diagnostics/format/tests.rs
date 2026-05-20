@@ -1,6 +1,6 @@
 use super::*;
-use crate::TypeInterner;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeInterner;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, MappedModifier, MappedType, ParamInfo,
     PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInfo,

@@ -12,7 +12,7 @@
 //! - Optional property looseness
 
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 
 // =============================================================================
 // Helper Functions

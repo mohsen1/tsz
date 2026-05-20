@@ -835,3 +835,110 @@ fn test_iife_closes_properly() {
         "Expected IIFE closing pattern.\nOutput:\n{output}"
     );
 }
+
+// =============================================================================
+// Derived class synthetic constructor: super(...args) and ordering
+// =============================================================================
+
+#[test]
+fn derived_class_with_instance_member_decorator_synthesizes_super_call() {
+    let source = "@dec class Child extends Base { @dec method() {} }";
+    let output = emit_decorator_with(source, true, true);
+    assert!(
+        output.contains("constructor(...args)"),
+        "Expected synthetic constructor with rest parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("super(...args)"),
+        "Expected super(...args) forwarding call in synthetic constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__runInitializers"),
+        "Expected __runInitializers call in constructor.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn derived_class_renamed_params_still_synthesizes_super_call() {
+    let source = "@myDec class Beta extends Alpha { @myDec go() {} }";
+    let output = emit_decorator_with(source, true, true);
+    assert!(
+        output.contains("constructor(...args)"),
+        "Expected synthetic constructor regardless of class/method name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("super(...args)"),
+        "Expected super(...args) in synthetic constructor regardless of class name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn derived_class_member_only_decorator_synthesizes_super_call() {
+    // Member-only decorators (no class decorator) on a derived class also need
+    // a synthetic constructor with super(...args).
+    let source = "class Leaf extends Root { @dec handle() {} }";
+    let output = emit_decorator_with(source, true, true);
+    assert!(
+        output.contains("constructor(...args)"),
+        "Expected synthetic constructor for member-decorated derived class.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("super(...args)"),
+        "Expected super call in synthetic constructor for member-only decorated derived class.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn base_class_with_instance_member_decorator_does_not_get_super_call() {
+    // A non-derived decorated class must not have a spurious super() call.
+    let source = "@dec class Standalone { @dec method() {} }";
+    let output = emit_decorator_with(source, true, true);
+    assert!(
+        !output.contains("super("),
+        "Base class should not get a super() call in the synthetic constructor.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn synthetic_constructor_appears_after_instance_methods() {
+    // When the source has no constructor, tsc appends the synthesized
+    // constructor after emitted instance members in the class body.
+    let source = "@dec class Child extends Base { @dec method() {} }";
+    let output = emit_decorator_with(source, true, true);
+    let ctor_pos = output.find("constructor(");
+    let method_pos = output.find("method()");
+    assert!(
+        ctor_pos.is_some(),
+        "Expected constructor in output.\nOutput:\n{output}"
+    );
+    assert!(
+        method_pos.is_some(),
+        "Expected method in output.\nOutput:\n{output}"
+    );
+    assert!(
+        method_pos.unwrap() < ctor_pos.unwrap(),
+        "Synthetic constructor must appear after the instance method.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn synthetic_constructor_appears_after_instance_fields() {
+    // Decorated fields keep their class-body position; the constructor only
+    // carries the final extra-initializer run.
+    let source = "class Child extends Base { @dec field = 1; }";
+    let output = emit_decorator_with(source, true, true);
+    let ctor_pos = output.find("constructor(");
+    let field_pos = output.find("field =");
+    assert!(
+        ctor_pos.is_some(),
+        "Expected constructor in output.\nOutput:\n{output}"
+    );
+    assert!(
+        field_pos.is_some(),
+        "Expected field in output.\nOutput:\n{output}"
+    );
+    assert!(
+        field_pos.unwrap() < ctor_pos.unwrap(),
+        "Synthetic constructor must appear after the instance field.\nOutput:\n{output}"
+    );
+}

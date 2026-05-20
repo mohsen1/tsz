@@ -8,7 +8,7 @@ use crate::test_utils::check_source_code_messages as get_diagnostics;
 use crate::{CheckerOptions, CheckerState};
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)

@@ -1,3 +1,4 @@
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::def::DefId;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
@@ -9,7 +10,6 @@ use crate::visitor::{
     lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
     type_param_info, union_list_id,
 };
-use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::sync::Arc;

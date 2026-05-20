@@ -7,7 +7,7 @@ use crate::context::{CheckerOptions, LibContext};
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::{BinderState, lib_loader::LibFile, state::LibContext as BinderLibContext};
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();

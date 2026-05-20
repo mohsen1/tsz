@@ -1,4 +1,5 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) fn originates_from_remapped_mapped_type_with_evaluator(
     db: &dyn TypeDatabase,

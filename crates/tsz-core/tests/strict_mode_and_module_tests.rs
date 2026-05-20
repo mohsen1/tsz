@@ -2,7 +2,7 @@ use crate::binder::BinderState;
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 #[test]
 fn test_always_strict_with_statement() {

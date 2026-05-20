@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 const IMPORT_DEFER_SOURCE: &str = r#"
 interface Array<T> {}

@@ -9,7 +9,7 @@
 
 use std::cell::RefCell;
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::resolver::TypeResolver;
 use crate::types::{TypeData, TypeId};
 use rustc_hash::FxHashMap;
@@ -154,7 +154,7 @@ pub fn type_parameter_has_mapped_constraint_db(db: &dyn TypeDatabase, type_id: T
 /// type arguments. Bridges resolver-backed lazy resolution so callers
 /// don't need to reimplement the substitute-then-classify pattern.
 pub fn is_generic_mapped_application_db<R: TypeResolver>(
-    db: &dyn crate::QueryDatabase,
+    db: &dyn crate::construction::QueryDatabase,
     resolver: &R,
     type_id: TypeId,
 ) -> bool {

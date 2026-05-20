@@ -1,8 +1,9 @@
 //! Freshness helpers for object literal excess property checking.
 
+use crate::TypeId;
+use crate::construction::TypeDatabase;
 use crate::types::ObjectFlags;
 use crate::visitor::{ObjectTypeKind, classify_object_type};
-use crate::{TypeDatabase, TypeId};
 
 pub fn is_fresh_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {

@@ -16,7 +16,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_checker::test_utils::{check_source_code_messages, load_lib_files};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     load_lib_files(&[

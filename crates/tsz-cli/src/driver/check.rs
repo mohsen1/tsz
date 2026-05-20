@@ -5800,7 +5800,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         let _source_type = checker.get_type_of_node(decl.initializer);
         let target_type = checker.get_type_from_type_node(decl.type_annotation);
         let _read_constraint_type =
-            |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
+            |object_type| match tsz_solver::construction::QueryDatabase::resolve_property_access(
                 &query_cache,
                 object_type,
                 "constraint",
@@ -5811,8 +5811,10 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
                 _ => None,
             };
         let _evaluated_target_type = {
-            let mut evaluator =
-                tsz_solver::TypeEvaluator::with_resolver(&program.type_interner, &checker.ctx);
+            let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(
+                &program.type_interner,
+                &checker.ctx,
+            );
             evaluator.evaluate(target_type)
         };
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());

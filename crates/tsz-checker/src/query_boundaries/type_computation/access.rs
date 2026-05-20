@@ -1,5 +1,6 @@
 use tsz_common::Atom;
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::super::common::tuple_elements;
 

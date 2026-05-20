@@ -1120,6 +1120,38 @@ fn type_index_access() {
 }
 
 #[test]
+fn type_index_access_allows_line_break_before_bracket() {
+    let source = "type T = Foo\n[\"key\"];";
+    let (parser, root) = parse_source(source);
+    assert_no_errors(&parser, "line-broken index access type alias");
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let alias = arena.get_type_alias(stmt_node).expect("type alias");
+    let type_node = arena.get(alias.type_node).expect("type node");
+    assert_eq!(
+        type_node.kind,
+        syntax_kind_ext::INDEXED_ACCESS_TYPE,
+        "line-broken type alias should still parse as indexed access"
+    );
+}
+
+#[test]
+fn type_annotation_index_access_allows_line_break_before_bracket() {
+    let source = "let value: Foo\n[\"key\"];";
+    let (parser, root) = parse_source(source);
+    assert_no_errors(&parser, "line-broken index access type annotation");
+    let arena = parser.get_arena();
+    let type_annotation = get_var_type_annotation(arena, root);
+    let type_node = arena.get(type_annotation).expect("type node");
+    assert_eq!(
+        type_node.kind,
+        syntax_kind_ext::INDEXED_ACCESS_TYPE,
+        "line-broken type annotation should still parse as indexed access"
+    );
+}
+
+#[test]
 fn type_index_access_number() {
     // `type T = Arr[number]`
     let (parser, root) = parse_source("type T = Arr[number];");

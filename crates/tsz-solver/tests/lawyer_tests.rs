@@ -1,9 +1,9 @@
 //! Tests for the Lawyer layer (Any propagation rules and `CompatChecker`).
 
 use super::*;
-use crate::AnyPropagationMode;
 use crate::intern::TypeInterner;
 use crate::relations::compat::CompatChecker;
+use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{FunctionShape, ParamInfo};
 use crate::{PropertyInfo, TypeId, Visibility};
 

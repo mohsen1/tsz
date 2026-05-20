@@ -3,7 +3,7 @@
 //! Contains `contains_*`, `is_*` predicates, union/intersection member access,
 //! array/tuple extraction, and compound member mapping.
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefinitionStore;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;

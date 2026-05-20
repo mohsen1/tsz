@@ -1969,7 +1969,8 @@ fn fix_symbol_types_fallback_used_when_node_types_is_any() {
     use tsz_binder::BinderState;
     use tsz_parser::parser::NodeIndex;
     use tsz_parser::parser::syntax_kind_ext;
-    use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypeInterner};
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{FunctionShape, ParamInfo, TypeId};
 
     let source = "export const isNonNull = (x: number | null) => x !== null;";
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
@@ -2041,8 +2042,9 @@ fn fix_predicate_pattern2_does_not_rewrite_unrelated_union_shapes() {
     // (T & undefined) | string must NOT be rewritten as T & ({} | undefined).
     // Only (T & undefined) | (T & {}) qualifies — both arms must be verified.
     use crate::type_cache_view::TypeCacheView;
+    use tsz_solver::construction::TypeInterner;
     use tsz_solver::{
-        FunctionShape, ParamInfo, TypeId, TypeInterner,
+        FunctionShape, ParamInfo, TypeId,
         types::{TypeParamInfo, TypePredicate, TypePredicateTarget},
     };
 

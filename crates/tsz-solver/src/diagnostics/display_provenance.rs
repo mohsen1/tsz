@@ -68,7 +68,7 @@ pub(crate) fn record_union_origin(db: &dyn TypeDatabase, provenance: UnionOrigin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
     use crate::types::TypeData;
 
     #[test]

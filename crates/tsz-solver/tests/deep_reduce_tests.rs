@@ -19,7 +19,7 @@
 //!   re-interning when nothing changed).
 
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::deep_reduce_for_display;
 use crate::def::resolver::NoopResolver;
 use crate::types::{ConditionalType, TupleElement, TypeData};
