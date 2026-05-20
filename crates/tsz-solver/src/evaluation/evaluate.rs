@@ -2819,6 +2819,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// produce tuples.
     fn visit_tuple(&mut self, tuple_list_id: TupleListId, original_type_id: TypeId) -> TypeId {
         use crate::intern::TEMPLATE_LITERAL_EXPANSION_LIMIT;
+        use tsz_common::limits::MAX_REPRESENTABLE_TUPLE_LENGTH;
 
         let elements = self.interner.tuple_list(tuple_list_id);
 
@@ -2868,6 +2869,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if let Some(TypeData::Tuple(inner_list_id)) = self.interner.lookup(evaluated_inner)
                 {
                     let inner_elements = self.interner.tuple_list(inner_list_id);
+                    let current_len = alternatives.iter().map(|a| a.len()).max().unwrap_or(0);
+                    if current_len.saturating_add(inner_elements.len())
+                        > MAX_REPRESENTABLE_TUPLE_LENGTH
+                    {
+                        self.interner.mark_tuple_too_large();
+                        return TypeId::ERROR;
+                    }
                     for alternative in &mut alternatives {
                         alternative.extend(inner_elements.iter().copied());
                     }
@@ -2922,6 +2930,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         alternatives.len().saturating_mul(spread_alternatives.len());
                     if alternative_count >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
                         self.interner.mark_union_too_complex();
+                        return TypeId::ERROR;
+                    }
+
+                    let max_prefix = alternatives.iter().map(|p| p.len()).max().unwrap_or(0);
+                    let max_spread = spread_alternatives
+                        .iter()
+                        .map(|s| s.len())
+                        .max()
+                        .unwrap_or(0);
+                    if max_prefix.saturating_add(max_spread) > MAX_REPRESENTABLE_TUPLE_LENGTH {
+                        self.interner.mark_tuple_too_large();
                         return TypeId::ERROR;
                     }
 

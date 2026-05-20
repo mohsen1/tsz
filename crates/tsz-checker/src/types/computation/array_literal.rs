@@ -342,6 +342,9 @@ impl<'a> CheckerState<'a> {
         };
 
         if self.ctx.in_const_assertion && self.array_literal_produces_too_large_tuple(idx) {
+            // Clear any flag the static estimator may have set so the solver
+            // flag channel starts clean for the next construct.
+            let _ = self.ctx.types.take_tuple_too_large();
             self.error_at_node(
                 idx,
                 crate::diagnostics::diagnostic_messages::EXPRESSION_PRODUCES_A_TUPLE_TYPE_THAT_IS_TOO_LARGE_TO_REPRESENT,

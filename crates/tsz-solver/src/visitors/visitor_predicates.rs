@@ -449,6 +449,27 @@ pub fn is_index_access_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
 }
 
+/// Returns `true` when `type_id`'s outer shape performs fresh tuple synthesis
+/// on evaluation — `Application`, `Conditional`, `Mapped`, `IndexAccess`, or
+/// `KeyOf`. Used by the checker to attribute the `tuple_too_large` flag to the
+/// alias whose body owns the synthesis, not to a transitive referrer whose body
+/// is a plain `Lazy` or already-materialized `Tuple`.
+pub fn is_fresh_tuple_synthesis_site(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        types.lookup(type_id),
+        Some(
+            TypeData::Application(_)
+                | TypeData::Conditional(_)
+                | TypeData::Mapped(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_),
+        )
+    )
+}
+
 /// Check if a type is a type query (typeof) type.
 pub fn is_type_query_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
