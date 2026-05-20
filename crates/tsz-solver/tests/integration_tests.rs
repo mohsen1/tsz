@@ -8,6 +8,7 @@
 //! These integration tests verify TS2322 and TS7006 error detection improves with strictness.
 
 use super::*;
+use crate::computation::CompatChecker;
 
 /// Test suite for SOLV-15: Generic type strict subtyping
 #[cfg(test)]

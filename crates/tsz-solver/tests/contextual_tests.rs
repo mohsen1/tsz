@@ -1,7 +1,8 @@
 use super::*;
 use crate::TypeInterner;
 use crate::inference::infer::InferenceContext;
-use crate::{CompatChecker, TupleElement, infer_generic_function};
+use crate::relations::compat::CompatChecker;
+use crate::{TupleElement, infer_generic_function};
 #[test]
 fn test_contextual_no_context() {
     let interner = TypeInterner::new();

@@ -248,8 +248,6 @@ pub(crate) use operations::compound_assignment::{
 pub(crate) use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
 };
-pub use relations::compat::{AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider};
-pub use relations::lawyer::AnyPropagationRules;
 pub use relations::relation_queries::{
     AssignabilityFailureAnalysis, RelationContext, RelationKind, RelationPolicy,
     RelationQueryInputs, RelationResult, analyze_assignability_failure_with_resolver,
