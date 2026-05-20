@@ -49,6 +49,37 @@ fn array_assignment_pattern_reads_simple_identifier_sources_when_downlevel_itera
 }
 
 #[test]
+fn empty_assignment_patterns_evaluate_rhs_without_read_helper() {
+    let output = emit_es5_downlevel_iteration(
+        "var a: any;\n\
+         ({} = a);\n\
+         ([] = a);\n",
+    );
+
+    assert!(
+        output.contains("var a;\n(a);\n(a);"),
+        "Empty object and array assignment patterns should evaluate only their RHS.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__read"),
+        "Empty array assignment patterns should not schedule the read helper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn hole_only_assignment_pattern_still_advances_iterable() {
+    let output = emit_es5_downlevel_iteration(
+        "var a: any;\n\
+         ([,] = a);\n",
+    );
+
+    assert!(
+        output.contains("__read(a, 1)"),
+        "Array assignment holes are not empty patterns; they must still advance the iterable.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn empty_array_binding_patterns_without_initializers_still_schedule_read_helpers() {
     let output = emit_es5_downlevel_iteration(
         "(function () {\n\
