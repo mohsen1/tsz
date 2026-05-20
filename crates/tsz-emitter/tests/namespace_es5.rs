@@ -82,6 +82,62 @@ fn test_namespace_with_function() {
 }
 
 #[test]
+fn test_commonjs_exported_namespace_erases_type_only_imports_and_reexports() {
+    let source = r#"export namespace M {
+    // variable
+    export var M_V = 0;
+    // interface
+    export interface M_I { }
+    // class
+    export class M_C { }
+    // type
+    export type M_T = number;
+    // alias
+    export import M_A = M;
+
+    // Reexports
+    export { M_V as v };
+    import * as M2 from "M2";
+    import M4 from "M4";
+    export import M5 = require("M5");
+}"#;
+    let (parser, root) = parse_test_source(source);
+
+    let root_node = parser.arena.get(root).expect("source file node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("source file");
+    let stmt_idx = source_file.statements.nodes[0];
+    let export_decl = parser
+        .arena
+        .get(stmt_idx)
+        .and_then(|node| parser.arena.get_export_decl(node))
+        .expect("exported namespace wrapper");
+
+    let mut emitter = NamespaceES5Emitter::with_commonjs(&parser.arena, true);
+    emitter.set_source_text(source);
+    let output = emitter.emit_exported_namespace(export_decl.export_clause);
+
+    assert!(
+        output.contains("M.M_V = 0;") && output.contains("M.M_C = M_C;"),
+        "Runtime namespace members should still emit. Got:\n{output}"
+    );
+    assert!(
+        !output.contains("// interface")
+            && !output.contains("// type")
+            && !output.contains("// Reexports"),
+        "Comments attached only to erased namespace members should not leak. Got:\n{output}"
+    );
+    assert!(
+        !output.contains("import * as M2")
+            && !output.contains("import M4")
+            && !output.contains("M.M5"),
+        "Namespace-scope ES imports, reexports, and external import-equals should erase. Got:\n{output}"
+    );
+}
+
+#[test]
 fn test_namespace_recovers_malformed_function_arrow_body_expression() {
     let output = emit_namespace(
         "// @target: es2015\r\nnamespace M {\r\n    export namespace N {\r\n\texport function f(x:number)=>2*x;\r\n    }\r\n}\r\n",
