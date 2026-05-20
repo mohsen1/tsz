@@ -142,6 +142,39 @@ fn test_structural_setter_only_property_uses_write_type() {
 }
 
 #[test]
+fn test_structural_authored_split_accessor_uses_get_set() {
+    let (parser, _root) = parse_test_source("");
+    let binder = BinderState::new();
+
+    let interner = TypeInterner::new();
+    let x_atom = interner.intern_string("x");
+    let mut accessor = PropertyInfo::new(x_atom, TypeId::STRING);
+    accessor.write_type = TypeId::NUMBER;
+    accessor.declaration_order = 1;
+
+    let point_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![accessor],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(point_type);
+
+    assert!(
+        printed.contains("get x(): string;"),
+        "Expected authored split accessor getter to stay in declaration emit: {printed}"
+    );
+    assert!(
+        printed.contains("set x(arg: number);"),
+        "Expected authored split accessor setter to stay in declaration emit: {printed}"
+    );
+}
+
+#[test]
 fn test_foreign_global_lazy_type_application_keeps_alias_name() {
     let (parser, _root) = parse_test_source("");
 
