@@ -503,14 +503,25 @@ impl<'a> NarrowingContext<'a> {
                 kept.push(member);
                 continue;
             }
-            let should_keep = if prop_type == literal_value
-                || crate::type_queries::contains_generic_type_parameters_db(self.db, prop_type)
-            {
+            let should_keep = if prop_type == literal_value {
                 keep_matching
             } else if keep_matching {
                 // true branch: keep members where literal <: property_type
-                self.literal_subtype_fast(literal_value, prop_type)
-                    .unwrap_or_else(|| is_subtype_of(self.db, literal_value, prop_type))
+                if crate::type_queries::contains_generic_type_parameters_db(self.db, prop_type) {
+                    if let Some(parts_id) = intersection_list_id(self.db, prop_type) {
+                        self.db.type_list(parts_id).iter().all(|&part| {
+                            crate::type_queries::contains_generic_type_parameters_db(self.db, part)
+                                || self
+                                    .literal_subtype_fast(literal_value, part)
+                                    .unwrap_or_else(|| is_subtype_of(self.db, literal_value, part))
+                        })
+                    } else {
+                        true
+                    }
+                } else {
+                    self.literal_subtype_fast(literal_value, prop_type)
+                        .unwrap_or_else(|| is_subtype_of(self.db, literal_value, prop_type))
+                }
             } else {
                 // false branch: exclude members where property_type <: excluded_literal
                 !self
@@ -946,6 +957,35 @@ impl<'a> NarrowingContext<'a> {
         // narrow `obj` to `never` when the property doesn't exist.
         let mut any_member_has_property = false;
 
+        let literal_matches_property_type = |prop_type: TypeId| -> bool {
+            if let Some(parts_id) = intersection_list_id(self.db, prop_type) {
+                return self.db.type_list(parts_id).iter().all(|&part| {
+                    let normalized_part = normalize_constructor_property_type(part);
+                    crate::type_queries::contains_generic_type_parameters_db(
+                        self.db,
+                        normalized_part,
+                    ) || is_subtype_of(self.db, literal_value, normalized_part)
+                });
+            }
+
+            let normalized_prop_type = normalize_constructor_property_type(prop_type);
+            if !crate::type_queries::contains_generic_type_parameters_db(
+                self.db,
+                normalized_prop_type,
+            ) {
+                return is_subtype_of(self.db, literal_value, normalized_prop_type);
+            }
+
+            let Some(parts_id) = intersection_list_id(self.db, normalized_prop_type) else {
+                return true;
+            };
+            self.db.type_list(parts_id).iter().all(|&part| {
+                let normalized_part = normalize_constructor_property_type(part);
+                crate::type_queries::contains_generic_type_parameters_db(self.db, normalized_part)
+                    || is_subtype_of(self.db, literal_value, normalized_part)
+            })
+        };
+
         for &member in &members {
             // Special case: any and unknown always match
             if member.is_any_or_unknown() {
@@ -985,16 +1025,7 @@ impl<'a> NarrowingContext<'a> {
                 // Property types like `E.A` may be stored as Lazy(DefId) references
                 // that need to be resolved to their actual enum literal types.
                 let resolved_prop_type = self.resolve_type(prop_type);
-                if crate::type_queries::contains_generic_type_parameters_db(
-                    self.db,
-                    resolved_prop_type,
-                ) {
-                    return Some(true);
-                }
-
-                // CRITICAL: Use is_subtype_of(literal_value, property_type)
-                // NOT the reverse! This was the bug in the reverted commit.
-                let matches = is_subtype_of(self.db, literal_value, resolved_prop_type);
+                let matches = literal_matches_property_type(resolved_prop_type);
 
                 if matches {
                     trace!(
@@ -1032,28 +1063,11 @@ impl<'a> NarrowingContext<'a> {
                 } else {
                     any_member_has_property = true;
                     if prop_types.len() == 1 {
-                        let normalized_prop_type =
-                            normalize_constructor_property_type(prop_types[0]);
-                        if crate::type_queries::contains_generic_type_parameters_db(
-                            self.db,
-                            normalized_prop_type,
-                        ) {
-                            true
-                        } else {
-                            is_subtype_of(self.db, literal_value, normalized_prop_type)
-                        }
+                        literal_matches_property_type(prop_types[0])
                     } else {
-                        let effective_type = self.db.intersection(prop_types);
-                        let normalized_effective_type =
-                            normalize_constructor_property_type(effective_type);
-                        if crate::type_queries::contains_generic_type_parameters_db(
-                            self.db,
-                            normalized_effective_type,
-                        ) {
-                            true
-                        } else {
-                            is_subtype_of(self.db, literal_value, normalized_effective_type)
-                        }
+                        prop_types
+                            .into_iter()
+                            .all(|prop_type| literal_matches_property_type(prop_type))
                     }
                 }
             } else {
