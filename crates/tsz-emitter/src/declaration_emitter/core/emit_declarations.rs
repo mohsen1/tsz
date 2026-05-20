@@ -1205,6 +1205,13 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if func.asterisk_token
+            && func_body.is_some()
+            && let Some(return_type_text) =
+                self.generator_yield_return_type_text(func.is_async, func_body)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if let (Some(return_type_text), true) =
             self.function_body_return_hint(func, func_body)
         {
@@ -1438,7 +1445,8 @@ impl<'a> DeclarationEmitter<'a> {
                                 func_name,
                             );
                         } else {
-                            let printed_type_text = self.print_type_id(effective_return_type_id);
+                            let printed_type_text = self
+                                .inferred_function_return_type_text(func, effective_return_type_id);
                             let printed_type_text = self
                                 .rewrite_returned_auto_accessor_parameter_unknowns(
                                     func,
@@ -1922,6 +1930,16 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&type_text);
+            } else if is_readonly
+                && !is_abstract
+                && !prop.question_token
+                && prop.initializer.is_some()
+                && self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                && self.is_symbol_call(prop.initializer)
+            {
+                self.write(": unique symbol");
             } else if prop.initializer.is_some()
                 && let Some(type_text) =
                     self.class_property_function_initializer_type_text(prop_idx, prop.initializer)
@@ -1963,10 +1981,16 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(" | undefined");
                     }
                 } else {
-                    // For non-readonly properties without an explicit type annotation,
-                    // widen literal types to their base types (e.g., `12` → `number`,
-                    // `false` → `boolean`) matching tsc's DTS behaviour.
-                    let effective_type = if !is_readonly {
+                    // Inferred class-property declaration surfaces widen
+                    // unique-symbol values from references to `symbol`; a direct
+                    // static readonly `Symbol()` initializer is handled above.
+                    let effective_type = if prop.initializer.is_some() {
+                        self.type_interner
+                            .map(|interner| {
+                                tsz_solver::operations::widening::widen_type(interner, type_id)
+                            })
+                            .unwrap_or(type_id)
+                    } else if !is_readonly {
                         self.type_interner
                             .map(|interner| {
                                 tsz_solver::operations::widening::widen_literal_type(
