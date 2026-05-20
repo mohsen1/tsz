@@ -1827,6 +1827,21 @@ const value = empty || fallback;
 }
 
 #[test]
+fn test_short_circuit_omits_right_operand_when_left_is_syntactically_truthy() {
+    let output = emit_dts_with_binding(
+        r#"
+class C {}
+const value = (() => new C()) || "";
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: () => C;"),
+        "Expected declaration inference to omit unreachable `||` right operand: {output}"
+    );
+}
+
+#[test]
 fn test_short_circuit_reference_respects_annotated_widened_surface() {
     let output = emit_dts_with_binding(
         r#"
