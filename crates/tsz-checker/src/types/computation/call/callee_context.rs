@@ -1,4 +1,4 @@
-use crate::context::TypingRequest;
+use crate::context::{TypingRequest, speculation::DiagnosticSpeculationSnapshot};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -38,9 +38,9 @@ impl<'a> CheckerState<'a> {
         }
         let func = self.ctx.arena.get_function(decl_node).cloned()?;
 
-        let diagnostics_before = self.ctx.snapshot_diagnostics();
+        let diagnostics_before = DiagnosticSpeculationSnapshot::new(&self.ctx);
         let fresh_signature = self.call_signature_from_function(&func, decl_idx);
-        self.ctx.rollback_diagnostics(&diagnostics_before);
+        diagnostics_before.rollback(&mut self.ctx.diagnostic_state());
 
         Some(fresh_signature)
     }
@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let snap = self.ctx.snapshot_diagnostics();
+        let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
         let params = args
             .iter()
             .copied()
@@ -148,7 +148,7 @@ impl<'a> CheckerState<'a> {
                 rest: false,
             })
             .collect();
-        self.ctx.rollback_diagnostics(&snap);
+        snap.rollback(&mut self.ctx.diagnostic_state());
 
         Some(
             self.ctx
