@@ -1065,9 +1065,7 @@ impl<'a> NarrowingContext<'a> {
                     if prop_types.len() == 1 {
                         literal_matches_property_type(prop_types[0])
                     } else {
-                        prop_types
-                            .into_iter()
-                            .all(|prop_type| literal_matches_property_type(prop_type))
+                        prop_types.into_iter().all(&literal_matches_property_type)
                     }
                 }
             } else {
