@@ -6,6 +6,7 @@ const WIP_LABEL = "WIP";
 const DEFAULT_WINDOW_HOURS = 24;
 const DEFAULT_MAX_PULL_REQUESTS = 80;
 const DEFAULT_GH_TIMEOUT_MS = 30_000;
+const DEFAULT_GH_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 function usage() {
   return [
@@ -88,6 +89,7 @@ function runGhJson(args, options = {}) {
   const timeout = options.ghTimeoutMs || DEFAULT_GH_TIMEOUT_MS;
   const result = spawnSync("gh", args, {
     encoding: "utf8",
+    maxBuffer: DEFAULT_GH_MAX_BUFFER_BYTES,
     stdio: ["ignore", "pipe", "pipe"],
     timeout,
   });
@@ -95,6 +97,9 @@ function runGhJson(args, options = {}) {
     const command = `gh ${args.join(" ")}`;
     if (result.error.code === "ETIMEDOUT") {
       throw new Error(`${command} timed out after ${timeout}ms`);
+    }
+    if (result.error.code === "ENOBUFS") {
+      throw new Error(`${command} exceeded ${DEFAULT_GH_MAX_BUFFER_BYTES} bytes of output`);
     }
     throw result.error;
   }
@@ -129,6 +134,13 @@ function normalizeLabel(label) {
 }
 
 function normalizeTimelineEvent(event) {
+  if (event?.event === "convert_to_draft") {
+    return {
+      event: "converted_to_draft",
+      createdAt: event.created_at,
+      actor: event.actor,
+    };
+  }
   if (event?.__typename === "ConvertToDraftEvent") {
     return {
       event: "converted_to_draft",
@@ -181,6 +193,21 @@ function readOpenPullRequests(repository, options) {
     throw new Error("REPOSITORY or GITHUB_REPOSITORY is required");
   }
 
+  try {
+    return readOpenPullRequestsGraphql(repository, options);
+  } catch (error) {
+    if (!isGraphqlRateLimitError(error)) throw error;
+    return readOpenPullRequestsRest(repository, options);
+  }
+}
+
+function isGraphqlRateLimitError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bgraphql_rate_limit\b/i.test(message)
+    || /API rate limit already exceeded/i.test(message);
+}
+
+function readOpenPullRequestsGraphql(repository, options) {
   const { owner, name } = parseRepository(repository);
   const first = Math.min(options.maxPullRequests, 100);
   const response = runGhJson([
@@ -200,6 +227,52 @@ function readOpenPullRequests(repository, options) {
     throw new Error("expected repository.pullRequests.nodes array in GraphQL response");
   }
   return pullRequests.map(normalizePr);
+}
+
+function readOpenPullRequestsRest(repository, options) {
+  const { owner, name } = parseRepository(repository);
+  const limit = options.maxPullRequests;
+  const perPage = Math.min(limit, 100);
+  const pullRequests = [];
+  let page = 1;
+
+  while (pullRequests.length < limit) {
+    const batch = runGhJson([
+      "api",
+      `repos/${owner}/${name}/pulls?state=open&sort=updated&direction=desc&per_page=${perPage}&page=${page}`,
+    ], options);
+    if (!Array.isArray(batch)) {
+      throw new Error("expected REST pull list array");
+    }
+    if (batch.length === 0) break;
+    pullRequests.push(...batch);
+    if (batch.length < perPage) break;
+    page += 1;
+  }
+
+  return pullRequests.slice(0, limit).map((pr) => {
+    const normalized = normalizePr(pr);
+    if (!isCandidate(normalized)) return normalized;
+    const timeline = runGhJson([
+      "api",
+      `repos/${owner}/${name}/issues/${pr.number}/timeline?per_page=100`,
+    ], options);
+    const prWithTimeline = normalizePr({
+      ...normalized,
+      timeline,
+    });
+    const latestEvent = latestWipStateEvent(prWithTimeline);
+    const commentsPath = latestEvent && eventTime(latestEvent)
+      ? `repos/${owner}/${name}/issues/${pr.number}/comments?per_page=100&since=${encodeURIComponent(eventTime(latestEvent))}`
+      : `repos/${owner}/${name}/issues/${pr.number}/comments?per_page=100`;
+    return normalizePr({
+      ...prWithTimeline,
+      comments: runGhJson([
+        "api",
+        commentsPath,
+      ], options),
+    });
+  });
 }
 
 function isCandidate(pr) {
