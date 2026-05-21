@@ -283,6 +283,45 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const compatibility = {
+    ...SAMPLE_COMPATIBILITY,
+    fixture_sources: [],
+  };
+  const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    new RegExp(`${canaryRow}: compatibility\\.fixture_sources must name at least one source`),
+  );
+});
+
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
+  const compatibility = {
+    ...SAMPLE_COMPATIBILITY,
+    fixture_sources: [
+      { name: "fixture", repository: "https://example.invalid/repo.git", ref: "" },
+      { name: "", repository: "", ref: "abc123" },
+    ],
+  };
+  const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    new RegExp(`${canaryRow}: compatibility\\.fixture_sources\\[0\\]\\.ref must be a non-empty string`),
+  );
+  assert.match(
+    result.stderr,
+    new RegExp(`${canaryRow}: compatibility\\.fixture_sources\\[1\\]\\.name must be a non-empty string`),
+  );
+  assert.match(
+    result.stderr,
+    new RegExp(`${canaryRow}: compatibility\\.fixture_sources\\[1\\]\\.repository must be a non-empty string`),
+  );
+});
+
+withTempDir((dir) => {
+  const canaryRow = COMPILE_ONLY_CANARY_PROJECT_ROWS[0];
   const { owner_track: _ownerTrack, ...compatibility } = SAMPLE_COMPATIBILITY;
   const result = runMerge(dir, [projectRow(canaryRow, compatibility)]);
   assert.equal(result.status, 1);

@@ -1102,6 +1102,35 @@ withTempDir((dir) => {
   assert.match(result.stdout, /See artifact for the remaining diagnostic deltas\./);
 });
 
+// format-step-summary surfaces malformed JSONL rows so the rendered summary
+// cannot look clean while silently dropping malformed compatibility records.
+withTempDir((dir) => {
+  const summary = path.join(dir, "summary.json");
+  fs.writeFileSync(
+    summary,
+    `${JSON.stringify({
+      by_state: { green: 1 },
+      by_oracle_classification: { "both-pass": 1 },
+      malformed_jsonl_lines: 2,
+      malformed_jsonl_examples: [
+        { line: 2, error: "Unexpected token n in JSON at position 0", text: "not-json" },
+        { line: 4, error: "Unexpected end of JSON input", text: "{" },
+      ],
+      first_diagnostic_deltas: [],
+    }, null, 2)}\n`,
+    "utf8",
+  );
+
+  const result = runProjectCompatibility(["format-step-summary"], {
+    SUMMARY_INPUT_FILE: summary,
+    SUMMARY_TITLE: "Project compatibility artifact",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Malformed JSONL lines: 2/);
+  assert.match(result.stdout, /line 2: Unexpected token n in JSON at position 0/);
+  assert.match(result.stdout, /line 4: Unexpected end of JSON input/);
+});
+
 // Header-only block when no diagnostic deltas were captured.
 withTempDir((dir) => {
   const summary = path.join(dir, "summary.json");

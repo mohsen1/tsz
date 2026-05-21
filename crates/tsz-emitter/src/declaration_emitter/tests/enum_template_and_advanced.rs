@@ -1281,10 +1281,12 @@ fn check_symbol_portability_prefers_symlinked_nested_package_over_public_root_ex
         sym_id,
         &binder,
         &current_path,
-        &mut rustc_hash::FxHashSet::default(),
-        &mut rustc_hash::FxHashSet::default(),
-        &mut rustc_hash::FxHashSet::default(),
-        &mut rustc_hash::FxHashSet::default(),
+        &mut crate::declaration_emitter::helpers::PortabilityVisitState {
+            visited_types: &mut rustc_hash::FxHashSet::default(),
+            visited_symbols: &mut rustc_hash::FxHashSet::default(),
+            visited_declaration_symbols: &mut rustc_hash::FxHashSet::default(),
+            visited_nodes: &mut rustc_hash::FxHashSet::default(),
+        },
     );
 
     assert_eq!(

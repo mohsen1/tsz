@@ -35,6 +35,91 @@ fn test_type_printer_preserves_union_display_origin() {
 }
 
 #[test]
+fn public_named_import_rewrites_private_import_type_reference() {
+    let source = r#"import { PrismaClient } from "@prisma/client";
+declare const value: unknown;"#;
+
+    let (rewritten, module, imported, alias) =
+        DeclarationEmitter::rewrite_leading_import_type_with_public_named_import(
+            source,
+            r#"import(".prisma/client").PrismaClient"#,
+        )
+        .expect("expected public named import rewrite");
+
+    assert_eq!(rewritten, "PrismaClient");
+    assert_eq!(module, "@prisma/client");
+    assert_eq!(imported, "PrismaClient");
+    assert_eq!(alias, None);
+}
+
+#[test]
+fn public_named_import_rewrite_uses_local_alias() {
+    let source = r#"import { PrismaClient as Client } from "@prisma/client";"#;
+
+    let (rewritten, module, imported, alias) =
+        DeclarationEmitter::rewrite_leading_import_type_with_public_named_import(
+            source,
+            r#"import(".prisma/client").PrismaClient<import(".prisma/client").PrismaClientOptions>"#,
+        )
+        .expect("expected aliased public named import rewrite");
+
+    assert_eq!(
+        rewritten,
+        r#"Client<import(".prisma/client").PrismaClientOptions>"#
+    );
+    assert_eq!(module, "@prisma/client");
+    assert_eq!(imported, "PrismaClient");
+    assert_eq!(alias.as_deref(), Some("Client"));
+}
+
+#[test]
+fn public_named_import_rewrite_preserves_foreign_default_type_arguments() {
+    let mut dependency_parser = tsz_parser::ParserState::new(
+        "/node_modules/.private/client/index.d.ts".to_string(),
+        "export interface Options {}\nexport class Client<T = Options> {}\n".to_string(),
+    );
+    let dependency_root = dependency_parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&dependency_parser.arena, dependency_root);
+
+    let client_sym = binder.file_locals.get("Client").expect("missing Client");
+    let options_sym = binder.file_locals.get("Options").expect("missing Options");
+    let dependency_arena = std::sync::Arc::new(dependency_parser.arena.clone());
+    let mut symbol_arenas = rustc_hash::FxHashMap::default();
+    symbol_arenas.insert(client_sym, std::sync::Arc::clone(&dependency_arena));
+    symbol_arenas.insert(options_sym, std::sync::Arc::clone(&dependency_arena));
+    binder.symbol_arenas = std::sync::Arc::new(symbol_arenas);
+
+    let (parser, _) = parse_test_source(r#"import { Client } from "@public/client";"#);
+    let interner = TypeInterner::new();
+    let mut emitter = DeclarationEmitter::with_type_info(
+        &parser.arena,
+        TypeCacheView::default(),
+        &interner,
+        &binder,
+    );
+    emitter.source_file_text = Some(r#"import { Client } from "@public/client";"#.into());
+    emitter.current_file_path = Some("/index.ts".to_string());
+    let mut arena_to_path = rustc_hash::FxHashMap::default();
+    arena_to_path.insert(
+        std::sync::Arc::as_ptr(&dependency_arena) as usize,
+        "/node_modules/.private/client/index.d.ts".to_string(),
+    );
+    emitter.set_arena_to_path(arena_to_path);
+
+    let (rewritten, module, imported, alias) = emitter
+        .rewrite_current_source_public_import_type_text_with_import(
+            r#"import(".private/client").Client"#,
+        )
+        .expect("expected public rewrite with default type arguments");
+
+    assert_eq!(rewritten, r#"Client<import(".private/client").Options>"#);
+    assert_eq!(module, "@public/client");
+    assert_eq!(imported, "Client");
+    assert_eq!(alias, None);
+}
+
+#[test]
 fn test_type_printer_deduplicates_identical_rendered_union_members() {
     let interner = TypeInterner::new();
     let x = interner.intern_string("x");

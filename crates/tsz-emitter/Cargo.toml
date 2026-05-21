@@ -175,6 +175,10 @@ name = "using_force_strict_mode_3516_tests"
 path = "tests/using_force_strict_mode_3516_tests.rs"
 
 [[test]]
+name = "using_function_body_hoisted_temps_indent_tests"
+path = "tests/using_function_body_hoisted_temps_indent_tests.rs"
+
+[[test]]
 name = "jsx_cjs_runtime_collision_tests"
 path = "tests/jsx_cjs_runtime_collision_tests.rs"
 

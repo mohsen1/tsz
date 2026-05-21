@@ -759,7 +759,16 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(type_text) = source_object_type {
                     self.write(&type_text);
                 } else if let Some(type_id) = self.get_node_type(assign.expression) {
-                    self.write(&self.print_type_id(type_id));
+                    let canonical = self.print_type_id_for_inferred_declaration(type_id);
+                    let type_text = self.declaration_emittable_type_text(
+                        assign.expression,
+                        type_id,
+                        &canonical,
+                    );
+                    let type_text = self
+                        .rewrite_current_source_public_import_type_text(&type_text)
+                        .unwrap_or(type_text);
+                    self.write(&type_text);
                 } else {
                     self.write("any");
                 }
@@ -1220,11 +1229,6 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        // First, emit: declare const _default: <type>;
-        self.write_indent();
-        self.write("declare const ");
-        self.write(&var_name);
-
         let portability_context = self.current_file_path.as_ref().map(|file_path| {
             let (pos, len) = self
                 .arena
@@ -1237,18 +1241,23 @@ impl<'a> DeclarationEmitter<'a> {
             (file_path.clone(), pos, len, self.diagnostics.len())
         });
 
-        // Default exports are const-like — preserve literal types for simple literals
-        if let Some(literal_text) = self.const_literal_initializer_text_deep(expr_idx) {
-            self.write(": ");
-            self.write(&literal_text);
+        let apply_public_import_rewrite = |emitter: &Self, type_text: String| {
+            emitter
+                .rewrite_current_source_public_import_type_text(&type_text)
+                .unwrap_or(type_text)
+        };
+
+        // Default exports are const-like — preserve literal types for simple literals.
+        let default_type_text = if let Some(literal_text) =
+            self.const_literal_initializer_text_deep(expr_idx)
+        {
+            literal_text
         } else if let Some(type_text) =
             self.object_literal_value_typeof_type_text(expr_idx, self.indent_level)
         {
-            self.write(": ");
-            self.write(&type_text);
+            type_text
         } else if let Some(type_text) = self.construct_return_new_expression_type_text(expr_idx) {
-            self.write(": ");
-            self.write(&type_text);
+            apply_public_import_rewrite(self, type_text)
         } else if let Some(type_text) = self.preferred_expression_type_text(expr_idx) {
             let type_text = self
                 .expand_imported_indexed_access_type_text(&type_text)
@@ -1265,10 +1274,9 @@ impl<'a> DeclarationEmitter<'a> {
                     expr_idx, "default", file_path, *pos, *len,
                 );
             }
-            self.write(": ");
-            self.write(&type_text);
+            apply_public_import_rewrite(self, type_text)
         } else if let Some(type_id) = self.get_node_type(expr_idx) {
-            let printed_type = self.print_type_id(type_id);
+            let printed_type = self.print_type_id_for_inferred_declaration(type_id);
             if let Some((file_path, pos, len, diagnostics_before)) = portability_context.as_ref()
                 && self.diagnostics.len() == *diagnostics_before
                 && Self::type_text_starts_with_import_type(&printed_type)
@@ -1285,11 +1293,19 @@ impl<'a> DeclarationEmitter<'a> {
                     expr_idx, "default", file_path, *pos, *len,
                 );
             }
-            self.write(": ");
-            self.write(&printed_type);
+            let printed_type =
+                self.declaration_emittable_type_text(expr_idx, type_id, &printed_type);
+            apply_public_import_rewrite(self, printed_type)
         } else {
-            self.write(": any");
-        }
+            "any".to_string()
+        };
+
+        // First, emit: declare const _default: <type>;
+        self.write_indent();
+        self.write("declare const ");
+        self.write(&var_name);
+        self.write(": ");
+        self.write(&default_type_text);
 
         self.write(";");
         self.write_line();

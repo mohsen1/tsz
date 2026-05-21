@@ -228,6 +228,51 @@ pub fn intersection_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> Type
     }
 }
 
+/// When `nested_target` is a direct recursive self-reference to a named
+/// (`Lazy`) member of `outer_intersection`, widen it to the full outer
+/// intersection so that nested object literals are checked against all
+/// intersection members.
+///
+/// Structural rule: when `interface A { p?: A }` is a member of `A & B`, tsc
+/// checks a nested literal assigned to `p` against `A & B` (not just `A`),
+/// because `p`'s type is a recursive self-reference that should be widened to
+/// the whole intersection context.
+///
+/// - `nested_target == T` where `T` is a `Lazy` intersection member → returns
+///   `outer_intersection`.
+/// - `nested_target == T | undefined` where `T` is a `Lazy` intersection
+///   member → returns `outer_intersection | undefined`.
+/// - Any other shape → returns `nested_target` unchanged.
+pub fn widen_if_recursive_intersection_member(
+    db: &dyn TypeDatabase,
+    nested_target: TypeId,
+    outer_intersection: TypeId,
+) -> TypeId {
+    let Some(outer_members) = crate::type_queries::get_intersection_members(db, outer_intersection)
+    else {
+        return nested_target;
+    };
+
+    let is_lazy_outer_member =
+        |t: TypeId| -> bool { crate::visitor::is_lazy_type(db, t) && outer_members.contains(&t) };
+
+    if is_lazy_outer_member(nested_target) {
+        return outer_intersection;
+    }
+
+    if let Some(union_members) = crate::type_queries::get_union_members(db, nested_target) {
+        let non_undef: Vec<TypeId> = union_members
+            .into_iter()
+            .filter(|&m| m != TypeId::UNDEFINED)
+            .collect();
+        if non_undef.len() == 1 && is_lazy_outer_member(non_undef[0]) {
+            return db.union(vec![outer_intersection, TypeId::UNDEFINED]);
+        }
+    }
+
+    nested_target
+}
+
 /// Extension trait for `TypeId` with chainable methods for common operations.
 ///
 /// This trait provides idiomatic Rust methods to reduce boilerplate when
@@ -391,7 +436,7 @@ pub(crate) fn expand_tuple_rest(db: &dyn TypeDatabase, type_id: TypeId) -> Tuple
 
     if let Some(elements) = tuple_list_id(db, type_id) {
         let elements = db.tuple_list(elements);
-        let mut fixed = Vec::new();
+        let mut fixed = Vec::with_capacity(elements.len());
         for (i, elem) in elements.iter().enumerate() {
             if elem.rest {
                 let inner = expand_tuple_rest(db, elem.type_id);

@@ -239,7 +239,8 @@ impl TypeInterner {
             let mut new_combinations = Vec::with_capacity(combinations.len() * part.len());
             for prefix in &combinations {
                 for suffix in part {
-                    let mut combined = prefix.clone();
+                    let mut combined = String::with_capacity(prefix.len() + suffix.len());
+                    combined.push_str(prefix);
                     combined.push_str(suffix);
                     new_combinations.push(combined);
                 }
@@ -548,7 +549,8 @@ impl TypeInterner {
             let mut next = Vec::with_capacity(combinations.len() * choices.len());
             for prefix in &combinations {
                 for choice in &choices {
-                    let mut combined = prefix.clone();
+                    let mut combined = Vec::with_capacity(prefix.len() + 1);
+                    combined.extend_from_slice(prefix);
                     combined.push(choice.clone());
                     next.push(combined);
                 }

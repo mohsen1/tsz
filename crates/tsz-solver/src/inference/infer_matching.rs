@@ -1798,7 +1798,7 @@ impl<'a> InferenceContext<'a> {
         source: &str,
         spans: &[TemplateSpan],
     ) -> Option<Vec<(InferenceVar, String)>> {
-        let mut bindings = Vec::new();
+        let mut bindings = Vec::with_capacity(spans.len());
         let mut pos = 0;
 
         for (i, span) in spans.iter().enumerate() {

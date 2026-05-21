@@ -448,7 +448,7 @@ impl<'a> NarrowingContext<'a> {
             let matching: Vec<TypeId> = if !type_param_results.is_empty() {
                 // Type parameter(s) matched: keep type params and exclude anonymous
                 // object types that can't be class instances at runtime.
-                let mut result = Vec::new();
+                let mut result = Vec::with_capacity(type_param_results.len());
                 let tp_indices: Vec<usize> = type_param_results.iter().map(|(i, _)| *i).collect();
                 for &(_, narrowed) in &type_param_results {
                     result.push(narrowed);
