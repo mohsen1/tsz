@@ -26,6 +26,14 @@ pub(crate) fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
     tsz_solver::type_queries::unwrap_readonly_deep(db, type_id)
 }
 
+pub(crate) fn widen_recursive_intersection_member(
+    db: &dyn TypeDatabase,
+    nested_target: TypeId,
+    outer_intersection: TypeId,
+) -> TypeId {
+    tsz_solver::utils::widen_if_recursive_intersection_member(db, nested_target, outer_intersection)
+}
+
 /// Strict type parameter check: matches `TypeParameter` and `Infer` only.
 ///
 /// Unlike `is_type_parameter_like` (which also matches `BoundParameter`),
