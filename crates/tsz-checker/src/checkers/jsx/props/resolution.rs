@@ -2147,9 +2147,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             type_id,
         )?;
-        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
-            return None;
-        };
+        let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
         self.get_symbol_globally(sym_id)
             .is_some_and(|symbol| symbol.escaped_name == "LibraryManagedAttributes")
             .then_some(args)

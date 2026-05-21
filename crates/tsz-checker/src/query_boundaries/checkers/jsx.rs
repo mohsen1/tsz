@@ -55,7 +55,7 @@ pub(crate) fn instantiate_type_alias_body(
     crate::query_boundaries::common::instantiate_type(db, body, &substitution)
 }
 
-pub(crate) fn property_access_success_type(
+pub(crate) const fn property_access_success_type(
     result: crate::query_boundaries::common::PropertyAccessResult,
 ) -> Option<TypeId> {
     match result {
@@ -66,7 +66,7 @@ pub(crate) fn property_access_success_type(
     }
 }
 
-pub(crate) fn property_access_is_success(
+pub(crate) const fn property_access_is_success(
     result: crate::query_boundaries::common::PropertyAccessResult,
 ) -> bool {
     matches!(
