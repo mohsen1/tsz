@@ -14,7 +14,7 @@ use super::handlers_code_fixes_utils::{
     extract_quoted_text, extract_type_identifiers, find_first_implements_class,
     find_matching_brace, is_identifier, parse_bare_identifier_expression,
     parse_identifier_call_expression, parse_interface_properties, parse_named_import_map,
-    positions_overlap, resolve_module_path, should_import_identifier,
+    positions_overlap, resolve_module_path,
 };
 use super::{Server, TsServerRequest, TsServerResponse};
 use tsz::checker::diagnostics::DiagnosticCategory;
@@ -3469,130 +3469,6 @@ impl Server {
         }
 
         None
-    }
-
-    fn synthetic_implement_interface_codefix(
-        &self,
-        file_path: &str,
-        content: &str,
-        auto_import_file_exclude_patterns: &[String],
-        auto_import_specifier_exclude_regexes: &[String],
-        import_module_specifier_ending: Option<&str>,
-        import_module_specifier_preference: Option<&str>,
-        line_map: &LineMap,
-    ) -> Option<serde_json::Value> {
-        let (_, interface_name, class_open_brace, class_close_brace) =
-            find_first_implements_class(content)?;
-        let mut class_imports = parse_named_import_map(content);
-        let (interface_file_path, interface_content) =
-            if let Some(interface_module_specifier) = class_imports.get(&interface_name).cloned() {
-                let interface_file_path =
-                    resolve_module_path(file_path, &interface_module_specifier, &self.open_files)?;
-                let interface_content = self
-                    .open_files
-                    .get(&interface_file_path)
-                    .cloned()
-                    .or_else(|| std::fs::read_to_string(&interface_file_path).ok())?;
-                (interface_file_path, interface_content)
-            } else if content.contains(&format!("interface {interface_name}")) {
-                (file_path.to_string(), content.to_string())
-            } else {
-                return None;
-            };
-
-        let interface_properties = parse_interface_properties(&interface_content, &interface_name)?;
-        if interface_properties.is_empty() {
-            return None;
-        }
-
-        let class_body = content.get(class_open_brace + 1..class_close_brace)?;
-        let mut missing_members = Vec::new();
-        for member in interface_properties {
-            if !class_body_has_member(class_body, member.name()) {
-                missing_members.push(member);
-            }
-        }
-        if missing_members.is_empty() {
-            return None;
-        }
-
-        let interface_imports = parse_named_import_map(&interface_content);
-        let mut needed_imports: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
-        for member in &missing_members {
-            for ident in extract_type_identifiers(member.referenced_types()) {
-                if should_import_identifier(&ident) && !class_imports.contains_key(&ident) {
-                    needed_imports.insert(ident);
-                }
-            }
-        }
-
-        let mut import_lines = Vec::new();
-        for ident in needed_imports {
-            if !self.interface_symbol_import_is_usable(
-                &interface_file_path,
-                &interface_imports,
-                &ident,
-                auto_import_file_exclude_patterns,
-            ) {
-                continue;
-            }
-            if let Some(module_specifier) = self.best_import_module_specifier_for_name(
-                file_path,
-                &ident,
-                auto_import_file_exclude_patterns,
-                auto_import_specifier_exclude_regexes,
-                import_module_specifier_ending,
-                import_module_specifier_preference,
-            ) && let std::collections::hash_map::Entry::Vacant(entry) =
-                class_imports.entry(ident.clone())
-            {
-                import_lines.push(format!("import {{ {ident} }} from '{module_specifier}';"));
-                entry.insert(module_specifier);
-            }
-        }
-
-        let members_text = missing_members
-            .iter()
-            .map(|m| format!("    {}", m.render()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let updated_body = if class_body.trim().is_empty() {
-            format!("\n{members_text}\n")
-        } else {
-            format!("{}\n{}\n", class_body.trim_end(), members_text)
-        };
-        let mut updated_content = format!(
-            "{}{}{}",
-            &content[..class_open_brace + 1],
-            updated_body,
-            &content[class_close_brace..]
-        );
-
-        for import_line in import_lines.iter().rev() {
-            if !updated_content.contains(import_line) {
-                updated_content = format!("{import_line}\n{updated_content}");
-            }
-        }
-        if updated_content == content {
-            return None;
-        }
-        let end_pos = line_map.offset_to_position(content.len() as u32, content);
-
-        Some(serde_json::json!({
-            "fixName": "fixClassIncorrectlyImplementsInterface",
-            "description": format!("Implement interface '{interface_name}'"),
-            "changes": [{
-                "fileName": file_path,
-                "textChanges": [{
-                    "start": { "line": 1, "offset": 1 },
-                    "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
-                    "newText": updated_content
-                }]
-            }],
-            "fixId": "fixClassIncorrectlyImplementsInterface",
-            "fixAllDescription": "Implement all unimplemented interfaces",
-        }))
     }
 
     pub(crate) fn handle_get_combined_code_fix(
