@@ -184,13 +184,14 @@ impl<'a> Printer<'a> {
             .and_then(|b| b.get(local_name))
             .cloned()
             .unwrap_or_default();
-        if names.is_empty()
-            && let Some(name) = self
+        if names.is_empty() {
+            if let Some(name) = self
                 .deferred_local_export_bindings
                 .as_ref()
                 .and_then(|b| b.get(local_name))
-        {
-            names.push(name.clone());
+            {
+                names.push(name.clone());
+            }
         }
         if is_inline {
             CjsLiveExportKind::Inline(names)

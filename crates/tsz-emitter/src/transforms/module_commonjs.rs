@@ -843,15 +843,17 @@ pub fn build_runtime_declaration_names(
                     && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
                     && !import_decl.is_type_only
                     && let Some(ref_node) = arena.get(import_decl.module_specifier)
-                    && (ref_node.kind == SyntaxKind::StringLiteral as u16
+                {
+                    if ref_node.kind == SyntaxKind::StringLiteral as u16
                         || is_import_alias_referencing_value(
                             arena,
                             import_decl.module_specifier,
                             statements,
                             preserve_const_enums,
-                        ))
-                {
-                    runtime_names.insert(name);
+                        )
+                    {
+                        runtime_names.insert(name);
+                    }
                 }
             }
             k if k == syntax_kind_ext::IMPORT_DECLARATION => {

@@ -162,10 +162,11 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             if preserve_computed_syntax {
-                if member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                    && let Some(value_type) = Self::object_literal_property_value_type(&member_text)
-                {
-                    computed_method_value_types.push(value_type.to_string());
+                if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                    if let Some(value_type) = Self::object_literal_property_value_type(&member_text)
+                    {
+                        computed_method_value_types.push(value_type.to_string());
+                    }
                 }
                 only_numeric_like &= Self::is_numeric_property_name_text(&name_text);
                 computed_members.push((name_text, member_text));

@@ -501,7 +501,7 @@ impl<'a> Printer<'a> {
                 continue;
             };
             let Some((stmt_runtime, stmt_scope)) =
-                self.statement_runtime_for_name(stmt_node, name, scope_body)
+                self.statement_runtime_for_name(stmt_node, &name, scope_body)
             else {
                 continue;
             };

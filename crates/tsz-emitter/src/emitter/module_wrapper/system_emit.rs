@@ -442,15 +442,15 @@ impl<'a> Printer<'a> {
             .deferred_local_export_bindings
             .replace(self.system_reexported_names.clone());
 
-        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev)
-            && let Some(file_name_text) = self.jsx_dev_file_name_text()
-        {
-            let assignment = file_name_text
-                .trim()
-                .strip_prefix("const ")
-                .unwrap_or(file_name_text.trim());
-            self.write(assignment);
-            self.write_line();
+        if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
+            if let Some(file_name_text) = self.jsx_dev_file_name_text() {
+                let assignment = file_name_text
+                    .trim()
+                    .strip_prefix("const ")
+                    .unwrap_or(file_name_text.trim());
+                self.write(assignment);
+                self.write_line();
+            }
         }
 
         for &stmt_idx in &source.statements.nodes {

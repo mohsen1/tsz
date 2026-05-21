@@ -974,13 +974,14 @@ impl<'a> Printer<'a> {
                 self.consumed_recovered_expression_statement_span =
                     Some((consumed_span.0, consumed_span.1, tail_name));
             }
-            if let Some(last_end) = last_emitted_declaration_end
-                && let Some(semi_after) =
+            if let Some(last_end) = last_emitted_declaration_end {
+                if let Some(semi_after) =
                     self.find_declaration_semicolon_after(last_end, effective_end)
-            {
-                let comment_end = semi_after.saturating_sub(1);
-                if !last_initializer_has_deferred_arrow_comment {
-                    self.emit_comments_in_range(last_end, comment_end, true, false);
+                {
+                    let comment_end = semi_after.saturating_sub(1);
+                    if !last_initializer_has_deferred_arrow_comment {
+                        self.emit_comments_in_range(last_end, comment_end, true, false);
+                    }
                 }
             }
             self.map_trailing_semicolon(node);
@@ -1194,10 +1195,10 @@ impl<'a> Printer<'a> {
         // Only recover when every declaration in the statement lacks an initializer.
         // If any declaration has an initializer, .typeof( is a valid property call
         // in a value expression that was already emitted — not a type-annotation tail.
-        if let Some(var_stmt) = self.arena.get_variable(node)
-            && !self.all_declarations_lack_initializer(&var_stmt.declarations)
-        {
-            return;
+        if let Some(var_stmt) = self.arena.get_variable(node) {
+            if !self.all_declarations_lack_initializer(&var_stmt.declarations) {
+                return;
+            }
         }
 
         let Some(text) = self.source_text else {

@@ -260,11 +260,11 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                         if let Some(arena) = self.global_symbol_arenas.get(&export_sym_id) {
                             let ptr = std::sync::Arc::as_ptr(arena) as usize;
-                            if ptr != current_arena_ptr
-                                && let Some(sym) = binder.symbols.get(export_sym_id)
-                            {
-                                found = Some((export_sym_id, sym, Arc::clone(arena)));
-                                break;
+                            if ptr != current_arena_ptr {
+                                if let Some(sym) = binder.symbols.get(export_sym_id) {
+                                    found = Some((export_sym_id, sym, Arc::clone(arena)));
+                                    break;
+                                }
                             }
                         }
                     }

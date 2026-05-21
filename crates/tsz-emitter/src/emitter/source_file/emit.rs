@@ -1419,23 +1419,22 @@ impl<'a> Printer<'a> {
             // wrapper parameter/setter; UMD keeps tsc's CJS factory-body require().
             let needs_tslib_binding = helpers.any_needed()
                 || self.import_helpers_need_tslib_binding_for_class_emit(&source.statements);
-            if self.ctx.options.import_helpers
-                && needs_tslib_binding
-                && !matches!(
+            if self.ctx.options.import_helpers && needs_tslib_binding {
+                if !matches!(
                     self.ctx.original_module_kind,
                     Some(ModuleKind::AMD | ModuleKind::System)
-                )
-            {
-                self.commonjs_tslib_import_binding = self.next_commonjs_module_var("tslib");
-                if self.ctx.options.target.is_es5() {
-                    self.write("var ");
-                } else {
-                    self.write("const ");
+                ) {
+                    self.commonjs_tslib_import_binding = self.next_commonjs_module_var("tslib");
+                    if self.ctx.options.target.is_es5() {
+                        self.write("var ");
+                    } else {
+                        self.write("const ");
+                    }
+                    let binding = self.commonjs_tslib_import_binding.clone();
+                    self.write(&binding);
+                    self.write(" = require(\"tslib\");");
+                    self.write_line();
                 }
-                let binding = self.commonjs_tslib_import_binding.clone();
-                self.write(&binding);
-                self.write(" = require(\"tslib\");");
-                self.write_line();
             }
         }
 

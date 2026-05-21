@@ -1455,14 +1455,15 @@ impl<'a> NamespaceES5Transformer<'a> {
                     self.rewrite_const_enum_accesses_in_node(item, namespace_path);
                 }
             }
-            IRNode::VarDecl {
-                initializer: Some(initializer),
-                ..
-            } => {
-                self.rewrite_const_enum_accesses_in_node(initializer, namespace_path);
+            IRNode::VarDecl { initializer, .. } => {
+                if let Some(initializer) = initializer {
+                    self.rewrite_const_enum_accesses_in_node(initializer, namespace_path);
+                }
             }
-            IRNode::ReturnStatement(Some(expr)) => {
-                self.rewrite_const_enum_accesses_in_node(expr, namespace_path);
+            IRNode::ReturnStatement(expr) => {
+                if let Some(expr) = expr {
+                    self.rewrite_const_enum_accesses_in_node(expr, namespace_path);
+                }
             }
             IRNode::IfStatement {
                 condition,
@@ -1620,11 +1621,10 @@ impl<'a> NamespaceES5Transformer<'a> {
                     }
                 }
             }
-            IRNode::GeneratorOp {
-                value: Some(value), ..
-            }
-            | IRNode::NamespaceExport { value, .. } => {
-                self.rewrite_const_enum_accesses_in_node(value, namespace_path);
+            IRNode::GeneratorOp { value, .. } => {
+                if let Some(value) = value {
+                    self.rewrite_const_enum_accesses_in_node(value, namespace_path);
+                }
             }
             IRNode::IfBreak { condition, .. } => {
                 self.rewrite_const_enum_accesses_in_node(condition, namespace_path);
@@ -1666,6 +1666,9 @@ impl<'a> NamespaceES5Transformer<'a> {
                 for item in body {
                     self.rewrite_const_enum_accesses_in_node(item, &nested_namespace_path);
                 }
+            }
+            IRNode::NamespaceExport { value, .. } => {
+                self.rewrite_const_enum_accesses_in_node(value, namespace_path);
             }
             _ => {}
         }

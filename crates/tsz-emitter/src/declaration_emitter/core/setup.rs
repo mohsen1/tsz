@@ -520,13 +520,15 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn recurse_module_body(&mut self, binder: &BinderState, module_node: &Node) {
-        if let Some(module_decl) = self.arena.get_module(module_node)
-            && let Some(body_node) = self.arena.get(module_decl.body)
-            && let Some(block) = self.arena.get_module_block(body_node)
-            && let Some(stmts) = &block.statements
-        {
-            let inner_stmts = stmts.nodes.to_vec();
-            self.collect_import_metadata_from_statements(binder, &inner_stmts);
+        if let Some(module_decl) = self.arena.get_module(module_node) {
+            if let Some(body_node) = self.arena.get(module_decl.body) {
+                if let Some(block) = self.arena.get_module_block(body_node) {
+                    if let Some(stmts) = &block.statements {
+                        let inner_stmts = stmts.nodes.to_vec();
+                        self.collect_import_metadata_from_statements(binder, &inner_stmts);
+                    }
+                }
+            }
         }
     }
 
@@ -540,12 +542,13 @@ impl<'a> DeclarationEmitter<'a> {
         for diagnostic in diagnostics {
             let mut diagnostic = diagnostic;
             let mut was_canonicalized = false;
-            if diagnostic.code == 2883
-                && let Some(message) =
+            if diagnostic.code == 2883 {
+                if let Some(message) =
                     Self::canonical_ts2883_named_reference_message(&diagnostic.message_text)
-            {
-                diagnostic.message_text = message;
-                was_canonicalized = true;
+                {
+                    diagnostic.message_text = message;
+                    was_canonicalized = true;
+                }
             }
             let exact_key = (
                 diagnostic.code,

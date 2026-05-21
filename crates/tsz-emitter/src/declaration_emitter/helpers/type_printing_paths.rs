@@ -401,16 +401,16 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(ambient_path);
         }
 
-        if let Some(source_arena) = binder.symbol_arenas.get(&sym_id)
-            && let Some(path) = resolve_from_arena(source_arena)
-        {
-            return Some(path);
+        if let Some(source_arena) = binder.symbol_arenas.get(&sym_id) {
+            if let Some(path) = resolve_from_arena(source_arena) {
+                return Some(path);
+            }
         }
 
-        if let Some(source_arena) = self.global_symbol_arenas.get(&sym_id)
-            && let Some(path) = resolve_from_arena(source_arena)
-        {
-            return Some(path);
+        if let Some(source_arena) = self.global_symbol_arenas.get(&sym_id) {
+            if let Some(path) = resolve_from_arena(source_arena) {
+                return Some(path);
+            }
         }
 
         None

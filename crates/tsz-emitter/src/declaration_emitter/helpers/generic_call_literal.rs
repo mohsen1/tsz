@@ -506,11 +506,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut changed = false;
         for (index, type_text) in replacements {
-            if let Some(element) = tuple_elements.get_mut(index)
-                && *element != type_text
-            {
-                *element = type_text;
-                changed = true;
+            if let Some(element) = tuple_elements.get_mut(index) {
+                if *element != type_text {
+                    *element = type_text;
+                    changed = true;
+                }
             }
         }
 

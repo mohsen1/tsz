@@ -209,10 +209,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
         .unwrap_or_else(|| "any".to_string());
 
-        if param.dot_dot_dot_token
-            && let Some(element_type) = type_text.strip_suffix("[]")
-        {
-            type_text = element_type.to_string();
+        if param.dot_dot_dot_token {
+            if let Some(element_type) = type_text.strip_suffix("[]") {
+                type_text = element_type.to_string();
+            }
         }
 
         (name, type_text)
@@ -1706,12 +1706,13 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn normalize_define_property_jsdoc_type_text(&self, type_text: &str) -> String {
-        if let Some(export_name) = type_text.strip_prefix("typeof module.exports.")
-            && self
+        if let Some(export_name) = type_text.strip_prefix("typeof module.exports.") {
+            if self
                 .js_define_property_function_initializer_for_export_name(export_name)
                 .is_some()
-        {
-            return "() => void".to_string();
+            {
+                return "() => void".to_string();
+            }
         }
         if let Some(start) = type_text.find("typeof module.exports.") {
             let export_start = start + "typeof module.exports.".len();

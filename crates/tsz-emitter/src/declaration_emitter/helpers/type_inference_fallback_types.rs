@@ -301,15 +301,16 @@ impl<'a> DeclarationEmitter<'a> {
                         ))
                 {
                     let printed = self.print_type_id_for_inferred_declaration(type_id);
-                    if let Some(call) = self.arena.get_call_expr(expr_node)
-                        && let Some((alias_name, module_specifier)) =
+                    if let Some(call) = self.arena.get_call_expr(expr_node) {
+                        if let Some((alias_name, module_specifier)) =
                             self.call_receiver_default_import_alias(call.expression)
-                    {
-                        return Some(Self::rewrite_import_type_export_to_default_alias(
-                            &printed,
-                            &alias_name,
-                            &module_specifier,
-                        ));
+                        {
+                            return Some(Self::rewrite_import_type_export_to_default_alias(
+                                &printed,
+                                &alias_name,
+                                &module_specifier,
+                            ));
+                        }
                     }
                     return Some(printed);
                 }

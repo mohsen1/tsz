@@ -6,6 +6,10 @@
 //! - Declaration file (`.d.ts`) emission behind the `dts` feature
 //! - Source map generation
 
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::needless_borrow)]
+
 pub mod context;
 #[cfg(feature = "dts")]
 pub mod declaration_emitter;

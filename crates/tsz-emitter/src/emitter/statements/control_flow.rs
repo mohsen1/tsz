@@ -320,14 +320,16 @@ impl<'a> Printer<'a> {
             self.recovered_empty_for_header_body_comment(node, loop_stmt);
         if let Some((comment_pos, comment_end, comment_has_trailing_newline)) =
             recovered_empty_header_comment
-            && let Some(text) = self.source_text
-            && let Ok(comment_text) =
-                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
         {
-            self.write(" ");
-            self.write_comment_with_reindent(comment_text, Some(comment_pos));
-            if comment_has_trailing_newline {
-                self.write_line();
+            if let Some(text) = self.source_text
+                && let Ok(comment_text) =
+                    crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+            {
+                self.write(" ");
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+                if comment_has_trailing_newline {
+                    self.write_line();
+                }
             }
         }
 

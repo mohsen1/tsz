@@ -443,18 +443,18 @@ impl<'a> Printer<'a> {
                                 self.const_enum_import_aliases.clone(),
                             );
                             // Cross-block export sharing
-                            if let Some(module_decl) = self.arena.get_module(node)
-                                && let Some(ns_name) = self.get_module_root_name(module_decl.name)
-                            {
-                                if self.declared_namespace_names.contains(&ns_name) {
-                                    should_declare_namespace_var = Some(false);
+                            if let Some(module_decl) = self.arena.get_module(node) {
+                                if let Some(ns_name) = self.get_module_root_name(module_decl.name) {
+                                    if self.declared_namespace_names.contains(&ns_name) {
+                                        should_declare_namespace_var = Some(false);
+                                    }
+                                    self.declared_namespace_names.insert(ns_name.clone());
+                                    let block_exports = ns_emitter.collect_exported_var_names(idx);
+                                    let entry =
+                                        self.namespace_prior_exports.entry(ns_name).or_default();
+                                    entry.extend(block_exports);
+                                    ns_emitter.set_prior_exported_vars(entry.clone());
                                 }
-                                self.declared_namespace_names.insert(ns_name.clone());
-                                let block_exports = ns_emitter.collect_exported_var_names(idx);
-                                let entry =
-                                    self.namespace_prior_exports.entry(ns_name).or_default();
-                                entry.extend(block_exports);
-                                ns_emitter.set_prior_exported_vars(entry.clone());
                             }
                             ns_emitter.set_indent_level(self.writer.indent_level());
                             ns_emitter.set_target_es5(true);
@@ -1600,17 +1600,17 @@ impl<'a> Printer<'a> {
                     );
                     let mut should_declare_namespace_var = None;
                     // Cross-block export sharing
-                    if let Some(module_decl) = self.arena.get_module(node)
-                        && let Some(ns_name) = self.get_module_root_name(module_decl.name)
-                    {
-                        if self.declared_namespace_names.contains(&ns_name) {
-                            should_declare_namespace_var = Some(false);
+                    if let Some(module_decl) = self.arena.get_module(node) {
+                        if let Some(ns_name) = self.get_module_root_name(module_decl.name) {
+                            if self.declared_namespace_names.contains(&ns_name) {
+                                should_declare_namespace_var = Some(false);
+                            }
+                            self.declared_namespace_names.insert(ns_name.clone());
+                            let block_exports = ns_emitter.collect_exported_var_names(idx);
+                            let entry = self.namespace_prior_exports.entry(ns_name).or_default();
+                            entry.extend(block_exports);
+                            ns_emitter.set_prior_exported_vars(entry.clone());
                         }
-                        self.declared_namespace_names.insert(ns_name.clone());
-                        let block_exports = ns_emitter.collect_exported_var_names(idx);
-                        let entry = self.namespace_prior_exports.entry(ns_name).or_default();
-                        entry.extend(block_exports);
-                        ns_emitter.set_prior_exported_vars(entry.clone());
                     }
                     ns_emitter.set_indent_level(self.writer.indent_level());
                     ns_emitter.set_target_es5(self.ctx.target_es5);

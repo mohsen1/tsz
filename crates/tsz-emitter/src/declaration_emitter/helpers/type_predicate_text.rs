@@ -61,17 +61,19 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(members) = tsz_solver::type_queries::get_intersection_members(interner, type_id)
             && let [left, right] = members.as_slice()
             && let Some((type_param, union_type)) = find_type_param(*left, *right)
-            && let Some(union_members) =
-                tsz_solver::type_queries::get_union_members(interner, union_type)
-            && union_members.contains(&tsz_solver::types::TypeId::UNDEFINED)
-            && union_members
-                .iter()
-                .copied()
-                .any(|m| tsz_solver::type_queries::is_empty_object_type(interner, m))
         {
-            return Some(
-                self.format_type_param_strict_null_predicate(type_param, outer_type_params),
-            );
+            if let Some(union_members) =
+                tsz_solver::type_queries::get_union_members(interner, union_type)
+                && union_members.contains(&tsz_solver::types::TypeId::UNDEFINED)
+                && union_members
+                    .iter()
+                    .copied()
+                    .any(|m| tsz_solver::type_queries::is_empty_object_type(interner, m))
+            {
+                return Some(
+                    self.format_type_param_strict_null_predicate(type_param, outer_type_params),
+                );
+            }
         }
 
         // Pattern 2: union [(T & undefined), (T & {})] — the solver's distributive form of

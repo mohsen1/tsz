@@ -1216,9 +1216,11 @@ impl<'a> Printer<'a> {
 
         while self.comment_emit_idx < self.all_comments.len() {
             let comment = &self.all_comments[self.comment_emit_idx];
-            if comment.pos >= attrs_node.pos && comment.end <= max_pos && !comment.is_multi_line {
-                self.comment_emit_idx += 1;
-                continue;
+            if comment.pos >= attrs_node.pos && comment.end <= max_pos {
+                if !comment.is_multi_line {
+                    self.comment_emit_idx += 1;
+                    continue;
+                }
             }
             break;
         }
