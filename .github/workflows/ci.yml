@@ -315,6 +315,16 @@ jobs:
                 echo "Merged PR #${pr_number} still carried WIP status; running main CI instead of trusting its PR run"
                 main_skip_allowed=false
               fi
+              pr_base_sha=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
+                --jq '.base.sha // empty' 2>/dev/null || true)
+              main_parent_sha="${{ github.event.before }}"
+              if [[ -n "${pr_base_sha}" \
+                    && -n "${main_parent_sha}" \
+                    && "${main_parent_sha}" != "0000000000000000000000000000000000000000" \
+                    && "${pr_base_sha}" != "${main_parent_sha}" ]]; then
+                echo "Merged PR #${pr_number} was validated against base ${pr_base_sha}, but landed on main parent ${main_parent_sha}; running main CI instead of trusting stale-base PR CI"
+                main_skip_allowed=false
+              fi
 
               pr_changed_paths=""
               page=1
