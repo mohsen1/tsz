@@ -286,6 +286,31 @@ impl<'a> TypeFormatter<'a> {
         resolved
     }
 
+    /// Returns `true` when the element type of an array shorthand (`T[]` or
+    /// `readonly T[]`) must be wrapped in parentheses to render unambiguously.
+    ///
+    /// Per the TypeScript grammar, `T[]` requires `T` to be a `PrimaryType`.
+    /// The variants listed below all bind looser than the postfix `[]`, so
+    /// rendering them without parens would re-parse with the `[]` captured
+    /// by the inner form: `infer X[]` as `infer (X[])`, `keyof T[]` as
+    /// `keyof (T[])`, `A | B[]` as `A | (B[])`, `(args) => R[]` as a
+    /// function returning `R[]`, and `A extends B ? X : Y[]` as the
+    /// conditional with a `Y[]` false branch.
+    fn requires_array_element_parens(&self, elem: TypeId) -> bool {
+        matches!(
+            self.interner.lookup(elem),
+            Some(
+                TypeData::Union(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::Function(_)
+                    | TypeData::Callable(_)
+                    | TypeData::Conditional(_)
+                    | TypeData::Infer(_)
+                    | TypeData::KeyOf(_)
+            )
+        )
+    }
+
     /// If `obj` is a homomorphic identity mapped type
     /// (`{ [P in keyof X]: X[P] }`, with optional/readonly modifier variants)
     /// then `obj[idx]` displays as `X[idx]`, plus `| undefined` when the
@@ -1568,16 +1593,7 @@ impl<'a> TypeFormatter<'a> {
                     return format!("Array<{elem_formatted}>").into();
                 }
                 let elem_formatted = self.format(*elem);
-                let needs_parens = matches!(
-                    self.interner.lookup(*elem),
-                    Some(
-                        TypeData::Union(_)
-                            | TypeData::Intersection(_)
-                            | TypeData::Function(_)
-                            | TypeData::Callable(_)
-                    )
-                );
-                if needs_parens {
+                if self.requires_array_element_parens(*elem) {
                     format!("({elem_formatted})[]").into()
                 } else {
                     format!("{elem_formatted}[]").into()
@@ -1760,17 +1776,7 @@ impl<'a> TypeFormatter<'a> {
                     {
                         // Array<T> -> T[]
                         let elem_formatted = self.format(single_arg);
-                        let needs_parens = matches!(
-                            self.interner.lookup(single_arg),
-                            Some(
-                                TypeData::Union(_)
-                                    | TypeData::Intersection(_)
-                                    | TypeData::Function(_)
-                                    | TypeData::Callable(_)
-                                    | TypeData::Conditional(_)
-                            )
-                        );
-                        let result = if needs_parens {
+                        let result = if self.requires_array_element_parens(single_arg) {
                             format!("({elem_formatted})[]")
                         } else {
                             format!("{elem_formatted}[]")
@@ -1781,17 +1787,7 @@ impl<'a> TypeFormatter<'a> {
                     if base_str == "ReadonlyArray" {
                         // ReadonlyArray<T> -> readonly T[]
                         let elem_formatted = self.format(single_arg);
-                        let needs_parens = matches!(
-                            self.interner.lookup(single_arg),
-                            Some(
-                                TypeData::Union(_)
-                                    | TypeData::Intersection(_)
-                                    | TypeData::Function(_)
-                                    | TypeData::Callable(_)
-                                    | TypeData::Conditional(_)
-                            )
-                        );
-                        let result = if needs_parens {
+                        let result = if self.requires_array_element_parens(single_arg) {
                             format!("readonly ({elem_formatted})[]")
                         } else {
                             format!("readonly {elem_formatted}[]")
@@ -1804,17 +1800,7 @@ impl<'a> TypeFormatter<'a> {
                     {
                         // Readonly<T[]> -> readonly T[]
                         let elem_formatted = self.format(elem);
-                        let needs_parens = matches!(
-                            self.interner.lookup(elem),
-                            Some(
-                                TypeData::Union(_)
-                                    | TypeData::Intersection(_)
-                                    | TypeData::Function(_)
-                                    | TypeData::Callable(_)
-                                    | TypeData::Conditional(_)
-                            )
-                        );
-                        let result = if needs_parens {
+                        let result = if self.requires_array_element_parens(elem) {
                             format!("readonly ({elem_formatted})[]")
                         } else {
                             format!("readonly {elem_formatted}[]")
@@ -2229,7 +2215,15 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
             TypeData::UniqueSymbol(_) => Cow::Borrowed("unique symbol"),
-            TypeData::Infer(info) => format!("infer {}", self.atom(info.name)).into(),
+            TypeData::Infer(info) => {
+                let name = self.atom(info.name);
+                if let Some(constraint) = info.constraint {
+                    let constraint_str = self.format(constraint);
+                    format!("infer {name} extends {constraint_str}").into()
+                } else {
+                    format!("infer {name}").into()
+                }
+            }
             TypeData::ThisType => Cow::Borrowed("this"),
             TypeData::StringIntrinsic { kind, type_arg } => {
                 let kind_name = match kind {
