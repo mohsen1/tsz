@@ -84,6 +84,7 @@ pub struct ClassES5Emitter<'a> {
     printer_options: Option<crate::emitter::PrinterOptions>,
     externally_hoisted_decls: rustc_hash::FxHashSet<String>,
     block_scope_shadowed_names: Vec<String>,
+    block_scope_reserved_names: Vec<String>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -105,6 +106,7 @@ impl<'a> ClassES5Emitter<'a> {
             printer_options: None,
             externally_hoisted_decls: rustc_hash::FxHashSet::default(),
             block_scope_shadowed_names: Vec::new(),
+            block_scope_reserved_names: Vec::new(),
         }
     }
 
@@ -120,6 +122,24 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub fn set_block_scope_shadowed_names(&mut self, names: Vec<String>) {
         self.block_scope_shadowed_names = names;
+    }
+
+    pub fn set_block_scope_reserved_names(&mut self, names: Vec<String>) {
+        self.block_scope_reserved_names = names;
+    }
+
+    pub fn block_scope_reserved_names(&self) -> Vec<String> {
+        let mut names = self.block_scope_reserved_names.clone();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    fn merge_ir_printer_block_scope_reserved_names(&mut self, printer: &IRPrinter<'a>) {
+        self.block_scope_reserved_names
+            .extend(printer.block_scope_reserved_names());
+        self.block_scope_reserved_names.sort();
+        self.block_scope_reserved_names.dedup();
     }
 
     pub fn set_printer_options(&mut self, options: crate::emitter::PrinterOptions) {
@@ -329,6 +349,7 @@ impl<'a> ClassES5Emitter<'a> {
             super_param.as_deref(),
             &body,
         );
+        self.merge_ir_printer_block_scope_reserved_names(&printer);
         let iife_expr = printer.take_output();
 
         (
@@ -460,6 +481,7 @@ impl<'a> ClassES5Emitter<'a> {
             printer.set_base_printer_options(opts.clone());
         }
         printer.set_block_scope_shadowed_names(self.block_scope_shadowed_names.clone());
+        printer.set_block_scope_reserved_names(self.block_scope_reserved_names.clone());
         printer
     }
 
@@ -533,10 +555,13 @@ impl<'a> ClassES5Emitter<'a> {
         output.push_str(&assignment);
 
         // Render each deferred static block as a separate string.
-        let static_strings: Vec<String> = deferred_static_blocks
-            .into_iter()
-            .map(|block| self.make_ir_printer().emit(&block).to_string())
-            .collect();
+        let mut static_strings = Vec::new();
+        for block in deferred_static_blocks {
+            let mut printer = self.make_ir_printer();
+            let output = printer.emit(&block).to_string();
+            self.merge_ir_printer_block_scope_reserved_names(&printer);
+            static_strings.push(output);
+        }
 
         (output, static_strings)
     }
@@ -550,10 +575,12 @@ impl<'a> ClassES5Emitter<'a> {
         if !self.externally_hoisted_decls.is_empty()
             && let IRNode::ES5ClassIIFE {
                 ref mut weakmap_decls,
+                ref mut computed_prop_temp_decls,
                 ..
             } = ir
         {
             weakmap_decls.retain(|decl| !self.externally_hoisted_decls.contains(decl));
+            computed_prop_temp_decls.retain(|decl| !self.externally_hoisted_decls.contains(decl));
         }
 
         // Inject leading comment from the main emitter's comment system.
@@ -568,6 +595,7 @@ impl<'a> ClassES5Emitter<'a> {
 
         let mut printer = self.make_ir_printer();
         let mut output = printer.emit(&ir).to_string();
+        self.merge_ir_printer_block_scope_reserved_names(&printer);
         if self.tc39_decorators
             && let Some(wrapped) =
                 self.transformer

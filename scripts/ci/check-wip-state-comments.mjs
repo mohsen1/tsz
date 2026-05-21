@@ -5,10 +5,12 @@ import { spawnSync } from "node:child_process";
 const WIP_LABEL = "WIP";
 const DEFAULT_WINDOW_HOURS = 24;
 const DEFAULT_MAX_PULL_REQUESTS = 80;
+const DEFAULT_GH_TIMEOUT_MS = 30_000;
+const DEFAULT_GH_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 function usage() {
   return [
-    "usage: check-wip-state-comments.mjs [--fixture path] [--repository owner/repo] [--window-hours n] [--max-prs n] [--advisory|--enforce]",
+    "usage: check-wip-state-comments.mjs [--fixture path] [--repository owner/repo] [--window-hours n] [--max-prs n] [--gh-timeout-ms n] [--advisory|--enforce]",
     "",
     "Reports open PRs whose latest WIP-state event does not have a signed",
     "explanatory comment within the required window.",
@@ -20,6 +22,8 @@ function parseArgs(argv) {
     advisory: true,
     enforce: false,
     fixture: null,
+    ghTimeoutMs: Number.parseInt(process.env.GH_TIMEOUT_MS || "", 10)
+      || DEFAULT_GH_TIMEOUT_MS,
     maxPullRequests: DEFAULT_MAX_PULL_REQUESTS,
     repository: process.env.REPOSITORY || process.env.GITHUB_REPOSITORY || null,
     windowHours: DEFAULT_WINDOW_HOURS,
@@ -53,6 +57,14 @@ function parseArgs(argv) {
       options.maxPullRequests = value;
       continue;
     }
+    if (arg === "--gh-timeout-ms") {
+      const value = Number.parseInt(argv[++i], 10);
+      if (!Number.isInteger(value) || value <= 0) {
+        throw new Error("--gh-timeout-ms requires a positive integer");
+      }
+      options.ghTimeoutMs = value;
+      continue;
+    }
     if (arg === "--advisory") {
       options.advisory = true;
       options.enforce = false;
@@ -73,11 +85,24 @@ function parseArgs(argv) {
   return options;
 }
 
-function runGhJson(args) {
+function runGhJson(args, options = {}) {
+  const timeout = options.ghTimeoutMs || DEFAULT_GH_TIMEOUT_MS;
   const result = spawnSync("gh", args, {
     encoding: "utf8",
+    maxBuffer: DEFAULT_GH_MAX_BUFFER_BYTES,
     stdio: ["ignore", "pipe", "pipe"],
+    timeout,
   });
+  if (result.error) {
+    const command = `gh ${args.join(" ")}`;
+    if (result.error.code === "ETIMEDOUT") {
+      throw new Error(`${command} timed out after ${timeout}ms`);
+    }
+    if (result.error.code === "ENOBUFS") {
+      throw new Error(`${command} exceeded ${DEFAULT_GH_MAX_BUFFER_BYTES} bytes of output`);
+    }
+    throw result.error;
+  }
   if (result.status !== 0) {
     throw new Error(
       [
@@ -90,36 +115,67 @@ function runGhJson(args) {
   return JSON.parse(result.stdout);
 }
 
-function runGhPaged(repository, path) {
-  const items = [];
-  for (let page = 1; page <= 30; page += 1) {
-    const pageItems = runGhJson([
-      "api",
-      "-H",
-      "Accept: application/vnd.github+json",
-      `repos/${repository}/${path}?per_page=100&page=${page}`,
-    ]);
-    if (!Array.isArray(pageItems)) {
-      throw new Error(`expected array response for ${path}`);
-    }
-    items.push(...pageItems);
-    if (pageItems.length < 100) break;
+function parseRepository(repository) {
+  const [owner, name, ...extra] = repository.split("/");
+  if (!owner || !name || extra.length > 0) {
+    throw new Error(`repository must use owner/repo form: ${repository}`);
   }
-  return items;
+  return { owner, name };
+}
+
+function connectionNodes(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.nodes)) return value.nodes;
+  return [];
 }
 
 function normalizeLabel(label) {
   return typeof label === "string" ? label : label?.name;
 }
 
+function normalizeTimelineEvent(event) {
+  if (event?.event === "convert_to_draft") {
+    return {
+      event: "converted_to_draft",
+      createdAt: event.created_at,
+      actor: event.actor,
+    };
+  }
+  if (event?.__typename === "ConvertToDraftEvent") {
+    return {
+      event: "converted_to_draft",
+      createdAt: event.createdAt,
+      actor: event.actor,
+    };
+  }
+  if (event?.__typename === "LabeledEvent") {
+    return {
+      event: "labeled",
+      label: event.label,
+      createdAt: event.createdAt,
+      actor: event.actor,
+    };
+  }
+  return event;
+}
+
 function normalizePr(pr) {
+  const labels = Array.isArray(pr.labels)
+    ? pr.labels
+    : connectionNodes(pr.labels);
+  const timeline = Array.isArray(pr.timeline)
+    ? pr.timeline
+    : connectionNodes(pr.timelineItems);
+  const comments = Array.isArray(pr.comments)
+    ? pr.comments
+    : connectionNodes(pr.comments);
   return {
     number: pr.number,
     title: pr.title || "",
     draft: pr.draft === true || pr.isDraft === true,
-    labels: Array.isArray(pr.labels) ? pr.labels.map(normalizeLabel).filter(Boolean) : [],
-    timeline: Array.isArray(pr.timeline) ? pr.timeline : [],
-    comments: Array.isArray(pr.comments) ? pr.comments : [],
+    labels: labels.map(normalizeLabel).filter(Boolean),
+    timeline: timeline.map(normalizeTimelineEvent),
+    comments,
   };
 }
 
@@ -137,27 +193,85 @@ function readOpenPullRequests(repository, options) {
     throw new Error("REPOSITORY or GITHUB_REPOSITORY is required");
   }
 
-  const pullRequests = runGhJson([
-    "pr",
-    "list",
-    "--repo",
-    repository,
-    "--state",
-      "open",
-      "--limit",
-      String(options.maxPullRequests),
-      "--json",
-      "number,title,isDraft,labels",
-    ]);
+  try {
+    return readOpenPullRequestsGraphql(repository, options);
+  } catch (error) {
+    if (!isGraphqlRateLimitError(error)) throw error;
+    return readOpenPullRequestsRest(repository, options);
+  }
+}
 
-  return pullRequests.map((pr) => {
+function isGraphqlRateLimitError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bgraphql_rate_limit\b/i.test(message)
+    || /API rate limit already exceeded/i.test(message);
+}
+
+function readOpenPullRequestsGraphql(repository, options) {
+  const { owner, name } = parseRepository(repository);
+  const first = Math.min(options.maxPullRequests, 100);
+  const response = runGhJson([
+    "api",
+    "graphql",
+    "-f",
+    `owner=${owner}`,
+    "-f",
+    `name=${name}`,
+    "-F",
+    `first=${first}`,
+    "-f",
+    "query=query($owner: String!, $name: String!, $first: Int!) { repository(owner: $owner, name: $name) { pullRequests(states: OPEN, first: $first, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { number title isDraft labels(first: 20) { nodes { name } } timelineItems(last: 30, itemTypes: [CONVERT_TO_DRAFT_EVENT, LABELED_EVENT]) { nodes { __typename ... on ConvertToDraftEvent { createdAt actor { login } } ... on LabeledEvent { createdAt actor { login } label { name } } } } comments(last: 100) { nodes { createdAt body author { login } } } } } } }",
+  ], options);
+  const pullRequests = (response.data || response).repository?.pullRequests?.nodes;
+  if (!Array.isArray(pullRequests)) {
+    throw new Error("expected repository.pullRequests.nodes array in GraphQL response");
+  }
+  return pullRequests.map(normalizePr);
+}
+
+function readOpenPullRequestsRest(repository, options) {
+  const { owner, name } = parseRepository(repository);
+  const limit = options.maxPullRequests;
+  const perPage = Math.min(limit, 100);
+  const pullRequests = [];
+  let page = 1;
+
+  while (pullRequests.length < limit) {
+    const batch = runGhJson([
+      "api",
+      `repos/${owner}/${name}/pulls?state=open&sort=updated&direction=desc&per_page=${perPage}&page=${page}`,
+    ], options);
+    if (!Array.isArray(batch)) {
+      throw new Error("expected REST pull list array");
+    }
+    if (batch.length === 0) break;
+    pullRequests.push(...batch);
+    if (batch.length < perPage) break;
+    page += 1;
+  }
+
+  return pullRequests.slice(0, limit).map((pr) => {
     const normalized = normalizePr(pr);
     if (!isCandidate(normalized)) return normalized;
-
-    const timeline = runGhPaged(repository, `issues/${normalized.number}/timeline`);
-    const comments = runGhPaged(repository, `issues/${normalized.number}/comments`);
-
-    return normalizePr({ ...normalized, timeline, comments });
+    const timeline = runGhJson([
+      "api",
+      `repos/${owner}/${name}/issues/${pr.number}/timeline?per_page=100`,
+    ], options);
+    const prWithTimeline = normalizePr({
+      ...normalized,
+      timeline,
+    });
+    const latestEvent = latestWipStateEvent(prWithTimeline);
+    const commentsPath = latestEvent && eventTime(latestEvent)
+      ? `repos/${owner}/${name}/issues/${pr.number}/comments?per_page=100&since=${encodeURIComponent(eventTime(latestEvent))}`
+      : `repos/${owner}/${name}/issues/${pr.number}/comments?per_page=100`;
+    return normalizePr({
+      ...prWithTimeline,
+      comments: runGhJson([
+        "api",
+        commentsPath,
+      ], options),
+    });
   });
 }
 

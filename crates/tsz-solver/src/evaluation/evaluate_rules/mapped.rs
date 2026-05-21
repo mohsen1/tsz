@@ -6,6 +6,7 @@
 use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type, instantiate_type_preserving,
+    instantiate_type_preserving_with_declared,
 };
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
@@ -485,6 +486,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 src,
             )
         });
+        // Whether to use the declared (non-optional) property type for T[K] inside
+        // the template when `-?` is present. True when: homomorphic source exists,
+        // no type-param contamination, and `-?` will strip optional. The per-key
+        // `source_optional` check runs inside the loops.
+        let remove_optional_with_declared = is_homomorphic
+            && !source_has_type_params
+            && matches!(mapped.optional_modifier, Some(MappedModifier::Remove))
+            && source_object.is_some();
 
         for mapped_key in key_set.keys {
             // Check if depth was exceeded during previous iterations
@@ -552,9 +561,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 subst.clear();
                 subst.insert(mapped.type_param.name, key_literal);
 
-                // Substitute into the template
-                let instantiated_template =
-                    instantiate_type_preserving(self.interner(), mapped.template, &subst);
+                let instantiated_template = if remove_optional_with_declared
+                    && source_optional
+                    && let Some(&(_, _, declared_type, _, _, _)) = source_info
+                    && let Some(source) = source_object
+                {
+                    // tsc feeds the DECLARED property type (not the read type with
+                    // `| undefined`) into the template when `-?` removes optionality.
+                    instantiate_type_preserving_with_declared(
+                        self.interner(),
+                        mapped.template,
+                        &subst,
+                        source,
+                        mapped.type_param.name,
+                        declared_type,
+                    )
+                } else {
+                    instantiate_type_preserving(self.interner(), mapped.template, &subst)
+                };
                 let evaluated = self.evaluate(instantiated_template);
 
                 // Check if evaluation hit depth limit
@@ -652,8 +676,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 subst.clear();
                 subst.insert(mapped.type_param.name, *symbol_key_id);
-                let instantiated =
-                    instantiate_type_preserving(self.interner(), mapped.template, &subst);
+                let instantiated = if remove_optional_with_declared
+                    && source_optional
+                    && let Some(&(_, _, declared_type, _, _, _)) = source_info
+                    && let Some(source) = source_object
+                {
+                    instantiate_type_preserving_with_declared(
+                        self.interner(),
+                        mapped.template,
+                        &subst,
+                        source,
+                        mapped.type_param.name,
+                        declared_type,
+                    )
+                } else {
+                    instantiate_type_preserving(self.interner(), mapped.template, &subst)
+                };
                 let evaluated = self.evaluate(instantiated);
                 if evaluated == TypeId::ERROR && self.is_depth_exceeded() {
                     return TypeId::ERROR;

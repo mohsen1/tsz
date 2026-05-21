@@ -478,10 +478,15 @@ impl<'a> Printer<'a> {
         }
         let prev_lexical_block_missing_initializer_function_depth =
             self.lexical_block_missing_initializer_function_depth;
+        let prev_lexical_block_missing_initializer_is_loop_body =
+            self.lexical_block_missing_initializer_is_loop_body;
         self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
+        self.lexical_block_missing_initializer_is_loop_body = true;
         self.emit_loop_body_for_iife(body_idx, body_info, captured_vars, _init_vars);
         self.lexical_block_missing_initializer_function_depth =
             prev_lexical_block_missing_initializer_function_depth;
+        self.lexical_block_missing_initializer_is_loop_body =
+            prev_lexical_block_missing_initializer_is_loop_body;
         self.ctx.block_scope_state.exit_scope();
 
         if !self.block_scoped_private_temps.is_empty() {

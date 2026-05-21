@@ -413,6 +413,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Do not clear the cache for a node that is currently being resolved.
+        // Clearing would cause the recompute to hit the circular-reference guard
+        // in `get_type_of_node_with_request` and produce `TypeId::ERROR`, which
+        // would then overwrite the correct cached type. This is observable when
+        // a class property initializer (e.g. `prop = (x: T) => U`) is in the
+        // middle of being typed: a re-entry to `build_class_instance_type` from
+        // inside the initializer's compute would otherwise wipe the
+        // in-progress entry and replace it with ERROR.
+        if self.ctx.node_resolution_stack.contains(&idx) {
+            return;
+        }
+
         // PERF: Skip clearing for nodes that never benefit from contextual retyping.
         // `null` is always TypeId::NULL, `true`/`false` are always boolean literals,
         // and regex literals are always RegExp. These never change under any context.

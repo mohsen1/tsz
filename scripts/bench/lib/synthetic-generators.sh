@@ -37,6 +37,7 @@
 #   conditional + infer extraction chains        generate_conditional_infer_hotspot_file
 #   object spread inference + property merging   generate_object_spread_hotspot_file
 #   contextual callback dispatch tables          generate_contextual_callback_hotspot_file
+#   recursive utility alias applications         generate_recursive_utility_alias_file
 
 generate_synthetic_file() {
     local class_count="$1"
@@ -241,6 +242,87 @@ EOF
     return score;
 }
 
+EOF
+    done
+}
+
+generate_recursive_utility_alias_file() {
+    local count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Recursive utility alias scale benchmark.
+// Varies alias names, type parameters, and wrapper shape while exercising
+// recursive mapped/indexed-access/conditional utility applications.
+
+type AliasCompute<TValue> = TValue extends (...args: infer Params) => infer Result
+    ? (...args: Params) => Result
+    : TValue extends readonly [infer Head, ...infer Tail]
+        ? readonly [AliasCompute<Head>, ...AliasCompute<Tail>]
+        : TValue extends object
+            ? { [Key in keyof TValue]: AliasCompute<TValue[Key]> }
+            : TValue;
+
+type NormalizeBox<Input> = Input extends object
+    ? { [Field in keyof Input]: NormalizeBox<Input[Field]> }
+    : Input;
+
+type DeepReadonlyVariant<Subject> = Subject extends (...args: any[]) => any
+    ? Subject
+    : Subject extends readonly [infer First, ...infer Rest]
+        ? readonly [DeepReadonlyVariant<First>, ...DeepReadonlyVariant<Rest>]
+        : Subject extends object
+            ? { readonly [Name in keyof Subject]: DeepReadonlyVariant<Subject[Name]> }
+            : Subject;
+
+type PickStringKeys<RecordLike> = {
+    [Member in keyof RecordLike as Member extends string ? Member : never]: RecordLike[Member]
+};
+
+type UtilityPipeline<Seed> = AliasCompute<
+    NormalizeBox<
+        DeepReadonlyVariant<
+            PickStringKeys<Seed>
+        >
+    >
+>;
+
+interface LeafPayload {
+    id: string;
+    count: number;
+    flags: {
+        enabled: boolean;
+        labels: readonly ["fast", "safe", "deep"];
+    };
+}
+HEADER
+
+    for ((i=0; i<count; i++)); do
+        cat >> "$output" << EOF
+
+type Variant${i}<Source${i}> = UtilityPipeline<{
+    readonly item${i}: Source${i};
+    readonly nested${i}: {
+        readonly left: Source${i};
+        readonly right: LeafPayload;
+        readonly tuple: readonly [Source${i}, LeafPayload, { wrapped: Source${i} }];
+    };
+}>;
+
+type Materialized${i} = Variant${i}<{
+    readonly value: LeafPayload;
+    readonly next: {
+        readonly value: LeafPayload;
+        readonly next: {
+            readonly value: LeafPayload;
+            readonly done: true;
+        };
+    };
+}>;
+
+declare const materialized${i}: Materialized${i};
+const recursiveUtilityValue${i}: string =
+    materialized${i}.nested${i}.tuple[2].wrapped.next.next.value.flags.labels[0];
 EOF
     done
 }

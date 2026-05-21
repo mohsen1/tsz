@@ -37,40 +37,17 @@ struct DirectActualLibAliasBodyProof {
     def_id: DefId,
     outcome: DirectActualLibAliasBodyOutcome,
 }
-// Track 7 transitional allowlist; prefer stable lib identity over additions.
-const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
-    "Capitalize",
-    "DecoratorMetadata",
-    "DecoratorMetadataObject",
-    "Exclude",
-    "Extract",
-    "FlatArray",
-    "IteratorResult",
-    "LocalesArgument",
-    "Lowercase",
-    "NonNullable",
-    "NumberFormatOptionsCurrencyDisplay",
-    "NumberFormatOptionsSignDisplay",
-    "NumberFormatOptionsStyle",
-    "NumberFormatOptionsUseGrouping",
-    "NumberFormatPartTypes",
-    "NumberFormatRangePartTypes",
-    "Omit",
-    "Partial",
-    "Pick",
-    "PropertyKey",
-    "Readonly",
-    "Record",
-    "Required",
-    "ReturnType",
-    "Uncapitalize",
-    "UnicodeBCP47LocaleIdentifier",
-    "Uppercase",
-    "WeakKey",
-];
 
-fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
-    DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS.contains(&name)
+fn generic_actual_lib_alias_body_has_direct_shape(
+    types: &dyn common::TypeDatabase,
+    body: TypeId,
+) -> bool {
+    common::mapped_type_id(types, body).is_some()
+        || common::contains_conditional_type(types, body)
+        || common::union_members(types, body).is_some()
+        || common::intersection_members(types, body).is_some()
+        || common::application_info(types, body).is_some()
+        || common::is_string_intrinsic_type(types, body)
 }
 
 fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
@@ -490,10 +467,12 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
             );
         let generic_alias_has_admitted_body = !params.is_empty()
-            && (is_direct_actual_lib_alias_body_admitted(name)
-                || common::mapped_type_id(self.ctx.types, body).is_some()
-                || common::contains_conditional_type(self.ctx.types, body)
-                || common::union_members(self.ctx.types, body).is_some());
+            && (generic_actual_lib_alias_body_has_direct_shape(self.ctx.types, body)
+                // Lib string intrinsic aliases lower from the `intrinsic`
+                // marker and get their structural representation at use sites.
+                // This helper is restricted to compiler-managed built-ins and
+                // still runs after actual-lib declaration proof above.
+                || common::is_compiler_managed_type(name));
         let outcome = if non_generic_alias_has_resolved_body || generic_alias_has_admitted_body {
             DirectActualLibAliasBodyOutcome::Success
         } else if !params.is_empty() {
