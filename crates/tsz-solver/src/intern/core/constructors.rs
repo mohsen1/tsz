@@ -1172,30 +1172,17 @@ impl TypeInterner {
             if elem.rest
                 && let Some(first_elem_type) = self.concrete_rest_elem_type(elem.type_id)
             {
-                let name = elem.name;
-                let optional = elem.optional;
-                let mut elem_types = vec![first_elem_type];
-                i += 1;
-                while i < elements.len() {
-                    let next = elements[i];
-                    if next.rest
-                        && let Some(next_elem_type) = self.concrete_rest_elem_type(next.type_id)
-                    {
-                        elem_types.push(next_elem_type);
-                        i += 1;
-                        continue;
-                    }
-                    break;
-                }
-                if elem_types.len() == 1 {
-                    // No adjacent merge — keep the original element unchanged.
+                let (run_types, consumed) =
+                    self.collect_concrete_rest_run(&elements[i + 1..], first_elem_type);
+                i += 1 + consumed;
+                if run_types.len() == 1 {
                     result.push(elem);
                 } else {
                     changed = true;
                     result.push(TupleElement {
-                        type_id: self.array(self.union(elem_types)),
-                        name,
-                        optional,
+                        type_id: self.array(self.union(run_types)),
+                        name: elem.name,
+                        optional: elem.optional,
                         rest: true,
                     });
                 }
@@ -1205,6 +1192,30 @@ impl TypeInterner {
             i += 1;
         }
         if changed { result } else { elements }
+    }
+
+    /// Collect a contiguous run of concrete rest elements starting after the first one.
+    ///
+    /// Returns `(all_elem_types_in_run, count_of_tail_elements_consumed)`.
+    /// `all_elem_types_in_run` always contains at least `first_elem_type`.
+    fn collect_concrete_rest_run(
+        &self,
+        tail: &[TupleElement],
+        first_elem_type: TypeId,
+    ) -> (Vec<TypeId>, usize) {
+        let mut types = vec![first_elem_type];
+        let mut consumed = 0;
+        for next in tail {
+            if next.rest
+                && let Some(t) = self.concrete_rest_elem_type(next.type_id)
+            {
+                types.push(t);
+                consumed += 1;
+            } else {
+                break;
+            }
+        }
+        (types, consumed)
     }
 
     /// Extract the element type from a rest element's `type_id` when merging is safe.
