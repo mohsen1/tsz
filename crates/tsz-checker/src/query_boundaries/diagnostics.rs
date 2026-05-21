@@ -3,7 +3,7 @@ use tsz_solver::TypeId;
 
 pub(crate) use super::common::{
     application_info, array_element_type, callable_shape_for_type, intersection_members,
-    lazy_def_id, union_members,
+    lazy_def_id, literal_value, union_members,
 };
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 
