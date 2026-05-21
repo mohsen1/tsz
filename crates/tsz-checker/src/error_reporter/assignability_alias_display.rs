@@ -1,6 +1,7 @@
 //! Alias display helpers for assignability diagnostics.
 
 use crate::diagnostics::{diagnostic_messages, format_message};
+use crate::query_boundaries::assignability_alias_display as alias_display_queries;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -73,19 +74,18 @@ impl<'a> CheckerState<'a> {
             && Self::generic_alias_name_from_display(source_display) == Some(annotation_name)
             && Self::generic_alias_name_from_display(target_display) == Some(annotation_name)
         {
-            if crate::query_boundaries::common::is_intersection_type(self.ctx.types, source)
-                || crate::query_boundaries::common::object_shape_id(self.ctx.types, source)
-                    .is_some()
-            {
+            if alias_display_queries::source_preserves_declared_generic_alias_display(
+                self.ctx.types,
+                source,
+            ) {
                 return Some(self.format_declared_annotation_for_diagnostic(&annotation_text));
             }
             return Some(source_display.to_string());
         }
-        let source_is_conditional =
-            crate::query_boundaries::common::contains_conditional_type(self.ctx.types, source);
-        let source_is_callable =
-            crate::query_boundaries::common::is_callable_type(self.ctx.types, source);
-        if !source_is_conditional && !source_is_callable {
+        if !alias_display_queries::source_can_use_declared_generic_alias_annotation(
+            self.ctx.types,
+            source,
+        ) {
             return None;
         }
         Self::declared_generic_alias_annotation_matches_target_display(
@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
             && let Some(annotation_text) =
                 self.declared_type_annotation_text_for_expression(expr_idx)
             && annotation_text.contains('<')
-            && crate::query_boundaries::common::application_id(self.ctx.types, target).is_some()
+            && alias_display_queries::is_application_for_alias_display(self.ctx.types, target)
             && let Some(annotation_name) = Self::generic_alias_name_from_display(&annotation_text)
             && let Some(target_name) = Self::generic_alias_name_from_display(target_display)
             && annotation_name != target_name
@@ -146,20 +146,21 @@ impl<'a> CheckerState<'a> {
             || annotation_text.trim_start().starts_with("typeof ")
             // No structural query for module-import types yet; keep as display fallback.
             || source_display.starts_with("import(")
-            || (crate::query_boundaries::common::object_shape_id(self.ctx.types, source).is_some()
+            || (alias_display_queries::is_object_for_alias_display(self.ctx.types, source)
                 && !annotation_text.contains('{'))
             || (!annotation_text.contains('<')
-                && crate::query_boundaries::common::application_id(self.ctx.types, source)
-                    .is_some()
-                && crate::query_boundaries::common::application_id(self.ctx.types, target)
-                    .is_some())
+                && alias_display_queries::is_application_for_alias_display(self.ctx.types, source)
+                && alias_display_queries::is_application_for_alias_display(self.ctx.types, target))
             || annotation_text.contains(" | ")
             || annotation_text.contains(" & ")
             || annotation_text.contains('<')
             || annotation_text.contains('.')
-            || (crate::query_boundaries::common::type_contains_undefined(self.ctx.types, source)
+            || (alias_display_queries::contains_undefined_for_alias_display(
+                self.ctx.types,
+                source,
+            )
                 && !annotation_text.contains("| undefined"))
-            || crate::query_boundaries::common::is_literal_type(self.ctx.types, source)
+            || alias_display_queries::is_literal_for_alias_display(self.ctx.types, source)
         {
             return None;
         }
