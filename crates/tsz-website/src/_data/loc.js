@@ -1,9 +1,26 @@
+// Source-vs-test line counting for the website's homepage stat.
+//
+// Structural rule: a Rust line is "test" iff the smallest enclosing item that
+// owns it would be compiled only under `cfg(test)` — that is, the line is
+// inside an integration tests/benches file (whole file), inside a
+// `#[cfg(test)]` / `#[cfg(all(test, ...))]` gated item, or inside a function
+// annotated with `#[test]` or any path attribute ending in `::test` (e.g.
+// `#[tokio::test]`, `#[async_std::test]`). Everything else is "source".
+//
+// The scanner is a single-pass, dependency-free Rust lexer (newlines, strings,
+// chars, lifetimes, raw strings, line/block comments) so test attributes
+// appearing inside string literals or comments don't trigger the test region.
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 
+// `git ls-files` pathspec wildcards cross `/`, so `crates/*/src/*.rs` matches
+// arbitrarily nested files. We enumerate test/bench directories explicitly so
+// integration test files outside `src/` are also counted toward total LOC.
 const FILE_GLOBS = [
   "crates/*/src/*.rs",
+  "crates/*/tests/*.rs",
+  "crates/*/benches/*.rs",
   "crates/*/build.rs",
   "crates/tsz-website/rust/*.rs",
 ];
@@ -31,6 +48,11 @@ export function fmt(n) {
   return Number(n).toLocaleString("en-US");
 }
 
+// A relative path is a whole-file test if it lives under a Rust integration
+// `tests/` or `benches/` directory, is named `tests.rs`, ends with `_test.rs`
+// / `_tests.rs`, or starts with `test_` / `tests_`. The `tests_` prefix
+// (e.g. `tests_completions.rs`) is the same convention as `test_` but
+// pluralized; both are routinely used for single-file test suites.
 export function isTestFile(relPath) {
   const p = relPath.replace(/\\/g, "/");
   if (/(?:^|\/)tests\//.test(p)) return true;
@@ -38,7 +60,7 @@ export function isTestFile(relPath) {
   const base = p.slice(p.lastIndexOf("/") + 1);
   if (base === "tests.rs") return true;
   if (/_tests?\.rs$/.test(base)) return true;
-  if (base.startsWith("test_")) return true;
+  if (/^tests?_/.test(base)) return true;
   return false;
 }
 
@@ -256,12 +278,69 @@ function skipAttribute(src, i, len) {
   return j;
 }
 
+// Returns the byte length consumed if `src[start..]` is a `#[test]` style
+// attribute — i.e. an attribute whose path ends in the segment `test`. This
+// matches the built-in `#[test]` and crate-namespaced equivalents such as
+// `#[tokio::test]` or `#[async_std::test]`, with or without an argument list.
+// Returns 0 otherwise. The matcher is intentionally structural (last path
+// segment), so attributes like `#[test_case]` or `#[allow(...)]` do not match.
+function matchTestAttr(src, start, len) {
+  let i = start;
+  if (src.charCodeAt(i) !== CC.HASH || src.charCodeAt(i + 1) !== CC.LBRACK) return 0;
+  i += 2;
+  i = skipWs(src, i, len);
+
+  // Consume `<ident>(::<ident>)*` and remember where the last segment started.
+  if (!isIdentCode(src.charCodeAt(i))) return 0;
+  let lastSegStart = i;
+  while (i < len) {
+    while (i < len && isIdentCode(src.charCodeAt(i))) i++;
+    if (src.charCodeAt(i) !== 0x3a || src.charCodeAt(i + 1) !== 0x3a) break;
+    i += 2;
+    lastSegStart = i;
+  }
+
+  // The last segment must be exactly `test` (4 bytes — `test_case` is rejected
+  // by the identifier-character break in the loop above).
+  if (
+    i - lastSegStart !== 4 ||
+    src.charCodeAt(lastSegStart) !== 0x74 ||
+    src.charCodeAt(lastSegStart + 1) !== 0x65 ||
+    src.charCodeAt(lastSegStart + 2) !== 0x73 ||
+    src.charCodeAt(lastSegStart + 3) !== 0x74
+  ) {
+    return 0;
+  }
+
+  i = skipWs(src, i, len);
+
+  // Optional `(...)` argument list — skip with simple paren depth tracking.
+  if (src.charCodeAt(i) === CC.LPAREN) {
+    i++;
+    let parenDepth = 1;
+    while (i < len && parenDepth > 0) {
+      const cc = src.charCodeAt(i);
+      if (cc === CC.LPAREN) parenDepth++;
+      else if (cc === CC.RPAREN) parenDepth--;
+      i++;
+    }
+    i = skipWs(src, i, len);
+  }
+
+  if (src.charCodeAt(i) !== CC.RBRACK) return 0;
+  return i + 1 - start;
+}
+
 // Single-pass scanner. Counts total file newlines and the subset of those
-// newlines that fall inside a top-level `#[cfg(test)]` gated item, honoring
-// Rust comment and string lexing so braces/`;` inside them never confuse the
-// item-body terminator search. Bracket/paren depth is tracked so that `;` in
-// array types like `[T; N]` and `{` in macros like `vec![{1}]` don't trigger
-// the item terminator while the cfg(test) item is still being parsed.
+// newlines that fall inside a top-level test region. A test region opens at a
+// top-level `#[cfg(test)]` / `#[cfg(all(test, ...))]` gate or a top-level
+// `#[test]` / `#[X::test]` attribute and closes at the end of the next
+// top-level item (its trailing `}` for items with bodies, or its `;` for
+// `mod foo;`-style declarations). Comment, string, char, lifetime, and raw
+// string lexing keep braces/`;` inside them from confusing the item-body
+// terminator search. Bracket/paren depth is tracked so that `;` in array
+// types like `[T; N]` and `{` in macros like `vec![{1}]` don't trigger the
+// item terminator while the test item is still being parsed.
 export function scanRust(src) {
   const len = src.length;
   const counts = { totalNl: 0, testNl: 0 };
@@ -355,6 +434,12 @@ export function scanRust(src) {
     ) {
       const cfgLen = matchCfgTestAttr(src, i, len);
       if (cfgLen > 0) {
+        inTestRegion = true;
+        testPendingSemi = true;
+        continue;
+      }
+      const testLen = matchTestAttr(src, i, len);
+      if (testLen > 0) {
         inTestRegion = true;
         testPendingSemi = true;
         continue;
