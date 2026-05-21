@@ -802,6 +802,60 @@ class RegularClass {\n    accessor shouldError;\n}\n";
     }
 
     #[test]
+    fn es5_accessor_empty_body_preserves_inner_line_comment() {
+        let source = "class C {\n    get value() { return 1; }\n    set value(param) {\n        // noop\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("set: function (param) {"),
+            "Setter should lower through Object.defineProperty.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("// noop"),
+            "Empty accessor bodies should preserve inner comments in ES5 lowering.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_namespace_erases_ambient_var_members() {
+        let source = "namespace N {\n    declare var guard: { isLeader: boolean; lead(): void };\n    if (guard.isLeader) {\n        guard.lead();\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            !output.contains("var guard;"),
+            "Ambient namespace variable declarations should be erased in ES5 namespace lowering.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("if (guard.isLeader)"),
+            "Runtime statements that use the ambient name should still emit.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es2015_auto_accessor_storage_vars_follow_private_helpers() {
         let source = "// Header comment\n\
 // Regular class should still error when targeting ES5\n\

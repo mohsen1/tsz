@@ -1949,6 +1949,9 @@ impl<'a> NamespaceES5Transformer<'a> {
         force_export: bool,
     ) -> Option<IRNode> {
         let var_data = self.arena.get_variable_at(var_idx)?;
+        if self.arena.is_declare(&var_data.modifiers) {
+            return None;
+        }
 
         let is_exported = force_export
             || self
