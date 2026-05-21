@@ -1082,76 +1082,74 @@ impl<'a> TypeFormatter<'a> {
         //
         // Restricted to composite shapes to avoid false positives where a primitive
         // or literal type coincidentally matches an alias body (e.g. `type U = 1`).
-        // Nested-if reads more cleanly than a long &&-chained let-chain here.
         // When `skip_object_display_alias` is set, do not redirect Object/
         // ObjectWithIndex types to a named definition (e.g. a JS constructor's
         // `prototype` property def whose body is this literal). Diagnostics
         // that opt into this mode want the literal's structural shape.
         let skip_object_def_lookup = self.skip_object_display_alias
             && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
-        #[allow(clippy::collapsible_if)]
+        let key_is_composite_for_def_lookup = matches!(
+            &key,
+            TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Union(_)
+                | TypeData::Intersection(_)
+                | TypeData::Tuple(_)
+                | TypeData::Callable(_)
+                | TypeData::Function(_)
+                | TypeData::Mapped(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+        );
         if !skip_object_def_lookup
-            && matches!(
-                &key,
-                TypeData::Object(_)
-                    | TypeData::ObjectWithIndex(_)
-                    | TypeData::Union(_)
-                    | TypeData::Intersection(_)
-                    | TypeData::Tuple(_)
-                    | TypeData::Callable(_)
-                    | TypeData::Function(_)
-                    | TypeData::Mapped(_)
-                    | TypeData::Conditional(_)
-                    | TypeData::IndexAccess(_, _)
-            )
+            && key_is_composite_for_def_lookup
             && let Some(def_store) = self.def_store
+            && let Some(def_id) = def_store.find_def_for_type(type_id)
+            && let Some(def) = def_store.get(def_id)
         {
-            if let Some(def_id) = def_store.find_def_for_type(type_id)
-                && let Some(def) = def_store.get(def_id)
-            {
-                // Skip type aliases whose body was computed by intersection
-                // reduction or conditional evaluation. tsc shows the expanded
-                // form for these types, not the alias name.
-                use crate::def::DefKind;
-                let shape_is_non_empty = |shape: &ObjectShape| -> bool {
-                    !shape.properties.is_empty()
-                        || shape.string_index.is_some()
-                        || shape.number_index.is_some()
-                };
-                let def_represents_non_empty_object = def
-                    .instance_shape
+            // Skip type aliases whose body was computed by intersection
+            // reduction or conditional evaluation. tsc shows the expanded
+            // form for these types, not the alias name.
+            use crate::def::DefKind;
+            let shape_is_non_empty = |shape: &ObjectShape| -> bool {
+                !shape.properties.is_empty()
+                    || shape.string_index.is_some()
+                    || shape.number_index.is_some()
+            };
+            let def_represents_non_empty_object = def
+                .instance_shape
+                .as_ref()
+                .is_some_and(|s| shape_is_non_empty(s.as_ref()))
+                || def
+                    .static_shape
                     .as_ref()
-                    .is_some_and(|s| shape_is_non_empty(s.as_ref()))
-                    || def
-                        .static_shape
-                        .as_ref()
-                        .is_some_and(|s| shape_is_non_empty(s.as_ref()));
-                let def_kind_matches_type_shape = def.kind == DefKind::TypeAlias
-                    || matches!(
-                        (&key, def.kind),
-                        (
-                            TypeData::Object(_) | TypeData::ObjectWithIndex(_),
-                            DefKind::Interface
-                                | DefKind::Class
-                                | DefKind::Namespace
-                                | DefKind::Enum
-                                | DefKind::ClassConstructor
-                                | DefKind::Function
-                                | DefKind::Variable
-                        ) | (
-                            TypeData::Callable(_) | TypeData::Function(_),
-                            DefKind::Interface
-                                | DefKind::ClassConstructor
-                                | DefKind::Function
-                                | DefKind::Variable
-                        ) | (TypeData::Enum(_, _), DefKind::Enum)
-                    );
-                let unproven_primitive_key_union_alias =
-                    def.kind == DefKind::TypeAlias && self.is_primitive_key_union_data(&key);
-                let skip_alias = if !def_kind_matches_type_shape {
-                    true
-                } else if def.kind == DefKind::TypeAlias {
-                    self.skip_type_alias_def_ids.contains(&def_id)
+                    .is_some_and(|s| shape_is_non_empty(s.as_ref()));
+            let def_kind_matches_type_shape = def.kind == DefKind::TypeAlias
+                || matches!(
+                    (&key, def.kind),
+                    (
+                        TypeData::Object(_) | TypeData::ObjectWithIndex(_),
+                        DefKind::Interface
+                            | DefKind::Class
+                            | DefKind::Namespace
+                            | DefKind::Enum
+                            | DefKind::ClassConstructor
+                            | DefKind::Function
+                            | DefKind::Variable
+                    ) | (
+                        TypeData::Callable(_) | TypeData::Function(_),
+                        DefKind::Interface
+                            | DefKind::ClassConstructor
+                            | DefKind::Function
+                            | DefKind::Variable
+                    ) | (TypeData::Enum(_, _), DefKind::Enum)
+                );
+            let unproven_primitive_key_union_alias =
+                def.kind == DefKind::TypeAlias && self.is_primitive_key_union_data(&key);
+            let skip_alias = if !def_kind_matches_type_shape {
+                true
+            } else if def.kind == DefKind::TypeAlias {
+                self.skip_type_alias_def_ids.contains(&def_id)
                         || def.body.is_some_and(|b| def_store.is_computed_body(b))
                         || (!def.type_params.is_empty()
                             && def.body.is_some_and(|b| {
@@ -1174,126 +1172,119 @@ impl<'a> TypeFormatter<'a> {
                         // structural TypeId. Ambient or local aliases with the same
                         // body must not repaint constraint diagnostics.
                         || unproven_primitive_key_union_alias
-                } else {
-                    // Interfaces and classes are also subject to the universal
-                    // empty-shape interning: a non-empty interface/class def
-                    // (e.g. `interface Promise<T> { then; catch; ... }`) may
-                    // have been registered against the canonical empty `{}`
-                    // TypeId during lib resolution. When the type we're
-                    // rendering is the truly anonymous empty `{}` (no shape
-                    // symbol stamp), do not repaint it as the unrelated def
-                    // name.
-                    //
-                    // Two skip cases (both gated on `is_empty_anonymous_object`):
-                    //   1. The def's recorded shape is itself non-empty.
-                    //   2. The def is generic (has type params) and has no
-                    //      `display_alias` provenance for this TypeId. The
-                    //      fall-through path would render `Promise<T>` from
-                    //      the bare type-param names, which is wrong: there
-                    //      is no concrete instantiation, just the universal
-                    //      `{}` shape that happens to share the TypeId.
-                    //
-                    // Empty interfaces (`interface I {}`) keep their name:
-                    // `def_represents_non_empty_object` is false for them and
-                    // they have no type params.
-                    //
-                    // Class instance types with empty bodies but a shape
-                    // symbol stamp (e.g., `class B<T> { constructor() {} }`)
-                    // keep `B<T>`: `is_empty_anonymous_object` is false
-                    // because the shape carries the class's symbol.
-                    is_empty_anonymous_object
-                        && (def_represents_non_empty_object
-                            || (!def.type_params.is_empty()
-                                && self.interner.get_display_alias(type_id).is_none()))
-                };
-                if skip_alias {
-                    // Fall through to format the structural type
-                } else {
-                    let name = self.format_def_name(&def);
-                    // Enum and namespace value types are displayed as `typeof Name` by tsc.
-                    // Class instance types and interfaces use just the name.
-                    // Exception: qualified enum member names like `W.a` are NOT prefixed
-                    // with `typeof` — only the enum container itself gets `typeof W`.
-                    // The `format_def_name` method qualifies names only with enum parents,
-                    // so a dot in the name reliably indicates an enum member reference.
-                    if matches!(
-                        def.kind,
-                        DefKind::Enum | DefKind::Namespace | DefKind::ClassConstructor
-                    ) {
-                        if name.contains('.') {
-                            return name.into();
-                        }
-                        return format!("typeof {name}").into();
+            } else {
+                // Interfaces and classes are also subject to the universal
+                // empty-shape interning: a non-empty interface/class def
+                // (e.g. `interface Promise<T> { then; catch; ... }`) may
+                // have been registered against the canonical empty `{}`
+                // TypeId during lib resolution. When the type we're
+                // rendering is the truly anonymous empty `{}` (no shape
+                // symbol stamp), do not repaint it as the unrelated def
+                // name.
+                //
+                // Two skip cases (both gated on `is_empty_anonymous_object`):
+                //   1. The def's recorded shape is itself non-empty.
+                //   2. The def is generic (has type params) and has no
+                //      `display_alias` provenance for this TypeId. The
+                //      fall-through path would render `Promise<T>` from
+                //      the bare type-param names, which is wrong: there
+                //      is no concrete instantiation, just the universal
+                //      `{}` shape that happens to share the TypeId.
+                //
+                // Empty interfaces (`interface I {}`) keep their name:
+                // `def_represents_non_empty_object` is false for them and
+                // they have no type params.
+                //
+                // Class instance types with empty bodies but a shape
+                // symbol stamp (e.g., `class B<T> { constructor() {} }`)
+                // keep `B<T>`: `is_empty_anonymous_object` is false
+                // because the shape carries the class's symbol.
+                is_empty_anonymous_object
+                    && (def_represents_non_empty_object
+                        || (!def.type_params.is_empty()
+                            && self.interner.get_display_alias(type_id).is_none()))
+            };
+            if skip_alias {
+                // Fall through to format the structural type
+            } else {
+                let name = self.format_def_name(&def);
+                // Enum and namespace value types are displayed as `typeof Name` by tsc.
+                // Class instance types and interfaces use just the name.
+                // Exception: qualified enum member names like `W.a` are NOT prefixed
+                // with `typeof` — only the enum container itself gets `typeof W`.
+                // The `format_def_name` method qualifies names only with enum parents,
+                // so a dot in the name reliably indicates an enum member reference.
+                if matches!(
+                    def.kind,
+                    DefKind::Enum | DefKind::Namespace | DefKind::ClassConstructor
+                ) {
+                    if name.contains('.') {
+                        return name.into();
                     }
-                    // For generic types, prefer the display_alias (which has the actual
-                    // instantiated type arguments like `A<number>`) over appending raw
-                    // type parameter names from the definition (like `A<T>`).
-                    // The display_alias is set when an Application type is evaluated,
-                    // and preserves the concrete type arguments from the instantiation.
-                    let prefer_array_shorthand =
-                        name == "Array" && matches!(&key, TypeData::Array(_));
-                    if !def.type_params.is_empty() && !prefer_array_shorthand {
-                        if let Some(alias_origin) = self.interner.get_display_alias(type_id)
-                            && self.display_alias_visiting.insert(alias_origin)
+                    return format!("typeof {name}").into();
+                }
+                // For generic types, prefer the display_alias (which has the actual
+                // instantiated type arguments like `A<number>`) over appending raw
+                // type parameter names from the definition (like `A<T>`).
+                // The display_alias is set when an Application type is evaluated,
+                // and preserves the concrete type arguments from the instantiation.
+                let prefer_array_shorthand = name == "Array" && matches!(&key, TypeData::Array(_));
+                if !def.type_params.is_empty() && !prefer_array_shorthand {
+                    if let Some(alias_origin) = self.interner.get_display_alias(type_id)
+                        && self.display_alias_visiting.insert(alias_origin)
+                    {
+                        let result = self.format(alias_origin);
+                        self.display_alias_visiting.remove(&alias_origin);
+                        return result;
+                    }
+                    // For Mapped types with generic params (e.g., Partial<T>,
+                    // Record<K, V>), fall through to structural formatting.
+                    // tsc shows the expanded mapped type form in error messages
+                    // for these, not the alias name. The display_alias mechanism
+                    // handles concrete instantiations (e.g., Partial<{a: string}>)
+                    // via the check above.
+                    if !matches!(&key, TypeData::Mapped(_)) {
+                        let params: Vec<String> = def
+                            .type_params
+                            .iter()
+                            .map(|tp| self.atom(tp.name).to_string())
+                            .collect();
+                        return format!("{}<{}>", name, params.join(", ")).into();
+                    }
+                    // Mapped type with generic params — fall through to structural display
+                } else {
+                    // For non-generic type aliases, check if the display_alias
+                    // is a generic Application whose base type has a mapped type
+                    // body. tsc shows `Id<{...}>` for `type Foo1 = Id<{...}>`
+                    // (where Id is a mapped type), but preserves `Bar` for
+                    // `type Bar = Omit<Foo, "c">` (where Omit is a type alias).
+                    if def.kind == DefKind::TypeAlias
+                        && let Some(alias_origin) = self.interner.get_display_alias(type_id)
+                        && let Some(TypeData::Application(app_id)) =
+                            self.interner.lookup(alias_origin)
+                    {
+                        let app = self.interner.type_application(app_id);
+                        let base_has_mapped_body = if let Some(TypeData::Lazy(base_def_id)) =
+                            self.interner.lookup(app.base)
+                            && let Some(ds) = self.def_store
+                            && let Some(base_def) = ds.get(base_def_id)
+                            && let Some(body) = base_def.body
+                        {
+                            crate::visitors::visitor_predicates::is_mapped_type(self.interner, body)
+                        } else {
+                            false
+                        };
+                        if base_has_mapped_body && self.display_alias_visiting.insert(alias_origin)
                         {
                             let result = self.format(alias_origin);
                             self.display_alias_visiting.remove(&alias_origin);
                             return result;
                         }
-                        // For Mapped types with generic params (e.g., Partial<T>,
-                        // Record<K, V>), fall through to structural formatting.
-                        // tsc shows the expanded mapped type form in error messages
-                        // for these, not the alias name. The display_alias mechanism
-                        // handles concrete instantiations (e.g., Partial<{a: string}>)
-                        // via the check above.
-                        if !matches!(&key, TypeData::Mapped(_)) {
-                            let params: Vec<String> = def
-                                .type_params
-                                .iter()
-                                .map(|tp| self.atom(tp.name).to_string())
-                                .collect();
-                            return format!("{}<{}>", name, params.join(", ")).into();
-                        }
-                        // Mapped type with generic params — fall through to structural display
-                    } else {
-                        // For non-generic type aliases, check if the display_alias
-                        // is a generic Application whose base type has a mapped type
-                        // body. tsc shows `Id<{...}>` for `type Foo1 = Id<{...}>`
-                        // (where Id is a mapped type), but preserves `Bar` for
-                        // `type Bar = Omit<Foo, "c">` (where Omit is a type alias).
-                        if def.kind == DefKind::TypeAlias {
-                            if let Some(alias_origin) = self.interner.get_display_alias(type_id)
-                                && let Some(TypeData::Application(app_id)) =
-                                    self.interner.lookup(alias_origin)
-                            {
-                                let app = self.interner.type_application(app_id);
-                                let base_has_mapped_body = if let Some(TypeData::Lazy(base_def_id)) =
-                                    self.interner.lookup(app.base)
-                                    && let Some(ds) = self.def_store
-                                    && let Some(base_def) = ds.get(base_def_id)
-                                    && let Some(body) = base_def.body
-                                {
-                                    crate::visitors::visitor_predicates::is_mapped_type(
-                                        self.interner,
-                                        body,
-                                    )
-                                } else {
-                                    false
-                                };
-                                if base_has_mapped_body
-                                    && self.display_alias_visiting.insert(alias_origin)
-                                {
-                                    let result = self.format(alias_origin);
-                                    self.display_alias_visiting.remove(&alias_origin);
-                                    return result;
-                                }
-                            }
-                        }
-                        // When a type resolves to a named definition (interface,
-                        // class, or type alias), show that name. tsc preserves alias
-                        // symbols: `type Bar = Omit<Foo, "c">` displays as "Bar".
-                        return name.into();
                     }
+                    // When a type resolves to a named definition (interface,
+                    // class, or type alias), show that name. tsc preserves alias
+                    // symbols: `type Bar = Omit<Foo, "c">` displays as "Bar".
+                    return name.into();
                 }
             }
         }
