@@ -27,6 +27,20 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
+/// Tracks visited nodes/types/symbols during portability traversal to prevent infinite recursion.
+pub(in crate::declaration_emitter) struct PortabilityVisitState<'v> {
+    pub visited_types: &'v mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
+    pub visited_symbols: &'v mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+    pub visited_declaration_symbols: &'v mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+    pub visited_nodes: &'v mut rustc_hash::FxHashSet<(usize, u32)>,
+}
+
+/// Accumulates portability issues and deduplicates entries during traversal.
+pub(in crate::declaration_emitter) struct PortabilityCollectState<'v> {
+    pub results: &'v mut Vec<(String, String)>,
+    pub seen: &'v mut rustc_hash::FxHashSet<(String, String)>,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     /// Emit required imports at the beginning of the .d.ts file.
     ///
@@ -477,20 +491,23 @@ impl<'a> DeclarationEmitter<'a> {
                     }
 
                     let current_file_path = self.current_file_path.as_deref().unwrap_or("");
-                    let mut visited_types = rustc_hash::FxHashSet::default();
-                    let mut visited_symbols = rustc_hash::FxHashSet::default();
-                    let mut visited_declaration_symbols = rustc_hash::FxHashSet::default();
-                    let mut visited_nodes = rustc_hash::FxHashSet::default();
+                    let mut v_types = rustc_hash::FxHashSet::default();
+                    let mut v_symbols = rustc_hash::FxHashSet::default();
+                    let mut v_decl_symbols = rustc_hash::FxHashSet::default();
+                    let mut v_nodes = rustc_hash::FxHashSet::default();
+                    let mut visit = PortabilityVisitState {
+                        visited_types: &mut v_types,
+                        visited_symbols: &mut v_symbols,
+                        visited_declaration_symbols: &mut v_decl_symbols,
+                        visited_nodes: &mut v_nodes,
+                    };
 
                     // Standard portability check first.
                     if let Some((from_path, _type_name)) = self.check_symbol_portability(
                         type_sym_id,
                         binder,
                         current_file_path,
-                        &mut visited_types,
-                        &mut visited_symbols,
-                        &mut visited_declaration_symbols,
-                        &mut visited_nodes,
+                        &mut visit,
                     ) {
                         let type_name = Self::canonical_import_alias_reference_name(
                             binder,
@@ -657,59 +674,54 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             sym_id
         };
-        let mut visited_symbols = rustc_hash::FxHashSet::default();
-        let mut visited_declaration_symbols = rustc_hash::FxHashSet::default();
-        let mut visited_nodes = rustc_hash::FxHashSet::default();
-        let mut visited_types = rustc_hash::FxHashSet::default();
+        let mut v_types = rustc_hash::FxHashSet::default();
+        let mut v_symbols = rustc_hash::FxHashSet::default();
+        let mut v_decl_syms = rustc_hash::FxHashSet::default();
+        let mut v_nodes = rustc_hash::FxHashSet::default();
+        let mut visit = PortabilityVisitState {
+            visited_types: &mut v_types,
+            visited_symbols: &mut v_symbols,
+            visited_declaration_symbols: &mut v_decl_syms,
+            visited_nodes: &mut v_nodes,
+        };
         self.collect_non_portable_references_in_symbol_declaration_with_state(
             resolved_sym,
-            &mut visited_types,
-            &mut visited_symbols,
-            &mut visited_declaration_symbols,
-            &mut visited_nodes,
+            &mut visit,
         )
     }
 
     pub(in crate::declaration_emitter) fn collect_non_portable_references_in_symbol_declaration_with_state(
         &self,
         sym_id: SymbolId,
-        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
-        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+        visit: &mut PortabilityVisitState<'_>,
     ) -> Vec<(String, String)> {
         let mut seen = rustc_hash::FxHashSet::default();
         let mut results = Vec::new();
+        let mut collect = PortabilityCollectState {
+            results: &mut results,
+            seen: &mut seen,
+        };
         self.collect_non_portable_references_in_symbol_declaration_inner(
             sym_id,
             false,
-            &mut results,
-            &mut seen,
-            visited_types,
-            visited_symbols,
-            visited_declaration_symbols,
-            visited_nodes,
+            &mut collect,
+            visit,
         );
         results
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::declaration_emitter) fn collect_non_portable_references_in_symbol_declaration_inner(
         &self,
         sym_id: SymbolId,
         skip_self_portability: bool,
-        results: &mut Vec<(String, String)>,
-        seen: &mut rustc_hash::FxHashSet<(String, String)>,
-        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
-        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+        collect: &mut PortabilityCollectState<'_>,
+        visit: &mut PortabilityVisitState<'_>,
     ) {
         let Some(binder) = self.binder else {
             return;
         };
         let resolved_sym = self.resolve_portability_declaration_symbol(sym_id, binder);
-        if !visited_declaration_symbols.insert(resolved_sym) {
+        if !visit.visited_declaration_symbols.insert(resolved_sym) {
             return;
         }
         let Some(symbol) = binder.symbols.get(resolved_sym) else {
@@ -728,18 +740,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         if !skip_self_portability
             && let Some(current_file_path) = self.current_file_path.as_deref()
-            && let Some(result) = self.check_symbol_portability(
-                resolved_sym,
-                binder,
-                current_file_path,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
-            )
-            && seen.insert(result.clone())
+            && let Some(result) =
+                self.check_symbol_portability(resolved_sym, binder, current_file_path, visit)
+            && collect.seen.insert(result.clone())
         {
-            results.push(result);
+            collect.results.push(result);
         }
 
         for decl_idx in symbol.declarations.iter().copied() {
@@ -752,12 +757,8 @@ impl<'a> DeclarationEmitter<'a> {
                     source_arena.as_ref(),
                     alias.type_node,
                     &source_path,
-                    results,
-                    seen,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    collect,
+                    visit,
                 );
             }
 
@@ -766,24 +767,16 @@ impl<'a> DeclarationEmitter<'a> {
                     source_arena.as_ref(),
                     function.type_annotation,
                     &source_path,
-                    results,
-                    seen,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    collect,
+                    visit,
                 );
                 for &param_idx in &function.parameters.nodes {
                     self.collect_non_portable_references_in_type_node(
                         source_arena.as_ref(),
                         param_idx,
                         &source_path,
-                        results,
-                        seen,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
+                        collect,
+                        visit,
                     );
                 }
             }
@@ -795,12 +788,8 @@ impl<'a> DeclarationEmitter<'a> {
                             source_arena.as_ref(),
                             clause_idx,
                             &source_path,
-                            results,
-                            seen,
-                            visited_types,
-                            visited_symbols,
-                            visited_declaration_symbols,
-                            visited_nodes,
+                            collect,
+                            visit,
                         );
                     }
                 }
@@ -809,12 +798,8 @@ impl<'a> DeclarationEmitter<'a> {
                         source_arena.as_ref(),
                         member_idx,
                         &source_path,
-                        results,
-                        seen,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
+                        collect,
+                        visit,
                     );
                 }
             }
@@ -824,12 +809,8 @@ impl<'a> DeclarationEmitter<'a> {
                     source_arena.as_ref(),
                     sig.type_annotation,
                     &source_path,
-                    results,
-                    seen,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    collect,
+                    visit,
                 );
             }
 
@@ -838,12 +819,8 @@ impl<'a> DeclarationEmitter<'a> {
                     source_arena.as_ref(),
                     func_type.type_annotation,
                     &source_path,
-                    results,
-                    seen,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    collect,
+                    visit,
                 );
             }
 
@@ -852,12 +829,8 @@ impl<'a> DeclarationEmitter<'a> {
                     source_arena.as_ref(),
                     var_decl.type_annotation,
                     &source_path,
-                    results,
-                    seen,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    collect,
+                    visit,
                 );
             }
 
@@ -866,12 +839,8 @@ impl<'a> DeclarationEmitter<'a> {
                     source_arena.as_ref(),
                     prop_decl.type_annotation,
                     &source_path,
-                    results,
-                    seen,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    collect,
+                    visit,
                 );
             }
 
@@ -880,32 +849,23 @@ impl<'a> DeclarationEmitter<'a> {
                     source_arena.as_ref(),
                     param.type_annotation,
                     &source_path,
-                    results,
-                    seen,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    collect,
+                    visit,
                 );
             }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::declaration_emitter) fn collect_non_portable_references_in_type_node(
         &self,
         arena: &NodeArena,
         node_idx: NodeIndex,
         source_path: &str,
-        results: &mut Vec<(String, String)>,
-        seen: &mut rustc_hash::FxHashSet<(String, String)>,
-        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
-        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+        collect: &mut PortabilityCollectState<'_>,
+        visit: &mut PortabilityVisitState<'_>,
     ) {
         let arena_addr = arena as *const NodeArena as usize;
-        if !node_idx.is_some() || !visited_nodes.insert((arena_addr, node_idx.0)) {
+        if !node_idx.is_some() || !visit.visited_nodes.insert((arena_addr, node_idx.0)) {
             return;
         }
         let Some(node) = arena.get(node_idx) else {
@@ -939,47 +899,24 @@ impl<'a> DeclarationEmitter<'a> {
                         };
                         if !self.collect_symbol_member_type_references(
                             exported_sym_id,
-                            results,
-                            seen,
-                            visited_types,
-                            visited_symbols,
-                            visited_declaration_symbols,
-                            visited_nodes,
+                            collect,
+                            visit,
                         ) {
                             self.collect_non_portable_references_in_symbol_declaration_inner(
                                 exported_sym_id,
                                 true,
-                                results,
-                                seen,
-                                visited_types,
-                                visited_symbols,
-                                visited_declaration_symbols,
-                                visited_nodes,
+                                collect,
+                                visit,
                             );
                         }
                         collected_object_refs = true;
                     }
                 }
                 if !collected_object_refs
-                    && !self.collect_symbol_member_type_references(
-                        sym_id,
-                        results,
-                        seen,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
-                    )
+                    && !self.collect_symbol_member_type_references(sym_id, collect, visit)
                 {
                     self.collect_non_portable_references_in_symbol_declaration_inner(
-                        sym_id,
-                        true,
-                        results,
-                        seen,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
+                        sym_id, true, collect, visit,
                     );
                 }
             } else {
@@ -987,39 +924,25 @@ impl<'a> DeclarationEmitter<'a> {
                     arena,
                     indexed.object_type,
                     source_path,
-                    results,
-                    seen,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    collect,
+                    visit,
                 );
             }
             self.collect_non_portable_references_in_type_node(
                 arena,
                 indexed.index_type,
                 source_path,
-                results,
-                seen,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
+                collect,
+                visit,
             );
             return;
         }
 
-        if let Some(result) = self.non_portable_import_type_text_reference(
-            arena,
-            node_idx,
-            source_path,
-            visited_types,
-            visited_symbols,
-            visited_declaration_symbols,
-            visited_nodes,
-        ) && seen.insert(result.clone())
+        if let Some(result) =
+            self.non_portable_import_type_text_reference(arena, node_idx, source_path, visit)
+            && collect.seen.insert(result.clone())
         {
-            results.push(result);
+            collect.results.push(result);
         }
 
         if node.kind == syntax_kind_ext::TYPE_REFERENCE
@@ -1038,37 +961,23 @@ impl<'a> DeclarationEmitter<'a> {
         {
             if let Some(binder) = self.binder
                 && let Some(current_file_path) = self.current_file_path.as_deref()
-                && let Some(result) = self.check_symbol_portability(
-                    sym_id,
-                    binder,
-                    current_file_path,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
-                )
-                && seen.insert(result.clone())
+                && let Some(result) =
+                    self.check_symbol_portability(sym_id, binder, current_file_path, visit)
+                && collect.seen.insert(result.clone())
             {
-                results.push(result);
+                collect.results.push(result);
             }
 
             self.collect_non_portable_references_in_symbol_declaration_inner(
-                sym_id,
-                false,
-                results,
-                seen,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
+                sym_id, false, collect, visit,
             );
         }
 
         if let Some(result) =
             self.non_portable_namespace_member_reference(arena, node_idx, source_path)
-            && seen.insert(result.clone())
+            && collect.seen.insert(result.clone())
         {
-            results.push(result);
+            collect.results.push(result);
         }
 
         if let Some(identifier) = arena.get_identifier(node) {
@@ -1090,24 +999,17 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(current_file_path) = self.current_file_path.as_deref()
                     && !skip_direct_identifier_portability
                 {
-                    let result = self.check_symbol_portability(
-                        sym_id,
-                        binder,
-                        current_file_path,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
-                    );
+                    let result =
+                        self.check_symbol_portability(sym_id, binder, current_file_path, visit);
                     if let Some(result) = result
-                        && seen.insert(result.clone())
+                        && collect.seen.insert(result.clone())
                     {
-                        results.push(result);
+                        collect.results.push(result);
                     }
                     if let Some(from_path) = self.check_nested_transitive_import(sym_id, binder) {
                         let result = (from_path, identifier.escaped_text.clone());
-                        if seen.insert(result.clone()) {
-                            results.push(result);
+                        if collect.seen.insert(result.clone()) {
+                            collect.results.push(result);
                         }
                     }
                 }
@@ -1115,12 +1017,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.collect_non_portable_references_in_symbol_declaration_inner(
                     sym_id,
                     skip_direct_identifier_portability,
-                    results,
-                    seen,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
+                    collect,
+                    visit,
                 );
             }
         }
@@ -1130,26 +1028,18 @@ impl<'a> DeclarationEmitter<'a> {
                 arena,
                 child_idx,
                 source_path,
-                results,
-                seen,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
+                collect,
+                visit,
             );
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn non_portable_import_type_text_reference(
         &self,
         arena: &NodeArena,
         node_idx: NodeIndex,
         source_path: &str,
-        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
-        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+        visit: &mut PortabilityVisitState<'_>,
     ) -> Option<(String, String)> {
         let node = arena.get(node_idx)?;
         if node.kind != syntax_kind_ext::TYPE_REFERENCE {
@@ -1167,15 +1057,8 @@ impl<'a> DeclarationEmitter<'a> {
             source_path,
         ) && let Some(binder) = self.binder
             && let Some(current_file_path) = self.current_file_path.as_deref()
-            && let Some(result) = self.check_symbol_portability(
-                sym_id,
-                binder,
-                current_file_path,
-                visited_types,
-                visited_symbols,
-                visited_declaration_symbols,
-                visited_nodes,
-            )
+            && let Some(result) =
+                self.check_symbol_portability(sym_id, binder, current_file_path, visit)
         {
             return Some(result);
         }
@@ -1443,16 +1326,11 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::declaration_emitter) fn collect_symbol_member_type_references(
         &self,
         sym_id: SymbolId,
-        results: &mut Vec<(String, String)>,
-        seen: &mut rustc_hash::FxHashSet<(String, String)>,
-        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
-        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
-        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+        collect: &mut PortabilityCollectState<'_>,
+        visit: &mut PortabilityVisitState<'_>,
     ) -> bool {
         let Some(binder) = self.binder else {
             return false;
@@ -1472,7 +1350,7 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
 
-        let count_before = results.len();
+        let count_before = collect.results.len();
         for decl_idx in symbol.declarations.iter().copied() {
             let Some(decl_node) = source_arena.get(decl_idx) else {
                 continue;
@@ -1489,30 +1367,22 @@ impl<'a> DeclarationEmitter<'a> {
                         source_arena.as_ref(),
                         signature.type_annotation,
                         &source_path,
-                        results,
-                        seen,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
+                        collect,
+                        visit,
                     );
                 } else if let Some(prop_decl) = source_arena.get_property_decl(member_node) {
                     self.collect_non_portable_references_in_type_node(
                         source_arena.as_ref(),
                         prop_decl.type_annotation,
                         &source_path,
-                        results,
-                        seen,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
+                        collect,
+                        visit,
                     );
                 }
             }
         }
 
-        results.len() > count_before
+        collect.results.len() > count_before
     }
 
     pub(in crate::declaration_emitter) fn collect_indexed_access_object_type_names(
