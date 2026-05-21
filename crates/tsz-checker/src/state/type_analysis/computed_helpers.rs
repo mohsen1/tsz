@@ -493,6 +493,32 @@ impl<'a> CheckerState<'a> {
             || self.type_alias_is_generic_self_circular(sym_id)
     }
 
+    /// Detect a generic self-application cycle for `sym_id` and, if found,
+    /// record it as circular *before* its body is lowered so the body
+    /// self-reference and downstream use sites observe the collapsed,
+    /// non-generic form. Returns true when `sym_id` is generic-self-circular.
+    pub(crate) fn detect_and_mark_generic_self_circular(&mut self, sym_id: SymbolId) -> bool {
+        let circular = self.type_alias_is_generic_self_circular(sym_id);
+        if circular {
+            self.ctx.circular_type_aliases.insert(sym_id);
+            if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                self.ctx.definition_store.mark_circular_def(def_id);
+            }
+        }
+        circular
+    }
+
+    /// Collapse a generic self-circular alias to a non-generic error type:
+    /// record an error body so use sites that apply type arguments report
+    /// TS2315 instead of cascading from a stale generic shape.
+    pub(crate) fn register_generic_circular_alias_error(&mut self, sym_id: SymbolId) {
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        self.ctx
+            .definition_store
+            .register_type_to_def(TypeId::ERROR, def_id);
+        self.ctx.definition_store.set_body(def_id, TypeId::ERROR);
+    }
+
     /// True when a *generic* type alias's unwrapped body is a self-application
     /// that cycles back to `root_sym` through simple-reference alias hops
     /// (`type A<T> = A<T>`, or `type Foo<T> = Bar<T>; type Bar<T> = Foo<T>`).
