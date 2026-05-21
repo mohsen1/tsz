@@ -33,7 +33,7 @@ fn has_code(diags: &[Diagnostic], code: u32) -> bool {
     diags.iter().any(|d| d.code == code)
 }
 
-fn no_errors(diags: &[Diagnostic]) -> bool {
+const fn no_errors(diags: &[Diagnostic]) -> bool {
     diags.is_empty()
 }
 
