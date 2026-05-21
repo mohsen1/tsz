@@ -433,21 +433,15 @@ impl TypeInterner {
             }
         }
 
-        // Bare `${unknown}` and `${any}` collapse to string. Do not widen
-        // prefixed/suffixed `any` patterns like `a${any}`: the fixed text
-        // remains part of the assignability contract.
+        // Bare `${string}` is the only intrinsic placeholder that collapses to
+        // `string`, matching tsc's `getTemplateLiteralType` single-span rule.
+        // `${any}` and `${unknown}` are intentionally kept as distinct deferred
+        // template literal types: `string` is NOT assignable to `\`${any}\`` or
+        // `\`${unknown}\`` (tsc emits TS2322 for those assignments).
         if let [TemplateSpan::Type(type_id)] = spans.as_slice()
-            && (*type_id == TypeId::UNKNOWN || *type_id == TypeId::ANY)
+            && *type_id == TypeId::STRING
         {
             return TypeId::STRING;
-        }
-
-        for span in &spans {
-            if let TemplateSpan::Type(type_id) = span
-                && *type_id == TypeId::UNKNOWN
-            {
-                return TypeId::STRING;
-            }
         }
 
         // Normalize spans by merging consecutive text spans (Pass 2)
@@ -594,15 +588,15 @@ impl TypeInterner {
     /// template literal pattern (`number`, `bigint`, `string`, `any`), or
     /// itself a pattern literal type.
     ///
-    /// Mirrors tsc's `isPatternLiteralPlaceholderType` (minus intersection
-    /// handling, which is not needed for the current
-    /// `getTemplateLiteralType`-style collapse).
+    /// Mirrors tsc's `isPatternLiteralPlaceholderType` (tsc 5.4+, minus
+    /// intersection handling which is not needed for the current collapse).
+    /// `any` was intentionally removed from the placeholder set in tsc 5.4:
+    /// the type `` `${any}` `` is a distinct deferred template, not equal to `string`.
     fn is_pattern_literal_placeholder_type(&self, type_id: TypeId) -> bool {
         match self.lookup(type_id) {
             Some(TypeData::Intrinsic(kind)) => matches!(
                 kind,
-                crate::types::IntrinsicKind::Any
-                    | crate::types::IntrinsicKind::String
+                crate::types::IntrinsicKind::String
                     | crate::types::IntrinsicKind::Number
                     | crate::types::IntrinsicKind::Bigint
             ),
