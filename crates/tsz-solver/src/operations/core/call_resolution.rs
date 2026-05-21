@@ -1869,6 +1869,14 @@ pub fn infer_generic_function<C: AssignabilityChecker>(
     evaluator.infer_generic_function(func, arg_types)
 }
 
+/// Named options for `resolve_call_with_checker_and_arg_sources`.
+pub struct ResolveCallOptions<'a> {
+    pub force_bivariant_callbacks: bool,
+    pub contextual_type: Option<TypeId>,
+    pub actual_this_type: Option<TypeId>,
+    pub arg_source_is_type_annotation: &'a [bool],
+}
+
 pub fn resolve_call_with_checker<C: AssignabilityChecker>(
     interner: &dyn QueryDatabase,
     checker: &mut C,
@@ -1883,29 +1891,27 @@ pub fn resolve_call_with_checker<C: AssignabilityChecker>(
         checker,
         func_type,
         arg_types,
-        force_bivariant_callbacks,
-        contextual_type,
-        actual_this_type,
-        &[],
+        &ResolveCallOptions {
+            force_bivariant_callbacks,
+            contextual_type,
+            actual_this_type,
+            arg_source_is_type_annotation: &[],
+        },
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn resolve_call_with_checker_and_arg_sources<C: AssignabilityChecker>(
     interner: &dyn QueryDatabase,
     checker: &mut C,
     func_type: TypeId,
     arg_types: &[TypeId],
-    force_bivariant_callbacks: bool,
-    contextual_type: Option<TypeId>,
-    actual_this_type: Option<TypeId>,
-    arg_source_is_type_annotation: &[bool],
+    opts: &ResolveCallOptions<'_>,
 ) -> CallWithCheckerResult {
     let mut evaluator = CallEvaluator::new(interner, checker);
-    evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
-    evaluator.set_contextual_type(contextual_type);
-    evaluator.set_actual_this_type(actual_this_type);
-    evaluator.set_arg_source_is_type_annotation(arg_source_is_type_annotation);
+    evaluator.set_force_bivariant_callbacks(opts.force_bivariant_callbacks);
+    evaluator.set_contextual_type(opts.contextual_type);
+    evaluator.set_actual_this_type(opts.actual_this_type);
+    evaluator.set_arg_source_is_type_annotation(opts.arg_source_is_type_annotation);
     let result = evaluator.resolve_call(func_type, arg_types);
     let predicate = evaluator.last_instantiated_predicate.take();
     let instantiated_params = evaluator.last_instantiated_params.take();
