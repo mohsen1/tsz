@@ -126,9 +126,60 @@ fn direct_source_file_type_alias_rejects_union_of_local_refs() {
 }
 
 #[test]
-fn direct_source_file_type_alias_rejects_chain_with_type_args() {
+fn direct_source_file_type_alias_lowers_local_generic_alias_application() {
     with_two_file_state(
         "type Wrap<T> = T | null;\nexport type Concrete = Wrap<string>;",
+        "import { Concrete } from './target';",
+        |state, target_binder| {
+            let concrete_sym = target_binder.file_locals.get("Concrete").expect("Concrete");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(concrete_sym, Some(1), true)
+                .expect("scope-independent generic alias applications should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "Concrete should be non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_local_generic_alias_application() {
+    with_two_file_state(
+        "type Box<X> = X[];\nexport type Result = Box<boolean>;",
+        "import { Result } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                .expect("renamed generic alias applications should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "Result should be non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_generic_body_with_local_alias_application() {
+    with_two_file_state(
+        "type Box<X> = X | null;\nexport type Result<T> = Box<T>;",
+        "import { Result } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                .expect("generic source aliases may reference structural local alias applications");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Result should preserve its type parameter");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_generic_alias_application_with_typeof_body() {
+    with_two_file_state(
+        "const v = 1;\ntype Wrap<T> = T | typeof v;\nexport type Concrete = Wrap<string>;",
         "import { Concrete } from './target';",
         |state, target_binder| {
             let concrete_sym = target_binder.file_locals.get("Concrete").expect("Concrete");
@@ -136,7 +187,7 @@ fn direct_source_file_type_alias_rejects_chain_with_type_args() {
                 state
                     .direct_source_file_type_alias_result(concrete_sym, Some(1), true)
                     .is_none(),
-                "chain with type arguments must stay on the child-checker path",
+                "flow-sensitive generic alias applications must stay on the child-checker path",
             );
         },
     );
