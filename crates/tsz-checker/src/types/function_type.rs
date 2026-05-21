@@ -2839,9 +2839,12 @@ impl<'a> CheckerState<'a> {
                 &self.ctx.class_instance_type_cache
             };
             return cache.get(&class_idx).copied().or_else(|| {
-                (!is_static)
-                    .then(|| self.ctx.enclosing_class.as_ref())
-                    .flatten()
+                if is_static {
+                    return None;
+                }
+                self.ctx
+                    .enclosing_class
+                    .as_ref()
                     .filter(|info| info.class_idx == class_idx)
                     .and_then(|info| info.cached_instance_this_type)
             });

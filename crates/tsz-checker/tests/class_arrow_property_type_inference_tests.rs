@@ -43,7 +43,7 @@ fn join_messages(diags: &[(u32, String)]) -> String {
         .join("\n")
 }
 
-/// Flatten a diagnostic and all of its related_information messages into
+/// Flatten a diagnostic and all of its `related_information` messages into
 /// one searchable string. Inner-elaboration tests need to inspect the
 /// related messages, not just the top-level.
 fn full_messages(diags: &[Diagnostic]) -> String {
