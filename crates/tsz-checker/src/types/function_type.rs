@@ -1872,16 +1872,18 @@ impl<'a> CheckerState<'a> {
 
             // TS2366/TS2355/TS7030: Check return completeness
             self.check_function_return_completeness(
-                is_function_declaration,
-                body,
-                idx,
-                annotated_return_type,
-                return_type,
-                has_type_annotation,
-                type_annotation,
-                function_is_generator,
-                name_node,
-                idx,
+                super::function_type_helpers::FunctionReturnCheckCtx {
+                    is_function_declaration,
+                    body,
+                    func_idx: idx,
+                    annotated_return_type,
+                    return_type,
+                    has_type_annotation,
+                    type_annotation,
+                    function_is_generator,
+                    name_node,
+                    idx,
+                },
             );
 
             // Determine if this is an async function for context tracking
@@ -2731,8 +2733,7 @@ impl<'a> CheckerState<'a> {
             // Fall back to synthetic PROMISE_BASE only without lib files.
             let promise_base = self
                 .ctx
-                .lib_promise_sym_id()
-                .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
+                .lib_promise_type_ref()
                 .unwrap_or(TypeId::PROMISE_BASE);
             final_return_type = self
                 .ctx

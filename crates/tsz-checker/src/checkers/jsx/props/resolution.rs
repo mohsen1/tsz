@@ -7,6 +7,19 @@ use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
+pub(crate) struct JsxPropsCheckOpts<'a> {
+    pub(crate) attributes_idx: NodeIndex,
+    pub(crate) props_type: TypeId,
+    pub(crate) tag_name_idx: NodeIndex,
+    pub(crate) component_type: Option<TypeId>,
+    pub(crate) special_attr_component_type: Option<TypeId>,
+    pub(crate) raw_props_has_type_params: bool,
+    pub(crate) display_target: String,
+    pub(crate) preferred_target_display: Option<&'a str>,
+    pub(crate) request: &'a TypingRequest,
+    pub(crate) children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
+}
+
 impl<'a> CheckerState<'a> {
     fn collect_jsx_union_resolution_attr_value_type(
         &mut self,
@@ -330,20 +343,19 @@ impl<'a> CheckerState<'a> {
     /// for excess properties. tsc uses `IntrinsicAttributes & PropsType` (or
     /// `IntrinsicAttributes & IntrinsicClassAttributes<T> & PropsType`) rather
     /// than just `PropsType`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn check_jsx_attributes_against_props(
-        &mut self,
-        attributes_idx: NodeIndex,
-        props_type: TypeId,
-        tag_name_idx: NodeIndex,
-        component_type: Option<TypeId>,
-        special_attr_component_type: Option<TypeId>,
-        raw_props_has_type_params: bool,
-        display_target: String,
-        preferred_target_display: Option<&str>,
-        request: &TypingRequest,
-        children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
-    ) {
+    pub(crate) fn check_jsx_attributes_against_props(&mut self, opts: JsxPropsCheckOpts<'_>) {
+        let JsxPropsCheckOpts {
+            attributes_idx,
+            props_type,
+            tag_name_idx,
+            component_type,
+            special_attr_component_type,
+            raw_props_has_type_params,
+            display_target,
+            preferred_target_display,
+            request,
+            children_ctx,
+        } = opts;
         // Grammar check: TS17000 for empty expressions in JSX attributes.
         // Matches tsc: only the first empty expression per element is reported.
         self.check_grammar_jsx_element(attributes_idx);
@@ -1330,21 +1342,23 @@ impl<'a> CheckerState<'a> {
                     children_ctx.as_ref().is_some_and(|ctx| ctx.child_count > 0);
                 let suppress_missing_props = spread_has_children && has_body_children;
 
-                let had_error = self.check_spread_property_types(
-                    spread_type,
-                    raw_spread_type,
-                    props_type,
-                    tag_name_idx,
-                    &overridden,
-                    &overridden_for_missing,
-                    &earlier_explicit_attrs,
-                    has_later_spreads,
-                    suppress_missing_props,
-                    has_prop_type_error || has_later_explicit_excess_attr,
-                    &display_target,
-                    preferred_target_display,
-                    merged_attrs_display.as_deref(),
-                );
+                let had_error =
+                    self.check_spread_property_types(super::super::spread::SpreadCheckOpts {
+                        spread_type,
+                        spread_source_type: raw_spread_type,
+                        props_type,
+                        tag_name_idx,
+                        overridden_names: &overridden,
+                        overridden_for_missing: &overridden_for_missing,
+                        earlier_explicit_attrs: &earlier_explicit_attrs,
+                        has_later_spreads,
+                        suppress_missing_props,
+                        suppress_unanchored_type_mismatch: has_prop_type_error
+                            || has_later_explicit_excess_attr,
+                        display_target: &display_target,
+                        preferred_target_display,
+                        merged_attrs_display: merged_attrs_display.as_deref(),
+                    });
                 suppress_missing_props_from_spread |= had_error || suppress_missing_props;
 
                 // Record this spread's property names for later iterations.

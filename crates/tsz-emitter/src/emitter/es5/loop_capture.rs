@@ -435,35 +435,59 @@ impl<'a> Printer<'a> {
         self.write(fn_name);
         self.write(" = function (");
 
+        let captured_param_names = captured_vars
+            .iter()
+            .map(|var| {
+                self.ctx
+                    .block_scope_state
+                    .get_emitted_name(var)
+                    .unwrap_or_else(|| var.clone())
+            })
+            .collect::<Vec<_>>();
+        let outer_shadowed_body_vars = body_info
+            .block_scoped_vars
+            .iter()
+            .filter(|var| self.ctx.block_scope_state.get_emitted_name(var).is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+
         // Parameters are the captured variables
-        for (i, var) in captured_vars.iter().enumerate() {
+        for (i, emitted) in captured_param_names.iter().enumerate() {
             if i > 0 {
                 self.write(", ");
             }
-            // If the variable was renamed by block scoping, use the renamed version
-            if let Some(emitted) = self.ctx.block_scope_state.get_emitted_name(var) {
-                self.write(&emitted);
-            } else {
-                self.write(var);
-            }
+            self.write(emitted);
         }
 
         self.write(") {");
         self.write_line();
         self.increase_indent();
-        let block_scoped_temp_byte_offset = self.writer.len();
-        let block_scoped_temp_line = self.writer.current_line();
+        let block_scoped_temp_anchor = self.capture_hoist_anchor();
 
         // Emit the body statements inside the IIFE
+        self.ctx.block_scope_state.enter_function_scope();
+        for var in &outer_shadowed_body_vars {
+            self.ctx
+                .block_scope_state
+                .register_function_scope_shadowed_name(var);
+        }
+        for (var, emitted) in captured_vars.iter().zip(captured_param_names.iter()) {
+            self.ctx
+                .block_scope_state
+                .register_function_parameter_with_emitted_name(var, emitted);
+        }
         let prev_lexical_block_missing_initializer_function_depth =
             self.lexical_block_missing_initializer_function_depth;
         self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
         self.emit_loop_body_for_iife(body_idx, body_info, captured_vars, _init_vars);
         self.lexical_block_missing_initializer_function_depth =
             prev_lexical_block_missing_initializer_function_depth;
+        self.ctx.block_scope_state.exit_scope();
 
         if !self.block_scoped_private_temps.is_empty() {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let indent = self
+                .writer
+                .indent_string_at(block_scoped_temp_anchor.indent_level);
             let temp_decls = self
                 .block_scoped_private_temps
                 .iter()
@@ -471,8 +495,8 @@ impl<'a> Printer<'a> {
                 .collect::<Vec<_>>()
                 .join(", ");
             self.writer.insert_line_at(
-                block_scoped_temp_byte_offset,
-                block_scoped_temp_line,
+                block_scoped_temp_anchor.byte_offset,
+                block_scoped_temp_anchor.line_no,
                 &format!("{indent}var {temp_decls};"),
             );
             self.block_scoped_private_temps.clear();
@@ -918,6 +942,41 @@ function foo(x: number) {\n\
         assert!(
             output.contains("var v, v;"),
             "Loop body var hoist should preserve duplicate var declarations.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn loop_capture_helper_body_uses_renamed_captured_parameter() {
+        let source = "declare function keep(v: number): void;\n\
+function foo() {\n\
+  let i = 0;\n\
+  for (let i = 0; i < 2; i++) {\n\
+    (() => i)();\n\
+  }\n\
+  keep(i);\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("var _loop_1 = function (i_1)"),
+            "Loop helper signature should use the block-scoped emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return i_1;"),
+            "Helper body references should resolve through the same emitted parameter.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_loop_1(i_1);"),
+            "Loop helper call should pass the same emitted captured variable.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("keep(i);"),
+            "Outer lexical binding should keep its own emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("return i;"),
+            "Helper body must not drift back to the outer binding name.\nOutput:\n{output}"
         );
     }
 

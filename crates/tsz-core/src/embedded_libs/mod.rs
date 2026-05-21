@@ -11,18 +11,21 @@ pub const LIB_FILE_COUNT: usize = 107;
 /// Look up embedded lib content by filename (e.g., "dom.d.ts", "es5.d.ts").
 /// Returns None for unknown filenames.
 #[inline]
-#[allow(clippy::match_same_arms)]
 pub fn get_lib_content(filename: &str) -> Option<&'static str> {
     match filename {
         "decorators.d.ts" => Some(include_str!("../lib-assets-stripped/decorators.d.ts")),
         "decorators.legacy.d.ts" => Some(include_str!(
             "../lib-assets-stripped/decorators.legacy.d.ts"
         )),
-        "dom.asynciterable.d.ts" => Some(include_str!(
+        // These four lib files are empty stubs (whitespace-only at strip time); they
+        // share identical content so we avoid duplicating the arm body.
+        "dom.asynciterable.d.ts"
+        | "dom.iterable.d.ts"
+        | "webworker.asynciterable.d.ts"
+        | "webworker.iterable.d.ts" => Some(include_str!(
             "../lib-assets-stripped/dom.asynciterable.d.ts"
         )),
         "dom.d.ts" => Some(include_str!("../lib-assets-stripped/dom.d.ts")),
-        "dom.iterable.d.ts" => Some(include_str!("../lib-assets-stripped/dom.iterable.d.ts")),
         "es2015.collection.d.ts" => Some(include_str!(
             "../lib-assets-stripped/es2015.collection.d.ts"
         )),
@@ -163,15 +166,9 @@ pub fn get_lib_content(filename: &str) -> Option<&'static str> {
         "scripthost.d.ts" => Some(include_str!("../lib-assets-stripped/scripthost.d.ts")),
         "tsserverlibrary.d.ts" => Some(include_str!("../lib-assets-stripped/tsserverlibrary.d.ts")),
         "typescript.d.ts" => Some(include_str!("../lib-assets-stripped/typescript.d.ts")),
-        "webworker.asynciterable.d.ts" => Some(include_str!(
-            "../lib-assets-stripped/webworker.asynciterable.d.ts"
-        )),
         "webworker.d.ts" => Some(include_str!("../lib-assets-stripped/webworker.d.ts")),
         "webworker.importscripts.d.ts" => Some(include_str!(
             "../lib-assets-stripped/webworker.importscripts.d.ts"
-        )),
-        "webworker.iterable.d.ts" => Some(include_str!(
-            "../lib-assets-stripped/webworker.iterable.d.ts"
         )),
         _ => None,
     }
@@ -204,14 +201,16 @@ macro_rules! embedded_hash_arm {
 
 /// Look up the compile-time content fingerprint for an embedded lib file.
 #[inline]
-#[allow(clippy::match_same_arms)]
 pub fn get_lib_content_hash(filename: &str) -> Option<u64> {
     match filename {
         "decorators.d.ts" => embedded_hash_arm!("decorators.d.ts"),
         "decorators.legacy.d.ts" => embedded_hash_arm!("decorators.legacy.d.ts"),
-        "dom.asynciterable.d.ts" => embedded_hash_arm!("dom.asynciterable.d.ts"),
+        // These four lib files are empty stubs with identical content; share one hash arm.
+        "dom.asynciterable.d.ts"
+        | "dom.iterable.d.ts"
+        | "webworker.asynciterable.d.ts"
+        | "webworker.iterable.d.ts" => embedded_hash_arm!("dom.asynciterable.d.ts"),
         "dom.d.ts" => embedded_hash_arm!("dom.d.ts"),
-        "dom.iterable.d.ts" => embedded_hash_arm!("dom.iterable.d.ts"),
         "es2015.collection.d.ts" => embedded_hash_arm!("es2015.collection.d.ts"),
         "es2015.core.d.ts" => embedded_hash_arm!("es2015.core.d.ts"),
         "es2015.d.ts" => embedded_hash_arm!("es2015.d.ts"),
@@ -310,10 +309,8 @@ pub fn get_lib_content_hash(filename: &str) -> Option<u64> {
         "scripthost.d.ts" => embedded_hash_arm!("scripthost.d.ts"),
         "tsserverlibrary.d.ts" => embedded_hash_arm!("tsserverlibrary.d.ts"),
         "typescript.d.ts" => embedded_hash_arm!("typescript.d.ts"),
-        "webworker.asynciterable.d.ts" => embedded_hash_arm!("webworker.asynciterable.d.ts"),
         "webworker.d.ts" => embedded_hash_arm!("webworker.d.ts"),
         "webworker.importscripts.d.ts" => embedded_hash_arm!("webworker.importscripts.d.ts"),
-        "webworker.iterable.d.ts" => embedded_hash_arm!("webworker.iterable.d.ts"),
         _ => None,
     }
 }
@@ -326,10 +323,9 @@ pub fn get_lib_references(filename: &str) -> Option<&'static [&'static str]> {
 
 /// Look up embedded `/// <reference lib=...>` entries for a known embedded lib.
 #[inline]
-#[allow(clippy::match_same_arms)]
 pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
     match filename {
-        "dom.d.ts" => &["es2015", "es2018.asynciterable"],
+        "dom.d.ts" | "webworker.d.ts" => &["es2015", "es2018.asynciterable"],
         "es2015.d.ts" => &[
             "es5",
             "es2015.core",
@@ -342,9 +338,10 @@ pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
             "es2015.symbol",
             "es2015.symbol.wellknown",
         ],
-        "es2015.generator.d.ts" => &["es2015.iterable"],
-        "es2015.iterable.d.ts" => &["es2015.symbol"],
-        "es2015.symbol.wellknown.d.ts" => &["es2015.symbol"],
+        "es2015.generator.d.ts" | "es2019.object.d.ts" | "esnext.iterator.d.ts" => {
+            &["es2015.iterable"]
+        }
+        "es2015.iterable.d.ts" | "es2015.symbol.wellknown.d.ts" => &["es2015.symbol"],
         "es2016.d.ts" => &["es2015", "es2016.array.include", "es2016.intl"],
         "es2016.full.d.ts" => &[
             "es2016",
@@ -372,7 +369,9 @@ pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
         ],
         "es2017.sharedmemory.d.ts" => &["es2015.symbol", "es2015.symbol.wellknown"],
         "es2018.asyncgenerator.d.ts" => &["es2018.asynciterable"],
-        "es2018.asynciterable.d.ts" => &["es2015.symbol", "es2015.iterable"],
+        "es2018.asynciterable.d.ts" | "esnext.float16.d.ts" => {
+            &["es2015.symbol", "es2015.iterable"]
+        }
         "es2018.d.ts" => &[
             "es2017",
             "es2018.asynciterable",
@@ -405,8 +404,7 @@ pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
             "dom.iterable",
             "dom.asynciterable",
         ],
-        "es2019.object.d.ts" => &["es2015.iterable"],
-        "es2020.bigint.d.ts" => &["es2020.intl"],
+        "es2020.bigint.d.ts" | "es2020.date.d.ts" | "es2020.number.d.ts" => &["es2020.intl"],
         "es2020.d.ts" => &[
             "es2019",
             "es2020.bigint",
@@ -418,7 +416,6 @@ pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
             "es2020.symbol.wellknown",
             "es2020.intl",
         ],
-        "es2020.date.d.ts" => &["es2020.intl"],
         "es2020.full.d.ts" => &[
             "es2020",
             "dom",
@@ -427,9 +424,8 @@ pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
             "dom.iterable",
             "dom.asynciterable",
         ],
-        "es2020.intl.d.ts" => &["es2018.intl"],
-        "es2020.number.d.ts" => &["es2020.intl"],
-        "es2020.sharedmemory.d.ts" => &["es2020.bigint"],
+        "es2020.intl.d.ts" | "es2025.intl.d.ts" => &["es2018.intl"],
+        "es2020.sharedmemory.d.ts" | "es2024.sharedmemory.d.ts" => &["es2020.bigint"],
         "es2020.string.d.ts" => &["es2015.iterable", "es2020.intl", "es2020.symbol.wellknown"],
         "es2020.symbol.wellknown.d.ts" => &["es2015.iterable", "es2015.symbol"],
         "es2021.d.ts" => &[
@@ -494,9 +490,7 @@ pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
             "dom.iterable",
             "dom.asynciterable",
         ],
-        "es2024.sharedmemory.d.ts" => &["es2020.bigint"],
         "es2025.collection.d.ts" => &["es2024.collection"],
-        "es2025.intl.d.ts" => &["es2018.intl"],
         "es5.d.ts" => &["decorators", "decorators.legacy"],
         "es5.full.d.ts" => &["es5", "dom", "webworker.importscripts", "scripthost"],
         "es6.d.ts" => &[
@@ -524,7 +518,6 @@ pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
         "esnext.date.d.ts" => &["esnext.temporal"],
         "esnext.decorators.d.ts" => &["es2015.symbol", "decorators"],
         "esnext.disposable.d.ts" => &["es2015.symbol", "es2015.iterable", "es2018.asynciterable"],
-        "esnext.float16.d.ts" => &["es2015.symbol", "es2015.iterable"],
         "esnext.full.d.ts" => &[
             "esnext",
             "dom",
@@ -533,9 +526,7 @@ pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
             "dom.iterable",
             "dom.asynciterable",
         ],
-        "esnext.iterator.d.ts" => &["es2015.iterable"],
         "esnext.temporal.d.ts" => &["es2015.symbol.wellknown", "es2020.intl", "es2025.intl"],
-        "webworker.d.ts" => &["es2015", "es2018.asynciterable"],
         _ => &[],
     }
 }

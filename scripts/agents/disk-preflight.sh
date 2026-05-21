@@ -102,8 +102,13 @@ fi
 echo ""
 echo "== reusable worktree signals =="
 git -C "$ROOT" worktree list --porcelain \
-  | awk '/^worktree / { print substr($0, 10) }' \
-  | while IFS= read -r wt; do
+  | awk '
+      /^worktree / { if (path) print path "\t" branch; path=substr($0, 10); branch="" }
+      /^branch / { branch=substr($0, 8) }
+      /^detached / { branch="detached:" substr($0, 10) }
+      END { if (path) print path "\t" branch }
+    ' \
+  | while IFS=$'\t' read -r wt branch; do
       [[ -n "$wt" ]] || continue
       flags=()
       [[ -L "$wt/TypeScript" ]] && flags+=("ts-link")
@@ -111,7 +116,7 @@ git -C "$ROOT" worktree list --porcelain \
       [[ -d "$wt/.target" ]] && flags+=(".target")
       [[ -d "$wt/target" ]] && flags+=("target")
       [[ ${#flags[@]} -eq 0 ]] && flags+=("no-local-cache-signal")
-      printf "%s %s\n" "$wt" "${flags[*]}"
+      printf "%s branch=%s %s\n" "$wt" "${branch:-unknown}" "${flags[*]}"
     done
 
 if echo "$GUARD_OUTPUT" | grep -q 'disk_status=low'; then

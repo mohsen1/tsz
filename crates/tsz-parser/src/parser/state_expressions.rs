@@ -1940,14 +1940,6 @@ impl ParserState {
         let mut expr = self.parse_primary_expression();
 
         loop {
-            if (self.context_flags & crate::parser::state::CONTEXT_FLAG_ENUM_MEMBER_INITIALIZER)
-                != 0
-                && self.scanner.has_preceding_line_break()
-                && self.is_token(SyntaxKind::OpenBracketToken)
-            {
-                break;
-            }
-
             match self.token() {
                 SyntaxKind::DotToken => {
                     let missing_name_pos = self.token_end();

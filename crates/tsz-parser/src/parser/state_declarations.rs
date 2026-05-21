@@ -1492,23 +1492,12 @@ impl ParserState {
             }
 
             let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
-                let saved_flags = self.context_flags;
-                self.context_flags |= crate::parser::state::CONTEXT_FLAG_ENUM_MEMBER_INITIALIZER;
-                let initializer = self.parse_assignment_expression();
-                self.context_flags = saved_flags;
-                initializer
+                self.parse_assignment_expression()
             } else {
                 NodeIndex::NONE
             };
 
-            let end_pos = if initializer != NodeIndex::NONE
-                && self.scanner.has_preceding_line_break()
-                && self.is_token(SyntaxKind::OpenBracketToken)
-            {
-                self.token_pos()
-            } else {
-                self.token_end()
-            };
+            let end_pos = self.token_end();
             let member = self.arena.add_enum_member(
                 syntax_kind_ext::ENUM_MEMBER,
                 start_pos,

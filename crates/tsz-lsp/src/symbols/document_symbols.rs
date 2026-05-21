@@ -1,11 +1,3 @@
-#![allow(
-    clippy::match_same_arms,
-    clippy::collapsible_if,
-    clippy::doc_markdown,
-    clippy::missing_const_for_fn,
-    clippy::type_complexity
-)]
-
 //! Document Symbols implementation for LSP.
 //!
 //! Provides an outline/structure view of a TypeScript file showing all
@@ -118,7 +110,7 @@ fn document_symbol_budget_account(symbols: &mut Vec<DocumentSymbol>) {
     });
 }
 
-fn document_symbol_node_may_emit_direct(kind: u16) -> bool {
+const fn document_symbol_node_may_emit_direct(kind: u16) -> bool {
     matches!(
         kind,
         k if k == syntax_kind_ext::FUNCTION_DECLARATION
@@ -215,7 +207,7 @@ impl SymbolKind {
             Self::Class => "class",
             Self::Method => "method",
             Self::Property | Self::Field | Self::Key => "property",
-            Self::Constructor => "constructor",
+            Self::Constructor | Self::SynthesizedConstructor => "constructor",
             Self::Enum => "enum",
             Self::Interface => "interface",
             Self::Function | Self::Event | Self::Operator => "function",
@@ -230,7 +222,6 @@ impl SymbolKind {
             Self::CallSignature => "call",
             Self::ConstructSignature => "construct",
             Self::IndexSignature => "index",
-            Self::SynthesizedConstructor => "constructor",
             Self::Unknown => "",
         }
     }
@@ -400,7 +391,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     // JS files can declare types via JSDoc
                     // `@typedef` tags on any top-level statement.
                     // Scan them so they surface as `type` nav entries.
-                    self.apply_jsdoc_typedefs(&sf.statements.nodes, &mut symbols);
+                    Self::apply_jsdoc_typedefs(&sf.statements.nodes, &mut symbols);
                 }
                 symbols
             }
@@ -1397,18 +1388,17 @@ impl<'a> DocumentSymbolProvider<'a> {
         // declarations from their block body, matching tsc's
         // "inner function causes the var to be a top-level function"
         // behavior.
-        if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-            || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        if (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+            && let Some(func) = self.arena.get_function(init_node)
         {
-            if let Some(func) = self.arena.get_function(init_node) {
-                return self.collect_children_from_block(func.body, container_name);
-            }
+            return self.collect_children_from_block(func.body, container_name);
         }
 
         Vec::new()
     }
 
-    /// Emit a child entry for each property in an OBJECT_LITERAL_EXPRESSION.
+    /// Emit a child entry for each property in an `OBJECT_LITERAL_EXPRESSION`.
     /// `PROPERTY_ASSIGNMENT` → property / nested object / method depending
     /// on the initializer; `SHORTHAND_PROPERTY_ASSIGNMENT` → property;
     /// `METHOD_DECLARATION` (`m() {}` shorthand) → method. Computed
@@ -1593,7 +1583,7 @@ impl<'a> DocumentSymbolProvider<'a> {
         }
     }
 
-    /// Classify a PROPERTY_ASSIGNMENT's initializer for navbar display.
+    /// Classify a `PROPERTY_ASSIGNMENT`'s initializer for navbar display.
     /// Function / arrow initializers are methods (optionally with a
     /// body-walked child list); object literals become nested objects;
     /// class expressions become class entries; everything else is a
@@ -1642,8 +1632,8 @@ impl<'a> DocumentSymbolProvider<'a> {
         }
     }
 
-    /// Recursively walk an OBJECT_BINDING_PATTERN or
-    /// ARRAY_BINDING_PATTERN and append a nav entry per bound name.
+    /// Recursively walk an `OBJECT_BINDING_PATTERN` or
+    /// `ARRAY_BINDING_PATTERN` and append a nav entry per bound name.
     /// Nested patterns (`{ x: [a, b] }`) recurse so every terminal
     /// identifier in the destructure surfaces. Uses the declaration's
     /// inherited `kind` / `kind_modifiers` so `const [a, b] = ...`
@@ -1709,23 +1699,9 @@ impl<'a> DocumentSymbolProvider<'a> {
         }
     }
 
-    /// Scan a function/method body for a RETURN_STATEMENT whose
-    /// expression is an OBJECT_LITERAL_EXPRESSION. When found, emit
-    /// that object's members as if they were direct children of the
-    /// enclosing function — this mirrors tsc's treatment of factory
-    /// functions (`function F() { return { a, b } }`).
-    /// Scan top-level expression statements for JS "expando" patterns
-    /// (`X.prototype.Y = fn`, `X.Y = fn`) and `Object.defineProperty(X,
-    /// 'Y', …)` calls. Each assignment attaches a member to the nav
-    /// entry named `X`, promoting it to a class and synthesizing a
-    /// `constructor` child so the navtree matches tsc's JS-mode
-    /// behavior.
-    /// Walk top-level statements for `@typedef` / `@callback` JSDoc
-    /// tags and surface their names as `type` nav entries. For now
-    /// this is a stub — JSDoc AST plumbing would need to flow through
-    /// the parser to the LSP to implement properly.
-    #[allow(clippy::unused_self)]
-    fn apply_jsdoc_typedefs(&self, _statements: &[NodeIndex], _symbols: &mut [DocumentSymbol]) {
+    /// Walk top-level statements for `@typedef` / `@callback` JSDoc tags and surface
+    /// their names as `type` nav entries. Stub until JSDoc AST nodes flow through the parser.
+    const fn apply_jsdoc_typedefs(_statements: &[NodeIndex], _symbols: &mut [DocumentSymbol]) {
         // TODO: when the parser exposes JSDoc nodes, walk them for
         // `@typedef T` and append `DocumentSymbol { name: T, kind:
         // SymbolKind::Struct }` entries. Until then this is a no-op.
@@ -2040,29 +2016,19 @@ impl<'a> DocumentSymbolProvider<'a> {
             None,
             Method,
         }
+        struct ExpandoMember {
+            name: String,
+            is_fn: bool,
+            body: NodeIndex,
+            stmt_idx: NodeIndex,
+            /// Property descriptor node from `Object.defineProperty` calls; `NodeIndex::NONE` otherwise.
+            descriptor: NodeIndex,
+            via_prototype: bool,
+            kind_hint: MemberKindHint,
+        }
         #[derive(Default)]
         struct Expando {
-            // (name, is_function_like, body_block_idx for children,
-            // statement index for source-position sort,
-            // descriptor_idx for `Object.defineProperty` cases so the
-            // descriptor's `get`/`set` properties surface as children,
-            // member_via_prototype — whether *this specific* member
-            // was assigned through `.prototype.y` so we distinguish
-            // `X.prototype.y = 0` (kind: property) from `X.y = 0`
-            // (kind: "" unknown),
-            // kind_hint — `Method` when the member came from an
-            // object-literal shorthand method (`{ m() {} }` in
-            // `X.prototype = {…}`), so it renders as `method` instead
-            // of `function`.)
-            members: Vec<(
-                String,
-                bool,
-                NodeIndex,
-                NodeIndex,
-                NodeIndex,
-                bool,
-                MemberKindHint,
-            )>,
+            members: Vec<ExpandoMember>,
             via_prototype: bool,
         }
         let mut groups: std::collections::BTreeMap<String, Expando> =
@@ -2098,7 +2064,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         && rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         && let Some(obj) = self.arena.get_literal_expr(rhs_node)
                     {
-                        let entry = groups.entry(owner.clone()).or_default();
+                        let entry = groups.entry(owner).or_default();
                         entry.via_prototype = true;
                         for &prop_idx in &obj.elements.nodes {
                             let Some(prop_node) = self.arena.get(prop_idx) else {
@@ -2151,15 +2117,15 @@ impl<'a> DocumentSymbolProvider<'a> {
                             } else {
                                 MemberKindHint::None
                             };
-                            entry.members.push((
-                                member_name,
+                            entry.members.push(ExpandoMember {
+                                name: member_name,
                                 is_fn,
                                 body,
                                 stmt_idx,
-                                NodeIndex::NONE,
-                                true,
-                                hint,
-                            ));
+                                descriptor: NodeIndex::NONE,
+                                via_prototype: true,
+                                kind_hint: hint,
+                            });
                         }
                         continue;
                     }
@@ -2175,18 +2141,16 @@ impl<'a> DocumentSymbolProvider<'a> {
                         NodeIndex::NONE
                     };
                     let entry = groups.entry(owner).or_default();
-                    entry.members.push((
+                    entry.members.push(ExpandoMember {
                         name,
                         is_fn,
                         body,
                         stmt_idx,
-                        NodeIndex::NONE,
+                        descriptor: NodeIndex::NONE,
                         via_prototype,
-                        MemberKindHint::None,
-                    ));
-                    if via_prototype {
-                        entry.via_prototype = true;
-                    }
+                        kind_hint: MemberKindHint::None,
+                    });
+                    entry.via_prototype |= via_prototype;
                 }
             } else if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION {
                 // `Object.defineProperty(X, 'y', descriptor)` /
@@ -2199,18 +2163,16 @@ impl<'a> DocumentSymbolProvider<'a> {
                     self.parse_define_property(expr_idx)
                 {
                     let entry = groups.entry(owner).or_default();
-                    entry.members.push((
+                    entry.members.push(ExpandoMember {
                         name,
-                        false,
-                        NodeIndex::NONE,
+                        is_fn: false,
+                        body: NodeIndex::NONE,
                         stmt_idx,
                         descriptor,
                         via_prototype,
-                        MemberKindHint::None,
-                    ));
-                    if via_prototype {
-                        entry.via_prototype = true;
-                    }
+                        kind_hint: MemberKindHint::None,
+                    });
+                    entry.via_prototype |= via_prototype;
                 }
             }
         }
@@ -2261,29 +2223,27 @@ impl<'a> DocumentSymbolProvider<'a> {
                     },
                 );
             }
-            for (name, is_fn, body, stmt_idx, descriptor, member_via_proto, kind_hint) in
-                &expando.members
-            {
-                let children = if body.is_some() {
-                    self.collect_children_from_block(*body, Some(&sym.name))
-                } else if descriptor.is_some() {
+            for member in &expando.members {
+                let children = if member.body.is_some() {
+                    self.collect_children_from_block(member.body, Some(&sym.name))
+                } else if member.descriptor.is_some() {
                     // defineProperty descriptor — walk its literal
                     // members so `get` / `set` show up as methods.
-                    self.collect_object_literal_members(*descriptor, Some(&sym.name))
+                    self.collect_object_literal_members(member.descriptor, Some(&sym.name))
                 } else {
                     Vec::new()
                 };
-                let kind = match kind_hint {
+                let kind = match member.kind_hint {
                     MemberKindHint::Method => SymbolKind::Method,
                     MemberKindHint::None => {
-                        if *is_fn {
+                        if member.is_fn {
                             SymbolKind::Function
-                        } else if descriptor.is_some() {
+                        } else if member.descriptor.is_some() {
                             // `Object.defineProperty(X, 'y', …)` has no
                             // inferable kind at tsc — the entry renders
                             // with no kind field.
                             SymbolKind::Unknown
-                        } else if *member_via_proto {
+                        } else if member.via_prototype {
                             // `X.prototype.y = 0` is treated as a
                             // prototype property assignment →
                             // ScriptElementKind.property.
@@ -2299,9 +2259,10 @@ impl<'a> DocumentSymbolProvider<'a> {
                 // expando-child sort (by source position) orders these
                 // relative to the synthesized constructor in the same
                 // order they appear in source.
-                let range = node_range(self.arena, self.line_map, self.source_text, *stmt_idx);
+                let range =
+                    node_range(self.arena, self.line_map, self.source_text, member.stmt_idx);
                 sym.children.push(DocumentSymbol {
-                    name: name.clone(),
+                    name: member.name.clone(),
                     detail: None,
                     kind,
                     kind_modifiers: String::new(),
@@ -2636,9 +2597,9 @@ impl<'a> DocumentSymbolProvider<'a> {
     }
 
     /// Check if a node kind is a declaration. Used in the
-    /// EXPORT_DECLARATION arm to decide whether to recurse into the
+    /// `EXPORT_DECLARATION` arm to decide whether to recurse into the
     /// exported clause (declarations) vs. treat it as a re-export
-    /// (NAMED_EXPORTS etc).
+    /// (`NAMED_EXPORTS` etc).
     const fn is_declaration(&self, kind: u16) -> bool {
         kind == syntax_kind_ext::FUNCTION_DECLARATION
             || kind == syntax_kind_ext::CLASS_DECLARATION
@@ -2952,18 +2913,19 @@ fn propagate_ambient_modifier(symbols: &mut [DocumentSymbol]) {
 /// combine both declarations). Recurses so nested namespaces
 /// (`namespace A.B {} / namespace A {}`) also merge at every level.
 fn merge_same_name_modules(symbols: &mut Vec<DocumentSymbol>) {
-    // First recurse into each symbol's children so we merge deepest
-    // first (avoids seeing pre-merged children on subsequent passes).
-    for sym in symbols.iter_mut() {
-        merge_same_name_modules(&mut sym.children);
-    }
-    // Now merge at this level. Walk children left to right; for each
-    // Module entry, look ahead for another Module with the same name
-    // and fold its children in, dropping the duplicate.
+    // Walk left-to-right; for each mergeable entry, fold same-name
+    // siblings into it (collecting their children), then recurse into
+    // the now-complete children list.  This single-pass approach avoids
+    // the O(2^depth) blowup that arises when merging and recursing are
+    // interleaved: doing an initial "recurse first" pass followed by a
+    // post-merge re-recurse doubles the work at every level of a deeply
+    // nested chain.
     let mut i = 0;
     while i < symbols.len() {
         let mergeable = is_mergeable_kind(symbols[i].kind);
         if mergeable.is_none() {
+            // Non-mergeable: just recurse into children and move on.
+            merge_same_name_modules(&mut symbols[i].children);
             i += 1;
             continue;
         }
@@ -2980,10 +2942,11 @@ fn merge_same_name_modules(symbols: &mut Vec<DocumentSymbol>) {
                 j += 1;
             }
         }
-        // After merging this slot's siblings, its children may now
-        // contain duplicates from the folded-in entries (e.g.
-        // `namespace A { interface I {} } + namespace A { interface I {} }`
-        // → merged A has two `I` children). Recurse once more to resolve.
+        // After all same-name siblings have been folded in, recurse into
+        // the merged children list once.  Any duplicates introduced by
+        // the fold (e.g. `namespace A { interface I {} } + namespace A {
+        // interface I {} }` → merged A with two `I` children) are handled
+        // by this single recursive call.
         merge_same_name_modules(&mut symbols[i].children);
         i += 1;
     }

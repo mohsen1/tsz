@@ -35,6 +35,28 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let mut left_parts = self.short_circuit_operand_type_parts(binary.left, depth + 1)?;
+        if operator == SyntaxKind::BarBarToken as u16
+            && self.short_circuit_operand_is_syntactically_truthy(binary.left, depth + 1)
+        {
+            Self::dedupe_and_sort_short_circuit_type_parts(&mut left_parts);
+            return Some(left_parts);
+        }
+
+        // When every component of the left type is semantically always truthy (e.g. a
+        // non-empty string literal, non-zero number literal, or `true`), the right operand
+        // of `||` is unreachable — mirrors tsc's evaluate_logical returning `left` when
+        // narrow_to_falsy(left) == never.  The `!left_parts.is_empty()` guard is required
+        // because `.all(…)` on an empty iterator is vacuously true.
+        if operator == SyntaxKind::BarBarToken as u16
+            && !left_parts.is_empty()
+            && left_parts
+                .iter()
+                .all(|part| Self::short_circuit_part_is_always_truthy(&part.text))
+        {
+            Self::dedupe_and_sort_short_circuit_type_parts(&mut left_parts);
+            return Some(left_parts);
+        }
+
         let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
 
         if operator == SyntaxKind::BarBarToken as u16 {
@@ -50,6 +72,98 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         Some(parts)
+    }
+
+    fn short_circuit_operand_is_syntactically_truthy(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let Some(expr_idx) = self.skip_outer_truthiness_expressions(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        match expr_node.kind {
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == SyntaxKind::RegularExpressionLiteral as u16 =>
+            {
+                true
+            }
+            k if k == SyntaxKind::BigIntLiteral as u16 => self
+                .arena
+                .get_literal(expr_node)
+                .is_some_and(|lit| Self::bigint_literal_is_nonzero(&lit.text)),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.arena
+                    .get_literal(expr_node)
+                    .is_some_and(|lit| !lit.text.is_empty())
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .arena
+                .get_literal(expr_node)
+                .is_some_and(|lit| Self::numeric_literal_is_nonzero(&lit.text)),
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.arena.get_binary_expr(expr_node).is_some_and(|binary| {
+                    binary.operator_token == SyntaxKind::BarBarToken as u16
+                        && self
+                            .short_circuit_operand_is_syntactically_truthy(binary.left, depth + 1)
+                })
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => self
+                .arena
+                .get_conditional_expr(expr_node)
+                .is_some_and(|cond| {
+                    self.short_circuit_operand_is_syntactically_truthy(cond.when_true, depth + 1)
+                        && self.short_circuit_operand_is_syntactically_truthy(
+                            cond.when_false,
+                            depth + 1,
+                        )
+                }),
+            _ => false,
+        }
+    }
+
+    fn skip_outer_truthiness_expressions(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = expr_idx;
+        loop {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                current = self.arena.get_parenthesized(node)?.expression;
+            } else if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+                current = self.arena.get_unary_expr_ex(node)?.expression;
+            } else if node.kind == syntax_kind_ext::TYPE_ASSERTION
+                || node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            {
+                current = self.arena.get_type_assertion(node)?.expression;
+            } else {
+                return Some(current);
+            }
+        }
+    }
+
+    fn numeric_literal_is_nonzero(text: &str) -> bool {
+        tsz_common::numeric::parse_numeric_literal_value(text).is_some_and(|value| value != 0.0)
+    }
+
+    fn bigint_literal_is_nonzero(text: &str) -> bool {
+        let Some(digits) = text.strip_suffix('n') else {
+            return false;
+        };
+        Self::numeric_literal_is_nonzero(digits)
     }
 
     fn short_circuit_operand_type_parts(
@@ -135,6 +249,25 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn short_circuit_nullish_excludes_left_type(type_text: &str) -> bool {
         matches!(type_text.trim(), "null" | "undefined" | "void")
+    }
+
+    fn short_circuit_part_is_always_truthy(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        // Mixed-truthiness primitives — can be empty string, zero, false, etc.
+        if matches!(
+            trimmed,
+            "string" | "number" | "boolean" | "bigint" | "any" | "unknown" | "object" | "never"
+        ) {
+            return false;
+        }
+        // Delegates to the canonical falsy-set (null/undefined/void/false/0/-0/0n/""/''
+        // as tracked by `short_circuit_or_excludes_left_type`).
+        if Self::short_circuit_or_excludes_left_type(trimmed) {
+            return false;
+        }
+        Self::is_short_circuit_string_literal_type(trimmed)
+            || Self::is_short_circuit_number_literal_type(trimmed)
+            || trimmed == "true"
     }
 
     fn dedupe_and_sort_short_circuit_type_parts(parts: &mut Vec<ShortCircuitTypePart>) {
@@ -252,11 +385,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
         self.short_circuit_const_literal_reference_type_text(expr_idx)
+            .or_else(|| self.js_literal_type_text(expr_idx))
             .or_else(|| self.preferred_expression_type_text(expr_idx))
             .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             .or_else(|| {
                 let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
                 self.short_circuit_const_literal_reference_type_text(expr_idx)
+                    .or_else(|| self.js_literal_type_text(expr_idx))
                     .or_else(|| self.preferred_expression_type_text(expr_idx))
                     .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             })
