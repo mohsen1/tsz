@@ -1,10 +1,11 @@
+use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn type_arg_reference_form(&self, type_arg: TypeId) -> TypeId {
         let db = self.ctx.types.as_type_database();
-        if crate::query_boundaries::common::lazy_def_id(db, type_arg).is_some() {
+        if query_common::lazy_def_id(db, type_arg).is_some() {
             return type_arg;
         }
 

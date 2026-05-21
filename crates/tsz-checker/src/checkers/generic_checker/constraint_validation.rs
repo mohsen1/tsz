@@ -1587,7 +1587,7 @@ impl<'a> CheckerState<'a> {
                         &subst,
                     )
                 };
-                let mut display_subst = crate::query_boundaries::common::TypeSubstitution::new();
+                let mut display_subst = query_common::TypeSubstitution::new();
                 for (j, p) in type_params.iter().enumerate() {
                     if let Some(&arg) = type_args.get(j) {
                         display_subst.insert(p.name, self.type_arg_reference_form(arg));
@@ -1596,11 +1596,7 @@ impl<'a> CheckerState<'a> {
                 let constraint_for_message = if display_subst.is_empty() {
                     constraint
                 } else {
-                    crate::query_boundaries::common::instantiate_type(
-                        self.ctx.types,
-                        constraint,
-                        &display_subst,
-                    )
+                    query_common::instantiate_type(self.ctx.types, constraint, &display_subst)
                 };
                 let primitive_fails_nominal_lib_object =
                     query::is_primitive_type(self.ctx.types.as_type_database(), type_arg)
