@@ -3999,7 +3999,10 @@ fn add_missing_await_offered_inside_async_arrow_nested_in_non_async_function() {
 }
 
 #[test]
-fn add_missing_await_offered_inside_class_static_block() {
+fn add_missing_await_not_offered_inside_class_static_block() {
+    // `await` is syntactically invalid inside class static initialization
+    // blocks (same restriction as class field initializers), so the fix
+    // must not be offered there even when a nested async function is absent.
     let source = "class C {\n  static {\n    const p: Promise<number> = fetchN();\n    p.toString();\n  }\n}\n";
-    assert_add_await_offered(source, "p.toString");
+    assert_add_await_not_offered(source, "p.toString");
 }

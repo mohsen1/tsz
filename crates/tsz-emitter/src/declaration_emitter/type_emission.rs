@@ -136,16 +136,21 @@ impl<'a> DeclarationEmitter<'a> {
             // Array type
             k if k == syntax_kind_ext::ARRAY_TYPE => {
                 if let Some(arr) = self.arena.get_array_type(type_node) {
+                    let already_has_parens = self
+                        .arena
+                        .get(arr.element_type)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
                     let inner = self.peel_paren(arr.element_type);
-                    let needs_parens = self.arena.get(inner).is_some_and(|n| {
-                        n.kind == syntax_kind_ext::FUNCTION_TYPE
-                            || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-                            || n.kind == syntax_kind_ext::UNION_TYPE
-                            || n.kind == syntax_kind_ext::INTERSECTION_TYPE
-                            || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                            || n.kind == syntax_kind_ext::TYPE_OPERATOR
-                            || n.kind == syntax_kind_ext::INFER_TYPE
-                    });
+                    let needs_parens = !already_has_parens
+                        && self.arena.get(inner).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::FUNCTION_TYPE
+                                || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                                || n.kind == syntax_kind_ext::UNION_TYPE
+                                || n.kind == syntax_kind_ext::INTERSECTION_TYPE
+                                || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                                || n.kind == syntax_kind_ext::TYPE_OPERATOR
+                                || n.kind == syntax_kind_ext::INFER_TYPE
+                        });
                     if needs_parens {
                         self.write("(");
                     }
@@ -176,12 +181,17 @@ impl<'a> DeclarationEmitter<'a> {
                             self.emit_named_tuple_type_multiline(type_idx);
                             continue;
                         }
+                        let already_has_parens = self
+                            .arena
+                            .get(type_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
                         let inner = self.peel_paren(type_idx);
-                        let needs_parens = self.arena.get(inner).is_some_and(|n| {
-                            n.kind == syntax_kind_ext::FUNCTION_TYPE
-                                || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-                                || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                        });
+                        let needs_parens = !already_has_parens
+                            && self.arena.get(inner).is_some_and(|n| {
+                                n.kind == syntax_kind_ext::FUNCTION_TYPE
+                                    || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                                    || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                            });
                         if needs_parens {
                             self.write("(");
                         }
@@ -241,13 +251,18 @@ impl<'a> DeclarationEmitter<'a> {
                         // to preserve operator precedence:
                         // `(A | B) & C` is different from `A | B & C`.
                         // `(A extends B ? C : D) & E` is different from `A extends B ? C : D & E`.
+                        let already_has_parens = self
+                            .arena
+                            .get(type_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
                         let inner = self.peel_paren(type_idx);
-                        let needs_parens = self.arena.get(inner).is_some_and(|n| {
-                            n.kind == syntax_kind_ext::FUNCTION_TYPE
-                                || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-                                || n.kind == syntax_kind_ext::UNION_TYPE
-                                || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                        });
+                        let needs_parens = !already_has_parens
+                            && self.arena.get(inner).is_some_and(|n| {
+                                n.kind == syntax_kind_ext::FUNCTION_TYPE
+                                    || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                                    || n.kind == syntax_kind_ext::UNION_TYPE
+                                    || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                            });
                         if needs_parens {
                             self.write("(");
                         }
@@ -415,14 +430,16 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
-            // Parenthesized type — transparent in DTS; strip the grouping
-            // parens and emit the inner type directly.  Parent contexts
-            // (array, tuple, union, intersection, conditional, optional,
-            // indexed access) add their own parens when structurally required,
-            // using `peel_paren` to look through any wrapper before deciding.
+            // Parenthesized type — tsc preserves source parens verbatim in
+            // the generated .d.ts.  Contexts that call `peel_paren` before
+            // computing `needs_parens` must guard with `!already_has_parens`
+            // so they don't emit a second pair of parens around a node that
+            // already carries its own.
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
                 if let Some(paren) = self.arena.get_wrapped_type(type_node) {
+                    self.write("(");
                     self.emit_type(paren.type_node);
+                    self.write(")");
                 }
             }
 
@@ -642,14 +659,19 @@ impl<'a> DeclarationEmitter<'a> {
                     // greedily consumes the `extends` keyword:
                     // `new () => T extends U ? X : Y` parses as
                     // `new () => (T extends U ? X : Y)` without parens.
+                    let check_already_has_parens = self
+                        .arena
+                        .get(conditional.check_type)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
                     let check_inner = self.peel_paren(conditional.check_type);
-                    let check_needs_parens = self.arena.get(check_inner).is_some_and(|node| {
-                        node.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                            || node.kind == syntax_kind_ext::FUNCTION_TYPE
-                            || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-                            || node.kind == syntax_kind_ext::UNION_TYPE
-                            || node.kind == syntax_kind_ext::INTERSECTION_TYPE
-                    });
+                    let check_needs_parens = !check_already_has_parens
+                        && self.arena.get(check_inner).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                                || node.kind == syntax_kind_ext::FUNCTION_TYPE
+                                || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                                || node.kind == syntax_kind_ext::UNION_TYPE
+                                || node.kind == syntax_kind_ext::INTERSECTION_TYPE
+                        });
 
                     if check_needs_parens {
                         self.write("(");
@@ -664,11 +686,16 @@ impl<'a> DeclarationEmitter<'a> {
                     // tsc parenthesizes a conditional type in the extends position,
                     // but does not wrap function/constructor types just because their
                     // return type is conditional.
-                    let extends_inner = self.peel_paren(conditional.extends_type);
-                    let extends_needs_parens = self
+                    let extends_already_has_parens = self
                         .arena
-                        .get(extends_inner)
-                        .is_some_and(|node| node.kind == syntax_kind_ext::CONDITIONAL_TYPE);
+                        .get(conditional.extends_type)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
+                    let extends_inner = self.peel_paren(conditional.extends_type);
+                    let extends_needs_parens = !extends_already_has_parens
+                        && self
+                            .arena
+                            .get(extends_inner)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::CONDITIONAL_TYPE);
 
                     if extends_needs_parens {
                         self.write("(");
@@ -706,14 +733,19 @@ impl<'a> DeclarationEmitter<'a> {
                         return;
                     }
                     // Parenthesize complex types before `?` to avoid ambiguity
+                    let already_has_parens = self
+                        .arena
+                        .get(wrapped.type_node)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
                     let opt_inner = self.peel_paren(wrapped.type_node);
-                    let needs_parens = self.arena.get(opt_inner).is_some_and(|inner| {
-                        inner.kind == syntax_kind_ext::UNION_TYPE
-                            || inner.kind == syntax_kind_ext::INTERSECTION_TYPE
-                            || inner.kind == syntax_kind_ext::FUNCTION_TYPE
-                            || inner.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-                            || inner.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                    });
+                    let needs_parens = !already_has_parens
+                        && self.arena.get(opt_inner).is_some_and(|inner| {
+                            inner.kind == syntax_kind_ext::UNION_TYPE
+                                || inner.kind == syntax_kind_ext::INTERSECTION_TYPE
+                                || inner.kind == syntax_kind_ext::FUNCTION_TYPE
+                                || inner.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                                || inner.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                        });
                     if needs_parens {
                         self.write("(");
                     }
@@ -949,9 +981,17 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(", ");
             }
             if self.first_type_argument_needs_parentheses(arg_idx, index == 0) {
-                self.write("(");
+                let already_has_parens = self
+                    .arena
+                    .get(arg_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
+                if !already_has_parens {
+                    self.write("(");
+                }
                 self.emit_type(arg_idx);
-                self.write(")");
+                if !already_has_parens {
+                    self.write(")");
+                }
                 continue;
             }
             if self.type_argument_tuple_should_preserve_multiline(arg_idx) {

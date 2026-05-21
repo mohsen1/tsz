@@ -44,6 +44,29 @@ pub(crate) fn property_type_for_contextual_type(
         .get_property_type(property_name)
 }
 
+/// Return true when a resolved receiver type has a named property whose type
+/// explicitly returns `never`.
+///
+/// The checker owns recognizing the property-access callee and deciding when
+/// the type fallback is allowed. This boundary owns the reusable semantic
+/// lookup: resolve the property through the solver and inspect the resulting
+/// callable return type.
+pub(crate) fn property_access_function_returns_never(
+    db: &dyn QueryDatabase,
+    object_type: TypeId,
+    property_name: &str,
+) -> bool {
+    if matches!(object_type, TypeId::ANY | TypeId::ERROR) {
+        return false;
+    }
+
+    matches!(
+        super::property_access::resolve_property_access(db, object_type, property_name),
+        super::common::PropertyAccessResult::Success { type_id, .. }
+            if function_return_type(db.as_type_database(), type_id) == Some(TypeId::NEVER)
+    )
+}
+
 pub(crate) fn enum_member_domain(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::visitor::enum_components(db, type_id)
         .map(|(_def_id, members)| members)
@@ -521,7 +544,39 @@ fn types_are_subtype_with_env(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tsz_common::Visibility;
     use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{FunctionShape, PropertyInfo};
+
+    fn function_returning(db: &TypeInterner, return_type: TypeId) -> TypeId {
+        db.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            this_type: None,
+            return_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    }
+
+    fn property(db: &TypeInterner, name: &str, type_id: TypeId) -> PropertyInfo {
+        PropertyInfo {
+            name: db.intern_string(name),
+            type_id,
+            write_type: type_id,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+            is_symbol_named: false,
+            single_quoted_name: false,
+        }
+    }
 
     #[test]
     fn assignment_reduction_preserves_top_like_initial_types() {
@@ -603,6 +658,50 @@ mod tests {
         assert_eq!(members.len(), 2);
         assert!(members.contains(&db.literal_string("string")));
         assert!(members.contains(&db.literal_string("number")));
+    }
+
+    #[test]
+    fn property_access_function_returns_never_recognizes_never_returning_property() {
+        let db = TypeInterner::new();
+        let never_fn = function_returning(&db, TypeId::NEVER);
+        let void_fn = function_returning(&db, TypeId::VOID);
+        let object = db.object(vec![
+            property(&db, "bail", never_fn),
+            property(&db, "continue", void_fn),
+        ]);
+
+        assert!(property_access_function_returns_never(&db, object, "bail"));
+        assert!(!property_access_function_returns_never(
+            &db, object, "continue"
+        ));
+        assert!(!property_access_function_returns_never(
+            &db, object, "missing"
+        ));
+    }
+
+    #[test]
+    fn property_access_function_returns_never_is_structural_not_name_based() {
+        let db = TypeInterner::new();
+        let never_fn = function_returning(&db, TypeId::NEVER);
+        let first_object = db.object(vec![property(&db, "abort", never_fn)]);
+        let second_object = db.object(vec![property(&db, "halt", never_fn)]);
+        let value_object = db.object(vec![property(&db, "abort", TypeId::NUMBER)]);
+
+        assert!(property_access_function_returns_never(
+            &db,
+            first_object,
+            "abort"
+        ));
+        assert!(property_access_function_returns_never(
+            &db,
+            second_object,
+            "halt"
+        ));
+        assert!(!property_access_function_returns_never(
+            &db,
+            value_object,
+            "abort"
+        ));
     }
 
     #[test]
