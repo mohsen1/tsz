@@ -569,9 +569,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 {
                     return parent_enum_type;
                 }
+                // Returning `evaluated` for the bare `typeof X[K]` shape
+                // (but not for `(typeof X)[K]`) gives an alias body a
+                // concrete display in diagnostics. The shortcut is only
+                // sound when the typeof receiver already resolved to a
+                // concrete type — if `get_type_from_type_query` returned a
+                // deferred `TypeQuery` (because the value's type was not
+                // yet in `TypeEnvironment` at alias-body check time), the
+                // eager evaluation collapses `IndexAccess(typeof x, K)` to
+                // `undefined` and the alias inherits that bogus
+                // resolution. Falling through to `indexed_type` keeps the
+                // two source shapes structurally identical at use sites,
+                // where the environment is complete (see #9787).
                 if evaluated != TypeId::ERROR
                     && evaluated != indexed_type
                     && object_is_type_query_node
+                    && !crate::query_boundaries::common::is_type_query_type(
+                        self.ctx.types,
+                        object_type,
+                    )
                 {
                     return evaluated;
                 }
