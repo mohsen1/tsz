@@ -50,6 +50,8 @@ pub enum AbstractClassCheckKind {
     Union(Vec<TypeId>),
     /// Intersection - check if any member is abstract
     Intersection(Vec<TypeId>),
+    /// Type parameter — checker should recurse through the constraint (if any)
+    TypeParam(Option<TypeId>),
     /// Other type - not an abstract class
     NotAbstract,
 }
@@ -75,6 +77,9 @@ pub fn classify_for_abstract_check(
         TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             AbstractClassCheckKind::Intersection(members.to_vec())
+        }
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
+            AbstractClassCheckKind::TypeParam(info.constraint)
         }
         _ => AbstractClassCheckKind::NotAbstract,
     }
