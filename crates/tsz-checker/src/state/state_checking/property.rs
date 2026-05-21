@@ -986,7 +986,7 @@ impl<'a> CheckerState<'a> {
             // `` `data-${string}` `` only accept matching property names. We still
             // check nested object literals against the applicable index signature
             // VALUE type for excess properties.
-            if let Some(ref idx_sig) = target_shape
+            if let Some(idx_sig) = target_shape
                 .string_index
                 .as_ref()
                 .or(target_shape.symbol_index.as_ref())
