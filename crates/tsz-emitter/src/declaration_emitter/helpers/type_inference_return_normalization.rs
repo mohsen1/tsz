@@ -178,6 +178,10 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> (String, bool) {
         let (text, substituted_parameter_type_query) =
             self.substitute_function_parameter_type_queries(func, source_type_text);
+        let text = self
+            .rewrite_current_source_named_import_type_text_with_import(&text)
+            .map(|(rewritten, _, _, _)| rewritten)
+            .unwrap_or(text);
         let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
         let text = self.rewrite_returned_call_conditional_unknown_subject(func, &text);
         let text = self
@@ -211,6 +215,10 @@ impl<'a> DeclarationEmitter<'a> {
             let return_type_id = self.widen_unique_symbol_value_type_for_dts(return_type_id, 0);
             self.print_type_id_for_inferred_declaration(return_type_id)
         };
+        let text = self
+            .rewrite_current_source_named_import_type_text_with_import(&text)
+            .map(|(rewritten, _, _, _)| rewritten)
+            .unwrap_or(text);
         let text = self.restore_mapped_return_type_param_constraints(func, &text);
         let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
         let text = self.rewrite_returned_call_conditional_unknown_subject(func, &text);

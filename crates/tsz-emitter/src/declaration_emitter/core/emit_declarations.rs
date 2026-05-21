@@ -107,6 +107,7 @@ impl<'a> DeclarationEmitter<'a> {
             return String::new();
         };
 
+        self.current_source_file_idx = Some(root_idx);
         self.source_file_text = Some(source_file.text.clone());
         if !self.source_file_is_js(source_file) {
             self.retain_synthetic_class_extends_alias_dependencies_in_statements(
@@ -116,6 +117,9 @@ impl<'a> DeclarationEmitter<'a> {
                 &source_file.statements,
             );
             self.retain_synthetic_function_return_dependencies_in_statements(
+                &source_file.statements,
+            );
+            self.retain_named_import_function_return_dependencies_in_statements(
                 &source_file.statements,
             );
             self.retain_synthetic_variable_declaration_dependencies_in_statements(
@@ -136,7 +140,6 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.source_is_declaration_file = source_file.is_declaration_file;
         self.source_is_js_file = self.source_file_is_js(source_file);
-        self.current_source_file_idx = Some(root_idx);
         // Prefer the pre-computed flag from ExportSurface when available;
         // fall back to the existing AST walk for JS files (which need
         // CommonJS-specific detection the surface doesn't cover yet).

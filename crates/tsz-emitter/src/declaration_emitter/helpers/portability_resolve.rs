@@ -1022,6 +1022,104 @@ impl<'a> DeclarationEmitter<'a> {
         Some((rewritten, module, imported, alias))
     }
 
+    pub(in crate::declaration_emitter) fn rewrite_current_source_named_import_type_text_with_import(
+        &self,
+        type_text: &str,
+    ) -> Option<(String, String, String, Option<String>)> {
+        let (start, module, tail) = Self::next_import_type_text(type_text)?;
+        if start != 0 {
+            return None;
+        }
+        let tail = tail.strip_prefix('.')?;
+        let imported_name = Self::leading_import_type_member_name(tail)?;
+        let (_, imported, alias) =
+            self.current_source_named_import_for_member(&module, imported_name)?;
+        let local_name = alias.as_deref().unwrap_or(imported.as_str());
+
+        let import_type_end = type_text.len() - (tail.len() + 1);
+        let member_start = import_type_end + 1;
+        let member_end = member_start + imported_name.len();
+        let mut rewritten = String::with_capacity(type_text.len());
+        rewritten.push_str(&type_text[..start]);
+        rewritten.push_str(local_name);
+        rewritten.push_str(&type_text[member_end..]);
+        Some((rewritten, module, imported, alias))
+    }
+
+    pub(in crate::declaration_emitter) fn current_source_named_import_for_type_text(
+        &self,
+        type_text: &str,
+    ) -> Option<(String, String, Option<String>)> {
+        let (start, module, tail) = Self::next_import_type_text(type_text)?;
+        if start != 0 {
+            return None;
+        }
+        let type_name = Self::leading_import_type_member_name(tail.strip_prefix('.')?)?;
+        self.current_source_named_import_for_member(&module, type_name)
+    }
+
+    fn current_source_named_import_for_member(
+        &self,
+        module: &str,
+        imported_name: &str,
+    ) -> Option<(String, String, Option<String>)> {
+        let root_idx = self.current_source_file_idx?;
+        let root_node = self.arena.get(root_idx)?;
+        let source_file = self.arena.get_source_file(root_node)?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_node) = self.arena.get(import.module_specifier) else {
+                continue;
+            };
+            let Some(module_lit) = self.arena.get_literal(module_node) else {
+                continue;
+            };
+            if module_lit.text != module {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && let Some(bindings) = self.arena.get_named_imports(bindings_node)
+            {
+                for &spec_idx in &bindings.elements.nodes {
+                    let Some(spec_node) = self.arena.get(spec_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = self.arena.get_specifier(spec_node) else {
+                        continue;
+                    };
+                    let imported_idx = if specifier.property_name.is_some() {
+                        specifier.property_name
+                    } else {
+                        specifier.name
+                    };
+                    let Some(imported) = self.get_identifier_text(imported_idx) else {
+                        continue;
+                    };
+                    if imported != imported_name {
+                        continue;
+                    }
+                    let local = self.get_identifier_text(specifier.name);
+                    let alias = local.filter(|local| local != &imported);
+                    return Some((module_lit.text.clone(), imported, alias));
+                }
+            }
+        }
+
+        None
+    }
+
     fn append_default_type_arguments_to_public_import_rewrite(
         &self,
         original_type_text: &str,

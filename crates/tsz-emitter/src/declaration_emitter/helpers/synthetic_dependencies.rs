@@ -74,6 +74,15 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn retain_named_import_function_return_dependencies_in_statements(
+        &mut self,
+        statements: &NodeList,
+    ) {
+        for &stmt_idx in &statements.nodes {
+            self.retain_named_import_function_return_dependencies_for_statement(stmt_idx);
+        }
+    }
+
     /// Walk exported `var`/`let`/`const` declarations whose type comes from
     /// initializer inference (no annotation) and pull every local type alias
     /// that the inferred type names into `used_symbols`. Without this, an
@@ -282,6 +291,61 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn retain_named_import_function_return_dependencies_for_statement(
+        &mut self,
+        stmt_idx: NodeIndex,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if self.statement_has_effective_export(stmt_idx)
+                    && let Some(func) = self.arena.get_function(stmt_node)
+                {
+                    self.retain_named_import_function_return_dependency(func);
+                }
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export) = self.arena.get_export_decl(stmt_node)
+                    && let Some(clause_node) = self.arena.get(export.export_clause)
+                    && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    && let Some(func) = self.arena.get_function(clause_node)
+                {
+                    self.retain_named_import_function_return_dependency(func);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn retain_named_import_function_return_dependency(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) {
+        if func.type_annotation.is_some() || !func.body.is_some() {
+            return;
+        }
+
+        let (Some(type_text), _) = self.function_body_return_hint(func, func.body) else {
+            return;
+        };
+        let Some((module, imported, alias)) =
+            self.current_source_named_import_for_type_text(&type_text)
+        else {
+            return;
+        };
+
+        self.required_imports
+            .entry(module.clone())
+            .or_default()
+            .push(imported.clone());
+        if let Some(alias) = alias {
+            self.import_string_aliases.insert((module, imported), alias);
         }
     }
 

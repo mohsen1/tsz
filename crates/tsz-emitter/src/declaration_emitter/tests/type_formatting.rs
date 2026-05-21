@@ -73,6 +73,81 @@ fn public_named_import_rewrite_uses_local_alias() {
 }
 
 #[test]
+fn current_source_named_import_rewrites_same_module_import_type() {
+    let (parser, root) =
+        parse_test_source(r#"import { CustomHtmlRepresentationThing } from "./foo.html";"#);
+    let interner = TypeInterner::new();
+    let binder = BinderState::new();
+    let mut emitter = DeclarationEmitter::with_type_info(
+        &parser.arena,
+        TypeCacheView::default(),
+        &interner,
+        &binder,
+    );
+    emitter.current_source_file_idx = Some(root);
+
+    let (rewritten, module, imported, alias) = emitter
+        .rewrite_current_source_named_import_type_text_with_import(
+            r#"import("./foo.html").CustomHtmlRepresentationThing"#,
+        )
+        .expect("expected current-source named import rewrite");
+
+    assert_eq!(rewritten, "CustomHtmlRepresentationThing");
+    assert_eq!(module, "./foo.html");
+    assert_eq!(imported, "CustomHtmlRepresentationThing");
+    assert_eq!(alias, None);
+}
+
+#[test]
+fn current_source_named_import_rewrite_uses_alias() {
+    let (parser, root) = parse_test_source(
+        r#"import { CustomHtmlRepresentationThing as Thing } from "./foo.html";"#,
+    );
+    let interner = TypeInterner::new();
+    let binder = BinderState::new();
+    let mut emitter = DeclarationEmitter::with_type_info(
+        &parser.arena,
+        TypeCacheView::default(),
+        &interner,
+        &binder,
+    );
+    emitter.current_source_file_idx = Some(root);
+
+    let (rewritten, module, imported, alias) = emitter
+        .rewrite_current_source_named_import_type_text_with_import(
+            r#"import("./foo.html").CustomHtmlRepresentationThing"#,
+        )
+        .expect("expected current-source named import alias rewrite");
+
+    assert_eq!(rewritten, "Thing");
+    assert_eq!(module, "./foo.html");
+    assert_eq!(imported, "CustomHtmlRepresentationThing");
+    assert_eq!(alias.as_deref(), Some("Thing"));
+}
+
+#[test]
+fn current_source_named_import_rewrite_requires_matching_import() {
+    let (parser, root) = parse_test_source(r#"import { Other } from "./foo.html";"#);
+    let interner = TypeInterner::new();
+    let binder = BinderState::new();
+    let mut emitter = DeclarationEmitter::with_type_info(
+        &parser.arena,
+        TypeCacheView::default(),
+        &interner,
+        &binder,
+    );
+    emitter.current_source_file_idx = Some(root);
+
+    assert!(
+        emitter
+            .rewrite_current_source_named_import_type_text_with_import(
+                r#"import("./foo.html").CustomHtmlRepresentationThing"#,
+            )
+            .is_none()
+    );
+}
+
+#[test]
 fn public_named_import_rewrite_preserves_foreign_default_type_arguments() {
     let mut dependency_parser = tsz_parser::ParserState::new(
         "/node_modules/.private/client/index.d.ts".to_string(),
