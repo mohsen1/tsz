@@ -912,6 +912,290 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn rewrite_leading_import_type_with_public_named_import(
+        source_text: &str,
+        type_text: &str,
+    ) -> Option<(String, String, String, Option<String>)> {
+        let (start, private_module, tail) = Self::next_import_type_text(type_text)?;
+        if start != 0 {
+            return None;
+        }
+        let tail = tail.strip_prefix('.')?;
+        let imported_name = Self::leading_import_type_member_name(tail)?;
+        let (public_module, public_imported_name, local_alias) =
+            Self::public_named_import_for_exported_name(source_text, imported_name)?;
+        if public_module == private_module {
+            return None;
+        }
+
+        let local_name = local_alias
+            .as_deref()
+            .unwrap_or(public_imported_name.as_str());
+        let import_type_end = type_text.len() - (tail.len() + 1);
+        let member_start = import_type_end + 1;
+        let member_end = member_start + imported_name.len();
+        let mut rewritten = String::with_capacity(type_text.len());
+        rewritten.push_str(&type_text[..start]);
+        rewritten.push_str(local_name);
+        rewritten.push_str(&type_text[member_end..]);
+        Some((rewritten, public_module, public_imported_name, local_alias))
+    }
+
+    pub(in crate::declaration_emitter) fn leading_import_type_member_name(
+        tail: &str,
+    ) -> Option<&str> {
+        tail.split([
+            '.', '<', '[', ']', ' ', '&', '|', '>', ',', ')', ';', ':', '?', '{', '}', '\n', '\r',
+        ])
+        .find(|part| !part.is_empty())
+    }
+
+    fn public_named_import_for_exported_name(
+        source_text: &str,
+        exported_name: &str,
+    ) -> Option<(String, String, Option<String>)> {
+        for line in source_text.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix("import ") else {
+                continue;
+            };
+            let Some(named_start) = rest.find('{') else {
+                continue;
+            };
+            let Some(named_end) = rest[named_start + 1..].find('}') else {
+                continue;
+            };
+            let named = &rest[named_start + 1..named_start + 1 + named_end];
+            let after_named = &rest[named_start + 1 + named_end + 1..];
+            let Some((_, module_part)) = after_named.split_once(" from ") else {
+                continue;
+            };
+            let Some(module) = Self::quoted_string_text(module_part.trim().trim_end_matches(';'))
+            else {
+                continue;
+            };
+            if module.starts_with('.') || module.starts_with('/') {
+                continue;
+            }
+            for specifier in named.split(',') {
+                let specifier = specifier.trim();
+                let (imported, alias) = specifier
+                    .split_once(" as ")
+                    .map_or((specifier, None), |(imported, alias)| {
+                        (imported.trim(), Some(alias.trim()))
+                    });
+                if imported == exported_name {
+                    return Some((module, imported.to_string(), alias.map(str::to_string)));
+                }
+            }
+        }
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn rewrite_current_source_public_import_type_text(
+        &self,
+        type_text: &str,
+    ) -> Option<String> {
+        self.rewrite_current_source_public_import_type_text_with_import(type_text)
+            .map(|(rewritten, _, _, _)| rewritten)
+    }
+
+    pub(in crate::declaration_emitter) fn rewrite_current_source_public_import_type_text_with_import(
+        &self,
+        type_text: &str,
+    ) -> Option<(String, String, String, Option<String>)> {
+        let source = self.source_file_text.as_deref()?;
+        let (rewritten, module, imported, alias) =
+            Self::rewrite_leading_import_type_with_public_named_import(source, type_text)?;
+        let local_name = alias.as_deref().unwrap_or(imported.as_str());
+        let rewritten = self.append_default_type_arguments_to_public_import_rewrite(
+            type_text, rewritten, local_name,
+        );
+        Some((rewritten, module, imported, alias))
+    }
+
+    fn append_default_type_arguments_to_public_import_rewrite(
+        &self,
+        original_type_text: &str,
+        rewritten: String,
+        local_name: &str,
+    ) -> String {
+        let Some(rest) = rewritten.strip_prefix(local_name) else {
+            return rewritten;
+        };
+        if rest.starts_with('<') {
+            return rewritten;
+        }
+        let Some(defaults) = self.default_type_arguments_for_import_type_text(original_type_text)
+        else {
+            return rewritten;
+        };
+        if defaults.is_empty() {
+            return rewritten;
+        }
+        format!("{local_name}<{}>{rest}", defaults.join(", "))
+    }
+
+    fn default_type_arguments_for_import_type_text(&self, type_text: &str) -> Option<Vec<String>> {
+        let binder = self.binder?;
+        let (_, module_specifier, tail) = Self::next_import_type_text(type_text)?;
+        let type_name = Self::leading_import_type_member_name(tail.strip_prefix('.')?)?;
+
+        let mut candidates = Vec::new();
+        if let Some(sym_id) = self.find_symbol_for_import_type_text(type_text) {
+            candidates.push(sym_id);
+            candidates.push(self.resolve_portability_symbol(sym_id, binder));
+        }
+        candidates.extend(
+            binder
+                .symbols
+                .iter()
+                .filter(|symbol| symbol.escaped_name == type_name)
+                .flat_map(|symbol| {
+                    [
+                        symbol.id,
+                        self.resolve_portability_symbol(symbol.id, binder),
+                    ]
+                }),
+        );
+
+        let mut seen = FxHashSet::default();
+        candidates.into_iter().find_map(|sym_id| {
+            if !seen.insert(sym_id) {
+                return None;
+            }
+            self.default_type_arguments_for_symbol(sym_id, &module_specifier)
+        })
+    }
+
+    fn default_type_arguments_for_symbol(
+        &self,
+        sym_id: SymbolId,
+        module_specifier: &str,
+    ) -> Option<Vec<String>> {
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for &decl_idx in &symbol.declarations {
+            let source_arena = binder
+                .get_arena_for_declaration(sym_id, decl_idx)
+                .map(Arc::as_ref)
+                .or_else(|| binder.symbol_arenas.get(&sym_id).map(Arc::as_ref))
+                .or_else(|| self.global_symbol_arenas.get(&sym_id).map(Arc::as_ref))
+                .unwrap_or(self.arena);
+            let Some(class_node) = source_arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(class_data) = source_arena.get_class(class_node) else {
+                continue;
+            };
+            let Some(type_parameters) = class_data.type_parameters.as_ref() else {
+                continue;
+            };
+            let type_param_names = type_parameters
+                .nodes
+                .iter()
+                .filter_map(|&param_idx| {
+                    source_arena
+                        .get(param_idx)
+                        .and_then(|param_node| source_arena.get_type_parameter(param_node))
+                        .and_then(|param| self.source_slice_from_arena(source_arena, param.name))
+                })
+                .collect::<FxHashSet<_>>();
+            let defaults = type_parameters
+                .nodes
+                .iter()
+                .map(|&param_idx| {
+                    source_arena
+                        .get(param_idx)
+                        .and_then(|param_node| source_arena.get_type_parameter(param_node))
+                        .and_then(|param| self.source_slice_from_arena(source_arena, param.default))
+                        .map(|default| {
+                            self.qualify_foreign_default_type_argument(
+                                default,
+                                module_specifier,
+                                source_arena,
+                                &type_param_names,
+                            )
+                        })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            return Some(defaults);
+        }
+        None
+    }
+
+    fn qualify_foreign_default_type_argument(
+        &self,
+        default_text: String,
+        module_specifier: &str,
+        source_arena: &NodeArena,
+        type_param_names: &FxHashSet<String>,
+    ) -> String {
+        let trimmed = default_text.trim();
+        if trimmed != default_text
+            || !Self::is_plain_identifier_text(trimmed)
+            || type_param_names.contains(trimmed)
+            || std::ptr::eq(source_arena, self.arena)
+        {
+            return default_text;
+        }
+        let Some(binder) = self.binder else {
+            return default_text;
+        };
+        let Some(current_path) = self.current_file_path.as_deref() else {
+            return default_text;
+        };
+
+        for module_path in self.matching_module_export_paths(binder, current_path, module_specifier)
+        {
+            if binder
+                .module_exports
+                .get(module_path)
+                .is_some_and(|exports| exports.has(trimmed))
+            {
+                return format!("import(\"{module_specifier}\").{trimmed}");
+            }
+        }
+
+        if binder.symbols.iter().any(|symbol| {
+            symbol.escaped_name == trimmed
+                && symbol.is_exported
+                && self.symbol_has_declaration_in_arena(symbol.id, source_arena)
+        }) {
+            return format!("import(\"{module_specifier}\").{trimmed}");
+        }
+
+        default_text
+    }
+
+    fn symbol_has_declaration_in_arena(&self, sym_id: SymbolId, source_arena: &NodeArena) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().any(|&decl_idx| {
+            binder
+                .get_arena_for_declaration(sym_id, decl_idx)
+                .map(Arc::as_ref)
+                .or_else(|| binder.symbol_arenas.get(&sym_id).map(Arc::as_ref))
+                .or_else(|| self.global_symbol_arenas.get(&sym_id).map(Arc::as_ref))
+                .is_some_and(|arena| std::ptr::eq(arena, source_arena))
+        })
+    }
+
+    fn is_plain_identifier_text(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first == '$' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+    }
+
     pub(in crate::declaration_emitter) fn quoted_string_text(text: &str) -> Option<String> {
         let trimmed = text.trim();
         let quote = trimmed.chars().next()?;
