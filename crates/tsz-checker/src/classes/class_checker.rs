@@ -82,6 +82,12 @@ pub(crate) struct ClassMemberInfo {
     pub(crate) is_method: bool,
     pub(crate) is_static: bool,
     pub(crate) is_accessor: bool,
+    /// True when this entry comes from a `SET_ACCESSOR` declaration (always
+    /// implies `is_accessor`). Used to recognize the setter half of an accessor
+    /// pair: tsc treats an accessor pair as one property whose type is the
+    /// getter return type, so override-compat (TS2416/TS2417) must run once
+    /// per pair instead of independently on the setter parameter type.
+    pub(crate) is_setter: bool,
     pub(crate) is_abstract: bool,
     pub(crate) has_override: bool,
     /// True when `override` comes from a JSDoc `@override` tag (not the keyword).
@@ -375,6 +381,8 @@ impl<'a> CheckerState<'a> {
         let (_derived_type_params, derived_type_param_updates) =
             self.push_type_parameters(&class_data.type_parameters);
 
+        let derived_accessor_pair_types = self.class_accessor_pair_getter_types(class_data);
+
         let own = build_own_member_summary(self, class_data);
         let all_members: Vec<_> = own
             .all_instance_members
@@ -495,6 +503,16 @@ impl<'a> CheckerState<'a> {
                     ),
                     diagnostic_codes::IS_DEFINED_AS_A_PROPERTY_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_ACCESSOR,
                 );
+                continue;
+            }
+
+            // Accessor pair canonicalization: skip the SET_ACCESSOR when a
+            // sibling GET_ACCESSOR exists. The getter's iteration already ran
+            // the compat check against the accessor pair's canonical property
+            // type (the getter return type).
+            if info.is_setter
+                && derived_accessor_pair_types.contains_key(&(info.name.clone(), info.is_static))
+            {
                 continue;
             }
 
@@ -1084,6 +1102,7 @@ impl<'a> CheckerState<'a> {
                     is_method: false,
                     is_static,
                     is_accessor,
+                    is_setter: false,
                     is_abstract,
                     has_override: self.has_override_modifier(&prop.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
@@ -1119,6 +1138,7 @@ impl<'a> CheckerState<'a> {
                                     is_method: true,
                                     is_static: self.has_static_modifier(&method.modifiers),
                                     is_accessor: false,
+                                    is_setter: false,
                                     is_abstract: self.has_abstract_modifier(&method.modifiers),
                                     has_override: true,
                                     is_jsdoc_override: !self
@@ -1165,6 +1185,7 @@ impl<'a> CheckerState<'a> {
                     is_method: true,
                     is_static,
                     is_accessor: false,
+                    is_setter: false,
                     is_abstract,
                     has_override: self.has_override_modifier(&method.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
@@ -1209,6 +1230,7 @@ impl<'a> CheckerState<'a> {
                     is_method: false,
                     is_static,
                     is_accessor: true,
+                    is_setter: false,
                     is_abstract,
                     has_override: self.has_override_modifier(&accessor.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
@@ -1260,6 +1282,7 @@ impl<'a> CheckerState<'a> {
                     is_method: false,
                     is_static,
                     is_accessor: true,
+                    is_setter: true,
                     is_abstract,
                     has_override: self.has_override_modifier(&accessor.modifiers)
                         || self.has_jsdoc_override_tag(member_idx),
@@ -1727,6 +1750,16 @@ impl<'a> CheckerState<'a> {
         let mut overload_compat_checked: rustc_hash::FxHashSet<(String, bool)> =
             rustc_hash::FxHashSet::default();
 
+        // When the derived class declares BOTH a getter and a setter for the
+        // same name+static-ness, tsc treats them as one accessor pair whose
+        // property type is the getter return type (see TS2416 override-compat).
+        // The getter's per-node iteration runs the compat check against the
+        // pair's canonical type; the setter must NOT independently relate its
+        // parameter type against the base or it produces a false TS2416 when
+        // the setter parameter type differs from the getter return type even
+        // though the accessor property type matches.
+        let derived_accessor_pair_types = self.class_accessor_pair_getter_types(class_data);
+
         // Check each member in the derived class
         for &member_idx in &class_data.members.nodes {
             let Some(info) = self.extract_class_member_info(member_idx, false) else {
@@ -1740,6 +1773,7 @@ impl<'a> CheckerState<'a> {
                 is_method,
                 is_static,
                 is_accessor,
+                is_setter,
                 has_override,
                 is_jsdoc_override,
                 has_dynamic_name,
@@ -1753,6 +1787,7 @@ impl<'a> CheckerState<'a> {
                 info.is_method,
                 info.is_static,
                 info.is_accessor,
+                info.is_setter,
                 info.has_override,
                 info.is_jsdoc_override,
                 info.has_dynamic_name,
@@ -2120,6 +2155,16 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::CLASS_DEFINES_INSTANCE_MEMBER_ACCESSOR_BUT_EXTENDED_CLASS_DEFINES_IT_AS_INSTANCE,
                     );
                 }
+            }
+
+            // Accessor pair canonicalization: the GET_ACCESSOR's iteration
+            // already runs the override-compat check against the pair's
+            // canonical property type (the getter return type). Skip the
+            // SET_ACCESSOR to avoid duplicate or false TS2416 diagnostics.
+            if is_setter
+                && derived_accessor_pair_types.contains_key(&(member_name.clone(), is_static))
+            {
+                continue;
             }
 
             // Skip type compatibility check if either type is ANY
