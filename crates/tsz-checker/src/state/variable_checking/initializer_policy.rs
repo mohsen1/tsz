@@ -573,14 +573,14 @@ impl<'a> CheckerState<'a> {
                                 declared_type,
                                 facts.initializer,
                             );
-                            if !elaborated_elements
-                                && !function_initializer_body_has_error
-                                && !(initializer_is_function
+                            if !(elaborated_elements
+                                || function_initializer_body_has_error
+                                || (initializer_is_function
                                     && jsdoc_declared_type.is_some()
                                     && self.async_function_jsdoc_return_type_suppression(
                                         checked_init_type,
                                         declared_type,
-                                    ))
+                                    )))
                                 && !(initializer_is_function
                                     && !self.is_assignable_to(checked_init_type, declared_type)
                                     && self.try_elaborate_assignment_source_error(
@@ -845,7 +845,7 @@ impl<'a> CheckerState<'a> {
                 widened,
                 self.ctx.strict_null_checks(),
             );
-            return (final_type, jsdoc_declared_type);
+            (final_type, jsdoc_declared_type)
         } else {
             // For for-in/for-of loop variables, the element type has already been cached
             // by assign_for_in_of_initializer_types. Use that instead of defaulting to any.
