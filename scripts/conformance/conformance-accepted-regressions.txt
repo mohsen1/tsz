@@ -5,7 +5,6 @@
 TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts
 TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
-TypeScript/tests/cases/compiler/declarationEmitPrivatePromiseLikeInterface.ts
 TypeScript/tests/cases/compiler/declarationsWithRecursiveInternalTypesProduceUniqueTypeParams.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
