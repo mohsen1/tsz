@@ -6430,8 +6430,8 @@ export class Box {
     );
 
     assert!(
-        output.contains("export class Box {"),
-        "Expected the JS class declaration to be preserved: {output}"
+        output.contains("export class Box<T> {"),
+        "Expected JSDoc class templates to surface in declaration emit: {output}"
     );
     assert!(
         output.contains("static readonly kind: string;"),
@@ -6465,6 +6465,71 @@ export class Factory {
     assert!(
         output.contains("static create<T>(value: T): T;"),
         "Expected JSDoc method templates on JS classes to surface in declaration emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_jsdoc_template_parameters_drive_new_expression_return() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @template Item, Meta
+ */
+export class Store {
+    /**
+     * @param {Item} item
+     * @param {Meta} meta
+     */
+    constructor(item, meta) {}
+
+    /**
+     * @template Value, Label
+     * @param {Value} value
+     * @param {Label} label
+     */
+    static make(value, label) { return new Store(value, label); }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export class Store<Item, Meta> {"),
+        "Expected class-level JSDoc templates to emit as type parameters: {output}"
+    );
+    assert!(
+        output.contains(
+            "static make<Value, Label>(value: Value, label: Label): Store<Value, Label>;"
+        ),
+        "Expected constructor parameter JSDoc to infer returned class type arguments: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_jsdoc_extends_preserves_type_arguments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template Payload
+ */
+export class Base {
+    /** @param {Payload} value */
+    constructor(value) { this.value = value; }
+}
+
+/**
+ * @template Entry
+ * @extends {Base<Entry>}
+ */
+export class Derived extends Base {
+    /** @param {Entry} value */
+    constructor(value) { super(value); }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export class Derived<Entry> extends Base<Entry> {"),
+        "Expected JSDoc @extends type arguments to be preserved in class heritage: {output}"
     );
 }
 
