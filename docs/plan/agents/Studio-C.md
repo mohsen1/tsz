@@ -46,10 +46,10 @@ scripts/agents/list-owned-work.sh Studio-C
 
 ## Existing Work To Inspect First
 
-- `#9874` ready: empty binding evaluation emit fix. Auto-merge is enabled, but
-  CI is blocked by shared checker `query_boundaries::common` architecture-guard
-  cap drift rather than by the emitter diff. Recheck after the shared lint cap
-  is restored or intentionally updated.
+- `#9874` draft: empty binding evaluation emit fix. It was moved back to draft
+  after fresh runs showed the shared checker `query_boundaries::common`
+  architecture-guard cap drift again. The diff is emitter-only; resume after
+  the shared lint cap is restored or intentionally updated.
 - `#9879` draft: ES5 class property initializer outer block-scope rename map.
   Latest handoff says its lint failure is the same shared checker cap drift on
   an older base; refresh/rebase before further emitter investigation.
@@ -57,11 +57,11 @@ scripts/agents/list-owned-work.sh Studio-C
   draft-light run is also blocked by the shared checker lint cap; resume after
   that clears.
 - `#9553` draft: async ES5 binary expressions, assignment targets, and control
-  flow. Current draft-light run is also blocked by the shared checker lint cap;
+  flow. Current draft-light run is blocked by the shared checker lint cap;
   resume after that clears.
-- `#9645` draft: suspending switch statements in the ES5 generator state
-  machine. It is older async/generator overlap; only touch it to land, close,
-  or refresh a clear handoff.
+- `#9645` ready: suspending switch statements in the ES5 generator state
+  machine. Auto-merge is enabled, but fresh CI is blocked by the shared checker
+  lint cap rather than by the emitter diff; rerun/merge after that clears.
 - Confirm current state with `scripts/agents/list-owned-work.sh Studio-C` each
   cycle because labels and CI can change quickly.
 
