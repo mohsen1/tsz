@@ -359,7 +359,7 @@ impl<'a> CheckerState<'a> {
                 let template_names: rustc_hash::FxHashSet<String> =
                     Self::jsdoc_template_type_params(&jsdoc)
                         .into_iter()
-                        .map(|(name, _)| name)
+                        .map(|(name, _, _)| name)
                         .collect();
                 if !template_names.is_empty() {
                     let jsdoc_param_names: Vec<String> = Self::extract_jsdoc_param_names(&jsdoc)

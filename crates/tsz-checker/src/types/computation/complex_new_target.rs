@@ -58,6 +58,29 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
 
+            if symbol.has_any_flags(symbol_flags::TYPE_PARAMETER) {
+                // Type params delegate abstract-ness to their constraint syntax node.
+                // Guard against self-referential constraints (e.g. `T extends T`).
+                for &decl_idx in &symbol.declarations {
+                    if !visited_aliases.insert(decl_idx) {
+                        continue;
+                    }
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    if let Some(tp_data) = self.ctx.arena.get_type_parameter(decl_node)
+                        && tp_data.constraint.is_some()
+                        && self.type_node_contains_abstract_constructor(
+                            tp_data.constraint,
+                            visited_aliases,
+                        )
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
                 return false;
             }

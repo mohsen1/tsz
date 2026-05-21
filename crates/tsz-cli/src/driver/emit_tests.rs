@@ -285,6 +285,20 @@ export declare const also: import("../shared/types").Thing;"#;
 }
 
 #[test]
+fn test_bundle_declaration_output_splits_single_line_jsdoc_declarations() {
+    let input = r#"/** @type {(typeof import("./folder/mod1"))[]} */ declare const items: (typeof import("./folder/mod1"))[];"#;
+
+    let output =
+        bundle_declaration_output(input, tsz_common::common::ModuleKind::AMD, Some("index"));
+    let expected = r#"declare module "index" {
+    /** @type {(typeof import("./folder/mod1"))[]} */
+    const items: (typeof import("folder/mod1"))[];
+}"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
 fn test_bundle_declaration_output_does_not_use_amd_dependency_name() {
     let input = r#"/// <amd-dependency name="legacyAlias" path="legacy/module" />
 export declare const value = 1;"#;

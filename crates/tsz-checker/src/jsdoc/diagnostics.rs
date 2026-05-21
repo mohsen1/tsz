@@ -1201,7 +1201,7 @@ impl<'a> CheckerState<'a> {
                 } else if !Self::is_simple_type_name(simple_expr) {
                     let template_params: Vec<String> = Self::jsdoc_template_type_params(&content)
                         .into_iter()
-                        .map(|(name, _is_const)| name)
+                        .map(|(name, _is_const, _default)| name)
                         .collect();
                     let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
                     self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
@@ -1794,7 +1794,7 @@ impl<'a> CheckerState<'a> {
                 } else if !Self::is_simple_type_name(expr) && !expr.is_empty() {
                     let template_params: Vec<String> = Self::jsdoc_template_type_params(&content)
                         .into_iter()
-                        .map(|(name, _is_const)| name)
+                        .map(|(name, _is_const, _default)| name)
                         .collect();
                     let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
                     self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);

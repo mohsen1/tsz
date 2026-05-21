@@ -42,6 +42,10 @@ name = "abstract_constructor_argument_tests"
 path = "tests/abstract_constructor_argument_tests.rs"
 
 [[test]]
+name = "ts2511_abstract_type_param_tests"
+path = "tests/ts2511_abstract_type_param_tests.rs"
+
+[[test]]
 name = "generic_alias_assignability_pollution_tests"
 path = "tests/generic_alias_assignability_pollution_tests.rs"
 
@@ -430,6 +434,10 @@ name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
 
 [[test]]
+name = "thisless_functions_not_context_sensitive_tests"
+path = "tests/thisless_functions_not_context_sensitive_tests.rs"
+
+[[test]]
 name = "rest_tuple_conditional_arg_tests"
 path = "tests/rest_tuple_conditional_arg_tests.rs"
 
@@ -472,6 +480,10 @@ path = "tests/binding_pattern_inference_tests.rs"
 [[test]]
 name = "ts2353_tests"
 path = "tests/ts2353_tests.rs"
+
+[[test]]
+name = "excess_property_check_recursive_intersection_tests"
+path = "tests/excess_property_check_recursive_intersection_tests.rs"
 
 [[test]]
 name = "ts2353_omit_pick_excess_property_tests"
@@ -846,6 +858,10 @@ name = "import_type_utility_identity_tests"
 path = "tests/import_type_utility_identity_tests.rs"
 
 [[test]]
+name = "import_type_ambient_module_member_tests"
+path = "tests/import_type_ambient_module_member_tests.rs"
+
+[[test]]
 name = "json_namespace_import_tests"
 path = "tests/json_namespace_import_tests.rs"
 
@@ -1156,6 +1172,10 @@ path = "tests/jsx_pragma_boundary_tests.rs"
 [[test]]
 name = "discriminant_narrow_function_lazy_preserved_tests"
 path = "tests/discriminant_narrow_function_lazy_preserved_tests.rs"
+
+[[test]]
+name = "discriminant_literal_reference_narrowing_tests"
+path = "tests/discriminant_literal_reference_narrowing_tests.rs"
 
 [[test]]
 name = "unique_symbol_discriminant_narrowing_tests"
