@@ -529,8 +529,8 @@ fn jsdoc_extract_type_tag_expr_nested_object_literal() {
 // =========================================================================
 
 /// Helper to extract just names from template params (for backward-compat tests).
-fn names_only(params: &[(String, bool)]) -> Vec<&str> {
-    params.iter().map(|(n, _)| n.as_str()).collect()
+fn names_only(params: &[(String, bool, Option<String>)]) -> Vec<&str> {
+    params.iter().map(|(n, _, _)| n.as_str()).collect()
 }
 
 #[test]
@@ -599,6 +599,8 @@ fn jsdoc_template_bracket_default_registers_name() {
     let jsdoc = "* @template [T=string]";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
     assert_eq!(names_only(&params), vec!["T"]);
+    // Issue #9739: default type string must be propagated (not discarded).
+    assert_eq!(params[0].2.as_deref(), Some("string"));
 }
 
 #[test]
@@ -608,6 +610,7 @@ fn jsdoc_template_bracket_default_after_const_modifier() {
     assert_eq!(params.len(), 1);
     assert_eq!(params[0].0, "T");
     assert!(params[0].1); // is_const
+    assert_eq!(params[0].2.as_deref(), Some("string")); // default propagated
 }
 
 #[test]
@@ -615,6 +618,26 @@ fn jsdoc_template_bracket_default_with_comma_separated_names() {
     let jsdoc = "* @template [T=string], U";
     let params = CheckerState::jsdoc_template_type_params(jsdoc);
     assert_eq!(names_only(&params), vec!["T", "U"]);
+    assert_eq!(params[0].2.as_deref(), Some("string")); // T has default
+    assert_eq!(params[1].2, None); // U has no default
+}
+
+#[test]
+fn jsdoc_template_no_default_for_plain_form() {
+    // Plain `@template T` (no brackets) has no default.
+    let jsdoc = "* @template T";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].2, None);
+}
+
+#[test]
+fn jsdoc_template_bracket_no_default() {
+    // `@template [T]` bracket form with no `=` default.
+    let jsdoc = "* @template [T]";
+    let params = CheckerState::jsdoc_template_type_params(jsdoc);
+    assert_eq!(names_only(&params), vec!["T"]);
+    assert_eq!(params[0].2, None);
 }
 
 #[test]

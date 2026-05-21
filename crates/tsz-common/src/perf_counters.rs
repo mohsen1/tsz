@@ -1821,6 +1821,18 @@ pub fn record_delegate_cross_arena_cache_hit_cross_file() {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record a lib-cache hit during cross-arena class delegation.
+#[inline]
+pub fn record_delegate_cross_arena_cache_hit_lib() {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.delegate_cross_arena_calls.fetch_add(1, Ordering::Relaxed);
+    c.delegate_cross_arena_cache_hits_lib
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 /// Record a hit on the cross-file type-parameter extraction cache. Mirrors
 /// [`record_delegate_cross_arena_miss`]: gate-once and one `counters()`
 /// lookup, then increment exactly the per-outcome counter that names this
