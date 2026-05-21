@@ -60,6 +60,14 @@ fn use_fingerprint_compare(
     !tsc_fingerprints.is_empty() && !tsz_fingerprints.is_empty()
 }
 
+fn is_project_config_diagnostic_code(code: u32) -> bool {
+    matches!(code, 18003 | 5023 | 5057 | 5058 | 5081 | 5101 | 5102 | 5107)
+}
+
+fn is_compiler_option_config_diagnostic_code(code: u32) -> bool {
+    matches!(code, 5101 | 5102 | 5107)
+}
+
 fn sanitize_artifact_name(path: &str) -> String {
     path.chars()
         .map(|ch| match ch {
@@ -1472,52 +1480,40 @@ impl Runner {
                         &tsc_fps,
                     );
 
-                    // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
                     // config-level deprecation warnings. These should not be compared as they are
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
                     // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003, TS5023) that the cache
                     // stores in fingerprints but not in error_codes.
-                    let config_level_codes: std::collections::HashSet<u32> = [
-                        18003u32, 5023u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32,
-                    ]
-                    .iter()
-                    .cloned()
-                    .collect();
-                    tsc_error_codes.retain(|c| !config_level_codes.contains(c));
+                    tsc_error_codes.retain(|c| !is_project_config_diagnostic_code(*c));
                     let tsc_fps: Vec<_> = tsc_fps
                         .into_iter()
-                        .filter(|fp| !config_level_codes.contains(&fp.code))
+                        .filter(|fp| !is_project_config_diagnostic_code(fp.code))
                         .collect();
                     compile_result
                         .error_codes
-                        .retain(|c| !config_level_codes.contains(c));
+                        .retain(|c| !is_project_config_diagnostic_code(*c));
                     compile_result
                         .diagnostic_fingerprints
-                        .retain(|fp| !config_level_codes.contains(&fp.code));
+                        .retain(|fp| !is_project_config_diagnostic_code(fp.code));
 
-                    // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
                     // config-level deprecation warnings. These should not be compared as they are
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
                     // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003, TS5023) that the cache
                     // stores in fingerprints but not in error_codes.
-                    let config_level_codes: std::collections::HashSet<u32> = [
-                        18003u32, 5023u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32,
-                    ]
-                    .iter()
-                    .cloned()
-                    .collect();
                     let tsc_error_codes: Vec<u32> = tsc_error_codes
                         .into_iter()
-                        .filter(|c| !config_level_codes.contains(c))
+                        .filter(|c| !is_project_config_diagnostic_code(*c))
                         .collect();
                     compile_result
                         .error_codes
-                        .retain(|c| !config_level_codes.contains(c));
+                        .retain(|c| !is_project_config_diagnostic_code(*c));
                     compile_result
                         .diagnostic_fingerprints
-                        .retain(|fp| !config_level_codes.contains(&fp.code));
+                        .retain(|fp| !is_project_config_diagnostic_code(fp.code));
                     // When @noLib is set, tsc only emits TS2318 ("Cannot find global type")
                     // and suppresses downstream errors caused by missing lib types.
                     // tsz doesn't yet suppress these, so filter extra codes/fingerprints
@@ -1688,27 +1684,25 @@ impl Runner {
                         &tsc_fps,
                     );
 
-                    // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
                     // config-level deprecation warnings. These should not be compared as they are
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
-                    let config_level_codes: std::collections::HashSet<u32> =
-                        [5101u32, 5107u32].iter().cloned().collect();
-                    tsc_error_codes.retain(|c| !config_level_codes.contains(c));
+                    tsc_error_codes.retain(|c| !is_compiler_option_config_diagnostic_code(*c));
                     let tsc_fps: Vec<_> = tsc_fps
                         .into_iter()
-                        .filter(|fp| !config_level_codes.contains(&fp.code))
+                        .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
                         .collect();
                     let compile_result = crate::tsz_wrapper::CompilationResult {
                         error_codes: compile_result
                             .error_codes
                             .into_iter()
-                            .filter(|c| !config_level_codes.contains(c))
+                            .filter(|c| !is_compiler_option_config_diagnostic_code(*c))
                             .collect(),
                         diagnostic_fingerprints: compile_result
                             .diagnostic_fingerprints
                             .into_iter()
-                            .filter(|fp| !config_level_codes.contains(&fp.code))
+                            .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
                             .collect(),
                         ..compile_result
                     };
@@ -1821,27 +1815,25 @@ impl Runner {
                         &tsc_fps,
                     );
 
-                    // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
                     // config-level deprecation warnings. These should not be compared as they are
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
-                    let config_level_codes: std::collections::HashSet<u32> =
-                        [5101u32, 5107u32].iter().cloned().collect();
-                    tsc_error_codes.retain(|c| !config_level_codes.contains(c));
+                    tsc_error_codes.retain(|c| !is_compiler_option_config_diagnostic_code(*c));
                     let tsc_fps: Vec<_> = tsc_fps
                         .into_iter()
-                        .filter(|fp| !config_level_codes.contains(&fp.code))
+                        .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
                         .collect();
                     let compile_result = crate::tsz_wrapper::CompilationResult {
                         error_codes: compile_result
                             .error_codes
                             .into_iter()
-                            .filter(|c| !config_level_codes.contains(c))
+                            .filter(|c| !is_compiler_option_config_diagnostic_code(*c))
                             .collect(),
                         diagnostic_fingerprints: compile_result
                             .diagnostic_fingerprints
                             .into_iter()
-                            .filter(|fp| !config_level_codes.contains(&fp.code))
+                            .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
                             .collect(),
                         ..compile_result
                     };
@@ -1988,6 +1980,15 @@ mod tests {
         ));
         // CLI mode: both sides populated — enable fingerprint compare.
         assert!(use_fingerprint_compare(&tsc, &tsz_populated));
+    }
+
+    #[test]
+    fn config_diagnostic_filters_include_removed_compiler_options() {
+        assert!(is_project_config_diagnostic_code(5102));
+        assert!(is_compiler_option_config_diagnostic_code(5102));
+        assert!(is_compiler_option_config_diagnostic_code(5101));
+        assert!(is_compiler_option_config_diagnostic_code(5107));
+        assert!(!is_compiler_option_config_diagnostic_code(2322));
     }
 
     #[test]
