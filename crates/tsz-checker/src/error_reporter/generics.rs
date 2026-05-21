@@ -599,7 +599,19 @@ impl<'a> CheckerState<'a> {
                 .and_then(|tq| tq.type_arguments.as_ref())
                 .is_some_and(|args| !args.nodes.is_empty())
         {
-            type_str = format!("typeof {type_str}");
+            if let Some(source_text) = self
+                .ctx
+                .arena
+                .source_files
+                .first()
+                .and_then(|source_file| source_file.text.get(node.pos as usize..node.end as usize))
+                .map(str::trim)
+                .filter(|text| text.starts_with("typeof "))
+            {
+                type_str = source_text.to_string();
+            } else {
+                type_str = format!("typeof {type_str}");
+            }
         }
         let constraint_str = self.format_type_diagnostic_constraint(constraint);
         // Structural check: `IndexedAccess(M, K)` where K is a bounded

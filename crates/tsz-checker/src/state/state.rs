@@ -23,6 +23,7 @@
 //!
 use crate::CheckerContext;
 use crate::context::{CheckerOptions, TypingRequest};
+use crate::control_flow::type_guards::reference_uses_outer_class_property_initializer_binding;
 use crate::query_boundaries::common::QueryDatabase;
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
@@ -409,11 +410,35 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if self.reference_uses_outer_class_property_initializer_binding(idx) {
+            return false;
+        }
+
         if self.is_require_call_bound_identifier(idx) {
             return false;
         }
 
         self.is_narrowable_identifier(idx)
+    }
+
+    fn reference_uses_outer_class_property_initializer_binding(&self, idx: NodeIndex) -> bool {
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.value_declaration.is_some()
+            && reference_uses_outer_class_property_initializer_binding(
+                self.ctx.arena,
+                idx,
+                symbol.value_declaration,
+            )
     }
 
     /// Check if a node is a narrowable identifier (variable with flow analysis).
@@ -1185,6 +1210,7 @@ impl<'a> CheckerState<'a> {
                 && (is_identifier || is_this_keyword)
                 && !self.ctx.daa_error_nodes.contains(&idx.0)
                 && !self.is_require_call_bound_identifier(idx)
+                && !self.reference_uses_outer_class_property_initializer_binding(idx)
                 && let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
                 && let Some(sym_id) = self
                     .ctx
