@@ -21,6 +21,7 @@ scripts/agents/list-owned-work.sh <AgentName>
 ## Current Assignment
 
 - Primary PR to land/close/handoff:
+- Assigned draft PRs to complete before new issue work:
 - Issue context:
 - Branch/worktree:
 - Next concrete step:
@@ -34,6 +35,8 @@ scripts/agents/list-owned-work.sh <AgentName>
 ## Non-Overlap Rules
 
 - Do not duplicate the listed PRs.
+- Do not start a new branch while assigned draft PRs are missing a ready,
+  merged, closed-with-evidence, or signed-handoff state.
 - If another active PR already owns the exact invariant, comment there instead
   of opening a new PR.
 - If you take over, leave a signed comment and update `agent:*` labels.

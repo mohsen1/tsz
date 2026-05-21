@@ -115,6 +115,35 @@ function analyzeMeasurementProfile(artifact) {
   };
 }
 
+function cleanValidationWarnings(warnings) {
+  if (!Array.isArray(warnings)) return [];
+  return warnings
+    .filter((warning) => warning && typeof warning === "object" && !Array.isArray(warning))
+    .map((warning) => ({
+      file: typeof warning.file === "string" && warning.file.trim() ? warning.file.trim() : null,
+      mismatched_fields: Array.isArray(warning.mismatched_fields)
+        ? warning.mismatched_fields
+          .filter((field) => typeof field === "string" && field.trim())
+          .map((field) => field.trim())
+        : [],
+      expected: warning.expected ?? null,
+      actual: warning.actual ?? null,
+    }));
+}
+
+function analyzeValidationWarnings(artifact) {
+  const validation = artifact?.validation && typeof artifact.validation === "object"
+    ? artifact.validation
+    : {};
+  const runnerEnvironment = cleanValidationWarnings(validation.runner_environment_warnings);
+  const measurementProfile = cleanValidationWarnings(validation.measurement_profile_warnings);
+  return {
+    runner_environment: runnerEnvironment,
+    measurement_profile: measurementProfile,
+    total: runnerEnvironment.length + measurementProfile.length,
+  };
+}
+
 function analyzeArtifact(artifact) {
   const byName = new Map();
   const duplicateCounts = new Map();
@@ -165,6 +194,7 @@ function analyzeArtifact(artifact) {
 
   return {
     measurementProfile: analyzeMeasurementProfile(artifact),
+    validationWarnings: analyzeValidationWarnings(artifact),
     rows,
     missing: rows.filter((r) => r.state === "missing"),
     red: rows.filter((r) => r.state === "red"),
@@ -175,7 +205,7 @@ function analyzeArtifact(artifact) {
   };
 }
 
-function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, rows, missing, red, yellow, gray, green, duplicates }) {
+function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, validationWarnings, rows, missing, red, yellow, gray, green, duplicates }) {
   const missingNames = missing?.map((r) => r.name) ?? REQUIRED_PROJECT_ROWS;
   return {
     artifact_absent: artifactAbsent,
@@ -184,6 +214,11 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, r
     generated_at: artifact?.generated_at ?? null,
     workflow_run_url: artifact?.workflow_run_url ?? null,
     measurement_profile: measurementProfile ?? null,
+    validation_warnings: validationWarnings ?? {
+      runner_environment: [],
+      measurement_profile: [],
+      total: 0,
+    },
     required_row_count: rows?.length ?? REQUIRED_PROJECT_ROWS.length,
     green: green?.length ?? 0,
     yellow: yellow?.length ?? 0,
@@ -238,6 +273,12 @@ function fmtPeakMemory(value, reason) {
   return reason ? `n/a (${reason})` : "—";
 }
 
+function fmtWarningFields(warning) {
+  return warning.mismatched_fields.length > 0
+    ? warning.mismatched_fields.join(", ")
+    : "metadata mismatch";
+}
+
 function artifactAge(generatedAt) {
   if (!generatedAt) return "unknown age";
   const h = Math.round((Date.now() - new Date(generatedAt).getTime()) / 3_600_000);
@@ -246,7 +287,7 @@ function artifactAge(generatedAt) {
   return `${h} h ago`;
 }
 
-function buildReport({ artifact, measurementProfile, rows, missing, red, yellow, gray, green, duplicates }) {
+function buildReport({ artifact, measurementProfile, validationWarnings, rows, missing, red, yellow, gray, green, duplicates }) {
   const sourceCommit = artifact?.source_commit?.slice(0, 10) ?? "unknown";
   const generatedAt = artifact?.generated_at ?? null;
   const workflowUrl = artifact?.workflow_run_url ?? null;
@@ -273,6 +314,8 @@ function buildReport({ artifact, measurementProfile, rows, missing, red, yellow,
     `| ⬜ gray | ${gray.length} |`,
     `| 🚫 missing | ${missing.length} |`,
     `| Duplicate rows | ${duplicates.length} |`,
+    `| Runner metadata warnings | ${validationWarnings.runner_environment.length} |`,
+    `| Measurement profile warnings | ${validationWarnings.measurement_profile.length} |`,
     "",
   ];
 
@@ -285,6 +328,22 @@ function buildReport({ artifact, measurementProfile, rows, missing, red, yellow,
   if (duplicates.length > 0) {
     lines.push(`### ⬜ Duplicate required rows (${duplicates.length})`, "");
     for (const r of duplicates) lines.push(`- \`${r.name}\` appears ${r.duplicate_count} times`);
+    lines.push("");
+  }
+
+  if (validationWarnings.runner_environment.length > 0) {
+    lines.push(`### Runner metadata warnings (${validationWarnings.runner_environment.length})`, "");
+    for (const warning of validationWarnings.runner_environment) {
+      lines.push(`- \`${mdCell(warning.file ?? "unknown input")}\`: ${mdCell(fmtWarningFields(warning))}`);
+    }
+    lines.push("");
+  }
+
+  if (validationWarnings.measurement_profile.length > 0) {
+    lines.push(`### Measurement profile warnings (${validationWarnings.measurement_profile.length})`, "");
+    for (const warning of validationWarnings.measurement_profile) {
+      lines.push(`- \`${mdCell(warning.file ?? "unknown input")}\`: ${mdCell(fmtWarningFields(warning))}`);
+    }
     lines.push("");
   }
 
@@ -357,7 +416,7 @@ if (artifactAbsent || parseError) {
 }
 
 const analysis = analyzeArtifact(artifact);
-const { measurementProfile, rows, missing, red, yellow, gray, green, duplicates } = analysis;
+const { measurementProfile, validationWarnings, rows, missing, red, yellow, gray, green, duplicates } = analysis;
 
 writeReport(buildReport({ artifact, ...analysis }));
 
@@ -368,6 +427,7 @@ if (jsonOutput) {
       parseError: null,
       artifact,
       measurementProfile,
+      validationWarnings,
       rows,
       missing,
       red,

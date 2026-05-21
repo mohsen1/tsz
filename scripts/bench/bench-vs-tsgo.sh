@@ -851,6 +851,8 @@ collect_pgo_workload() {
         generated_inputs+=("$pgo_tmp/complex_generics.ts")
         generate_deeppartial_optional_chain_file 50 "$pgo_tmp/deeppartial_optional_chain.ts"
         generated_inputs+=("$pgo_tmp/deeppartial_optional_chain.ts")
+        generate_recursive_utility_alias_file 30 "$pgo_tmp/recursive_utility_alias.ts"
+        generated_inputs+=("$pgo_tmp/recursive_utility_alias.ts")
         generate_shallow_optional_chain_file 50 "$pgo_tmp/shallow_optional_chain.ts"
         generated_inputs+=("$pgo_tmp/shallow_optional_chain.ts")
         generate_union_file 100 "$pgo_tmp/union_members.ts"
@@ -3371,6 +3373,11 @@ main() {
         run_benchmark "DeepPartial optional-chain N=50" "$file"
         echo
 
+        file="$TEMP_DIR/recursive_utility_alias_30.ts"
+        generate_recursive_utility_alias_file 30 "$file"
+        run_benchmark "Recursive utility aliases N=30" "$file"
+        echo
+
         file="$TEMP_DIR/shallow_optional_50.ts"
         generate_shallow_optional_chain_file 50 "$file"
         run_benchmark "Shallow optional-chain N=50" "$file"
@@ -3426,6 +3433,13 @@ main() {
         generate_deeppartial_optional_chain_file 400 "$file"
         run_benchmark "DeepPartial optional-chain N=400" "$file"
         echo
+
+        for count in 120 240; do
+            file="$TEMP_DIR/recursive_utility_alias_${count}.ts"
+            generate_recursive_utility_alias_file "$count" "$file"
+            run_benchmark "Recursive utility aliases N=$count" "$file"
+            echo
+        done
 
         file="$TEMP_DIR/shallow_optional_400.ts"
         generate_shallow_optional_chain_file 400 "$file"
