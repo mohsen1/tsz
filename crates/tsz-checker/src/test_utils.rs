@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
+use tsz_common::position::LineMap;
 use tsz_parser::parser::ParserState;
 
 /// Parse, bind, and type-check a TypeScript source string, returning all diagnostics.
@@ -158,6 +159,279 @@ impl HasDiagnosticMessage for (u32, String) {
 impl HasDiagnosticMessage for (u32, &str) {
     fn diagnostic_message(&self) -> &str {
         self.1
+    }
+}
+
+/// Types that expose a diagnostic start byte offset for location-aware
+/// assertions.
+pub trait HasDiagnosticStart {
+    fn diagnostic_start(&self) -> u32;
+}
+
+impl HasDiagnosticStart for Diagnostic {
+    fn diagnostic_start(&self) -> u32 {
+        self.start
+    }
+}
+
+impl<T: HasDiagnosticStart + ?Sized> HasDiagnosticStart for &T {
+    fn diagnostic_start(&self) -> u32 {
+        (*self).diagnostic_start()
+    }
+}
+
+/// Compute the 1-indexed (line, column) of a byte offset in `source`.
+///
+/// Lines and columns are 1-indexed; the column count is in UTF-16 code units
+/// to match the tsc / LSP fingerprint convention. Built on
+/// [`tsz_common::position::LineMap`], so callers do not need to roll their
+/// own offset → line/column conversion in tests.
+///
+/// Offsets past the end of `source` clamp to the last position (same
+/// semantics as `LineMap::offset_to_position`).
+#[must_use]
+pub fn line_column_for_offset(source: &str, offset: u32) -> (u32, u32) {
+    let map = LineMap::build(source);
+    let pos = map.offset_to_position(offset, source);
+    (pos.line.saturating_add(1), pos.character.saturating_add(1))
+}
+
+/// 1-indexed `(line, column)` of a diagnostic's start position in `source`.
+///
+/// Convenience wrapper around [`line_column_for_offset`]; accepts any value
+/// that exposes a diagnostic start offset via [`HasDiagnosticStart`].
+#[must_use]
+pub fn diagnostic_line_column<T: HasDiagnosticStart>(source: &str, diagnostic: &T) -> (u32, u32) {
+    line_column_for_offset(source, diagnostic.diagnostic_start())
+}
+
+/// Structural fingerprint for a single diagnostic: a code plus optional
+/// 1-indexed location, structural message fragment, and minimum
+/// `related_information` arity.
+///
+/// Used by [`assert_diagnostic_shape`] / [`assert_diagnostic_shapes`] to
+/// upgrade tests from "this code appears somewhere" to "this code appears
+/// at this `(line, column)` with this structural message fragment and at
+/// least this many related notes."
+///
+/// **Anti-hardcoding (CLAUDE.md §25):** prefer template fragments
+/// (e.g. `" is not assignable to the same property in base type "`) over
+/// fragments that include user-chosen identifier names, alias names, or
+/// rendered identifier spellings. The matcher does not enforce this — the
+/// test author owns the choice — but tests that fingerprint user-chosen
+/// names will lock onto the spelling of a single repro and regress when an
+/// equivalent shape uses different names.
+#[derive(Debug, Clone)]
+pub struct DiagnosticShape {
+    /// Required diagnostic code (e.g. `2416`).
+    pub code: u32,
+    /// Optional 1-indexed line of the diagnostic start.
+    pub line: Option<u32>,
+    /// Optional 1-indexed column (UTF-16 code units) of the diagnostic start.
+    pub column: Option<u32>,
+    /// Optional structural fragment of the message text. The matcher uses
+    /// `str::contains`; pass message-template fragments rather than full
+    /// rendered messages.
+    pub message_fragment: Option<&'static str>,
+    /// Optional minimum number of `related_information` entries.
+    pub related_min: Option<usize>,
+}
+
+impl DiagnosticShape {
+    /// Begin a shape that requires only the diagnostic `code`.
+    #[must_use]
+    pub const fn code(code: u32) -> Self {
+        Self {
+            code,
+            line: None,
+            column: None,
+            message_fragment: None,
+            related_min: None,
+        }
+    }
+
+    /// Pin the diagnostic start to 1-indexed `(line, column)`.
+    #[must_use]
+    pub const fn at(mut self, line: u32, column: u32) -> Self {
+        self.line = Some(line);
+        self.column = Some(column);
+        self
+    }
+
+    /// Require the message text to contain `fragment`. Prefer
+    /// template-shaped fragments over user-chosen identifier names.
+    #[must_use]
+    pub const fn with_message_fragment(mut self, fragment: &'static str) -> Self {
+        self.message_fragment = Some(fragment);
+        self
+    }
+
+    /// Require at least `n` `related_information` entries.
+    #[must_use]
+    pub const fn with_related_min(mut self, n: usize) -> Self {
+        self.related_min = Some(n);
+        self
+    }
+}
+
+/// Check whether `diagnostic` matches `shape`. Returns `Ok(())` on a full
+/// match, or `Err(reason)` describing the first failing constraint (used
+/// directly in panic messages to triage near-misses).
+fn shape_match(
+    source: &str,
+    diagnostic: &Diagnostic,
+    shape: &DiagnosticShape,
+) -> Result<(), String> {
+    if diagnostic.code != shape.code {
+        return Err(format!(
+            "code TS{} (expected TS{})",
+            diagnostic.code, shape.code
+        ));
+    }
+    if shape.line.is_some() || shape.column.is_some() {
+        let (line, column) = diagnostic_line_column(source, diagnostic);
+        if let Some(expected) = shape.line
+            && expected != line
+        {
+            return Err(format!("line {line} (expected {expected})"));
+        }
+        if let Some(expected) = shape.column
+            && expected != column
+        {
+            return Err(format!("column {column} (expected {expected})"));
+        }
+    }
+    if let Some(fragment) = shape.message_fragment
+        && !diagnostic.message_text.contains(fragment)
+    {
+        return Err(format!("message missing fragment {fragment:?}"));
+    }
+    if let Some(expected) = shape.related_min
+        && diagnostic.related_information.len() < expected
+    {
+        return Err(format!(
+            "related_information.len() = {} (expected >= {expected})",
+            diagnostic.related_information.len(),
+        ));
+    }
+    Ok(())
+}
+
+fn format_diagnostic_for_panic(source: &str, diagnostic: &Diagnostic) -> String {
+    let (line, column) = diagnostic_line_column(source, diagnostic);
+    format!(
+        "TS{} at {}:{} ({}+{}) in {:?}: {:?} [related={}]",
+        diagnostic.code,
+        line,
+        column,
+        diagnostic.start,
+        diagnostic.length,
+        diagnostic.file,
+        diagnostic.message_text,
+        diagnostic.related_information.len(),
+    )
+}
+
+/// Assert that at least one diagnostic in `diagnostics` matches `shape`.
+///
+/// Returns a reference to the first matching diagnostic so callers can do
+/// follow-up assertions if needed. On failure, the panic message lists every
+/// diagnostic with the same code and the precise reason each was rejected
+/// (wrong line, wrong column, missing message fragment, …), which is the
+/// information that `assert!(codes.contains(&NNNN), ...)` swallows.
+pub fn assert_diagnostic_shape<'a>(
+    source: &str,
+    diagnostics: &'a [Diagnostic],
+    shape: &DiagnosticShape,
+) -> &'a Diagnostic {
+    let mut near_misses: Vec<(&Diagnostic, String)> = Vec::new();
+    for diagnostic in diagnostics {
+        let reason = match shape_match(source, diagnostic, shape) {
+            Ok(()) => return diagnostic,
+            Err(reason) => reason,
+        };
+        if diagnostic.code == shape.code {
+            near_misses.push((diagnostic, reason));
+        }
+    }
+
+    let all_codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    let detail = if near_misses.is_empty() {
+        "    (no diagnostic with the expected code was emitted)".to_string()
+    } else {
+        near_misses
+            .iter()
+            .map(|(d, reason)| {
+                format!(
+                    "    - {}\n      reason: {reason}",
+                    format_diagnostic_for_panic(source, d),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    panic!(
+        "Expected diagnostic shape {shape:?} to match at least one diagnostic.\n\
+         Emitted codes: {all_codes:?}\n\
+         Candidates with the expected code:\n{detail}",
+    );
+}
+
+/// Assert that every shape in `shapes` matches at least one diagnostic.
+///
+/// Extra diagnostics are allowed; this is a structural-presence check, not
+/// an exact-list match. Use [`assert_diagnostic_shapes_exactly`] when the
+/// test wants to pin the full diagnostic set.
+pub fn assert_diagnostic_shapes(
+    source: &str,
+    diagnostics: &[Diagnostic],
+    shapes: &[DiagnosticShape],
+) {
+    for shape in shapes {
+        assert_diagnostic_shape(source, diagnostics, shape);
+    }
+}
+
+/// Assert that `diagnostics` contains *exactly* one match per shape and no
+/// other diagnostics. Order-insensitive: each diagnostic is matched against
+/// the first unsatisfied shape it fits.
+///
+/// Use this for tests that want to lock the full emitted set, not just
+/// presence of a few key diagnostics.
+pub fn assert_diagnostic_shapes_exactly(
+    source: &str,
+    diagnostics: &[Diagnostic],
+    shapes: &[DiagnosticShape],
+) {
+    let mut consumed = vec![false; shapes.len()];
+    let mut unmatched: Vec<&Diagnostic> = Vec::new();
+    for diagnostic in diagnostics {
+        let slot = shapes.iter().enumerate().position(|(idx, shape)| {
+            !consumed[idx] && shape_match(source, diagnostic, shape).is_ok()
+        });
+        match slot {
+            Some(idx) => consumed[idx] = true,
+            None => unmatched.push(diagnostic),
+        }
+    }
+    let missing: Vec<&DiagnosticShape> = shapes
+        .iter()
+        .zip(&consumed)
+        .filter_map(|(shape, used)| (!used).then_some(shape))
+        .collect();
+    if !missing.is_empty() || !unmatched.is_empty() {
+        let unmatched_lines: Vec<String> = unmatched
+            .iter()
+            .map(|d| format!("    - {}", format_diagnostic_for_panic(source, d)))
+            .collect();
+        let missing_lines: Vec<String> = missing.iter().map(|s| format!("    - {s:?}")).collect();
+        panic!(
+            "Diagnostic set did not match the expected shapes exactly.\n\
+             Unmatched shapes:\n{}\n\
+             Unmatched diagnostics:\n{}\n",
+            missing_lines.join("\n"),
+            unmatched_lines.join("\n"),
+        );
     }
 }
 
@@ -1338,5 +1612,216 @@ class C {}
             );
             assert!(lib.file_name.starts_with("lib."));
         }
+    }
+
+    // =========================================================================
+    // line_column_for_offset / diagnostic_line_column / DiagnosticShape
+    //
+    // Lock the location-aware diagnostic assertion helpers added for issue
+    // #8488. The two key correctness contracts are:
+    //   - 1-indexed line/column with UTF-16 column units (matches tsc/LSP).
+    //   - Panic messages on near-miss surface the actual `(line, column)`
+    //     and reason — the information `assert!(codes.contains(&NNNN), ..)`
+    //     swallows.
+    // =========================================================================
+
+    #[test]
+    fn line_column_for_offset_returns_one_indexed_for_start_of_source() {
+        assert_eq!(line_column_for_offset("abc", 0), (1, 1));
+        assert_eq!(line_column_for_offset("", 0), (1, 1));
+    }
+
+    #[test]
+    fn line_column_for_offset_advances_columns_within_a_line() {
+        let source = "let s: string = 1;";
+        assert_eq!(line_column_for_offset(source, 0), (1, 1));
+        assert_eq!(line_column_for_offset(source, 4), (1, 5));
+        // Offset just past the last char clamps to end of line.
+        let end = u32::try_from(source.len()).unwrap();
+        let (line, _) = line_column_for_offset(source, end);
+        assert_eq!(line, 1);
+    }
+
+    #[test]
+    fn line_column_for_offset_advances_lines_across_newlines() {
+        // "\nfoo\nbar": offset 0='\n' -> (1,1); offset 1='f' -> (2,1);
+        // offset 5='b' -> (3,1).
+        let source = "\nfoo\nbar";
+        assert_eq!(line_column_for_offset(source, 0), (1, 1));
+        assert_eq!(line_column_for_offset(source, 1), (2, 1));
+        assert_eq!(line_column_for_offset(source, 5), (3, 1));
+    }
+
+    #[test]
+    fn line_column_for_offset_counts_utf16_units_for_bmp_characters() {
+        // 'é' is a single UTF-16 code unit (2 bytes in UTF-8). Column after
+        // 'é' must be 2 (1-indexed UTF-16 units = 1 unit past start).
+        let source = "éX"; // bytes: [c3 a9, 58], offset 2 = start of 'X'
+        assert_eq!(line_column_for_offset(source, 2), (1, 2));
+    }
+
+    #[test]
+    fn diagnostic_line_column_uses_diagnostic_start_offset() {
+        // `let s: string = 1;` -> TS2322 anchors on the offending `1`.
+        let source = "let s: string = 1;";
+        let diags = check_source_strict(source);
+        let ts2322 = diags
+            .iter()
+            .find(|d| d.code == 2322)
+            .expect("expected TS2322 for string = number");
+        let (line, column) = diagnostic_line_column(source, ts2322);
+        // The diagnostic should be on line 1, and the column must equal
+        // `start + 1` (UTF-16 == byte for ASCII).
+        assert_eq!(line, 1);
+        assert_eq!(column, ts2322.start + 1);
+    }
+
+    #[test]
+    fn diagnostic_shape_builder_pins_fields_independently() {
+        let shape = DiagnosticShape::code(2322)
+            .at(3, 5)
+            .with_message_fragment("not assignable")
+            .with_related_min(1);
+        assert_eq!(shape.code, 2322);
+        assert_eq!(shape.line, Some(3));
+        assert_eq!(shape.column, Some(5));
+        assert_eq!(shape.message_fragment, Some("not assignable"));
+        assert_eq!(shape.related_min, Some(1));
+    }
+
+    #[test]
+    fn assert_diagnostic_shape_matches_code_line_column_and_fragment() {
+        let source = "let s: string = 1;";
+        let diags = check_source_strict(source);
+        let ts2322 = diags
+            .iter()
+            .find(|d| d.code == 2322)
+            .expect("expected TS2322");
+        let (line, column) = diagnostic_line_column(source, ts2322);
+        let matched = assert_diagnostic_shape(
+            source,
+            &diags,
+            &DiagnosticShape::code(2322)
+                .at(line, column)
+                .with_message_fragment("is not assignable to type"),
+        );
+        assert_eq!(matched.code, 2322);
+    }
+
+    #[test]
+    fn assert_diagnostic_shape_panics_with_near_miss_detail_on_wrong_line() {
+        // Deliberately wrong line. The panic message must surface the
+        // near-miss with the actual emitted location so the test author
+        // can see the diagnostic moved, rather than guessing what went
+        // wrong. Capture the panic payload and assert on the structure
+        // rather than `#[should_panic]` so we can verify the rich content.
+        let source = "let s: string = 1;";
+        let diags = check_source_strict(source);
+        let payload = std::panic::catch_unwind(|| {
+            assert_diagnostic_shape(source, &diags, &DiagnosticShape::code(2322).at(999, 1));
+        })
+        .expect_err("near-miss assertion must panic");
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&'static str>().copied())
+            .unwrap_or("<non-string panic>");
+        assert!(
+            message.contains("Expected diagnostic shape"),
+            "panic must mention the shape that failed; got: {message}"
+        );
+        assert!(
+            message.contains("Emitted codes: [2322]"),
+            "panic must list the emitted codes for triage; got: {message}"
+        );
+        assert!(
+            message.contains("expected 999"),
+            "panic must mention the expected line value so the author can see it was wrong; got: {message}"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "no diagnostic with the expected code")]
+    fn assert_diagnostic_shape_panics_when_no_diagnostic_has_the_code() {
+        let source = "let s: string = 1;";
+        let diags = check_source_strict(source);
+        // A code that this source can never emit. The panic must say "no
+        // diagnostic with the expected code was emitted" rather than
+        // listing irrelevant near-misses.
+        assert_diagnostic_shape(source, &diags, &DiagnosticShape::code(9999));
+    }
+
+    #[test]
+    fn assert_diagnostic_shape_is_rename_agnostic_when_fragment_is_structural() {
+        // Anti-hardcoding (§25): the same DiagnosticShape with a structural
+        // message fragment matches two fixtures that differ only in
+        // user-chosen identifier names. If a future change made the matcher
+        // depend on identifier spelling, one of these two asserts would fail.
+        let shape = DiagnosticShape::code(2322).with_message_fragment("is not assignable to type");
+        let lhs = check_source_strict("let alpha: string = 1;");
+        let rhs = check_source_strict("let beta: string = 2;");
+        assert_diagnostic_shape("let alpha: string = 1;", &lhs, &shape);
+        assert_diagnostic_shape("let beta: string = 2;", &rhs, &shape);
+    }
+
+    #[test]
+    fn assert_diagnostic_shapes_passes_when_every_shape_has_a_match() {
+        // Two distinct diagnostics from one source. The presence-based
+        // helper accepts the set as long as every shape matches. We pin
+        // the `(line, column)` from the actual emitted diagnostics rather
+        // than from a hardcoded guess at the anchor offset, so this test
+        // stays a contract over the matcher, not over the checker's
+        // current anchor policy.
+        let source = "let s: string = 1; let t: number = '';";
+        let diags = check_source_strict(source);
+        let pairs: Vec<(u32, u32)> = diags
+            .iter()
+            .filter(|d| d.code == 2322)
+            .map(|d| diagnostic_line_column(source, d))
+            .collect();
+        assert!(
+            pairs.len() >= 2,
+            "fixture must emit at least two TS2322s, got: {pairs:?} from {diags:#?}"
+        );
+        let shapes = [
+            DiagnosticShape::code(2322).at(pairs[0].0, pairs[0].1),
+            DiagnosticShape::code(2322).at(pairs[1].0, pairs[1].1),
+        ];
+        assert_diagnostic_shapes(source, &diags, &shapes);
+    }
+
+    #[test]
+    fn assert_diagnostic_shapes_exactly_rejects_extra_unmatched_diagnostics() {
+        // Two TS2322 are emitted but the test only declares one shape.
+        // `_exactly` must reject the extra diagnostic.
+        let source = "let s: string = 1; let t: number = '';";
+        let diags = check_source_strict(source);
+        let first = diags
+            .iter()
+            .find(|d| d.code == 2322)
+            .expect("fixture must emit at least one TS2322");
+        let (line, column) = diagnostic_line_column(source, first);
+        let single_shape = [DiagnosticShape::code(2322).at(line, column)];
+        let panicked = std::panic::catch_unwind(|| {
+            assert_diagnostic_shapes_exactly(source, &diags, &single_shape);
+        });
+        assert!(
+            panicked.is_err(),
+            "_exactly must panic when an emitted diagnostic has no matching shape"
+        );
+    }
+
+    #[test]
+    fn assert_diagnostic_shapes_exactly_rejects_missing_expected_shapes() {
+        // The expected shape is for a diagnostic that the source does not
+        // emit. `_exactly` must panic listing the missing shape.
+        let diags: Vec<Diagnostic> = Vec::new();
+        let shape = [DiagnosticShape::code(2322).at(1, 1)];
+        let panicked =
+            std::panic::catch_unwind(|| assert_diagnostic_shapes_exactly("", &diags, &shape));
+        assert!(
+            panicked.is_err(),
+            "_exactly must panic when a declared shape never matched any diagnostic"
+        );
     }
 }

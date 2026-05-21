@@ -1,23 +1,8 @@
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::test_utils::{check_source_diagnostics, check_with_options};
-
-fn line_and_column_for_offset(source: &str, offset: u32) -> (u32, u32) {
-    let mut line = 1;
-    let mut column = 1;
-    for (idx, ch) in source.char_indices() {
-        if idx == offset as usize {
-            return (line, column);
-        }
-        if ch == '\n' {
-            line += 1;
-            column = 1;
-        } else {
-            column += 1;
-        }
-    }
-    (line, column)
-}
+use tsz_checker::test_utils::{
+    check_source_diagnostics, check_with_options, line_column_for_offset,
+};
 
 fn diagnostic_anchor_text<'a>(source: &'a str, diagnostic: &Diagnostic) -> &'a str {
     assert_eq!(
@@ -142,7 +127,7 @@ fn mapped_key_constraint_ts2322_anchors_the_invalid_constraint_type() {
         "TS2322 must anchor on the invalid mapped key constraint type, got: {ts2322:#?}"
     );
     assert_eq!(
-        line_and_column_for_offset(source, ts2322[0].start),
+        line_column_for_offset(source, ts2322[0].start),
         (2, 20),
         "mapped key constraint TS2322 should keep the conformance fingerprint location"
     );
@@ -180,7 +165,7 @@ type Bad<S extends 'a' | 'b' | 'extra'> = { [Key in AB[S]]: true }[S];
         "TS2322 must start on the mapped key constraint expression, got: {ts2322:#?}"
     );
     assert_eq!(
-        line_and_column_for_offset(source, ts2322[0].start),
+        line_column_for_offset(source, ts2322[0].start),
         (6, 53),
         "mapped indexed-access key constraint TS2322 should keep the conformance fingerprint location"
     );
