@@ -171,6 +171,10 @@ name = "system_top_level_using_env_position_tests"
 path = "tests/system_top_level_using_env_position_tests.rs"
 
 [[test]]
+name = "system_top_level_using_class_name_reuse_tests"
+path = "tests/system_top_level_using_class_name_reuse_tests.rs"
+
+[[test]]
 name = "using_force_strict_mode_3516_tests"
 path = "tests/using_force_strict_mode_3516_tests.rs"
 
