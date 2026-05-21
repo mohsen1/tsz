@@ -934,22 +934,30 @@ impl<'a> CheckerState<'a> {
                     let expected_context_type =
                         self.evaluate_application_type(expected_context_type);
                     let expected_context_type = self.evaluate_type_with_env(expected_context_type);
+                    // Pre-extract before &mut self calls to release the arena borrow.
+                    let value_node_fn_span = self
+                        .ctx
+                        .arena
+                        .get(value_node_idx)
+                        .filter(|n| n.is_function_expression_or_arrow())
+                        .map(|n| (n.pos, n.end));
+
                     let mut function_param_diagnostic_span = None;
-                    if let Some(value_node) = self.ctx.arena.get(value_node_idx)
-                        && matches!(
-                            value_node.kind,
-                            syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
-                        )
-                    {
+                    let contextual_expected_type = if let Some(fn_span) = value_node_fn_span {
+                        // Refine union prop types to callable members (e.g. `Fn | undefined`
+                        // → `Fn`) before has_function_context so optional callback props are
+                        // correctly identified as callable.
+                        let refined =
+                            self.refine_jsx_callable_contextual_type(expected_context_type);
                         let has_function_context =
                             crate::query_boundaries::common::function_shape_for_type(
                                 self.ctx.types,
-                                expected_context_type,
+                                refined,
                             )
                             .is_some()
                                 || crate::query_boundaries::common::call_signatures_for_type(
                                     self.ctx.types,
-                                    expected_context_type,
+                                    refined,
                                 )
                                 .is_some_and(|sigs| !sigs.is_empty());
                         if !has_function_context {
@@ -966,17 +974,11 @@ impl<'a> CheckerState<'a> {
                             .implicit_any_checked_closures
                             .insert(value_node_idx);
                         self.invalidate_function_like_for_contextual_retry(value_node_idx);
-                        function_param_diagnostic_span = Some((value_node.pos, value_node.end));
-                    }
-                    let contextual_expected_type =
-                        if self.ctx.arena.get(value_node_idx).is_some_and(|node| {
-                            node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                        }) {
-                            self.refine_jsx_callable_contextual_type(expected_context_type)
-                        } else {
-                            expected_context_type
-                        };
+                        function_param_diagnostic_span = Some(fn_span);
+                        refined
+                    } else {
+                        expected_context_type
+                    };
                     // Set contextual type to preserve narrow literal types.
                     let is_function_attr = function_param_diagnostic_span.is_some();
                     let spec_snap = function_param_diagnostic_span

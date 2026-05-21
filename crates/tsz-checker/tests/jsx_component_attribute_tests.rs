@@ -7629,3 +7629,113 @@ function App() {
         "React.ReactType in function with inferred return type should not emit TS2786, got: {diags:?}"
     );
 }
+
+// =============================================================================
+// Union callback prop contextual typing tests
+//
+// Structural rule: when a JSX attribute value is an arrow function or function
+// expression, and the expected prop type is a union containing at least one
+// callable member (e.g. `((e: Event) => void) | undefined`), the function's
+// parameter types must be contextually inferred from the callable union member.
+// =============================================================================
+
+#[test]
+fn jsx_optional_callback_union_prop_no_ts7006() {
+    // Most common React pattern: `onClick?: (e: MouseEvent) => void` desugars
+    // to `((e: MouseEvent) => void) | undefined` at the call site.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface MouseEvent {{ clientX: number; clientY: number; }}
+interface ButtonProps {{
+    onClick?: (e: MouseEvent) => void;
+}}
+declare function Button(props: ButtonProps): JSX.Element;
+
+<Button onClick={{(e) => e.clientX}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "optional callback prop union should contextually type arrow param, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "optional callback prop union should not produce TS2322, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_optional_callback_union_prop_renamed_param_no_ts7006() {
+    // Same as above but with different parameter names to prove the fix is not
+    // name-keyed: `event`, `ev`, `x` must all work identically to `e`.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface KeyboardEvent {{ key: string; }}
+interface InputProps {{
+    onKeyDown?: (event: KeyboardEvent) => void;
+}}
+declare function Input(props: InputProps): JSX.Element;
+
+<Input onKeyDown={{(ev) => ev.key}} />;
+<Input onKeyDown={{(x) => x.key}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "renamed param optional callback should contextually type arrow param, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_union_of_two_callables_no_ts7006() {
+    // Union of two distinct callable types — both branches are callable, so the
+    // parameter should still be contextually typed.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface EventA {{ aField: number; }}
+interface EventB {{ bField: string; }}
+interface TwoCallbackProps {{
+    handler: ((e: EventA) => void) | ((e: EventB) => void);
+}}
+declare function Widget(props: TwoCallbackProps): JSX.Element;
+
+<Widget handler={{(e) => {{ void e; }}}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "union of two callables should not emit TS7006, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_direct_callable_prop_no_ts7006() {
+    // Baseline: a non-union callable prop continues to work correctly.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface ClickEvent {{ x: number; }}
+interface DirectProps {{
+    onClick: (e: ClickEvent) => void;
+}}
+declare function Btn(props: DirectProps): JSX.Element;
+
+<Btn onClick={{(e) => e.x}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "direct callable prop should contextually type arrow param, got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "direct callable prop should not emit TS2322, got: {diags:?}"
+    );
+}
