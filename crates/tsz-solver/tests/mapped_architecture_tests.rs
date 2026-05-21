@@ -600,3 +600,198 @@ fn mapped_type_over_type_param_with_array_constraint() {
         panic!("Expected array or deferred mapped type, got plain Object");
     }
 }
+
+// =============================================================================
+// Mapped types with `-?` over optional tuple elements (issue #9712)
+//
+// Structural rule: when a homomorphic mapped type's `-?` modifier removes
+// optionality from a source tuple element that was originally optional, the
+// resulting element must have `optional = false` AND its type must not
+// retain the implicit `| undefined` introduced by the source's optionality.
+// This mirrors the object-property `-?` handling. Tests vary the iteration
+// variable name and element types to prove the rule is structural.
+// =============================================================================
+
+/// Build `{ [<iter> in keyof T]-?: T[<iter>] }` for an arbitrary T.
+fn build_required_mapped(interner: &TypeInterner, iter_name: &str, source: TypeId) -> MappedType {
+    let iter_atom = interner.intern_string(iter_name);
+    let iter_param = TypeParamInfo {
+        name: iter_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let iter_type = interner.type_param(iter_param);
+    let template = interner.index_access(source, iter_type);
+    MappedType {
+        type_param: iter_param,
+        constraint: interner.keyof(source),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: Some(MappedModifier::Remove),
+    }
+}
+
+fn assert_tuple_elements(interner: &TypeInterner, type_id: TypeId, expected: &[(TypeId, bool)]) {
+    match interner.lookup(type_id) {
+        Some(TypeData::Tuple(tuple_id)) => {
+            let elements = interner.tuple_list(tuple_id);
+            assert_eq!(
+                elements.len(),
+                expected.len(),
+                "tuple element count mismatch"
+            );
+            for (i, (elem, &(want_ty, want_opt))) in elements.iter().zip(expected).enumerate() {
+                assert_eq!(elem.type_id, want_ty, "element {i} type mismatch");
+                assert_eq!(
+                    elem.optional, want_opt,
+                    "element {i} optional flag mismatch"
+                );
+                assert!(!elem.rest, "element {i} unexpected rest flag");
+            }
+        }
+        other => panic!("expected Tuple, got {other:?}"),
+    }
+}
+
+#[test]
+fn required_over_optional_tuple_strips_optional_and_undefined() {
+    // Reported repro: Required<[number, string?]> → [number, string].
+    // Both the optional flag and the implicit `| undefined` must be gone.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    let mapped = build_required_mapped(&interner, "K", source);
+    let mapped_id = interner.mapped(mapped);
+    let result = evaluate_type(&interner, mapped_id);
+
+    assert_tuple_elements(
+        &interner,
+        result,
+        &[(TypeId::NUMBER, false), (TypeId::STRING, false)],
+    );
+}
+
+#[test]
+fn required_over_optional_tuple_is_iter_name_invariant() {
+    // Renaming the iteration variable must not change the structural rule.
+    // `K`, `P`, `X` all produce the same all-required tuple.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    for iter_name in ["K", "P", "X"] {
+        let mapped = build_required_mapped(&interner, iter_name, source);
+        let mapped_id = interner.mapped(mapped);
+        let result = evaluate_type(&interner, mapped_id);
+        assert_tuple_elements(
+            &interner,
+            result,
+            &[(TypeId::BOOLEAN, false), (TypeId::NUMBER, false)],
+        );
+    }
+}
+
+#[test]
+fn required_over_multiple_optional_tuple_elements() {
+    // All optional source elements get optional=false AND lose `| undefined`.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    let mapped = build_required_mapped(&interner, "K", source);
+    let mapped_id = interner.mapped(mapped);
+    let result = evaluate_type(&interner, mapped_id);
+    assert_tuple_elements(
+        &interner,
+        result,
+        &[(TypeId::STRING, false), (TypeId::NUMBER, false)],
+    );
+}
+
+#[test]
+fn no_modifier_over_optional_tuple_preserves_optional() {
+    // Boundary: with no optional modifier, source optional is preserved.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    let iter_atom = interner.intern_string("K");
+    let iter_param = TypeParamInfo {
+        name: iter_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let iter_type = interner.type_param(iter_param);
+    let template = interner.index_access(source, iter_type);
+
+    let mapped = MappedType {
+        type_param: iter_param,
+        constraint: interner.keyof(source),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None, // identity — preserve source flags
+    };
+
+    let mapped_id = interner.mapped(mapped);
+    let result = evaluate_type(&interner, mapped_id);
+    // Element 1 stays optional and its type is the declared `string` (the
+    // implicit undefined comes back at read-time via tuple indexed access).
+    assert_tuple_elements(
+        &interner,
+        result,
+        &[(TypeId::NUMBER, false), (TypeId::STRING, true)],
+    );
+}

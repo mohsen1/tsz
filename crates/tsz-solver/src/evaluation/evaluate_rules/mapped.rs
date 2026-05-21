@@ -2073,7 +2073,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
 
             // Substitute into the template to get the mapped element type
-            let mapped_type =
+            let raw_mapped_type =
                 self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
 
             // Get the modifiers for this element
@@ -2087,6 +2087,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
             // Note: readonly modifier is intentionally ignored for tuple elements,
             // as TypeScript doesn't support readonly on individual tuple elements.
+
+            // When `-?` removes optionality from a previously optional element,
+            // tsc strips the implicit `| undefined` that indexed access on an
+            // optional tuple element introduced (the `StripOptional` ->
+            // `removeMissingOrUndefinedType` path in `getTypeOfMappedSymbol`).
+            let mapped_type = if elem.optional && !optional {
+                crate::narrowing::utils::remove_undefined(self.interner(), raw_mapped_type)
+            } else {
+                raw_mapped_type
+            };
 
             mapped_elements.push(TupleElement {
                 type_id: mapped_type,
