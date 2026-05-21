@@ -318,7 +318,9 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(crate) fn jsdoc_name_like_type_expr_for_pos(&self, pos: u32) -> Option<String> {
         let expr = self.leading_jsdoc_type_expr_for_pos(pos)?;
-        if Self::jsdoc_name_like_type_reference(&expr) {
+        if Self::jsdoc_name_like_type_reference(&expr)
+            && !Self::jsdoc_type_expr_uses_redirected_lookup(&expr)
+        {
             Some(expr)
         } else {
             None
@@ -1153,6 +1155,12 @@ impl<'a> DeclarationEmitter<'a> {
         Some(format!("{prefix}{{\n{}\n}}>", fields.join("\n")))
     }
 
+    fn jsdoc_type_expr_uses_redirected_lookup(type_expr: &str) -> bool {
+        let trimmed = type_expr.trim();
+        Self::jsdoc_redirected_lookup_type_text(trimmed).is_some()
+            || Self::normalize_jsdoc_object_index_type(trimmed).is_some()
+    }
+
     pub(in crate::declaration_emitter) fn normalize_jsdoc_type_expr(type_expr: &str) -> String {
         let normalized_legacy_generics = type_expr.trim().replace(".<", "<");
         let trimmed = normalized_legacy_generics.as_str();
@@ -1410,6 +1418,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
         match s {
             "*" | "?" => "any".to_string(),
+            redirected if let Some(text) = Self::jsdoc_redirected_lookup_type_text(redirected) => {
+                text.to_string()
+            }
             // `Array<>` is the form after `normalize_jsdoc_type_expr` strips
             // the legacy `.<` → `<` so both `Array` and `Array.<>` reach this
             // arm. tsc treats empty-args generic JSDoc references as
@@ -1419,6 +1430,22 @@ impl<'a> DeclarationEmitter<'a> {
             "Array" | "Array.<>" | "Array<>" => "any[]".to_string(),
             "Promise" | "Promise.<>" | "Promise<>" => "Promise<any>".to_string(),
             _ => s.to_string(),
+        }
+    }
+
+    fn jsdoc_redirected_lookup_type_text(type_name: &str) -> Option<&'static str> {
+        match type_name.trim() {
+            "String" => Some("string"),
+            "Number" => Some("number"),
+            "Boolean" => Some("boolean"),
+            "Void" => Some("void"),
+            "Undefined" => Some("undefined"),
+            "Null" => Some("null"),
+            "function" => Some("Function"),
+            "array" => Some("any[]"),
+            "promise" => Some("Promise<any>"),
+            "event" => Some("Event | undefined"),
+            _ => None,
         }
     }
 

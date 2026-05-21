@@ -2487,6 +2487,7 @@ impl<'a> DeclarationEmitter<'a> {
                         continue;
                     }
                     if self.emit_js_object_literal_namespace_if_possible(
+                        decl_idx,
                         decl.name,
                         decl.initializer,
                         is_exported,

@@ -525,6 +525,11 @@ impl<'a> DeclarationEmitter<'a> {
             if self.is_js_export_equals_name(decl.name) {
                 continue;
             }
+            if self.jsdoc_type_text_for_node(decl_idx).is_some()
+                || self.jsdoc_type_text_for_node(decl.name).is_some()
+            {
+                continue;
+            }
             if self.is_js_object_literal_namespace_candidate(decl.name, decl.initializer) {
                 return true;
             }
@@ -535,11 +540,17 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(in crate::declaration_emitter) fn emit_js_object_literal_namespace_if_possible(
         &mut self,
+        decl_idx: NodeIndex,
         decl_name: NodeIndex,
         initializer: NodeIndex,
         is_exported: bool,
     ) -> bool {
         if self.is_js_export_equals_name(decl_name) {
+            return false;
+        }
+        if self.jsdoc_type_text_for_node(decl_idx).is_some()
+            || self.jsdoc_type_text_for_node(decl_name).is_some()
+        {
             return false;
         }
         if !self.is_js_object_literal_namespace_candidate(decl_name, initializer) {

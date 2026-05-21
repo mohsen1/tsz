@@ -1805,6 +1805,45 @@ function read(value) {
 }
 
 #[test]
+fn test_jsdoc_type_redirected_lookup_names_are_not_emitted_as_aliases() {
+    let output = emit_js_dts(
+        r#"
+/** @type {String} */ const text = "";
+/** @type {Number} */ const count = 1;
+/** @type {Boolean} */ const enabled = true;
+/** @type {function} */ const run = () => {};
+/** @type {array} */ const values = [];
+/** @type {promise} */ const later = Promise.resolve(1);
+/** @type {Object<string, string>} */ const map = { key: "value" };
+/** @type {event} */ const ev = undefined;
+"#,
+    );
+
+    for expected in [
+        "declare const text: string;",
+        "declare const count: number;",
+        "declare const enabled: boolean;",
+        "declare const run: Function;",
+        "declare const values: any[];",
+        "declare const later: Promise<any>;",
+        "declare const ev: Event | undefined;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "Expected redirected JSDoc lookup declaration `{expected}`: {output}"
+        );
+    }
+    assert!(
+        output.contains("declare const map: {\n    [x: string]: string;\n};"),
+        "Expected Object<K,V> JSDoc lookup to emit an index signature: {output}"
+    );
+    assert!(
+        !output.contains("namespace map"),
+        "Did not expect Object<K,V> JSDoc lookup to be treated as a namespace-like alias: {output}"
+    );
+}
+
+#[test]
 fn test_js_script_typedef_before_variable_is_emitted_as_local_type() {
     let source = r#"
 /** @typedef {{x: string}} LocalType */
