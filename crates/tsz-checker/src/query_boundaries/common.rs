@@ -1210,21 +1210,9 @@ pub(crate) fn get_merged_object_shape_for_type(
     Some(ObjectShape {
         flags: base_shape.flags,
         properties: merged_props,
-        string_index: if has_string_index {
-            base_shape.string_index
-        } else {
-            None
-        },
-        number_index: if has_number_index {
-            base_shape.number_index
-        } else {
-            None
-        },
-        symbol_index: if has_symbol_index {
-            base_shape.symbol_index
-        } else {
-            None
-        },
+        string_index: base_shape.string_index.filter(|_| has_string_index),
+        number_index: base_shape.number_index.filter(|_| has_number_index),
+        symbol_index: base_shape.symbol_index.filter(|_| has_symbol_index),
         symbol: base_shape.symbol,
     })
 }

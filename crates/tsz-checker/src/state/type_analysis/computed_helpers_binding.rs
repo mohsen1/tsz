@@ -837,7 +837,6 @@ impl<'a> CheckerState<'a> {
         let Some(shape) = callable_shape_for_type(self.ctx.types, ctor_type) else {
             return ctor_type;
         };
-
         let factory = self.ctx.types.factory();
         factory.callable(tsz_solver::CallableShape {
             call_signatures,
