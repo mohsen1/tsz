@@ -1798,10 +1798,17 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.arena,
                                     ta.type_node,
                                 );
+                            // Restore the pre-existing suppression for generic
+                            // simple-reference aliases unless the precise
+                            // structural self-cycle detection confirmed it.
+                            let generic_self_ref = ta.type_parameters.is_some()
+                                && self.is_simple_type_reference(ta.type_node)
+                                && !self.type_alias_is_generic_self_circular(sym_id);
                             if name_matches
                                 && !has_parse_error_tp
                                 && !has_import_partner
                                 && !body_is_deferred
+                                && !generic_self_ref
                                 && !is_jsx_runtime_bridge_alias
                                 && !self.ctx.import_conflict_names.contains(&name)
                             {

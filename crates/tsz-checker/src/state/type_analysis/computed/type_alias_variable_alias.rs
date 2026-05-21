@@ -242,6 +242,9 @@ impl<'a> CheckerState<'a> {
                     .is_jsx_import_source_runtime_bridge_alias(decl_arena, type_alias.type_node);
                 let is_circular = circularity_eligible
                     && !is_jsx_runtime_bridge_alias
+                    && (generic_self_circular
+                        || params.is_empty()
+                        || !self.is_simple_type_reference(type_alias.type_node))
                     && (self.is_direct_circular_reference(
                         sym_id,
                         alias_type,
@@ -281,8 +284,6 @@ impl<'a> CheckerState<'a> {
                     // space as a direct circularity and still emits TS2456.
                     // We check the local AST rather than a resolved type to
                     // avoid SymbolId/arena collisions during driver-mode runs.
-                    // `generic_self_circular`: a self-application lowers to a
-                    // deferred application but tsc still reports TS2456.
                     let body_is_deferred = self.alias_ast_is_deferred(sym_id)
                         && !is_non_generic_mapped_cycle
                         && !generic_self_circular;
