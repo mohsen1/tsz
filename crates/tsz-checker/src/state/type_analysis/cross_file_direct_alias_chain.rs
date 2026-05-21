@@ -55,10 +55,14 @@ impl<'a> CheckerState<'a> {
                     return false;
                 };
                 let Some(args) = type_ref.type_arguments.as_ref() else {
-                    return false;
+                    return Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        arena, binder, node_idx, seen,
+                    );
                 };
                 if args.nodes.is_empty() {
-                    return false;
+                    return Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        arena, binder, node_idx, seen,
+                    );
                 }
                 let Some(name) = arena
                     .get(type_ref.type_name)
@@ -344,6 +348,47 @@ impl<'a> CheckerState<'a> {
                 );
                 seen.pop(sym_id);
                 result
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                arena.get_composite_type(node).is_some_and(|composite| {
+                    composite.types.nodes.iter().copied().all(|member| {
+                        Self::source_file_type_node_is_local_alias_chain_lowerable(
+                            arena, binder, member, seen,
+                        )
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                arena.get_array_type(node).is_some_and(|array| {
+                    Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        arena,
+                        binder,
+                        array.element_type,
+                        seen,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                arena.get_tuple_type(node).is_some_and(|tuple| {
+                    tuple.elements.nodes.iter().copied().all(|element| {
+                        Self::source_file_type_node_is_local_alias_chain_lowerable(
+                            arena, binder, element, seen,
+                        )
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE =>
+            {
+                arena.get_wrapped_type(node).is_some_and(|wrapped| {
+                    Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        arena,
+                        binder,
+                        wrapped.type_node,
+                        seen,
+                    )
+                })
             }
             _ => false,
         }
