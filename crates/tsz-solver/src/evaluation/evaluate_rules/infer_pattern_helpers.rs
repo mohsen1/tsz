@@ -371,7 +371,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         pattern_fn_id: FunctionShapeId,
         pattern: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        _visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         let pattern_fn = self.interner().function_shape(pattern_fn_id);
@@ -390,7 +390,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                                source_return: TypeId,
                                                bindings: &mut FxHashMap<Atom, TypeId>|
              -> bool {
-                let mut local_visited = FxHashSet::default();
                 if has_single_rest_infer {
                     if !self.match_rest_infer_tuple(
                         source_params,
@@ -412,7 +411,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     source_return,
                     pattern_fn.return_type,
                     bindings,
-                    &mut local_visited,
+                    visited,
                     checker,
                 ) {
                     return false;
@@ -561,7 +560,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                               source_type_params: &[TypeParamInfo],
                                               bindings: &mut FxHashMap<Atom, TypeId>|
                  -> bool {
-                    let mut local_visited = FxHashSet::default();
                     let erased_subst = self.erase_type_params_to_constraints(source_type_params);
 
                     if source_params.len() == 1 && source_params[0].rest {
@@ -580,7 +578,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             source_param_type,
                             infer_ty,
                             bindings,
-                            &mut local_visited,
+                            visited,
                             checker,
                         );
                     }
@@ -599,13 +597,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         })
                         .collect();
                     let tuple_ty = self.interner().tuple(tuple_elems);
-                    self.match_infer_pattern(
-                        tuple_ty,
-                        infer_ty,
-                        bindings,
-                        &mut local_visited,
-                        checker,
-                    )
+                    self.match_infer_pattern(tuple_ty, infer_ty, bindings, visited, checker)
                 };
 
                 return match self.interner().lookup(source) {
@@ -783,12 +775,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     source_return: TypeId,
                                     bindings: &mut FxHashMap<Atom, TypeId>|
              -> bool {
-                let mut local_visited = FxHashSet::default();
                 if !self.match_infer_pattern(
                     source_return,
                     pattern_fn.return_type,
                     bindings,
-                    &mut local_visited,
+                    visited,
                     checker,
                 ) {
                     return false;
@@ -885,14 +876,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // When this parameter type is not specified, use Unknown
             let source_this = source_this.unwrap_or(TypeId::UNKNOWN);
             if has_this_infer {
-                let mut local_visited = FxHashSet::default();
-                if !self.match_infer_pattern(
-                    source_this,
-                    pattern_this,
-                    bindings,
-                    &mut local_visited,
-                    checker,
-                ) {
+                if !self.match_infer_pattern(source_this, pattern_this, bindings, visited, checker)
+                {
                     return false;
                 }
             } else if !checker.is_subtype_of(source_this, pattern_this) {
@@ -919,17 +904,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
 
-            if has_return_infer {
-                let mut local_visited = FxHashSet::default();
-                if !self.match_infer_pattern(
+            if has_return_infer
+                && !self.match_infer_pattern(
                     source_return,
                     pattern_fn.return_type,
                     bindings,
-                    &mut local_visited,
+                    visited,
                     checker,
-                ) {
-                    return false;
-                }
+                )
+            {
+                return false;
             }
 
             // For explicit-this infer patterns, matched signature components are
@@ -1205,7 +1189,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         pattern_shape_id: CallableShapeId,
         pattern: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
-        _visited: &mut FxHashSet<(TypeId, TypeId)>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         let pattern_shape = self.interner().callable_shape(pattern_shape_id);
@@ -1255,7 +1239,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                                source_return: TypeId,
                                                bindings: &mut FxHashMap<Atom, TypeId>|
              -> bool {
-                let mut local_visited = FxHashSet::default();
                 if has_single_rest_infer {
                     if !self.match_rest_infer_tuple(
                         source_params,
@@ -1277,7 +1260,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     source_return,
                     pattern_sig.return_type,
                     bindings,
-                    &mut local_visited,
+                    visited,
                     checker,
                 ) {
                     return false;
@@ -1463,12 +1446,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     source_return: TypeId,
                                     bindings: &mut FxHashMap<Atom, TypeId>|
              -> bool {
-                let mut local_visited = FxHashSet::default();
                 if !self.match_infer_pattern(
                     source_return,
                     pattern_sig.return_type,
                     bindings,
-                    &mut local_visited,
+                    visited,
                     checker,
                 ) {
                     return false;
@@ -1871,12 +1853,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let mut combined = FxHashMap::default();
                 for &member in members.iter() {
                     let mut member_bindings = FxHashMap::default();
-                    let mut local_visited = FxHashSet::default();
                     if !self.match_infer_pattern(
                         member,
                         pattern,
                         &mut member_bindings,
-                        &mut local_visited,
+                        visited,
                         checker,
                     ) {
                         return false;
@@ -2010,22 +1991,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             crate::type_queries::get_array_element_type(self.interner(), source)
             && let Some(pattern_index) = &pattern_shape.number_index
         {
-            let mut key_visited = FxHashSet::default();
             if !self.match_infer_pattern(
                 TypeId::NUMBER,
                 pattern_index.key_type,
                 bindings,
-                &mut key_visited,
+                visited,
                 checker,
             ) {
                 return false;
             }
-            let mut value_visited = FxHashSet::default();
             return self.match_infer_pattern(
                 source_elem,
                 pattern_index.value_type,
                 bindings,
-                &mut value_visited,
+                visited,
                 checker,
             );
         }
@@ -2066,12 +2045,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             return false;
                         }
                     } else {
-                        let mut local_visited = FxHashSet::default();
                         if !self.match_infer_pattern(
                             TypeId::STRING,
                             pattern_index.key_type,
                             bindings,
-                            &mut local_visited,
+                            visited,
                             checker,
                         ) {
                             return false;
@@ -2088,12 +2066,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         } else {
                             self.interner().union(values)
                         };
-                        let mut local_visited = FxHashSet::default();
                         if !self.match_infer_pattern(
                             value_type,
                             pattern_index.value_type,
                             bindings,
-                            &mut local_visited,
+                            visited,
                             checker,
                         ) {
                             return false;
@@ -2122,12 +2099,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             return false;
                         }
                     } else {
-                        let mut local_visited = FxHashSet::default();
                         if !self.match_infer_pattern(
                             TypeId::NUMBER,
                             pattern_index.key_type,
                             bindings,
-                            &mut local_visited,
+                            visited,
                             checker,
                         ) {
                             return false;
@@ -2147,12 +2123,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         } else {
                             self.interner().union(values)
                         };
-                        let mut local_visited = FxHashSet::default();
                         if !self.match_infer_pattern(
                             value_type,
                             pattern_index.value_type,
                             bindings,
-                            &mut local_visited,
+                            visited,
                             checker,
                         ) {
                             return false;
@@ -2186,12 +2161,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let mut combined = FxHashMap::default();
                 for &member in members.iter() {
                     let mut member_bindings = FxHashMap::default();
-                    let mut local_visited = FxHashSet::default();
                     if !self.match_infer_pattern(
                         member,
                         pattern,
                         &mut member_bindings,
-                        &mut local_visited,
+                        visited,
                         checker,
                     ) {
                         return false;
