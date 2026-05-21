@@ -179,35 +179,23 @@ pub const LOCK_WAIT_BUCKET_UPPER_BOUNDS_NS: [u64; LOCK_WAIT_BUCKET_COUNT] = [
     u64::MAX,    // overflow
 ];
 
-/// How `delegate_cross_arena_symbol_resolution` found the target arena for
-/// a cache miss that must construct a child checker.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CrossArenaSymbolMissSource {
-    /// `binder.symbol_arenas` pointed at a non-current arena.
-    SymbolArena = 0,
-    /// `binder.declaration_arenas` found a non-current declaration arena.
-    DeclarationArena = 1,
-    /// `cross_file_symbol_targets` resolved the target file index.
-    SymbolFileTarget = 2,
-    /// Fallback bucket for unexpected delegation shapes.
-    Unknown = 3,
-}
-
-pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT: usize = 4;
-
-pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES: [&str; CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT] = [
-    "symbol_arenas",
-    "declaration_arenas",
-    "symbol_file_targets",
-    "unknown",
-];
-
-impl CrossArenaSymbolMissSource {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// How `delegate_cross_arena_symbol_resolution` found the target arena for
+    /// a cache miss that must construct a child checker.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CrossArenaSymbolMissSource {
+        /// `binder.symbol_arenas` pointed at a non-current arena.
+        SymbolArena = 0 => "symbol_arenas",
+        /// `binder.declaration_arenas` found a non-current declaration arena.
+        DeclarationArena = 1 => "declaration_arenas",
+        /// `cross_file_symbol_targets` resolved the target file index.
+        SymbolFileTarget = 2 => "symbol_file_targets",
+        /// Fallback bucket for unexpected delegation shapes.
+        Unknown = 3 => "unknown",
     }
+
+    pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT;
+    pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES;
 }
 
 /// Coarse symbol-kind bucket for `DelegateCrossArenaSymbol` misses.
