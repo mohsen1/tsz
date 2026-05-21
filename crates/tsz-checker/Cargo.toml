@@ -1298,6 +1298,10 @@ name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
 
 [[test]]
+name = "class_arrow_property_type_inference_tests"
+path = "tests/class_arrow_property_type_inference_tests.rs"
+
+[[test]]
 name = "class_implements_index_signature_tests"
 path = "tests/class_implements_index_signature_tests.rs"
 
