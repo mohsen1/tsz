@@ -5,6 +5,17 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext::METHOD_SIGNATURE;
 use tsz_solver::TypeId;
 
+pub(crate) struct InterfaceOverloadCoverageCtx<'a> {
+    pub(crate) iface_name: NodeIndex,
+    pub(crate) derived_name: &'a str,
+    pub(crate) base_name: &'a str,
+    pub(crate) base_iface_indices: &'a [NodeIndex],
+    pub(crate) derived_member_names: &'a rustc_hash::FxHashSet<String>,
+    pub(crate) derived_members: &'a [(String, TypeId, NodeIndex, u16, bool, bool)],
+    pub(crate) substitution: &'a TypeSubstitution,
+    pub(crate) interface_self_type: Option<TypeId>,
+}
+
 fn overload_method_wrapper_value_type(
     types: &dyn tsz_solver::construction::QueryDatabase,
     type_id: TypeId,
@@ -69,18 +80,20 @@ fn can_use_fresh_generic_overload_assignability(
 }
 
 impl<'a> CheckerState<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn check_interface_overload_coverage(
         &mut self,
-        iface_name: NodeIndex,
-        derived_name: &str,
-        base_name: &str,
-        base_iface_indices: &[NodeIndex],
-        derived_member_names: &rustc_hash::FxHashSet<String>,
-        derived_members: &[(String, TypeId, NodeIndex, u16, bool, bool)],
-        substitution: &TypeSubstitution,
-        interface_self_type: Option<TypeId>,
+        ctx: InterfaceOverloadCoverageCtx<'_>,
     ) {
+        let InterfaceOverloadCoverageCtx {
+            iface_name,
+            derived_name,
+            base_name,
+            base_iface_indices,
+            derived_member_names,
+            derived_members,
+            substitution,
+            interface_self_type,
+        } = ctx;
         let base_method_overloads: Vec<(String, Vec<TypeId>)>;
         {
             let mut by_name: rustc_hash::FxHashMap<String, Vec<TypeId>> =

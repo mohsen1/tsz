@@ -5,7 +5,7 @@
 
 mod attr_value;
 mod generic_spread;
-mod resolution;
+pub(crate) mod resolution;
 mod special_attribute_callbacks;
 mod synthesized_display;
 mod validation;

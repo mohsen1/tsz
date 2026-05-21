@@ -353,16 +353,18 @@ impl<'a> CheckerState<'a> {
                 // (tsc doesn't wrap intrinsic element props in IntrinsicAttributes).
                 let display_target = self.build_jsx_display_target(evaluated_props, None);
                 self.check_jsx_attributes_against_props(
-                    jsx_opening.attributes,
-                    evaluated_props,
-                    jsx_opening.tag_name,
-                    None,
-                    None,
-                    false, // intrinsic elements never have raw type params
-                    display_target,
-                    None,
-                    request,
-                    children_ctx,
+                    super::super::props::resolution::JsxPropsCheckOpts {
+                        attributes_idx: jsx_opening.attributes,
+                        props_type: evaluated_props,
+                        tag_name_idx: jsx_opening.tag_name,
+                        component_type: None,
+                        special_attr_component_type: None,
+                        raw_props_has_type_params: false,
+                        display_target,
+                        preferred_target_display: None,
+                        request,
+                        children_ctx,
+                    },
                 );
 
                 // tsc types ALL JSX expressions (both intrinsic and component) as
@@ -522,16 +524,18 @@ impl<'a> CheckerState<'a> {
             {
                 let display_target = self.build_jsx_display_target(props_type, None);
                 self.check_jsx_attributes_against_props(
-                    jsx_opening.attributes,
-                    props_type,
-                    jsx_opening.tag_name,
-                    None,
-                    None,
-                    false,
-                    display_target,
-                    None,
-                    request,
-                    children_ctx,
+                    super::super::props::resolution::JsxPropsCheckOpts {
+                        attributes_idx: jsx_opening.attributes,
+                        props_type,
+                        tag_name_idx: jsx_opening.tag_name,
+                        component_type: None,
+                        special_attr_component_type: None,
+                        raw_props_has_type_params: false,
+                        display_target,
+                        preferred_target_display: None,
+                        request,
+                        children_ctx,
+                    },
                 );
                 if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
                     let lib_binders = self.get_lib_binders();
@@ -587,16 +591,18 @@ impl<'a> CheckerState<'a> {
                         )
                 {
                     self.check_jsx_attributes_against_props(
-                        jsx_opening.attributes,
-                        props_type,
-                        jsx_opening.tag_name,
-                        None,
-                        None,
-                        raw_has_type_params,
-                        display_target,
-                        None,
-                        request,
-                        children_ctx,
+                        super::super::props::resolution::JsxPropsCheckOpts {
+                            attributes_idx: jsx_opening.attributes,
+                            props_type,
+                            tag_name_idx: jsx_opening.tag_name,
+                            component_type: None,
+                            special_attr_component_type: None,
+                            raw_props_has_type_params: raw_has_type_params,
+                            display_target,
+                            preferred_target_display: None,
+                            request,
+                            children_ctx,
+                        },
                     );
                 } else {
                     self.check_grammar_jsx_element(jsx_opening.attributes);
@@ -808,16 +814,18 @@ impl<'a> CheckerState<'a> {
                         )
                     });
                     self.check_jsx_attributes_against_props(
-                        jsx_opening.attributes,
-                        props_type,
-                        jsx_opening.tag_name,
-                        Some(component_metadata_type),
-                        Some(component_type),
-                        raw_has_type_params,
-                        display_target,
-                        preferred_props_display.as_deref(),
-                        request,
-                        children_ctx,
+                        super::super::props::resolution::JsxPropsCheckOpts {
+                            attributes_idx: jsx_opening.attributes,
+                            props_type,
+                            tag_name_idx: jsx_opening.tag_name,
+                            component_type: Some(component_metadata_type),
+                            special_attr_component_type: Some(component_type),
+                            raw_props_has_type_params: raw_has_type_params,
+                            display_target,
+                            preferred_target_display: preferred_props_display.as_deref(),
+                            request,
+                            children_ctx,
+                        },
                     );
                     let generic_spread_props_type =
                         class_props_from_construct.unwrap_or(props_type);

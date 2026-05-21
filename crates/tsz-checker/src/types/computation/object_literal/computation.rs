@@ -3047,18 +3047,20 @@ impl<'a> CheckerState<'a> {
         }
 
         let object_type = self.finalize_object_literal_type(
-            properties,
-            display_type_overrides,
-            string_index_types,
-            number_index_types,
-            string_index_param_name,
-            number_index_param_name,
-            has_spread,
-            has_any_spread,
-            has_union_spread,
-            union_spread_branches,
-            generic_spread_types,
-            all_properties_context_sensitive,
+            super::super::object_literal_support::ObjectLiteralFinalizeCtx {
+                properties,
+                display_type_overrides,
+                string_index_types,
+                number_index_types,
+                string_index_param_name,
+                number_index_param_name,
+                has_spread,
+                has_any_spread,
+                has_union_spread,
+                union_spread_branches,
+                generic_spread_types,
+                all_properties_context_sensitive,
+            },
         );
 
         // Check getter/setter type compatibility for object literal accessors.

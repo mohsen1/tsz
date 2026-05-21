@@ -1809,14 +1809,16 @@ impl<'a> CheckerState<'a> {
             // overload is unmatched, emit TS2430.
             if !ts2430_emitted_for_base {
                 self.check_interface_overload_coverage(
-                    iface_data.name,
-                    &derived_name,
-                    &base_name,
-                    &base_iface_indices,
-                    &derived_member_names,
-                    &derived_members,
-                    &substitution,
-                    interface_self_type,
+                    super::class_checker_compat_overloads::InterfaceOverloadCoverageCtx {
+                        iface_name: iface_data.name,
+                        derived_name: &derived_name,
+                        base_name: &base_name,
+                        base_iface_indices: &base_iface_indices,
+                        derived_member_names: &derived_member_names,
+                        derived_members: &derived_members,
+                        substitution: &substitution,
+                        interface_self_type,
+                    },
                 );
             }
 
