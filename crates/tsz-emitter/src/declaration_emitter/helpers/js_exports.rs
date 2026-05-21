@@ -3193,27 +3193,15 @@ impl<'a> DeclarationEmitter<'a> {
         &mut self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
-        let Some(expr_node) = self.arena.get(expr_idx) else {
-            return None;
-        };
+        let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
             return None;
         }
-        let Some(new_expr) = self.arena.get_call_expr(expr_node) else {
-            return None;
-        };
-        let Some(local_name) = self.get_identifier_text(new_expr.expression) else {
-            return None;
-        };
-        let Some(binder) = self.binder else {
-            return None;
-        };
-        let Some(sym_id) = self.resolve_identifier_symbol(new_expr.expression, &local_name) else {
-            return None;
-        };
-        let Some(symbol) = binder.symbols.get(sym_id) else {
-            return None;
-        };
+        let new_expr = self.arena.get_call_expr(expr_node)?;
+        let local_name = self.get_identifier_text(new_expr.expression)?;
+        let binder = self.binder?;
+        let sym_id = self.resolve_identifier_symbol(new_expr.expression, &local_name)?;
+        let symbol = binder.symbols.get(sym_id)?;
         for decl_idx in symbol.declarations.iter().copied() {
             if !self.variable_declaration_is_top_level_source_file_statement(decl_idx) {
                 continue;
