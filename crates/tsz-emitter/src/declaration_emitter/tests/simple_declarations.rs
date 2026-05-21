@@ -1772,6 +1772,39 @@ export function process(s) {}
 }
 
 #[test]
+fn test_js_script_leading_jsdoc_typedef_comments_stay_before_hoisted_function() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {number} Count {@link Count docs} */
+/**
+ * @param {Count} value {@link Count}
+ */
+function read(value) {
+  return value;
+}
+"#,
+    );
+
+    let raw_typedef_pos = output
+        .find("/** @typedef {number} Count {@link Count docs} */")
+        .expect("Expected raw typedef comment to stay in source order");
+    let function_pos = output
+        .find("declare function read(value: Count): Count;")
+        .expect("Expected hoisted script function declaration");
+    let alias_pos = output
+        .find("type Count = number;")
+        .expect("Expected trailing typedef alias");
+    assert!(
+        raw_typedef_pos < function_pos,
+        "Expected raw typedef comment before script function declaration: {output}"
+    );
+    assert!(
+        function_pos < alias_pos,
+        "Expected script typedef alias after function declaration: {output}"
+    );
+}
+
+#[test]
 fn test_js_script_typedef_before_variable_is_emitted_as_local_type() {
     let source = r#"
 /** @typedef {{x: string}} LocalType */

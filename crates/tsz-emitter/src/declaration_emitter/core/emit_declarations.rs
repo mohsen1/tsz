@@ -977,6 +977,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let has_leading_jsdoc_typedef = self.source_is_js_file
             && self.js_export_equals_names.is_empty()
+            && self.statement_has_effective_export(stmt_idx)
             && !self.leading_jsdoc_type_ref_resolves_to_function_typedef(stmt_node.pos)
             && jsdoc_chain
                 .iter()
@@ -1019,15 +1020,16 @@ impl<'a> DeclarationEmitter<'a> {
             ) {
                 self.emit_jsdoc_comment_chain(&filtered);
             }
-        } else if effective_chain.len() == 1
-            && Self::jsdoc_has_function_signature_tags(effective_chain[0].as_str())
+        } else if effective_chain
+            .iter()
+            .any(|jsdoc| Self::jsdoc_has_function_signature_tags(jsdoc))
             && self.hoisted_jsdoc_source_comment_is_multiline(stmt_node.pos)
         {
             if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
                 stmt_node.pos,
                 &effective_chain,
             ) {
-                self.emit_multiline_jsdoc_comment(&effective_chain[0]);
+                self.emit_jsdoc_comment_chain(&effective_chain);
             }
         } else {
             self.emit_jsdoc_comment_chain(&effective_chain);
