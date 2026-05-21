@@ -1799,10 +1799,18 @@ impl<'a> Printer<'a> {
                 self.es5_super_home_is_static = false;
             }
             if has_extends && !extends_null {
-                self.write("constructor() {");
+                if self.ctx.target_es5 {
+                    self.write("constructor() {");
+                } else {
+                    self.write("constructor(...args) {");
+                }
                 self.write_line();
                 self.increase_indent();
-                self.write("super(...arguments);");
+                if self.ctx.target_es5 {
+                    self.write("super(...arguments);");
+                } else {
+                    self.write("super(...args);");
+                }
                 self.write_line();
             } else {
                 self.write("constructor() {");
