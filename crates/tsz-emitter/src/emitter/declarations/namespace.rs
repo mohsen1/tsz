@@ -1483,21 +1483,21 @@ impl<'a> Printer<'a> {
             return;
         };
         if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-            if let Some(export) = self.arena.get_export_decl(stmt_node) {
-                if let Some(inner_node) = self.arena.get(export.export_clause) {
-                    if inner_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                        self.collect_namespace_exports_from_statement(
-                            export.export_clause,
-                            parent_path,
-                            true,
-                        );
-                    } else if let Some(path) = parent_path {
-                        let names = self.get_export_names_from_clause(export.export_clause);
-                        self.namespace_all_exported_names
-                            .entry(path.to_string())
-                            .or_default()
-                            .extend(names);
-                    }
+            if let Some(export) = self.arena.get_export_decl(stmt_node)
+                && let Some(inner_node) = self.arena.get(export.export_clause)
+            {
+                if inner_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    self.collect_namespace_exports_from_statement(
+                        export.export_clause,
+                        parent_path,
+                        true,
+                    );
+                } else if let Some(path) = parent_path {
+                    let names = self.get_export_names_from_clause(export.export_clause);
+                    self.namespace_all_exported_names
+                        .entry(path.to_string())
+                        .or_default()
+                        .extend(names);
                 }
             }
             return;

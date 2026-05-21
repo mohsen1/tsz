@@ -783,16 +783,16 @@ impl<'a> Printer<'a> {
             && operand_node.kind == SyntaxKind::Identifier as u16
         {
             let local_name = self.get_identifier_text_idx(unary.operand);
-            if self.in_system_execute_body {
-                if let Some(export_name) = self.system_reexported_names.get(&local_name).cloned() {
-                    self.write("exports_1(\"");
-                    self.write(&export_name);
-                    self.write("\", ");
-                    self.write(get_operator_text(unary.operator));
-                    self.write(&local_name);
-                    self.write(")");
-                    return;
-                }
+            if self.in_system_execute_body
+                && let Some(export_name) = self.system_reexported_names.get(&local_name).cloned()
+            {
+                self.write("exports_1(\"");
+                self.write(&export_name);
+                self.write("\", ");
+                self.write(get_operator_text(unary.operator));
+                self.write(&local_name);
+                self.write(")");
+                return;
             }
             if self.emit_cjs_live_export_prefix_unary(&local_name, unary.operator) {
                 return;

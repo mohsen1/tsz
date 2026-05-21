@@ -56,10 +56,10 @@ impl<'a> DeclarationEmitter<'a> {
         if member.is_empty() {
             return None;
         }
-        if member.starts_with('{') {
-            if let Some(unwrapped) = Self::unwrap_synthetic_anonymous_object_type(member) {
-                return Some(unwrapped);
-            }
+        if member.starts_with('{')
+            && let Some(unwrapped) = Self::unwrap_synthetic_anonymous_object_type(member)
+        {
+            return Some(unwrapped);
         }
         Some(member.to_string())
     }

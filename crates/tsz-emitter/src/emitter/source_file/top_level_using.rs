@@ -1970,43 +1970,39 @@ impl<'a> Printer<'a> {
             && has_decorators
             && !self.ctx.options.legacy_decorators
             && !self.ctx.options.target.supports_es2025()
+            && let Some(expr) = self.capture_tc39_decorated_class_expression(idx, &display_name)
         {
-            if let Some(expr) = self.capture_tc39_decorated_class_expression(idx, &display_name) {
-                if let Some(export_name) = export_name.as_ref() {
-                    if !is_es_module_output {
-                        self.write_export_binding_start(export_name);
-                    }
-                    if export_name == "default" {
-                        self.write("_default = ");
-                        if class.name.is_some() {
-                            self.write(&binding_name);
-                            self.write(" = ");
-                        }
-                    } else {
+            if let Some(export_name) = export_name.as_ref() {
+                if !is_es_module_output {
+                    self.write_export_binding_start(export_name);
+                }
+                if export_name == "default" {
+                    self.write("_default = ");
+                    if class.name.is_some() {
                         self.write(&binding_name);
                         self.write(" = ");
-                    }
-                    self.write(&expr);
-                    if !is_es_module_output {
-                        self.write_export_binding_end();
-                    } else {
-                        self.write(";");
                     }
                 } else {
                     self.write(&binding_name);
                     self.write(" = ");
-                    self.write(&expr);
+                }
+                self.write(&expr);
+                if !is_es_module_output {
+                    self.write_export_binding_end();
+                } else {
                     self.write(";");
                 }
-                self.mark_top_level_using_inline_cjs_export(
-                    export_name.as_ref(),
-                    is_es_module_output,
-                );
-                if let Some(prev) = prev_anon_default_name {
-                    self.anonymous_default_export_name = prev;
-                }
-                return true;
+            } else {
+                self.write(&binding_name);
+                self.write(" = ");
+                self.write(&expr);
+                self.write(";");
             }
+            self.mark_top_level_using_inline_cjs_export(export_name.as_ref(), is_es_module_output);
+            if let Some(prev) = prev_anon_default_name {
+                self.anonymous_default_export_name = prev;
+            }
+            return true;
         }
         if self.ctx.options.target.supports_es2025()
             && has_decorators

@@ -200,7 +200,7 @@ impl<'a> Printer<'a> {
             }
             self.emit(catch.variable_declaration);
             self.write(")");
-        } else if self.catch_clause_has_recovered_empty_binding_parens(node, &catch) {
+        } else if self.catch_clause_has_recovered_empty_binding_parens(node, catch) {
             self.write(" ()");
         } else if self.ctx.needs_es2019_lowering {
             let name = self.make_unique_name();

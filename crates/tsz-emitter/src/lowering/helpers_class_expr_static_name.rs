@@ -15,23 +15,36 @@ impl<'a> LoweringPass<'a> {
         let needs_private_field_lowering = self.ctx.needs_es2022_lowering;
         let target_needs_field_lowering =
             self.ctx.needs_es2022_lowering || !self.ctx.options.use_define_for_class_fields;
-        #[allow(clippy::nonminimal_bool)]
         let has_static_field_comma_expr = target_needs_field_lowering
             && class.members.nodes.iter().any(|&member_idx| {
-                self.arena.get(member_idx).is_some_and(|member| {
-                    member.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                        && self.arena.get_property_decl(member).is_some_and(|prop| {
-                            self.arena.is_static(&prop.modifiers)
-                                && !self
-                                    .arena
-                                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                                && !self
-                                    .arena
-                                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                                && !(needs_private_field_lowering
-                                    && is_private_identifier(self.arena, prop.name))
-                        })
-                })
+                let Some(member) = self.arena.get(member_idx) else {
+                    return false;
+                };
+                if member.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                    return false;
+                }
+                let Some(prop) = self.arena.get_property_decl(member) else {
+                    return false;
+                };
+                if !self.arena.is_static(&prop.modifiers) {
+                    return false;
+                }
+                if self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                {
+                    return false;
+                }
+                if self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    return false;
+                }
+                if needs_private_field_lowering && is_private_identifier(self.arena, prop.name) {
+                    return false;
+                }
+                true
             });
         let has_static_block_comma_expr = self.ctx.needs_es2022_lowering
             && class.members.nodes.iter().any(|&member_idx| {

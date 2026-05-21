@@ -343,7 +343,7 @@ fn emit_dts_with_index_access_return(source: &str, method_name_str: &str) -> Str
             .and_then(|n| parser.arena.get_type_parameter(n))
             .and_then(|p| parser.arena.get_identifier_text(p.name))
             .expect("type param name");
-        let atom = interner.intern_string(&name);
+        let atom = interner.intern_string(name);
         let type_id = interner.type_param(tsz_solver::TypeParamInfo::simple(atom));
         param_type_ids.push((name.to_string(), type_id));
     }

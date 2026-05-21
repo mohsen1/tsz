@@ -1193,14 +1193,14 @@ impl<'a> Printer<'a> {
             {
                 return Some(r);
             }
-            if let Some(target) = self.const_enum_import_aliases.get(first) {
-                if let Some(r) = self.lookup_scoped_const_enum_alias_target_values(
+            if let Some(target) = self.const_enum_import_aliases.get(first)
+                && let Some(r) = self.lookup_scoped_const_enum_alias_target_values(
                     target,
                     Some(rest),
                     access_pos,
-                ) {
-                    return Some(r);
-                }
+                )
+            {
+                return Some(r);
             }
         } else if let Some(target) = self.const_enum_import_aliases.get(enum_path)
             && let Some(r) =

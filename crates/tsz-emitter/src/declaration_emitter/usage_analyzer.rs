@@ -1925,17 +1925,15 @@ impl<'a> UsageAnalyzer<'a> {
                             return;
                         }
                     }
-                    if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
-                        if !self.is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
-                        {
-                            self.mark_symbol_used(sym_id, kind);
-                        }
+                    if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text)
+                        && !self.is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
+                    {
+                        self.mark_symbol_used(sym_id, kind);
                     }
-                    if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) {
-                        if !self.is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
-                        {
-                            self.mark_symbol_used(sym_id, kind);
-                        }
+                    if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text)
+                        && !self.is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
+                    {
+                        self.mark_symbol_used(sym_id, kind);
                     }
                     // Also check namespace/module scope tables, since the
                     // symbol may live in a parent namespace scope rather than
@@ -1944,12 +1942,11 @@ impl<'a> UsageAnalyzer<'a> {
                     // properly marked as used (and thus emitted + triggering
                     // `export {};` scope markers).
                     for scope in self.binder.scopes.iter() {
-                        if let Some(sym_id) = scope.table.get(&ident.escaped_text) {
-                            if !self
+                        if let Some(sym_id) = scope.table.get(&ident.escaped_text)
+                            && !self
                                 .is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
-                            {
-                                self.mark_symbol_used(sym_id, kind);
-                            }
+                        {
+                            self.mark_symbol_used(sym_id, kind);
                         }
                     }
                 }

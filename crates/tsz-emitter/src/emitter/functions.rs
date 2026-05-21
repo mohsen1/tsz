@@ -560,10 +560,9 @@ impl<'a> Printer<'a> {
                             text,
                             name_node.pos as usize,
                             name_node.end as usize,
-                        ) {
-                            if name_text.trim() == "this" {
-                                continue;
-                            }
+                        ) && name_text.trim() == "this"
+                        {
+                            continue;
                         }
                     }
                 }

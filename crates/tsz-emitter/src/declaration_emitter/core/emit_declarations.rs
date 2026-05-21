@@ -1684,10 +1684,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
         if self.source_is_js_file && !jsdoc_template_params.is_empty() {
             self.emit_jsdoc_template_parameters(&jsdoc_template_params);
-        } else if let Some(ref type_params) = class.type_parameters {
-            if !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+        } else if let Some(ref type_params) = class.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
         }
 
         // Heritage clauses (extends, implements)
@@ -2067,16 +2067,16 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(": any");
                             emitted_any_for_truncation = true;
                         }
-                        if !emitted_any_for_truncation {
-                            if self.emit_non_serializable_local_alias_diagnostic(
+                        if !emitted_any_for_truncation
+                            && self.emit_non_serializable_local_alias_diagnostic(
                                 &type_text,
                                 &file_path,
                                 name_node.pos,
                                 name_node.end - name_node.pos,
-                            ) {
-                                self.write(": any");
-                                emitted_any_for_truncation = true;
-                            }
+                            )
+                        {
+                            self.write(": any");
+                            emitted_any_for_truncation = true;
                         }
                         if !emitted_any_for_truncation {
                             let _ = self.emit_non_serializable_import_type_diagnostic(

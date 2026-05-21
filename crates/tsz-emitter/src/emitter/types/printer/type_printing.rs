@@ -688,7 +688,7 @@ impl<'a> TypePrinter<'a> {
         if types.is_empty() {
             return "never".to_string();
         }
-        if let Some(enum_text) = self.try_print_enum_member_union_as_parent(&types) {
+        if let Some(enum_text) = self.try_print_enum_member_union_as_parent(types) {
             return enum_text;
         }
 
@@ -1557,10 +1557,9 @@ impl<'a> TypePrinter<'a> {
         // name map from TypeCache so we can still emit "Promise" instead of "any".
         if let Some(sym_id) = sym_id
             && self.symbol_arena.is_some_and(|a| a.get(sym_id).is_none())
+            && let Some(name) = self.type_cache.and_then(|c| c.def_to_name.get(&def_id))
         {
-            if let Some(name) = self.type_cache.and_then(|c| c.def_to_name.get(&def_id)) {
-                return name.clone();
-            }
+            return name.clone();
         }
 
         // If we have a symbol and it's visible/global, use the name. Otherwise

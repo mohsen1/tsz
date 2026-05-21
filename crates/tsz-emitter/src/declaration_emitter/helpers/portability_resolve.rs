@@ -2906,10 +2906,10 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(exports) = binder.module_exports.get(module_path) else {
                 continue;
             };
-            if let Some(resolved) = exports.get(export_name) {
-                if resolved != sym_id {
-                    return Some(resolved);
-                }
+            if let Some(resolved) = exports.get(export_name)
+                && resolved != sym_id
+            {
+                return Some(resolved);
             }
         }
         None

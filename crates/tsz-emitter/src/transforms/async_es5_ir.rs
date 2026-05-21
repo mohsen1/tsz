@@ -4494,13 +4494,13 @@ impl<'a> AsyncES5Transformer<'a> {
                         "                                    return [2 /*return*/, \"continue\"];"
                             .to_string(),
                     );
-                } else if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT {
-                    if let Some(ret) = self.arena.get_return_statement(stmt_node) {
-                        let value = self.ir_text(self.expression_to_ir(ret.expression));
-                        lines.push(format!(
+                } else if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
+                    && let Some(ret) = self.arena.get_return_statement(stmt_node)
+                {
+                    let value = self.ir_text(self.expression_to_ir(ret.expression));
+                    lines.push(format!(
                             "                                    return [2 /*return*/, {{ value: {value} }}];"
                         ));
-                    }
                 }
             }
         }

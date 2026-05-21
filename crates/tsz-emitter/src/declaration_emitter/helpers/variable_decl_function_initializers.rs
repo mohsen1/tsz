@@ -475,12 +475,11 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn element_access_key_pattern_text(&self, key_idx: NodeIndex) -> Option<String> {
         let key_node = self.arena.get(key_idx)?;
-        if key_node.kind == SyntaxKind::StringLiteral as u16
-            || key_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        if (key_node.kind == SyntaxKind::StringLiteral as u16
+            || key_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+            && let Some(literal) = self.arena.get_literal(key_node)
         {
-            if let Some(literal) = self.arena.get_literal(key_node) {
-                return Some(literal.text.clone());
-            }
+            return Some(literal.text.clone());
         }
         if key_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
             let source = self.get_source_slice(key_node.pos, key_node.end)?;

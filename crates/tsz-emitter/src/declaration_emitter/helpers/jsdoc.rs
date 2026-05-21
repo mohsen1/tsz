@@ -1569,11 +1569,11 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            if let Some(parsed_return) = Self::parse_jsdoc_return_type_line(line) {
-                if return_type.is_none() {
-                    return_type = Some(Self::normalize_jsdoc_overload_type_text(&parsed_return));
-                    seen_return = true;
-                }
+            if let Some(parsed_return) = Self::parse_jsdoc_return_type_line(line)
+                && return_type.is_none()
+            {
+                return_type = Some(Self::normalize_jsdoc_overload_type_text(&parsed_return));
+                seen_return = true;
             }
         }
 
