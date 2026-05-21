@@ -1791,8 +1791,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         use crate::types::MappedModifier;
         use crate::visitor::mapped_type_id;
 
-        // Try the flattened chain approach first: this handles nested homomorphic
-        // mapped types like Partial<Readonly<T>> vs Readonly<Partial<T>>.
+        // Fast path: flatten nested homomorphic chains (e.g. Partial<Readonly<T>>).
+        // `flatten_mapped_chain` returns None for any mapped type that has a
+        // name_type (`as` clause), so name-type compatibility is implicit here.
         if let (Some(s_flat), Some(t_flat)) = (
             flatten_mapped_chain(self.interner, s_mapped_id),
             flatten_mapped_chain(self.interner, t_mapped_id),
@@ -1819,12 +1820,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let s_mapped = self.interner.get_mapped(s_mapped_id);
         let t_mapped = self.interner.get_mapped(t_mapped_id);
 
+        // Name-type compatibility is always required: a source with no `as`
+        // clause cannot be compatible with a target that renames its keys (and
+        // vice-versa), regardless of how the raw key constraints relate.
+        let name_types_ok = self.mapped_name_types_compatible(&s_mapped, &t_mapped);
+
         // Both must have the same constraint (e.g., both `keyof T`).
         // First try identity, then evaluate to normalize (e.g., keyof(Readonly<T>) → keyof(T)).
-        let constraints_match = self
-            .mapped_key_constraint_covers(s_mapped.constraint, t_mapped.constraint)
-            || (self.mapped_name_types_compatible(&s_mapped, &t_mapped)
-                && self
+        let constraints_match = name_types_ok
+            && (self.mapped_key_constraint_covers(s_mapped.constraint, t_mapped.constraint)
+                || self
                     .subtype
                     .is_subtype_of(t_mapped.constraint, s_mapped.constraint));
 
@@ -1891,15 +1896,36 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         Some(result)
     }
 
+    /// Returns whether the `as` clause is the identity — the bare iteration
+    /// variable itself (`as K`). Such clauses are structurally equivalent to
+    /// having no `as` clause at all.
+    fn is_identity_name_type(&self, mapped: &MappedType) -> bool {
+        let Some(name) = mapped.name_type else {
+            return true;
+        };
+        type_param_info(self.interner, name).is_some_and(|p| p.name == mapped.type_param.name)
+    }
+
     fn mapped_name_types_compatible(
         &mut self,
         source_mapped: &MappedType,
         target_mapped: &MappedType,
     ) -> bool {
-        let (Some(source_name), Some(target_name)) =
-            (source_mapped.name_type, target_mapped.name_type)
-        else {
-            return source_mapped.name_type == target_mapped.name_type;
+        // Normalize: `as K` where K is the bare iteration variable is semantically
+        // equivalent to no `as` clause. Treat identity clauses as None.
+        let source_name = if self.is_identity_name_type(source_mapped) {
+            None
+        } else {
+            source_mapped.name_type
+        };
+        let target_name_type = if self.is_identity_name_type(target_mapped) {
+            None
+        } else {
+            target_mapped.name_type
+        };
+
+        let (Some(source_name), Some(target_name)) = (source_name, target_name_type) else {
+            return source_name == target_name_type;
         };
 
         let source_param = self.interner.type_param(source_mapped.type_param);
