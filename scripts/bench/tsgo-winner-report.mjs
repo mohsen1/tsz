@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
 import { isGreen, isIncompleteCompat } from "./row-utils.mjs";
 
 function readJson(file) {
@@ -179,12 +180,32 @@ function compareFamiliesByWorstFactorDesc(a, b) {
   return a.family.localeCompare(b.family);
 }
 
+function duplicateProjectRows(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    const name = typeof row?.name === "string" ? row.name : null;
+    if (!name || !Object.hasOwn(PROJECT_ROWS_BY_NAME, name)) continue;
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+
+  return [...counts]
+    .filter(([, count]) => count > 1)
+    .map(([name, count]) => ({
+      name,
+      label: PROJECT_ROWS_BY_NAME[name]?.label ?? name,
+      count,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function createTsgoWinnerReport(input, inputPath) {
   const rows = Array.isArray(input.results) ? input.results : [];
+  const duplicateRows = duplicateProjectRows(rows);
+  const duplicateNames = new Set(duplicateRows.map((row) => row.name));
   const incompleteCompatExcluded = rows.filter(isIncompleteCompat).length;
 
   const winners = rows
-    .filter((row) => row?.winner === "tsgo" && isGreen(row))
+    .filter((row) => row?.winner === "tsgo" && isGreen(row) && !duplicateNames.has(row?.name))
     .map((row) => ({
       name: row.name,
       factor: asNumber(row.factor),
@@ -236,6 +257,7 @@ export function createTsgoWinnerReport(input, inputPath) {
     },
     totals: {
       rows: rows.length,
+      duplicate_project_rows: duplicateRows.length,
       green_tsgo_winners: winners.length,
       project_green_tsgo_winners: projects.length,
       green_tsgo_winners_with_closure: winners.length - missingLossClosureRows.length,
@@ -245,6 +267,7 @@ export function createTsgoWinnerReport(input, inputPath) {
       incomplete_compat_excluded: incompleteCompatExcluded,
     },
     measurement_profile: measurementProfileStatus(input),
+    duplicate_rows: duplicateRows,
     worst: winners[0] ?? null,
     by_owner_family: [...byOwnerFamily.values()].sort(compareFamiliesByWorstFactorDesc),
     rows: winners,
@@ -274,4 +297,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       `report: ${path.relative(process.cwd(), outputPath).split(path.sep).join("/")}`,
     ].join("\n"),
   );
+
+  if (report.totals.duplicate_project_rows > 0) {
+    console.error(
+      `duplicate project rows: ${report.duplicate_rows
+        .map((row) => `${row.name} (${row.count})`)
+        .join(", ")}`,
+    );
+    process.exit(1);
+  }
 }
