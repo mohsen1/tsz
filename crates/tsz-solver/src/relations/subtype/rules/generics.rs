@@ -1159,6 +1159,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_mapped_id: MappedTypeId,
         target_mapped_id: MappedTypeId,
     ) -> SubtypeResult {
+        // Fast path: flatten nested homomorphic chains (e.g. Partial<Readonly<T>>).
+        // `flatten_mapped_chain` returns None for any mapped type that has a
+        // name_type (`as` clause), so name-type compatibility is implicit here.
         if let (Some(s_flat), Some(t_flat)) = (
             flatten_mapped_chain(self.interner, source_mapped_id),
             flatten_mapped_chain(self.interner, target_mapped_id),
@@ -1179,13 +1182,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        // Fallback: single-level mapped type comparison.
         let source_mapped = self.interner.get_mapped(source_mapped_id);
         let target_mapped = self.interner.get_mapped(target_mapped_id);
 
-        let constraints_match = self
-            .mapped_key_constraint_covers(source_mapped.constraint, target_mapped.constraint)
-            || (self.mapped_name_types_compatible(&source_mapped, &target_mapped)
-                && self
+        // Name-type compatibility is always required: a source with no `as`
+        // clause cannot be a subtype of a target that renames its keys (and
+        // vice-versa), regardless of how the raw key constraints relate.
+        let name_types_ok = self.mapped_name_types_compatible(&source_mapped, &target_mapped);
+        let constraints_match = name_types_ok
+            && (self
+                .mapped_key_constraint_covers(source_mapped.constraint, target_mapped.constraint)
+                || self
                     .check_subtype(target_mapped.constraint, source_mapped.constraint)
                     .is_true());
 

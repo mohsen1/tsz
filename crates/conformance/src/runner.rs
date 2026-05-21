@@ -12,7 +12,9 @@ use crate::test_parser::{
     should_skip_test,
 };
 use crate::text_decode::{decode_source_text, DecodedSourceText};
-use crate::tsc_results::{DiagnosticFingerprint, ErrorFrequency, TestResult, TestStats};
+use crate::tsc_results::{
+    DiagnosticFingerprint, ErrorFrequency, TestResult, TestResultFail, TestStats,
+};
 use crate::tsz_wrapper;
 use anyhow::Context;
 use futures::stream::{self, StreamExt};
@@ -330,7 +332,7 @@ fn compare_diagnostics(
         let mut actual = compile_result.error_codes.clone();
         expected.sort_unstable();
         actual.sort_unstable();
-        TestResult::Fail {
+        TestResult::Fail(Box::new(TestResultFail {
             expected,
             actual,
             missing,
@@ -341,7 +343,7 @@ fn compare_diagnostics(
             actual_fingerprints,
             options,
             known_failure: None,
-        }
+        }))
     }
 }
 
@@ -778,18 +780,19 @@ impl Runner {
                                         writeln!(buf, "PASS {}", rel_path).ok();
                                     }
                                 }
-                                TestResult::Fail {
-                                    expected,
-                                    actual,
-                                    missing,
-                                    extra,
-                                    missing_fingerprints,
-                                    extra_fingerprints,
-                                    expected_fingerprints,
-                                    actual_fingerprints,
-                                    options,
-                                    known_failure,
-                                } => {
+                                TestResult::Fail(fail) => {
+                                    let TestResultFail {
+                                        expected,
+                                        actual,
+                                        missing,
+                                        extra,
+                                        missing_fingerprints,
+                                        extra_fingerprints,
+                                        expected_fingerprints,
+                                        actual_fingerprints,
+                                        options,
+                                        known_failure,
+                                    } = *fail;
                                     stats.failed.fetch_add(1, Ordering::SeqCst);
                                     if known_failure.is_some() {
                                         stats.known_failures.fetch_add(1, Ordering::SeqCst);
@@ -2271,18 +2274,12 @@ mod tests {
         extra_codes: &[u32],
     ) {
         match result {
-            TestResult::Fail {
-                expected,
-                actual,
-                missing,
-                extra,
-                ..
-            } => {
-                assert_eq!(expected, expected_codes, "expected codes mismatch");
-                assert_eq!(actual, actual_codes, "actual codes mismatch");
-                let mut m = missing.clone();
+            TestResult::Fail(fail) => {
+                assert_eq!(&fail.expected, expected_codes, "expected codes mismatch");
+                assert_eq!(&fail.actual, actual_codes, "actual codes mismatch");
+                let mut m = fail.missing.clone();
                 m.sort_unstable();
-                let mut e = extra.clone();
+                let mut e = fail.extra.clone();
                 e.sort_unstable();
                 let mut want_m = missing_codes.to_vec();
                 want_m.sort_unstable();
@@ -2353,21 +2350,15 @@ mod tests {
 
         let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
         match result {
-            TestResult::Fail {
-                missing,
-                extra,
-                missing_fingerprints,
-                extra_fingerprints,
-                ..
-            } => {
+            TestResult::Fail(fail) => {
                 assert!(
-                    missing.is_empty() && extra.is_empty(),
+                    fail.missing.is_empty() && fail.extra.is_empty(),
                     "codes should match exactly"
                 );
-                assert_eq!(missing_fingerprints.len(), 1);
-                assert_eq!(missing_fingerprints[0].file, "expected.ts");
-                assert_eq!(extra_fingerprints.len(), 1);
-                assert_eq!(extra_fingerprints[0].file, "actual.ts");
+                assert_eq!(fail.missing_fingerprints.len(), 1);
+                assert_eq!(fail.missing_fingerprints[0].file, "expected.ts");
+                assert_eq!(fail.extra_fingerprints.len(), 1);
+                assert_eq!(fail.extra_fingerprints[0].file, "actual.ts");
             }
             other => panic!("expected Fail with fingerprint diff, got {other:?}"),
         }
@@ -2383,11 +2374,9 @@ mod tests {
 
         let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
         match result {
-            TestResult::Fail {
-                expected, actual, ..
-            } => {
-                assert_eq!(expected, vec![2304, 2345]);
-                assert_eq!(actual, vec![2304, 7027]);
+            TestResult::Fail(fail) => {
+                assert_eq!(fail.expected, vec![2304, 2345]);
+                assert_eq!(fail.actual, vec![2304, 7027]);
             }
             other => panic!("expected Fail, got {other:?}"),
         }
@@ -2407,13 +2396,10 @@ mod tests {
 
         let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
         match result {
-            TestResult::Fail {
-                missing_fingerprints,
-                ..
-            } => {
+            TestResult::Fail(fail) => {
                 // Sort key is (code, file, line, column, message_key).
                 assert_eq!(
-                    missing_fingerprints
+                    fail.missing_fingerprints
                         .iter()
                         .map(|f| (f.code, f.file.clone()))
                         .collect::<Vec<_>>(),
@@ -2441,20 +2427,16 @@ mod tests {
 
         let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
         match result {
-            TestResult::Fail {
-                expected_fingerprints,
-                actual_fingerprints,
-                ..
-            } => {
+            TestResult::Fail(fail) => {
                 assert_eq!(
-                    expected_fingerprints
+                    fail.expected_fingerprints
                         .iter()
                         .map(|f| (f.code, f.file.as_str()))
                         .collect::<Vec<_>>(),
                     vec![(2304, "a.ts"), (2322, "b.ts")],
                 );
                 assert_eq!(
-                    actual_fingerprints
+                    fail.actual_fingerprints
                         .iter()
                         .map(|f| (f.code, f.file.as_str()))
                         .collect::<Vec<_>>(),
@@ -2474,10 +2456,7 @@ mod tests {
 
         let result = compare_diagnostics(&compile, &tsc_codes, &[], options.clone());
         match result {
-            TestResult::Fail {
-                options: got_options,
-                ..
-            } => assert_eq!(got_options, options),
+            TestResult::Fail(fail) => assert_eq!(fail.options, options),
             other => panic!("expected Fail, got {other:?}"),
         }
     }

@@ -1074,7 +1074,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         result
     }
 
-    #[allow(clippy::type_complexity)]
     fn hoist_matching_nonlocal_type_params(
         &mut self,
         source: &FunctionShape,

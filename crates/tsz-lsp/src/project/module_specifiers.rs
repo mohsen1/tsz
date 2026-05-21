@@ -12,7 +12,7 @@ use rustc_hash::FxHashSet;
 
 use tsz_parser::parser::node::NodeAccess;
 
-use super::Project;
+use super::{ImportSpecifierPreference, Project};
 
 const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
 const TS_EXTENSION_SUFFIXES: [&str; 7] =
@@ -32,6 +32,35 @@ enum ExportsResolutionMode {
     Both,
 }
 
+/// Relative-path-dependent candidate specifiers for one source → target pair.
+struct RelativeCandidates {
+    /// Direct relative specifier (e.g. `./utils` or `../shared/helpers`).
+    relative: String,
+    /// Specifier from `rootDirs` flattening, if applicable.
+    root_dirs_relative: Option<String>,
+    /// Specifiers derived from tsconfig `paths` mappings.
+    path_mappings: Vec<String>,
+    /// Specifiers derived from package.json `imports` (`#…` form).
+    package_imports: Vec<String>,
+}
+
+/// All candidate specifiers for a source → target pair, grouped by origin.
+///
+/// Constructed by [`Project::collect_specifier_candidates`]; ranked into a
+/// final ordered list by [`rank_specifier_candidates`].
+struct SpecifierCandidateSet {
+    /// Relative-path candidates. `None` when source and target share no
+    /// resolvable file-system root (no common prefix after normalization).
+    relative: Option<RelativeCandidates>,
+    /// Workspace monorepo package specifier for targets in a sibling package.
+    workspace_package: Option<String>,
+    /// `node_modules` package specifier for targets inside a package tree.
+    node_modules_package: Option<String>,
+    /// When true the ranker strips any relative path that traverses into
+    /// a `node_modules` directory (a deep-relative import would break on publish).
+    target_in_node_modules: bool,
+}
+
 impl Project {
     pub(crate) fn resolve_module_specifier(
         &self,
@@ -49,110 +78,58 @@ impl Project {
         from_file: &str,
         target_file: &str,
     ) -> Vec<String> {
+        let candidates = self.collect_specifier_candidates(from_file, target_file);
+        rank_specifier_candidates(candidates, self.import_module_specifier_preference)
+    }
+
+    /// Collect all candidate specifiers for a source → target pair, grouped
+    /// by origin (relative, rootDirs, paths, package imports, workspace
+    /// package, `node_modules` package). The returned set carries no ordering
+    /// policy; pass it to [`rank_specifier_candidates`] to get the final list.
+    fn collect_specifier_candidates(
+        &self,
+        from_file: &str,
+        target_file: &str,
+    ) -> SpecifierCandidateSet {
         let target_in_node_modules = target_file.replace('\\', "/").contains("/node_modules/");
         let supports_package_exports = self.module_resolution_supports_package_exports(from_file);
         let exports_mode = self.exports_resolution_mode_for_importer(from_file);
-        let package_specifier = self.package_specifier_from_node_modules_with_mode(
+        let node_modules_package = self.package_specifier_from_node_modules_with_mode(
             target_file,
             supports_package_exports,
             exports_mode,
         );
-        let workspace_package_specifier = self.workspace_package_dependency_specifier(
+        let workspace_package = self.workspace_package_dependency_specifier(
             from_file,
             target_file,
             target_in_node_modules,
             supports_package_exports,
             exports_mode,
         );
-
         let Some(relative) = self.relative_module_specifier_from_files(from_file, target_file)
         else {
-            let mut only_packages: Vec<String> = workspace_package_specifier.into_iter().collect();
-            only_packages.extend(package_specifier);
-            let mut seen = FxHashSet::default();
-            only_packages.retain(|spec| seen.insert(spec.clone()));
-            return only_packages;
+            return SpecifierCandidateSet {
+                relative: None,
+                workspace_package,
+                node_modules_package,
+                target_in_node_modules,
+            };
         };
-
         let root_dirs_relative =
             self.root_dirs_relative_specifier_from_files(from_file, target_file);
         let path_mappings = self.path_mapping_specifiers_from_files(from_file, target_file);
         let package_imports = self.package_import_specifiers_from_files(from_file, target_file);
-        let pref = self.import_module_specifier_preference.as_deref();
-        let mut candidates = Vec::new();
-
-        if pref == Some("non-relative") {
-            candidates.extend(path_mappings);
-            candidates.extend(package_imports);
-            if let Some(workspace_package_specifier) = workspace_package_specifier.as_ref() {
-                candidates.push(workspace_package_specifier.clone());
-            }
-            if let Some(package_specifier) = package_specifier.as_ref() {
-                candidates.push(package_specifier.clone());
-            }
-            candidates.push(relative);
-            if let Some(root_dirs_relative) = root_dirs_relative {
-                candidates.push(root_dirs_relative);
-            }
-        } else if pref == Some("relative") || pref == Some("project-relative") {
-            // Explicit path mappings (tsconfig `paths`) are user-declared
-            // and take precedence over workspace-package specifiers derived
-            // from a target's package.json `name`. Order them first so that
-            // aliases like `{"pkg-2/*": ["./packages/pkg-2/src/*"]}` win over
-            // the `pkg-2/src/utils` bare-package form tsc would otherwise
-            // consider non-preferred. `package_imports` (package.json
-            // `imports` / `#…` specifiers), however, is NOT tsconfig-level
-            // and must stay behind the relative specifier for project-
-            // relative preference to keep tsc parity.
-            candidates.extend(path_mappings);
-            // TypeScript still prefers dependency package specifiers (workspace links /
-            // node_modules) over deep relative traversals, even under explicit
-            // `relative` preference.
-            if let Some(workspace_package_specifier) = workspace_package_specifier.as_ref() {
-                candidates.push(workspace_package_specifier.clone());
-            }
-            if let Some(package_specifier) = package_specifier.as_ref() {
-                candidates.push(package_specifier.clone());
-            }
-            candidates.push(relative);
-            if let Some(root_dirs_relative) = root_dirs_relative {
-                candidates.push(root_dirs_relative);
-            }
-            candidates.extend(package_imports);
-        } else {
-            candidates.push(relative);
-            if let Some(root_dirs_relative) = root_dirs_relative {
-                candidates.push(root_dirs_relative);
-            }
-            candidates.extend(path_mappings);
-            candidates.extend(package_imports);
-            if let Some(workspace_package_specifier) = workspace_package_specifier.as_ref() {
-                candidates.push(workspace_package_specifier.clone());
-            }
-            if let Some(package_specifier) = package_specifier.as_ref() {
-                candidates.push(package_specifier.clone());
-            }
+        SpecifierCandidateSet {
+            relative: Some(RelativeCandidates {
+                relative,
+                root_dirs_relative,
+                path_mappings,
+                package_imports,
+            }),
+            workspace_package,
+            node_modules_package,
+            target_in_node_modules,
         }
-
-        let mut seen = FxHashSet::default();
-        candidates.retain(|spec| seen.insert(spec.clone()));
-        if target_in_node_modules {
-            candidates.retain(|spec| !spec.replace('\\', "/").contains("node_modules/"));
-        }
-
-        if pref.is_none() || pref == Some("shortest") {
-            candidates.sort_by(compare_module_specifier_candidates);
-        } else if pref == Some("non-relative") {
-            candidates.sort_by(|a, b| {
-                let a_relative = a.starts_with('.');
-                let b_relative = b.starts_with('.');
-                a_relative
-                    .cmp(&b_relative)
-                    .then_with(|| compare_module_specifier_candidates(a, b))
-            });
-        }
-
-        candidates
     }
 
     fn workspace_package_dependency_specifier(
@@ -297,8 +274,7 @@ impl Project {
                 .replace('\\', "/"),
         ];
         target_candidates.extend(self.project_output_target_alternatives(target_file));
-        let mut seen_targets = FxHashSet::default();
-        target_candidates.retain(|candidate| seen_targets.insert(candidate.clone()));
+        dedup_in_place(&mut target_candidates);
 
         if supports_package_exports
             && let Some(target_package_json) = target_package_json.as_ref()
@@ -553,7 +529,7 @@ impl Project {
     }
 
     fn prefers_project_relative_workspace_fallback_without_requesting_package(&self) -> bool {
-        self.import_module_specifier_preference.as_deref() == Some("project-relative")
+        self.import_module_specifier_preference == Some(ImportSpecifierPreference::ProjectRelative)
     }
 
     fn target_matches_package_root_specifier(
@@ -646,8 +622,7 @@ impl Project {
         .replace('\\', "/");
         let mut target_candidates = vec![normalized_target_file];
         target_candidates.extend(self.project_output_target_alternatives(target_file));
-        let mut seen_targets = FxHashSet::default();
-        target_candidates.retain(|candidate| seen_targets.insert(candidate.clone()));
+        dedup_in_place(&mut target_candidates);
 
         let mut specifiers = Vec::new();
         for (alias_pattern, mapped_targets) in paths {
@@ -673,8 +648,7 @@ impl Project {
             }
         }
 
-        let mut seen = FxHashSet::default();
-        specifiers.retain(|specifier| seen.insert(specifier.clone()));
+        dedup_in_place(&mut specifiers);
         specifiers
     }
 
@@ -1701,6 +1675,110 @@ impl Project {
     }
 }
 
+/// Rank a [`SpecifierCandidateSet`] into a deduplicated, ordered list of
+/// import specifier strings, applying the caller's `pref` policy.
+///
+/// This is a pure function: it has no access to project state and does not
+/// perform any further path construction. All policy lives here; collection
+/// lives in [`Project::collect_specifier_candidates`].
+fn rank_specifier_candidates(
+    candidates: SpecifierCandidateSet,
+    pref: Option<ImportSpecifierPreference>,
+) -> Vec<String> {
+    let SpecifierCandidateSet {
+        relative,
+        workspace_package,
+        node_modules_package,
+        target_in_node_modules,
+    } = candidates;
+
+    let Some(rel) = relative else {
+        // No relative path reachable — return only package specifiers.
+        let mut only_packages: Vec<String> = workspace_package.into_iter().collect();
+        only_packages.extend(node_modules_package);
+        dedup_in_place(&mut only_packages);
+        return only_packages;
+    };
+
+    let RelativeCandidates {
+        relative,
+        root_dirs_relative,
+        path_mappings,
+        package_imports,
+    } = rel;
+
+    let mut ranked = Vec::new();
+
+    match pref {
+        Some(ImportSpecifierPreference::NonRelative) => {
+            ranked.extend(path_mappings);
+            ranked.extend(package_imports);
+            ranked.extend(workspace_package);
+            ranked.extend(node_modules_package);
+            ranked.push(relative);
+            ranked.extend(root_dirs_relative);
+        }
+        Some(ImportSpecifierPreference::Relative | ImportSpecifierPreference::ProjectRelative) => {
+            // Both variants share identical candidate ordering; they differ only
+            // in whether workspace fallback without a requesting package.json is
+            // active (see `prefers_project_relative_workspace_fallback…`).
+            //
+            // Explicit path mappings (tsconfig `paths`) are user-declared and
+            // take precedence over workspace-package specifiers. `package_imports`
+            // (package.json `imports` / `#…` specifiers) must stay behind the
+            // relative specifier.
+            ranked.extend(path_mappings);
+            // TypeScript still prefers declared dependency specifiers over deep
+            // relative traversals, even under explicit `relative` preference.
+            ranked.extend(workspace_package);
+            ranked.extend(node_modules_package);
+            ranked.push(relative);
+            ranked.extend(root_dirs_relative);
+            ranked.extend(package_imports);
+        }
+        None => {
+            ranked.push(relative);
+            ranked.extend(root_dirs_relative);
+            ranked.extend(path_mappings);
+            ranked.extend(package_imports);
+            ranked.extend(workspace_package);
+            ranked.extend(node_modules_package);
+        }
+    }
+
+    dedup_in_place(&mut ranked);
+    if target_in_node_modules {
+        ranked.retain(|spec| !spec.replace('\\', "/").contains("node_modules/"));
+    }
+
+    match pref {
+        None => ranked.sort_by(compare_module_specifier_candidates),
+        Some(ImportSpecifierPreference::NonRelative) => {
+            ranked.sort_by(|a, b| {
+                let a_relative = a.starts_with('.');
+                let b_relative = b.starts_with('.');
+                a_relative
+                    .cmp(&b_relative)
+                    .then_with(|| compare_module_specifier_candidates(a, b))
+            });
+        }
+        Some(ImportSpecifierPreference::Relative | ImportSpecifierPreference::ProjectRelative) => {}
+    }
+
+    ranked
+}
+
+fn dedup_in_place(v: &mut Vec<String>) {
+    if v.len() <= 2 {
+        if v.len() == 2 && v[0] == v[1] {
+            v.truncate(1);
+        }
+        return;
+    }
+    let mut seen = FxHashSet::default();
+    v.retain(|s| seen.insert(s.clone()));
+}
+
 fn normalize_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
 
@@ -2222,8 +2300,7 @@ fn package_import_specifiers_for_target(
         }
     }
 
-    let mut seen = FxHashSet::default();
-    specs.retain(|spec| seen.insert(spec.clone()));
+    dedup_in_place(&mut specs);
     specs.sort_by(compare_module_specifier_candidates);
     specs
 }

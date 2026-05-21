@@ -1951,6 +1951,9 @@ pub fn diff_skeletons(previous: &[FileSkeleton], current: &[FileSkeleton]) -> Sk
 mod tests {
     use super::*;
 
+    type AugDecl = (String, u32, u32);
+    type ModuleAugEntry = (String, Vec<AugDecl>);
+
     /// Helper to make a minimal skeleton for testing diffs.
     fn make_skeleton(name: &str, fingerprint: u64) -> FileSkeleton {
         FileSkeleton {
@@ -2386,10 +2389,9 @@ mod tests {
     // -------------------------------------------------------------------------
 
     /// Helper: build a skeleton with the given module-augmentation entries.
-    #[allow(clippy::type_complexity)]
     fn skeleton_with_module_augmentations(
         file_name: &str,
-        augs: Vec<(String, Vec<(String, u32, u32)>)>,
+        augs: Vec<ModuleAugEntry>,
     ) -> FileSkeleton {
         let module_augmentations: Vec<SkeletonAugmentation> = augs
             .into_iter()
