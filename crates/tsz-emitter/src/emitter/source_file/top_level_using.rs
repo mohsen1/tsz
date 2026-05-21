@@ -318,7 +318,10 @@ impl<'a> Printer<'a> {
         count
     }
 
-    fn count_es5_resource_expression_hoisted_temps(&self, idx: NodeIndex) -> usize {
+    pub(in crate::emitter) fn count_es5_resource_expression_hoisted_temps(
+        &self,
+        idx: NodeIndex,
+    ) -> usize {
         if idx.is_none() {
             return 0;
         }
