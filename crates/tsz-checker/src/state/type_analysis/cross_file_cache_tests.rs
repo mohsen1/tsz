@@ -26,7 +26,7 @@ fn cache_test_state<'a>(
 }
 
 #[test]
-fn generic_source_file_symbol_arena_results_use_requester_scoped_cache() {
+fn generic_source_file_symbol_arena_results_use_stable_cache() {
     let arena = NodeArena::default();
     let binder = BinderState::new();
     let types = TypeInterner::new();
@@ -53,21 +53,19 @@ fn generic_source_file_symbol_arena_results_use_requester_scoped_cache() {
     assert_eq!(
         state
             .ctx
-            .cached_stable_source_file_symbol_arena_type(sym_id, file_idx as u32, scope),
-        None,
-        "generic source-file symbols are requester-scoped, not globally stable",
-    );
-    assert_eq!(
-        state
-            .ctx
-            .cached_source_file_symbol_arena_type(
-                sym_id,
-                file_idx as u32,
-                scope,
-                state.ctx.current_file_idx as u32,
-            )
+            .cached_stable_source_file_symbol_arena_type(sym_id, file_idx as u32, scope)
             .map(|(type_id, params)| (type_id, params.len())),
         Some((TypeId::STRING, 1)),
+        "source-file symbols already passed the structural stability gate",
+    );
+    assert_eq!(
+        state.ctx.cached_source_file_symbol_arena_type(
+            sym_id,
+            file_idx as u32,
+            scope,
+            state.ctx.current_file_idx as u32,
+        ),
+        None,
     );
     assert_eq!(
         state
