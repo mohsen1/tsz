@@ -824,7 +824,7 @@ impl<'a> CheckerState<'a> {
                         Self::jsx_callable_params_compatible_for_element_type(
                             source_params,
                             target_params,
-                        ) && self.is_assignable_to(*source_return, *target_return)
+                        ) && self.diagnostic_relation_boolean_guard(*source_return, *target_return)
                     })
             })
     }
