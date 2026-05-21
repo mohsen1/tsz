@@ -816,7 +816,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// overload is selected during resolution, and any overload may satisfy the
     /// calling context.
     pub(super) fn compute_union_this_type(&self, members: &[TypeId]) -> Option<TypeId> {
-        use crate::operations::core::receiver_constraining_this_type;
         let mut this_types = Vec::new();
 
         for &member in members {
@@ -824,7 +823,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             match self.interner.lookup(member) {
                 Some(TypeData::Function(func_id)) => {
                     let function = self.interner.function_shape(func_id);
-                    if let Some(this_type) = receiver_constraining_this_type(function.this_type) {
+                    if let Some(this_type) = function.this_type {
                         this_types.push(this_type);
                     }
                 }
@@ -835,8 +834,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // overload resolution, so we can't pre-compute a combined
                     // this type for them.
                     if callable.call_signatures.len() == 1
-                        && let Some(this_type) =
-                            receiver_constraining_this_type(callable.call_signatures[0].this_type)
+                        && let Some(this_type) = callable.call_signatures[0].this_type
                     {
                         this_types.push(this_type);
                     }

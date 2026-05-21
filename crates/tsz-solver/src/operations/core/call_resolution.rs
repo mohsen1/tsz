@@ -946,21 +946,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // doesn't satisfy ALL members' `this` requirements.
         // IMPORTANT: Defer `this` errors to after argument checking — TSC reports
         // argument errors (TS2345) before `this` context errors (TS2684).
-        let mut deferred_this_error =
-            if let Some(combined_this) = self.compute_union_this_type(&members) {
-                let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
-                if !self.checker.is_assignable_to(actual_this, combined_this) {
-                    Some(CallResult::ThisTypeMismatch {
-                        expected_this: combined_this,
-                        actual_this,
-                        emit_not_callable: false,
-                    })
-                } else {
-                    None
-                }
+        // Gate via `receiver_constraining_this_type`: if the intersected
+        // combined `this` reduces to exactly `void`, the receiver check is
+        // skipped (matches tsc's `thisType !== voidType`). Filtering members
+        // *before* intersection would over-relax mixed unions like `void | A`,
+        // since tsc still runs the check on `void & A` (which is not `void`).
+        let mut deferred_this_error = if let Some(combined_this) = self
+            .compute_union_this_type(&members)
+            .and_then(|t| receiver_constraining_this_type(Some(t)))
+        {
+            let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+            if !self.checker.is_assignable_to(actual_this, combined_this) {
+                Some(CallResult::ThisTypeMismatch {
+                    expected_this: combined_this,
+                    actual_this,
+                    emit_not_callable: false,
+                })
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         // Phase 0.5: Check multi-overload union members for compatible signatures.
         // When multiple union members have multiple overloads, first try to find
@@ -988,8 +995,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // the matched overloads across all members.
                 let unified_this = unified_sigs
                     .iter()
-                    .filter_map(|s| receiver_constraining_this_type(s.this_type))
-                    .reduce(|a, b| self.interner.intersection2(a, b));
+                    .filter_map(|s| s.this_type)
+                    .reduce(|a, b| self.interner.intersection2(a, b))
+                    .and_then(|t| receiver_constraining_this_type(Some(t)));
 
                 if let Some(combined_this) = unified_this {
                     let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
