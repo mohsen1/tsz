@@ -426,6 +426,7 @@ impl<'a> CheckerState<'a> {
             && (raw_props_has_type_params
                 || component_type.is_some()
                 || special_attr_component_type.is_some());
+        let children_ctx_for_overload = children_ctx.clone();
         let component_has_managed_props_metadata = component_type.is_some_and(|comp| {
             use crate::query_boundaries::common::PropertyAccessResult;
             matches!(
@@ -456,6 +457,18 @@ impl<'a> CheckerState<'a> {
         let mut has_prop_type_error = false;
         let mut invalid_generic_spread_types: Vec<TypeId> = Vec::new();
         let mut has_explicit_jsx_attrs = false;
+
+        let class_props_overload_component_type = if self
+            .get_jsx_namespace_export_symbol_id("ElementType")
+            .is_some()
+            && !self.jsx_tag_is_logical_component_alias(tag_name_idx)
+        {
+            special_attr_component_type.or(component_type)
+        } else {
+            None
+        };
+        let route_class_props_mismatch_to_overload = class_props_overload_component_type
+            .is_some_and(|comp| self.should_report_jsx_class_missing_props_via_assignability(comp));
 
         let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
             rustc_hash::FxHashMap::default();
@@ -797,6 +810,21 @@ impl<'a> CheckerState<'a> {
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
                             {
+                                if route_class_props_mismatch_to_overload
+                                    && class_props_overload_component_type.is_some_and(|comp| {
+                                        self.report_jsx_class_props_overload_failure_if_needed(
+                                            comp,
+                                            props_type,
+                                            attributes_idx,
+                                            tag_name_idx,
+                                            children_ctx_for_overload.clone(),
+                                        )
+                                    })
+                                {
+                                    has_excess_property_error = true;
+                                    continue;
+                                }
+
                                 // Build the synthesized JSX-attributes source-type display:
                                 // when the element has spread attributes, tsc prints the merged
                                 // object (`{ extra: true; onClick: ... }`) rather than just the
@@ -1532,6 +1560,8 @@ impl<'a> CheckerState<'a> {
         let empty_attrs_with_children_injected_props = provided_attrs.is_empty()
             && self.strip_jsx_children_injection_for_display(props_type) != props_type;
 
+        let class_has_missing_required_props =
+            self.jsx_has_missing_required_props(props_type, &provided_attrs);
         let reported_class_missing_props_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !has_excess_property_error
@@ -1541,18 +1571,33 @@ impl<'a> CheckerState<'a> {
             && !empty_attrs_with_children_injected_props
             && !has_prop_type_error
             && !self.jsx_tag_is_logical_component_alias(tag_name_idx)
-            && class_missing_props_component_type.is_some_and(|comp| {
-                self.should_report_jsx_class_missing_props_via_assignability(comp)
-            })
-            && self.jsx_has_missing_required_props(props_type, &provided_attrs)
+            && class_has_missing_required_props
         {
-            let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-            self.report_jsx_synthesized_props_assignability_error(
-                attrs_type,
-                &display_target,
-                tag_name_idx,
-            );
-            true
+            if route_class_props_mismatch_to_overload
+                && class_props_overload_component_type.is_some_and(|comp| {
+                    self.report_jsx_class_props_overload_failure_if_needed(
+                        comp,
+                        props_type,
+                        attributes_idx,
+                        tag_name_idx,
+                        children_ctx_for_overload.clone(),
+                    )
+                })
+            {
+                true
+            } else if class_missing_props_component_type.is_some_and(|comp| {
+                self.should_report_jsx_class_missing_props_via_assignability(comp)
+            }) {
+                let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+                self.report_jsx_synthesized_props_assignability_error(
+                    attrs_type,
+                    &display_target,
+                    tag_name_idx,
+                );
+                true
+            } else {
+                false
+            }
         } else {
             false
         };

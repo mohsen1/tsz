@@ -815,7 +815,7 @@ impl<'a> CheckerState<'a> {
                     });
                     let reported_class_overload_failure =
                         class_props_from_construct.is_some_and(|class_props| {
-                            self.jsx_class_props_is_readonly_wrapper(class_props)
+                            self.jsx_class_props_has_readonly_mapped_surface(class_props)
                                 && self
                                     .get_jsx_namespace_export_symbol_id("ElementType")
                                     .is_some()

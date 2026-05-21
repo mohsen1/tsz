@@ -1514,6 +1514,59 @@ fn jsx_readonly_class_component_props_mismatch_reports_ts2769() {
     );
 }
 
+#[test]
+fn jsx_readonly_class_component_react16_order_props_mismatch_reports_ts2769() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type Readonly<T> = { readonly [P in keyof T]: T[P]; };
+        declare namespace React {
+            type ReactNode = JSX.Element | string | number | null;
+            class Component<P, S> {
+                constructor(props: Readonly<P>);
+                constructor(props: P, context?: any);
+                readonly props: Readonly<{ children?: ReactNode }> & Readonly<P>;
+                render(): ReactNode;
+            }
+        }
+        type NewElementConstructor<P> =
+            | ((props: P) => React.ReactNode)
+            | (new (props: P) => React.Component<P, any>);
+        declare namespace JSX {
+            interface Element {}
+            interface ElementClass { render(): React.ReactNode; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements { div: {}; }
+            type ElementType = string | NewElementConstructor<any>;
+        }
+
+        class RenderTitle extends React.Component<{ title: string }, {}> {
+            render() { return this.props.title; }
+        }
+        <RenderTitle />;
+        <RenderTitle title="ok" />;
+        <RenderTitle extra />;
+
+        class Caption extends React.Component<{ label: string }, {}> {
+            render() { return this.props.label; }
+        }
+        <Caption />;
+        <Caption label="ok" />;
+        <Caption spare />;
+        "#,
+    );
+    let ts2769_count = diagnostics.iter().filter(|diag| diag.code == 2769).count();
+    assert_eq!(
+        ts2769_count, 4,
+        "React16-order readonly class props mismatches should report TS2769, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diag| diag.code == 2322 || diag.code == 2741),
+        "React16-order readonly class props mismatch should not fall back to TS2322/TS2741, got: {diagnostics:?}"
+    );
+}
+
 /// JSX class components with multi-construct overloads must consult
 /// `static defaultProps` and treat its keys as supplied. A `<Comp />` call
 /// with no attributes must not fail overload resolution just because the
