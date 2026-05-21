@@ -1,42 +1,42 @@
-//! Typed cross-file query API types from `PERFORMANCE_PLAN.md` §7.
+//! Typed cross-file query API types.
 //!
-//! This sibling module owns the typed query bucket discriminant and the
-//! remaining two types from the plan's API contract:
+//! This module owns the three types that form the typed cross-file query
+//! contract:
 //!
-//! - [`CrossFileQueryKind`]: typed bucket for cache lookup/write storage.
+//! - [`CrossFileQueryKind`]: typed bucket discriminant for cache lookups and
+//!   writes. The **`u8` discriminant values** are the stable contract; variant
+//!   names may be renamed freely.
 //! - [`CrossFileQueryKey`]: typed cache key for cross-file query lookups.
 //! - [`CrossFileQueryAnswer`]: typed answer payload returned by typed
 //!   query paths.
 //!
-//! Both types are intentionally `pub(crate)` and currently unused.
-//! They exist so subsequent PR 6B+ migrations can reference them from
-//! day one without introducing the type alongside the migration. See
-//! `docs/plan/PERFORMANCE_PLAN.md` §7 for the full API rationale.
+//! `CrossFileQueryKey` and `CrossFileQueryAnswer` are `pub(crate)` and
+//! currently unused. They exist so subsequent PR 6B+ migrations can reference
+//! them from day one without introducing the type alongside the migration.
 //!
 use crate::context::RequestCacheKey;
 use tsz_binder::SymbolId;
 
 /// Typed identifier for the cross-file query bucket a cache lookup or write
-/// targets. Replaces the four `u8` constants that used to live here, matching
-/// the API shape proposed in `docs/plan/PERFORMANCE_PLAN.md` §7 ("Typed
-/// Cross-File Queries"):
+/// targets. Replaces the four `u8` constants that used to live inline at each
+/// call site.
 ///
-/// > pub enum CrossFileQueryKind {
-/// >     SymbolType,
-/// >     ClassInstanceType,
-/// >     InterfaceType,
-/// >     InterfaceMemberSimpleType,
-/// > }
+/// **Stable contract: the `u8` discriminant values, not the variant names.**
+/// The storage layer keys caches by `(u8, file_idx, primary, secondary,
+/// args_hash)`. Renaming a variant is safe; changing its discriminant value
+/// silently invalidates every `DefinitionStore` entry under that bucket.
 ///
-/// The discriminant values are the historical `u8` numbers already stored in
-/// `DefinitionStore` cache keys, so the enum remains `#[repr(u8)]`-compatible
-/// with the cache key layout via `as u8`.
+/// Current buckets and their stable discriminants:
 ///
-/// Adding a new bucket: add the variant, give it a fresh `u8` discriminant,
-/// and ensure it doesn't collide with existing ones (the storage layer keys
-/// caches by `(u8, file_idx, primary, secondary, args_hash)` so
-/// re-purposing a discriminant would silently corrupt unrelated cache
-/// entries).
+/// | Variant                  | `u8` |
+/// |--------------------------|------|
+/// | `Symbol`                 |  4   |
+/// | `ClassInstance`          |  2   |
+/// | `Interface`              |  1   |
+/// | `InterfaceMemberSimple`  |  3   |
+///
+/// Adding a new bucket: add the variant with a fresh discriminant that does
+/// not collide with the values above.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(u8)]
 pub(crate) enum CrossFileQueryKind {
@@ -57,13 +57,11 @@ impl CrossFileQueryKind {
     }
 }
 
-/// Typed cache key for cross-file query lookups. Matches
-/// `PERFORMANCE_PLAN.md` §7's API contract verbatim.
+/// Typed cache key for cross-file query lookups.
 ///
-/// Per §7 ("Cache Key Requirements"), every input that changes the answer
-/// must appear in the key. Today the storage layer keys caches by
-/// `(u8, file_idx, primary, secondary, args_hash)`, so this struct
-/// projects the same dimensions onto the typed API:
+/// Every input that changes the answer must appear in the key. The storage
+/// layer keys caches by `(u8, file_idx, primary, secondary, args_hash)`, so
+/// this struct projects the same dimensions onto the typed API:
 ///
 /// - `kind` becomes the storage `u8` via `CrossFileQueryKind::as_storage_kind`.
 /// - `target_file_idx` is the storage `file_idx`.
@@ -84,8 +82,7 @@ pub(crate) struct CrossFileQueryKey {
     pub options_fingerprint: u64,
 }
 
-/// Typed answer payload for cross-file query results. Matches
-/// `PERFORMANCE_PLAN.md` §7's API contract verbatim.
+/// Typed answer payload for cross-file query results.
 ///
 /// Variants:
 ///
