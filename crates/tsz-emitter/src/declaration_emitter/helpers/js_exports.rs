@@ -1310,22 +1310,37 @@ impl<'a> DeclarationEmitter<'a> {
                 else {
                     continue;
                 };
-                if spec.is_type_only || spec.property_name.is_none() {
+                if spec.is_type_only {
                     continue;
                 }
-                let Some(local_name) = self.get_identifier_text(spec.property_name) else {
+                let local_name_idx = if spec.property_name.is_some() {
+                    spec.property_name
+                } else {
+                    spec.name
+                };
+                let Some(local_name) = self.get_identifier_text(local_name_idx) else {
                     continue;
                 };
                 let Some(&target_stmt_idx) = export_targets.get(&local_name) else {
                     continue;
                 };
-                if self.js_function_declaration_has_signature_jsdoc(target_stmt_idx) {
+                if self.js_function_declaration_has_signature_jsdoc(target_stmt_idx)
+                    || self.js_unexported_class_declaration_statement(target_stmt_idx)
+                {
                     deferred.insert(target_stmt_idx);
                 }
             }
         }
 
         deferred
+    }
+
+    fn js_unexported_class_declaration_statement(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && !self.stmt_has_export_modifier(stmt_node)
     }
 
     fn js_function_declaration_has_signature_jsdoc(&self, stmt_idx: NodeIndex) -> bool {
@@ -1532,7 +1547,15 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 continue;
             }
-            self.emit_hoisted_js_function_statement(stmt_idx);
+            if self
+                .arena
+                .get(stmt_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+            {
+                self.emit_hoisted_js_function_statement(stmt_idx);
+            } else {
+                self.emit_deferred_js_named_export_statement(stmt_idx);
+            }
         }
     }
 

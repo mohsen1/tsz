@@ -1071,6 +1071,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_private_identifier_marker();
         }
 
+        self.emit_js_any_base_index_signature_if_needed(class.heritage_clauses.as_ref());
         self.emit_js_array_subclass_constructor_overloads_if_needed(
             &class.members,
             class.heritage_clauses.as_ref(),
@@ -1556,6 +1557,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_private_identifier_marker();
         }
 
+        self.emit_js_any_base_index_signature_if_needed(class.heritage_clauses.as_ref());
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
         if self.class_has_private_identifier_member(&class.members)
             && delay_private_identifier_marker

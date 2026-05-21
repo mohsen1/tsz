@@ -985,6 +985,23 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some()
     }
 
+    pub(in crate::declaration_emitter) fn emit_js_any_base_index_signature_if_needed(
+        &mut self,
+        heritage_clauses: Option<&NodeList>,
+    ) {
+        if !self.source_is_js_file {
+            return;
+        }
+        if self.synthetic_class_extends_alias_type_id(heritage_clauses)
+            != Some(tsz_solver::TypeId::ANY)
+        {
+            return;
+        }
+        self.write_indent();
+        self.write("[x: string]: any;");
+        self.write_line();
+    }
+
     pub(in crate::declaration_emitter) fn emit_js_array_subclass_constructor_overloads_if_needed(
         &mut self,
         members: &NodeList,
@@ -2611,6 +2628,9 @@ impl<'a> DeclarationEmitter<'a> {
                             )
                             && !self.initializer_references_js_elided_bare_require_binding(
                                 decl.initializer,
+                            )
+                            && !self.js_variable_dependency_is_synthetic_class_extends_alias_source(
+                                decl.name,
                             )
                     });
                 }

@@ -1622,6 +1622,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !is_exported
             && !self.should_emit_public_api_member(&class.modifiers)
             && !self.is_js_export_equals_name(class.name)
+            && !self
+                .js_deferred_local_export_alias_function_statements
+                .contains(&class_idx)
             && !self.is_confirmed_public_api_dependency(class.name)
         {
             return;
@@ -1729,6 +1732,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_private_identifier_marker();
         }
 
+        self.emit_js_any_base_index_signature_if_needed(class.heritage_clauses.as_ref());
         self.emit_js_array_subclass_constructor_overloads_if_needed(
             &class.members,
             class.heritage_clauses.as_ref(),
