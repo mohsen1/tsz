@@ -1704,7 +1704,7 @@ impl<'a> CheckerState<'a> {
                 if !self.is_assignable_to(attrs_type, raw_props_type) {
                     let display_props_type = component_type
                         .filter(|&component| {
-                            crate::query_boundaries::common::is_type_parameter_like(
+                            crate::query_boundaries::checkers::jsx::is_type_parameter_like(
                                 self.ctx.types,
                                 component,
                             )

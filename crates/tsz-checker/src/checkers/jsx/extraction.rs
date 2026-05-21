@@ -5,6 +5,7 @@
 //! (TS2604), return types (TS2786), and provides helpers for generic/overloaded
 //! component detection.
 
+use crate::query_boundaries::checkers::jsx as jsx_boundary;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -29,35 +30,22 @@ impl<'a> CheckerState<'a> {
         let instantiated = if type_params.is_empty() {
             body_type
         } else {
-            let args = [component_type, props_type];
-            let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
-                self.ctx.types,
-                &type_params,
-                &args,
-            );
-            crate::query_boundaries::common::instantiate_type(
+            jsx_boundary::instantiate_type_alias_body(
                 self.ctx.types,
                 body_type,
-                &substitution,
+                &type_params,
+                &[component_type, props_type],
             )
         };
-        let default_props_type =
-            match self.resolve_property_access_with_env(component_type, "defaultProps") {
-                crate::query_boundaries::common::PropertyAccessResult::Success {
-                    type_id, ..
-                } => Some(type_id),
-                _ => None,
-            };
+        let default_props_type = jsx_boundary::property_access_success_type(
+            self.resolve_property_access_with_env(component_type, "defaultProps"),
+        );
         let has_managed_props_metadata = default_props_type.is_some()
-            || matches!(
+            || jsx_boundary::property_access_is_success(
                 self.resolve_property_access_with_env(component_type, "propTypes"),
-                crate::query_boundaries::common::PropertyAccessResult::Success { .. }
             );
         if !has_managed_props_metadata
-            && crate::query_boundaries::common::is_type_parameter_like(
-                self.ctx.types,
-                component_type,
-            )
+            && jsx_boundary::is_type_parameter_like(self.ctx.types, component_type)
         {
             let lma_ref = self.resolve_symbol_as_lazy_type(lma_sym_id);
             return self
@@ -66,7 +54,7 @@ impl<'a> CheckerState<'a> {
                 .factory()
                 .application(lma_ref, vec![component_type, props_type]);
         }
-        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, props_type) {
+        if jsx_boundary::contains_type_parameters(self.ctx.types, props_type) {
             return props_type;
         }
         if !has_managed_props_metadata
@@ -109,8 +97,7 @@ impl<'a> CheckerState<'a> {
             // the same default-props transform used for the `evaluated == ANY`
             // branch — making the defaulted props optional matches what tsc
             // emits for these helper-alias shapes.
-            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
-                .is_none()
+            if !jsx_boundary::has_object_shape(self.ctx.types, evaluated)
                 && let Some(default_props_type) = default_props_type
                 && let Some(fallback) =
                     self.try_apply_jsx_default_props_fallback(props_type, default_props_type)
@@ -123,10 +110,7 @@ impl<'a> CheckerState<'a> {
             // using a broken evaluation result that would cause false TS2322 diagnostics.
             // Use contains_error_type_in_args which checks Application.base as well,
             // matching the formatter's own error-detection logic.
-            if crate::query_boundaries::common::contains_error_type_in_args(
-                self.ctx.types,
-                evaluated,
-            ) {
+            if jsx_boundary::contains_error_type_in_args(self.ctx.types, evaluated) {
                 return props_type;
             }
             let evaluated_is_callable = self.jsx_type_contains_callable_surface(evaluated);
@@ -166,10 +150,8 @@ impl<'a> CheckerState<'a> {
         if let Some(props_type) =
             self.react_component_alias_application_props_arg(raw_component_type)
         {
-            let raw_has_type_params = crate::query_boundaries::common::contains_type_parameters(
-                self.ctx.types,
-                props_type,
-            );
+            let raw_has_type_params =
+                jsx_boundary::contains_type_parameters(self.ctx.types, props_type);
             let props_type =
                 self.apply_jsx_library_managed_attributes(raw_component_type, props_type);
             return Some((props_type, raw_has_type_params));
@@ -194,11 +176,9 @@ impl<'a> CheckerState<'a> {
         // Bare type parameters use their callable/construct constraint for props
         // extraction, while the raw type parameter remains the component argument
         // to JSX.LibraryManagedAttributes<T, P>.
-        if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, component_type) {
-            let constraint = crate::query_boundaries::common::type_parameter_constraint(
-                self.ctx.types,
-                component_type,
-            )?;
+        if jsx_boundary::is_type_parameter_like(self.ctx.types, component_type) {
+            let constraint =
+                jsx_boundary::type_parameter_constraint(self.ctx.types, component_type)?;
             return self.get_jsx_props_type_for_component_member_with_raw(
                 raw_component_type,
                 constraint,
@@ -206,9 +186,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, component_type)
-        {
+        if let Some(members) = jsx_boundary::union_members(self.ctx.types, component_type) {
             let mut candidates = Vec::new();
             let mut seen = rustc_hash::FxHashSet::default();
             let mut any_raw_has_type_params = false;
@@ -755,16 +733,12 @@ impl<'a> CheckerState<'a> {
 
             signatures.extend(self.jsx_callable_signatures_for_return_check(candidate));
 
-            if let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, candidate)
-            {
-                stack.extend(members);
-            }
-            if let Some(members) =
-                crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
-            {
-                stack.extend(members);
-            }
+            stack.extend(
+                crate::query_boundaries::checkers::jsx::union_and_intersection_members(
+                    self.ctx.types,
+                    candidate,
+                ),
+            );
             if let Some(alias) = self.ctx.types.get_display_alias(candidate) {
                 stack.push(alias);
             }

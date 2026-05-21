@@ -920,12 +920,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let type_args = props_arg.into_iter().collect::<Vec<_>>();
-        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+        crate::query_boundaries::checkers::jsx::instantiate_type_alias_body(
             self.ctx.types,
+            body,
             &type_params,
             &type_args,
-        );
-        crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &substitution)
+        )
     }
 
     fn jsx_intrinsic_tag_allowed_by_element_type(
@@ -933,20 +933,11 @@ impl<'a> CheckerState<'a> {
         tag: &str,
         element_type: TypeId,
     ) -> bool {
-        let tag_atom = self.ctx.types.intern_string(tag);
-        let members = crate::query_boundaries::common::union_members(self.ctx.types, element_type)
-            .unwrap_or_else(|| vec![element_type]);
-        members.into_iter().any(|member| {
-            if crate::query_boundaries::common::is_string_type(self.ctx.types, member) {
-                return true;
-            }
-            if let Some(crate::query_boundaries::common::LiteralValue::String(atom)) =
-                crate::query_boundaries::common::literal_value(self.ctx.types, member)
-            {
-                return atom == tag_atom;
-            }
-            false
-        })
+        crate::query_boundaries::checkers::jsx::element_type_allows_intrinsic_tag(
+            self.ctx.types,
+            element_type,
+            tag,
+        )
     }
 
     fn jsx_element_type_props_arg_for_element(&mut self, element_idx: NodeIndex) -> Option<TypeId> {
