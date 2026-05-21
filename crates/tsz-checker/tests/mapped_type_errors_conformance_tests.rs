@@ -1,7 +1,8 @@
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::test_utils::{
-    check_source_diagnostics, check_with_options, line_column_for_offset,
+    check_source_diagnostics, check_with_options, has_any_diagnostic_code, has_diagnostic_code,
+    line_column_for_offset,
 };
 
 fn diagnostic_anchor_text<'a>(source: &'a str, diagnostic: &Diagnostic) -> &'a str {
@@ -375,5 +376,140 @@ type Bad = RecordA<object, number>;
             .iter()
             .all(|message| !message.contains("constraint 'PropertyKey'")),
         "TS2344 against keyof any must not collapse to PropertyKey: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn mapped_without_as_is_not_assignable_to_mapped_with_template_literal_as() {
+    // Rule: { [K in keyof T]: T[K] } is not a subtype of
+    //       { [K in keyof T as `get_${string & K}`]: T[K] }
+    // because the target renames every key.  tsc emits TS2322 here.
+    let source = r#"
+type WithRaw<T>       = { [K in keyof T]: T[K] };
+type WithGetPrefix<T> = { [K in keyof T as `get_${string & K}`]: T[K] };
+function test<T>(x: WithRaw<T>): WithGetPrefix<T> {
+    return x;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diagnostics, 2322),
+        "Expected TS2322 when assigning a non-`as` mapped type to a key-renaming mapped type, \
+         got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn mapped_without_as_is_not_assignable_to_mapped_with_template_literal_as_renamed_binders() {
+    // Same rule, different iteration-variable names (`Item`/`Q` instead of `K`).
+    // Proves the check is structural, not name-dependent.
+    let source = r#"
+type Plain<T>    = { [Item in keyof T]: T[Item] };
+type Prefixed<T> = { [Q in keyof T as `set_${string & Q}`]: T[Q] };
+function bad<T>(x: Plain<T>): Prefixed<T> {
+    return x;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diagnostics, 2322),
+        "Expected TS2322 for renamed-binder variant of key-renaming mismatch, \
+         got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn mapped_with_as_is_not_assignable_to_mapped_without_as() {
+    // Inverse direction: a key-renaming source cannot satisfy a plain (no-`as`) target
+    // because the source only has `get_*` keys, not the original ones.
+    let source = r#"
+type WithGetPrefix<T> = { [K in keyof T as `get_${string & K}`]: T[K] };
+type WithRaw<T>       = { [K in keyof T]: T[K] };
+function bad<T>(x: WithGetPrefix<T>): WithRaw<T> {
+    return x;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diagnostics, 2322),
+        "Expected TS2322 when assigning a key-renamed mapped type to a plain mapped type, \
+         got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn two_mapped_types_same_template_literal_as_are_assignable() {
+    // Positive case: both sides carry the same `as` clause — the key spaces
+    // agree and the assignment must succeed with no diagnostic.
+    let source = r#"
+type Prefixed<T> = { [K in keyof T as `get_${string & K}`]: T[K] };
+function ok<T>(x: Prefixed<T>): Prefixed<T> {
+    return x;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2322),
+        "Expected no TS2322 when both mapped types carry the same `as` clause, \
+         got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn two_plain_mapped_types_same_constraint_are_assignable() {
+    // Positive case: two mapped types without `as` clauses and the same
+    // constraint are mutually assignable.
+    let source = r#"
+type A<T> = { [K in keyof T]: T[K] };
+type B<T> = { [P in keyof T]: T[P] };
+function ok<T>(x: A<T>): B<T> {
+    return x;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2322),
+        "Expected no TS2322 for two plain homomorphic mapped types, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn concrete_mapped_without_as_not_assignable_to_concrete_mapped_with_as() {
+    // Concrete (non-generic) variant: constraint is a literal union.
+    // { [K in "x" | "y"]: number } is not assignable to
+    // { [K in "x" | "y" as `get_${K}`]: number } because the key sets differ.
+    // For concrete mapped types tsc expands to an object literal and reports
+    // TS2739 (missing properties) or TS2741 rather than TS2322.
+    let source = r#"
+type Keys = "x" | "y";
+type Raw     = { [K in Keys]: number };
+type Renamed = { [K in Keys as `get_${K}`]: number };
+declare const raw: Raw;
+const r: Renamed = raw;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        has_any_diagnostic_code(&diagnostics, &[2322, 2739, 2741]),
+        "Expected an assignment error (TS2322/TS2739/TS2741) for concrete mapped-without-as \
+         assigned to mapped-with-as, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn mapped_with_different_as_clauses_are_not_assignable() {
+    // Two mapped types that both have `as` clauses but different key-remapping
+    // expressions are not mutually assignable.
+    let source = r#"
+type GetPrefixed<T>  = { [K in keyof T as `get_${string & K}`]: T[K] };
+type SetPrefixed<T>  = { [K in keyof T as `set_${string & K}`]: T[K] };
+function bad<T>(x: GetPrefixed<T>): SetPrefixed<T> {
+    return x;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        has_diagnostic_code(&diagnostics, 2322),
+        "Expected TS2322 when two mapped types have different `as` key-remapping clauses, \
+         got: {diagnostics:#?}"
     );
 }
