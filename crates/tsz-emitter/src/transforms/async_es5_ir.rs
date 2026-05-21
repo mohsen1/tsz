@@ -2670,6 +2670,11 @@ impl<'a> AsyncES5Transformer<'a> {
                     cases,
                     current_statements,
                     current_label,
+                ) && !self.process_for_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
                 ) {
                     current_statements.push(self.statement_to_ir(idx));
                 }

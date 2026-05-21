@@ -539,6 +539,8 @@ impl<'a> CheckerState<'a> {
         let mut display_type_overrides: FxHashMap<Atom, TypeId> = FxHashMap::default();
         let mut string_index_types: Vec<TypeId> = Vec::new();
         let mut number_index_types: Vec<TypeId> = Vec::new();
+        // Wide `symbol`-typed computed keys (see `symbol_key_routing`).
+        let mut symbol_index_types: Vec<TypeId> = Vec::new();
         // Index signatures inherited from spread sources (kept separate because
         // they should only be included when the literal has no explicit properties —
         // tsc drops spread index signatures when explicit properties exist).
@@ -686,7 +688,9 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|computed| {
                         self.get_type_of_node(computed.expression) == TypeId::ERROR
                     });
-                let name_opt = if computed_key_is_error {
+                let name_opt = if computed_key_is_error
+                    || self.object_literal_computed_key_is_wide_symbol(prop.name)
+                {
                     None
                 } else {
                     self.get_property_name_resolved(prop.name)
@@ -1420,13 +1424,13 @@ impl<'a> CheckerState<'a> {
                         value_type = literal_type;
                     }
 
-                    if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
-                        number_index_types.push(value_type);
-                    } else if self.is_assignable_to(prop_name_type, TypeId::STRING)
-                        || self.is_assignable_to(prop_name_type, TypeId::ANY)
-                    {
-                        string_index_types.push(value_type);
-                    }
+                    self.route_computed_member_value_to_index_signature(
+                        prop_name_type,
+                        value_type,
+                        &mut number_index_types,
+                        &mut string_index_types,
+                        &mut symbol_index_types,
+                    );
                 }
             }
             // Shorthand property: { x } - identifier is both name and value
@@ -1726,7 +1730,11 @@ impl<'a> CheckerState<'a> {
                 {
                     self.get_type_of_node(computed.expression);
                 }
-                let name_opt = self.get_property_name_resolved(method.name);
+                let name_opt = if self.object_literal_computed_key_is_wide_symbol(method.name) {
+                    None
+                } else {
+                    self.get_property_name_resolved(method.name)
+                };
                 if let Some(name) = name_opt.clone() {
                     // Set contextual type for method
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
@@ -2153,13 +2161,13 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
-                        number_index_types.push(method_type);
-                    } else if self.is_assignable_to(prop_name_type, TypeId::STRING)
-                        || self.is_assignable_to(prop_name_type, TypeId::ANY)
-                    {
-                        string_index_types.push(method_type);
-                    }
+                    self.route_computed_member_value_to_index_signature(
+                        prop_name_type,
+                        method_type,
+                        &mut number_index_types,
+                        &mut string_index_types,
+                        &mut symbol_index_types,
+                    );
                 }
             }
             // Accessor: { get foo() {} } or { set foo(v) {} }
@@ -2236,7 +2244,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let name_opt = self.get_property_name_resolved(accessor.name);
+                let name_opt = if self.object_literal_computed_key_is_wide_symbol(accessor.name) {
+                    None
+                } else {
+                    self.get_property_name_resolved(accessor.name)
+                };
                 if let Some(name) = name_opt.clone() {
                     // For non-contextual object literals, TypeScript treats `this` inside
                     // accessors as the object literal under construction. Provide a
@@ -2580,13 +2592,13 @@ impl<'a> CheckerState<'a> {
                             .unwrap_or(TypeId::ANY)
                     };
 
-                    if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
-                        number_index_types.push(accessor_type);
-                    } else if self.is_assignable_to(prop_name_type, TypeId::STRING)
-                        || self.is_assignable_to(prop_name_type, TypeId::ANY)
-                    {
-                        string_index_types.push(accessor_type);
-                    }
+                    self.route_computed_member_value_to_index_signature(
+                        prop_name_type,
+                        accessor_type,
+                        &mut number_index_types,
+                        &mut string_index_types,
+                        &mut symbol_index_types,
+                    );
                 }
             }
             // Spread assignment: { ...obj }
@@ -3030,15 +3042,23 @@ impl<'a> CheckerState<'a> {
         if explicit_property_names.is_empty() {
             string_index_param_name = spread_string_index_signatures
                 .iter()
+                .filter(|idx| idx.key_type != TypeId::SYMBOL)
                 .find_map(|idx| idx.param_name);
             number_index_param_name = spread_number_index_signatures
                 .iter()
                 .find_map(|idx| idx.param_name);
-            string_index_types.extend(
-                spread_string_index_signatures
-                    .into_iter()
-                    .map(|idx| idx.value_type),
-            );
+            // `ObjectShape.string_index` is shared between string- and
+            // symbol-keyed signatures (discriminated by `key_type`). Route each
+            // spread-contributed index into the matching bucket so a spread
+            // source with `{ [k: symbol]: V }` does not leak `V` into a
+            // string index signature.
+            for idx in spread_string_index_signatures {
+                if idx.key_type == TypeId::SYMBOL {
+                    symbol_index_types.push(idx.value_type);
+                } else {
+                    string_index_types.push(idx.value_type);
+                }
+            }
             number_index_types.extend(
                 spread_number_index_signatures
                     .into_iter()
@@ -3052,6 +3072,7 @@ impl<'a> CheckerState<'a> {
                 display_type_overrides,
                 string_index_types,
                 number_index_types,
+                symbol_index_types,
                 string_index_param_name,
                 number_index_param_name,
                 has_spread,

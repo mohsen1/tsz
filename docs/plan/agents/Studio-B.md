@@ -29,11 +29,14 @@ scripts/agents/list-owned-work.sh Studio-B
 - Issue context: `#8356`, `#7574`, `#7378`, `#7531`, and the
   closed-but-informative `#8857`/`#8858`/`#8868`/`#8869`/`#8870`.
 - Related recent merges to inspect for benchmark-readiness guardrails:
-  `#9813`, `#9794`, `#9789`, `#9626`, `#9587`, and `#9581`.
+  `#9866`, `#9813`, `#9794`, `#9789`, `#9626`, `#9587`, and
+  `#9581`.
 - Track: roadmap Tracks 2 and 10.
-- Next concrete step: use the `#9819`/`#9829` guard and the closed `#8868`
-  attribution evidence to decide whether the next slice is semantic recursion
-  work or source-file type-alias delegation caching for `#8356`/`#7378`.
+- Next concrete step: after `#9866`'s stable generic source-alias cache landed,
+  re-run a narrow `ts-toolbelt-project` attribution when disk/runner capacity
+  allows. Compare the new source-file type-alias delegation residues against
+  the closed `#8868` evidence before choosing the next slice for `#8356` /
+  `#7378`.
 
 ## Existing Work To Inspect First
 
@@ -50,6 +53,9 @@ scripts/agents/list-owned-work.sh Studio-B
   dominates `with_parent_cache` construction, with source-file type-alias
   residues such as `Exclude`, `Naked`, `_Omit`, and `KeySet`; do not route that
   row as a diagnostic blocker unless a matching-env artifact turns red.
+- `#9866` landed the source-file type-alias delegation cache slice suggested by
+  that attribution. Do not duplicate it; first refresh the benchmark/counter
+  evidence and identify any remaining structural residue.
 - If a benchmark row is red because of diagnostics, hand it to the owning
   semantic lane before measuring runtime.
 
