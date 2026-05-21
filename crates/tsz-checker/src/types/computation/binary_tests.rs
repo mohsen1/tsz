@@ -1092,3 +1092,69 @@ var r = x instanceof o4;
             .collect::<Vec<_>>()
     );
 }
+
+// --- `in` operator LHS type checks (TS2322) ---
+
+#[test]
+fn in_lhs_boolean_emits_ts2322() {
+    let diags = check_source_diagnostics("declare const o: object; const x = true in o;");
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "Expected TS2322 for boolean LHS of `in`, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn in_lhs_object_literal_emits_ts2322() {
+    let diags = check_source_diagnostics("declare const o: object; const y = {} in o;");
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "Expected TS2322 for object-literal LHS of `in`, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn in_lhs_string_no_error() {
+    let diags = check_source_diagnostics("declare const o: object; const x = \"k\" in o;");
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "Should NOT emit TS2322 for string LHS of `in`, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn in_lhs_number_no_error() {
+    let diags = check_source_diagnostics("declare const o: object; const x = 5 in o;");
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "Should NOT emit TS2322 for number LHS of `in`, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn in_lhs_any_no_error() {
+    let diags = check_source_diagnostics(
+        "declare const o: object; declare const x: any; const r = x in o;",
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "Should NOT emit TS2322 for `any` LHS of `in`, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn in_lhs_as_any_no_error() {
+    let diags = check_source_diagnostics(
+        "declare const o: object; declare const x: boolean; const r = (x as any) in o;",
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "Should NOT emit TS2322 for `x as any` LHS of `in`, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}

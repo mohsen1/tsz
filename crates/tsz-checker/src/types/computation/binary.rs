@@ -1412,7 +1412,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if op_kind == SyntaxKind::InKeyword as u16 {
-                let result = self.check_in_operator(left_idx, right_idx, right_type);
+                let result = self.check_in_operator(left_idx, right_idx, left_type, right_type);
                 type_stack.push(result);
                 continue;
             }
@@ -2854,6 +2854,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         left_idx: NodeIndex,
         right_idx: NodeIndex,
+        left_type: TypeId,
         right_type: TypeId,
     ) -> TypeId {
         // TS1451: Private identifiers must be the direct LHS of `in`, not wrapped
@@ -2877,6 +2878,22 @@ impl<'a> CheckerState<'a> {
         } else if left_node_kind == SyntaxKind::PrivateIdentifier as u16 {
             // Direct private identifier as LHS — validate it
             self.check_private_identifier_in_expression(left_stripped, right_idx, right_type);
+        } else {
+            // When the LHS is not a private identifier, its type must be assignable to
+            // `string | number | symbol`. Non-string/number/symbol types (e.g. `boolean`,
+            // plain objects) produce TS2322 at the LHS position.
+            if left_type != TypeId::ANY
+                && left_type != TypeId::UNKNOWN
+                && left_type != TypeId::ERROR
+            {
+                let key_union =
+                    self.ctx
+                        .types
+                        .union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL);
+                let _ = self.check_assignable_or_report_at_exact_anchor(
+                    left_type, key_union, left_idx, left_idx,
+                );
+            }
         }
 
         // TS18047/TS18049: RHS of `in` must not be possibly null (or null|undefined).
