@@ -1222,14 +1222,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Fall back to JSDoc `@typedef` resolution. Typedefs don't bind a
-        // symbol; they live in the JSDoc typedef table and require explicit
-        // lookup. The lookup also walks across files (same scope used by
-        // `@extends` and other JSDoc references), so cross-file `@typedef`
-        // names work without any name-matching here.
-        if let Some((typedef_type, _type_params)) =
-            self.resolve_global_jsdoc_typedef_info(target_name)
-        {
+        // Fall back to JSDoc `@typedef` resolution, scoped to the current
+        // source file. tsc resolves `@implements {T}` in the same scope as the
+        // class: file-local `@typedef T` is visible, but typedefs declared in
+        // unrelated files are not. Walking the global typedef table would
+        // surface typedefs tsc never sees and produce spurious TS2420/TS2416
+        // in the conformance check.
+        let typedef_info = self.ctx.arena.source_files.first().and_then(|sf| {
+            let comments = sf.comments.clone();
+            let source_text = sf.text.to_string();
+            self.resolve_jsdoc_typedef_info(target_name, &comments, &source_text)
+        });
+        if let Some((typedef_type, _type_params)) = typedef_info {
             let interface_type = self.evaluate_type_for_assignability(typedef_type);
             return Some(JsDocImplementsTarget::Materialized {
                 interface_type,
