@@ -163,6 +163,27 @@ function collectMissingFields(object, prefix, fields) {
   return missing;
 }
 
+function collectFixtureSourceFailures(rowName, fixtureSources) {
+  const failures = [];
+  if (!Array.isArray(fixtureSources) || fixtureSources.length === 0) {
+    return [`${rowName}: compatibility.fixture_sources must name at least one source`];
+  }
+
+  fixtureSources.forEach((source, index) => {
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+      failures.push(`${rowName}: compatibility.fixture_sources[${index}] must be an object`);
+      return;
+    }
+    for (const field of ["name", "repository", "ref"]) {
+      if (!isNonEmptyString(source[field])) {
+        failures.push(`${rowName}: compatibility.fixture_sources[${index}].${field} must be a non-empty string`);
+      }
+    }
+  });
+
+  return failures;
+}
+
 function collectRunnerSignatureFailures(payloads, runnerEnvironmentWarnings) {
   const failures = [];
   const seenShardLabels = new Map();
@@ -349,6 +370,7 @@ function collectProjectCompatibilityFailures(rows) {
         failures.push(`${row.name}: missing compatibility.${field}`);
       }
     }
+    failures.push(...collectFixtureSourceFailures(row.name, row.compatibility.fixture_sources));
     const state = String(row.compatibility.state || "").toLowerCase();
     if (state === "red" || state === "yellow") {
       if (!isNonEmptyString(row.compatibility.first_failure_class)) {
