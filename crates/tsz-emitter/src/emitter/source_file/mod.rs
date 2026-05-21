@@ -593,6 +593,38 @@ mod tests {
     }
 
     #[test]
+    fn es5_static_initializer_class_expression_boundary_uses_direct_iife() {
+        let source = "class Base { static f = 1; }\nclass C extends Base {\n    static classExprBoundary = class { a = super.f + this.f };\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("C.classExprBoundary = /** @class */ (function () {"),
+            "Static initializer class-expression boundaries should emit the class IIFE directly.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("C.classExprBoundary = (function () {"),
+            "Plain class-expression boundaries should not add a wrapper IIFE.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("this.a = _super.prototype.f + this.f;"),
+            "The nested class constructor should keep its own `this` while preserving the static `super` base.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_static_class_expression_schedules_static_blocks_in_comma_initializer() {
         let source = "function foo() {\n    return class {\n        static foo = 1;\n        static {\n            const c = class {\n                static bar = 2;\n                static {\n                    // do\n                }\n            };\n        }\n    };\n}\n";
 
