@@ -43355,10 +43355,12 @@ fn intermediate_application_alias_stores_for_fresh_generic_mapped_type() {
     );
 }
 
-/// Non-Mapped structural types (e.g. Object, Intersection) must NOT receive a
+/// Non-Mapped structural types (Object, Intersection) must NEVER receive a
 /// display alias when the Application's args contain generic type parameters.
 /// Only freshly-allocated Mapped types are safe because their constraint is
 /// baked into the interned key (guaranteeing per-instantiation uniqueness).
+/// Both shapes are tested so a future change that widens alias storage to
+/// generic Objects or Intersections trips the boundary assertion.
 #[test]
 fn intermediate_application_alias_skips_generic_args_for_non_mapped_structural_type() {
     let interner = TypeInterner::new();
@@ -43370,25 +43372,30 @@ fn intermediate_application_alias_skips_generic_args_for_non_mapped_structural_t
         is_const: false,
     });
 
-    // Application first, then Object (structural but not Mapped).
-    let app = interner.application(interner.lazy(DefId(9902)), vec![k]);
+    // --- Object shape ---
+    let app_obj = interner.application(interner.lazy(DefId(9902)), vec![k]);
     let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), k)]);
 
     let evaluator = TypeEvaluator::new(&interner);
-    evaluator.store_intermediate_application_display_alias(obj, app, obj, &[k]);
+    evaluator.store_intermediate_application_display_alias(obj, app_obj, obj, &[k]);
 
-    // An Object with generic args must not be aliased — it could be shared across
-    // instantiations when args produce the same structural shape.
-    // The alias is either None (skipped) or an Application (acceptable if interner allowed it).
-    // What must NOT happen: the alias should not point to a non-Application type.
-    let alias = interner.get_display_alias(obj);
-    if let Some(a) = alias {
-        assert!(
-            matches!(interner.lookup(a), Some(TypeData::Application(_))),
-            "if Object gets an alias it must point to an Application, got {:?}",
-            interner.lookup(a)
-        );
-    }
+    assert_eq!(
+        interner.get_display_alias(obj),
+        None,
+        "Object with generic args must not receive a display alias"
+    );
+
+    // --- Intersection shape ---
+    let app_int = interner.application(interner.lazy(DefId(9909)), vec![k]);
+    let intersect = interner.intersection(vec![TypeId::STRING, k]);
+
+    evaluator.store_intermediate_application_display_alias(intersect, app_int, intersect, &[k]);
+
+    assert_eq!(
+        interner.get_display_alias(intersect),
+        None,
+        "Intersection with generic args must not receive a display alias"
+    );
 }
 
 /// Prove the formatter uses the evaluator-stored alias (no manual pre-seeding).
