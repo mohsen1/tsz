@@ -15,6 +15,7 @@ use crate::inference::infer::{
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::widening;
 use crate::types::{InferencePriority, ObjectFlags, TemplateSpan, TypeData, TypeId};
+use crate::visitor::is_literal_type;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
@@ -671,9 +672,36 @@ impl<'a> InferenceContext<'a> {
             .iter()
             .any(|candidate| candidate.source_is_type_annotation);
         let resolved = if priority_implies_combination || all_from_index_signatures {
-            // Union: used for return type inference, low-priority contexts,
-            // index signature inference, and nullable parameter inference
-            self.best_common_type(&candidate_types)
+            // Mirror tsc's `getCovariantInference` for the
+            // `PriorityImpliesCombination` branch: build the subtype-reduced
+            // union of the candidates rather than the common supertype.
+            //
+            // We must NOT use `best_common_type` when every candidate is a
+            // non-fresh literal type, because its first step
+            // (`find_common_base_type`) collapses literals to their primitive
+            // base (`1 | 2` -> `number`), discarding the precise type the
+            // user asked for via `as const`. tsc's later `getWidenedType`
+            // step is the right place for that collapse — and it is gated on
+            // candidate freshness (issue #9714).
+            //
+            // For structural / class-hierarchy candidates we keep
+            // `best_common_type`: its tournament + common-base-class steps
+            // produce the supertype that the existing test baselines (and
+            // tsz's downstream solver paths) already depend on.  Switching
+            // those wholesale to `getUnionType(Subtype)` is correct in
+            // principle but produces a different inferred type for many
+            // tests (e.g. `[Dog, Cat]` extending `Animal` becomes
+            // `Dog | Cat` instead of `Animal`) — that is a separate broad
+            // realignment best handled in its own PR.
+            let all_non_fresh_literals = !filtered_no_never.is_empty()
+                && filtered_no_never
+                    .iter()
+                    .all(|c| !c.is_fresh_literal && is_literal_type(self.interner, c.type_id));
+            if all_non_fresh_literals {
+                self.interner.union_from_slice(&candidate_types)
+            } else {
+                self.best_common_type(&candidate_types)
+            }
         } else {
             // Common supertype: used for NakedTypeVariable and other direct inference.
             // tsc widens literal candidates BEFORE getCommonSupertype (via baseCandidates =
@@ -746,8 +774,21 @@ impl<'a> InferenceContext<'a> {
             if all_same || valid_candidates.is_empty() {
                 resolved
             } else {
-                // Create a union of all valid candidate types (subtype-reduced).
-                self.best_common_type(&valid_candidates)
+                // Apply the same all-non-fresh-literals gate as the
+                // combination branch above: union with subtype reduction when
+                // the candidates are user-pinned literals (so `1 | 2` does
+                // not collapse to `number`), otherwise fall back to the
+                // common-supertype tournament via `best_common_type`.
+                let all_non_fresh_literals = filtered_no_never
+                    .iter()
+                    .filter(|c| valid_candidates.contains(&c.type_id))
+                    .all(|c| !c.is_fresh_literal && is_literal_type(self.interner, c.type_id))
+                    && !filtered_no_never.is_empty();
+                if all_non_fresh_literals {
+                    self.interner.union(valid_candidates)
+                } else {
+                    self.best_common_type(&valid_candidates)
+                }
             }
         } else {
             resolved
