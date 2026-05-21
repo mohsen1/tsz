@@ -56,6 +56,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info};
+use tsz_common::limits;
 
 use tsz::binder::BinderState;
 use tsz::lib_loader::LibFile;
@@ -1738,6 +1739,19 @@ fn main() -> Result<()> {
     tsz_cli::tracing_config::init_tracing();
 
     let args = ServerArgs::parse();
+
+    // Run on a large stack to prevent overflows in recursive AST traversals
+    // (document highlights, find-references, narrowing) on deeply-nested code.
+    // Matches the 128 MiB stack used by the tsz CLI for project-sized workloads.
+    std::thread::Builder::new()
+        .stack_size(limits::THREAD_STACK_SIZE_BYTES)
+        .spawn(move || server_main(args))
+        .expect("failed to spawn server thread")
+        .join()
+        .expect("server thread panicked")
+}
+
+fn server_main(args: ServerArgs) -> Result<()> {
     let mut server = Server::new(&args).context("failed to initialize server")?;
 
     info!("tsz-server ready (protocol: {:?})", args.protocol);

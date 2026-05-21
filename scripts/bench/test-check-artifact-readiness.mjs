@@ -182,6 +182,53 @@ withTempDir((dir) => {
 console.log("✅ missing measurement profile is reported without failing readiness");
 
 // ---------------------------------------------------------------------------
+// Test: merged artifact validation warnings are surfaced in readiness output so
+// runner and measurement metadata problems are visible to dashboards.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows, {
+    measurement_profile: SAMPLE_MEASUREMENT_PROFILE,
+    validation: {
+      runner_environment_warnings: [
+        {
+          file: "bench-results-b.json",
+          mismatched_fields: ["cpu_count", "cloud_build_machine_type"],
+          expected: { cpu_count: 32 },
+          actual: { cpu_count: 16 },
+        },
+      ],
+      measurement_profile_warnings: [
+        {
+          file: "bench-results-pgo-b.json",
+          mismatched_fields: ["profile_guided_optimization.profile_fingerprint"],
+          expected: { profile_guided_optimization: { profile_fingerprint: "aaa" } },
+          actual: { profile_guided_optimization: { profile_fingerprint: "bbb" } },
+        },
+      ],
+    },
+  }));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 0, `validation warnings should not fail readiness:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.validation_warnings.total, 2, "JSON should count validation warnings");
+  assert.deepEqual(
+    parsed.validation_warnings.runner_environment[0].mismatched_fields,
+    ["cpu_count", "cloud_build_machine_type"],
+    "JSON should preserve runner metadata warning fields",
+  );
+  assert.deepEqual(
+    parsed.validation_warnings.measurement_profile[0].mismatched_fields,
+    ["profile_guided_optimization.profile_fingerprint"],
+    "JSON should preserve measurement profile warning fields",
+  );
+  assert.match(result.stderr, /Runner metadata warnings \(1\)/);
+  assert.match(result.stderr, /Measurement profile warnings \(1\)/);
+});
+console.log("✅ validation warnings are surfaced in readiness output");
+
+// ---------------------------------------------------------------------------
 // Test: artifact missing one required row → exit 1
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {
