@@ -595,6 +595,42 @@ impl<'a> CheckerState<'a> {
                                     excess_property_target,
                                     facts.initializer,
                                 );
+                                // When the initializer is a wrapper that pushes
+                                // the contextual type into multiple candidate
+                                // object literals (`?:`, `??`, `||`, parens,
+                                // `,`, `=`), the call above sees the composite
+                                // source and cannot iterate its shape. Run the
+                                // per-literal excess check on every fresh
+                                // object literal reachable through those
+                                // wrappers so nested excess properties on
+                                // branch literals are surfaced (e.g. `c ? { a:
+                                // { b:1, c:2 } } : { a: { b:2 } }` should
+                                // still emit TS2353 for the inner `c`). See
+                                // #9681. Skip when the initializer is itself
+                                // an object literal — the canonical
+                                // `check_object_literal_excess_properties`
+                                // call above already runs against the literal
+                                // and rerunning it via
+                                // `get_type_of_node(literal)` can disagree on
+                                // the source type for symbol-named computed
+                                // keys / sibling-initializer destructuring
+                                // shapes.
+                                if self.ctx.diagnostics.len() == diags_before
+                                    && !self.ctx.arena.get(facts.initializer).is_some_and(|n| {
+                                        n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                    })
+                                {
+                                    let literals =
+                                        self.collect_rhs_object_literals(facts.initializer);
+                                    for obj_idx in literals {
+                                        let lit_type = self.get_type_of_node(obj_idx);
+                                        self.check_object_literal_excess_properties(
+                                            lit_type,
+                                            excess_property_target,
+                                            obj_idx,
+                                        );
+                                    }
+                                }
                                 if self.ctx.diagnostics.len() == diags_before {
                                     // Only attempt elaboration when overall assignment fails AND
                                     // the initializer reaches an object literal through paren or

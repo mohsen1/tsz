@@ -6,6 +6,7 @@ mod commonjs_assignment;
 mod destructuring;
 mod js_constructor_provisional;
 mod js_global_fallback;
+mod rhs_literal_walker;
 
 #[cfg(test)]
 #[path = "../assignment_checker_tests.rs"]

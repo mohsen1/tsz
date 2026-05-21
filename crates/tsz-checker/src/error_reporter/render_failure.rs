@@ -494,6 +494,41 @@ impl<'a> CheckerState<'a> {
                 target_type: _,
             } => {
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                // When the source is a union (e.g. a fresh literal flowed
+                // through `?:`, `??`, or `||` and yielded a union of fresh
+                // members), tsc reports the assignment as TS2322 with the
+                // excess-property message attached as related-information
+                // elaboration, not as a standalone TS2353 anchored at the
+                // property. The structural rule: a fresh literal in a
+                // composite source produces an excess-property elaboration
+                // on the outer assignment, not a property-anchored emit.
+                if crate::query_boundaries::common::union_members(self.ctx.types, source).is_some()
+                {
+                    let (source_str, target_str) =
+                        self.format_top_level_assignability_message_types_at(source, target, idx);
+                    let main_message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    let (elab_code, elab_message) =
+                        self.excess_property_diagnostic_message(&prop_name, target, idx);
+                    let mut diag = Diagnostic::error(
+                        file_name.clone(),
+                        start,
+                        length,
+                        main_message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: file_name,
+                        start,
+                        length,
+                        message_text: elab_message,
+                        category: DiagnosticCategory::Message,
+                        code: elab_code,
+                    });
+                    return diag;
+                }
                 let (code, message) =
                     self.excess_property_diagnostic_message(&prop_name, target, idx);
                 let (excess_start, excess_length) = self

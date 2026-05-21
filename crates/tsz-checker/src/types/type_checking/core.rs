@@ -48,12 +48,29 @@ impl<'a> CheckerState<'a> {
             // Use exact anchor to prevent assignment_anchor_node from
             // walking up to the enclosing arrow/function expression.
             // TSC reports branch-level TS2322 at the specific branch node.
+            let diags_before = self.ctx.diagnostics.len();
             let _ = self.check_assignable_or_report_at_exact_anchor(
                 branch_type,
                 expected_type,
                 anchor_idx,
                 anchor_idx,
             );
+            // When the branch is itself a fresh object literal and the
+            // exact-anchor check is suppressed in favour of property-level
+            // excess reporting (the canonical TS2353 path), no outer caller
+            // will see the fresh shape — the conditional's union result is
+            // what flows to the enclosing `return` and gets compared against
+            // the declared return type. Emit the property-level TS2353 here so
+            // the suppression's assumption (`TS2353 fires elsewhere`) holds.
+            if self.ctx.diagnostics.len() == diags_before
+                && self
+                    .ctx
+                    .arena
+                    .get(anchor_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            {
+                self.check_object_literal_excess_properties(branch_type, expected_type, anchor_idx);
+            }
         }
     }
 

@@ -827,6 +827,18 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         use super::freshness::is_fresh_object_type;
         use crate::visitor::{ObjectTypeKind, classify_object_type};
 
+        // When the source is a union, the excess-property rule applies
+        // independently to each fresh object-literal member. tsc keeps a fresh
+        // literal "fresh" even after it flows through a `?:`, `??`, or other
+        // expression that yields a union — assigning that union to a closed
+        // target must still reject excess properties on any fresh member.
+        if let Some(TypeData::Union(members_id)) = self.interner.lookup(source) {
+            let members: Vec<TypeId> = self.interner.type_list(members_id).to_vec();
+            return members
+                .iter()
+                .all(|&m| self.check_excess_properties(m, target));
+        }
+
         // Only check fresh object literals
         if !is_fresh_object_type(self.interner, source) {
             return true;
@@ -898,6 +910,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     fn find_excess_property(&mut self, source: TypeId, target: TypeId) -> Option<Atom> {
         use super::freshness::is_fresh_object_type;
         use crate::visitor::{ObjectTypeKind, classify_object_type};
+
+        // Union sources: report the first excess property found in any fresh
+        // member. Symmetric with `check_excess_properties` above.
+        if let Some(TypeData::Union(members_id)) = self.interner.lookup(source) {
+            let members: Vec<TypeId> = self.interner.type_list(members_id).to_vec();
+            return members
+                .iter()
+                .find_map(|&m| self.find_excess_property(m, target));
+        }
 
         // Only check fresh object literals
         if !is_fresh_object_type(self.interner, source) {

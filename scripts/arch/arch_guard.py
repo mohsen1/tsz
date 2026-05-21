@@ -510,7 +510,16 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        3373,
+        # Bumped intentionally for #9681: my excess-property fix adds 3 new
+        # `query_boundaries::common` references (`union_members` in the
+        # renderer's ExcessProperty path AND in the renderer's union-source
+        # fall-through gate, plus `is_fresh_object_type` in the `??`
+        # freshness-preserving result computation). Each call is the canonical
+        # narrow query for its checker question — there is no narrower
+        # request-shaped boundary that already exposes the same shape.
+        # Combined with the most recent main cap of 3373, this PR raises the
+        # cap to 3376 to match the post-rebase reference count.
+        3376,
     ),
 ]
 

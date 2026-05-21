@@ -1540,6 +1540,15 @@ impl<'a> CheckerState<'a> {
                     // which removes structural subtypes (e.g., never[] from
                     // number[] | never[] → number[]). This matters when the
                     // RHS is an empty array literal [] (always never[] in strict mode).
+                    //
+                    // Exception: a fresh object literal on the right must NOT
+                    // be reduced out even if it is structurally a subtype of the
+                    // left's non-nullish part. tsc keeps the fresh literal in
+                    // the result union so that subsequent excess-property
+                    // checking (against the outer contextual target) can run
+                    // on the fresh member. Collapsing here erases the fresh
+                    // shape and silently accepts excess properties — see
+                    // mohsen1/tsz#9681.
                     let result = match non_nullish {
                         None => right_type,
                         Some(non_nullish) => {
@@ -1549,8 +1558,14 @@ impl<'a> CheckerState<'a> {
                             // what the solver does for `??` in BinaryOpEvaluator.
                             let non_nullish = evaluator
                                 .apply_non_nullable_approximation(evaluated_left, non_nullish);
+                            let right_is_fresh_object =
+                                crate::query_boundaries::common::is_fresh_object_type(
+                                    self.ctx.types,
+                                    right_type,
+                                );
                             if non_nullish == right_type
-                                || self.is_subtype_of(right_type, non_nullish)
+                                || (!right_is_fresh_object
+                                    && self.is_subtype_of(right_type, non_nullish))
                             {
                                 non_nullish
                             } else if self.is_subtype_of(non_nullish, right_type) {

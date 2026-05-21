@@ -763,14 +763,51 @@ impl<'a> CheckerState<'a> {
                     } else {
                         anchor_idx
                     };
-                    let literal_idx = self.find_rhs_object_literal(start_idx);
-                    if let Some(obj_idx) = literal_idx {
-                        self.check_object_literal_excess_properties(source, target, obj_idx);
+                    // First try property-level emits via every RHS object
+                    // literal reachable through contextual-typing wrappers
+                    // (`=`, parens, `?:`, `??`, `||`, `,`, `as`/`<T>`/
+                    // `satisfies`). Each branch literal carries its own fresh
+                    // shape and may have its own excess properties; running the
+                    // checker helper against the literal's own type produces
+                    // the per-literal TS2353 anchored at the offending
+                    // property. If no literal-level diagnostic fires (e.g. the
+                    // union source has no excess at the literal granularity)
+                    // we fall through to the union-source TS2322 elaboration
+                    // path in `render_failure_reason`.
+                    let diags_before = self.ctx.diagnostics.len();
+                    let literals = self.collect_rhs_object_literals(start_idx);
+                    for obj_idx in literals {
+                        let literal_type = self.get_type_of_node(obj_idx);
+                        // Use the literal's own (fresh) type as the source so
+                        // the property iteration runs against its shape rather
+                        // than the wrapper expression's union/collapsed type.
+                        self.check_object_literal_excess_properties(literal_type, target, obj_idx);
                     }
-                    // If we can't find an object literal, the solver's excess property
-                    // check may be from a non-literal fresh type (shouldn't happen in
-                    // typical code, but fallback to avoid silent suppression).
-                    return;
+                    if self.ctx.diagnostics.len() > diags_before {
+                        return;
+                    }
+                    // Only fall through to `render_failure_reason` for
+                    // union sources, where the TS2322-with-elaboration
+                    // path in `render_failure.rs` is the intended target.
+                    // For direct-literal / non-union sources where the
+                    // walker found no literal, preserve the pre-fix
+                    // behavior of suppressing the diagnostic — otherwise
+                    // the fallback `(start, length)` anchor in
+                    // `find_excess_property_anchor` produces spurious
+                    // TS2353 at the variable position for valid patterns
+                    // the canonical EPC helper correctly accepts (e.g.
+                    // symbol-keyed literal assigned to a target with a
+                    // symbol index signature, intersection-target EPC
+                    // through index signatures, where the Lawyer reports
+                    // an `__unique_*` synthetic name that has no
+                    // identifier-shaped AST anchor).
+                    if crate::query_boundaries::common::union_members(self.ctx.types, source)
+                        .is_none()
+                    {
+                        return;
+                    }
+                    // Fall through to render_failure_reason for the
+                    // TS2322-with-elaboration path on union sources.
                 }
                 // Skip MissingProperty for computed symbol expressions (TS2339 emitted separately).
                 if let tsz_solver::SubtypeFailureReason::MissingProperty {
