@@ -1370,6 +1370,10 @@ name = "satisfies_generic_inference_literal_widening_tests"
 path = "tests/satisfies_generic_inference_literal_widening_tests.rs"
 
 [[test]]
+name = "issue_9785_const_type_param_satisfies_repro"
+path = "tests/issue_9785_const_type_param_satisfies_repro.rs"
+
+[[test]]
 name = "satisfies_object_property_position_tests"
 path = "tests/satisfies_object_property_position_tests.rs"
 
