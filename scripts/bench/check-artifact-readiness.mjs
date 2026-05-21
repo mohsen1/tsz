@@ -50,8 +50,9 @@ function loadArtifact() {
   }
 }
 
-function rowState(row) {
+function rowState(row, duplicate = false) {
   if (!row) return "missing";
+  if (duplicate) return "gray";
   if (row.status) return "red";
   if (isIncompleteCompat(row)) return "gray";
   const compat = row.compatibility;
@@ -115,28 +116,43 @@ function analyzeMeasurementProfile(artifact) {
 }
 
 function analyzeArtifact(artifact) {
-  const byName = new Map(
-    (artifact.results ?? []).map((r) => [r?.name, r]),
-  );
+  const byName = new Map();
+  const duplicateCounts = new Map();
+  for (const row of Array.isArray(artifact?.results) ? artifact.results : []) {
+    const name = row?.name;
+    if (typeof name !== "string") continue;
+    if (byName.has(name)) {
+      duplicateCounts.set(name, (duplicateCounts.get(name) ?? 1) + 1);
+    } else {
+      byName.set(name, row);
+    }
+  }
 
   const rows = REQUIRED_PROJECT_ROWS.map((name) => {
     const row = byName.get(name) ?? null;
-    const state = rowState(row);
+    const duplicateCount = duplicateCounts.get(name) ?? (row ? 1 : 0);
+    const duplicate = duplicateCount > 1;
+    const state = rowState(row, duplicate);
     const def = PROJECT_ROWS_BY_NAME[name];
     const compatibility = row?.compatibility ?? {};
     return {
       name,
       label: def?.label ?? name,
       state,
+      duplicate_count: duplicateCount,
       tsz_ms: row?.tsz_ms ?? null,
       tsgo_ms: row?.tsgo_ms ?? null,
       winner: row?.winner ?? null,
-      exit_class: compatibility.exit_class ?? null,
+      exit_class: duplicate ? "duplicate row" : compatibility.exit_class ?? null,
       phase: compatibility.phase ?? null,
       last_successful_phase: compatibility.last_successful_phase ?? null,
-      first_failure_class: compatibility.first_failure_class ?? null,
+      first_failure_class: duplicate
+        ? `${duplicateCount} entries found`
+        : compatibility.first_failure_class ?? null,
       owner_family: compatibility.semantic_owner_family ?? compatibility.owner_family ?? null,
-      known_blockers: Array.isArray(compatibility.known_blockers)
+      known_blockers: duplicate
+        ? ["duplicate project row"]
+        : Array.isArray(compatibility.known_blockers)
         ? compatibility.known_blockers.filter(Boolean).slice(0, 8)
         : [],
       diagnostic_status: compatibility.diagnostic_status ?? null,
@@ -155,10 +171,11 @@ function analyzeArtifact(artifact) {
     yellow: rows.filter((r) => r.state === "yellow"),
     gray: rows.filter((r) => r.state === "gray"),
     green: rows.filter((r) => r.state === "green"),
+    duplicates: rows.filter((r) => r.duplicate_count > 1),
   };
 }
 
-function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, rows, missing, red, yellow, gray, green }) {
+function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, rows, missing, red, yellow, gray, green, duplicates }) {
   const missingNames = missing?.map((r) => r.name) ?? REQUIRED_PROJECT_ROWS;
   return {
     artifact_absent: artifactAbsent,
@@ -174,12 +191,14 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, r
     gray: gray?.length ?? 0,
     missing: missingNames.length,
     missing_rows: missingNames,
+    duplicate_rows: duplicates?.map((r) => ({ name: r.name, count: r.duplicate_count })) ?? [],
     red_rows: red?.map((r) => r.name) ?? [],
     yellow_rows: yellow?.map((r) => r.name) ?? [],
     rows: rows?.map((r) => ({
       name: r.name,
       label: r.label,
       state: r.state,
+      duplicate_count: r.duplicate_count,
       tsz_ms: r.tsz_ms,
       tsgo_ms: r.tsgo_ms,
       winner: r.winner,
@@ -227,7 +246,7 @@ function artifactAge(generatedAt) {
   return `${h} h ago`;
 }
 
-function buildReport({ artifact, measurementProfile, rows, missing, red, yellow, gray, green }) {
+function buildReport({ artifact, measurementProfile, rows, missing, red, yellow, gray, green, duplicates }) {
   const sourceCommit = artifact?.source_commit?.slice(0, 10) ?? "unknown";
   const generatedAt = artifact?.generated_at ?? null;
   const workflowUrl = artifact?.workflow_run_url ?? null;
@@ -253,12 +272,19 @@ function buildReport({ artifact, measurementProfile, rows, missing, red, yellow,
     `| ❌ red | ${red.length} |`,
     `| ⬜ gray | ${gray.length} |`,
     `| 🚫 missing | ${missing.length} |`,
+    `| Duplicate rows | ${duplicates.length} |`,
     "",
   ];
 
   if (missing.length > 0) {
     lines.push(`### 🚫 Missing required rows (${missing.length})`, "");
     for (const r of missing) lines.push(`- \`${r.name}\``);
+    lines.push("");
+  }
+
+  if (duplicates.length > 0) {
+    lines.push(`### ⬜ Duplicate required rows (${duplicates.length})`, "");
+    for (const r of duplicates) lines.push(`- \`${r.name}\` appears ${r.duplicate_count} times`);
     lines.push("");
   }
 
@@ -323,6 +349,7 @@ if (artifactAbsent || parseError) {
         yellow: null,
         gray: null,
         green: null,
+        duplicates: null,
       })) + "\n",
     );
   }
@@ -330,7 +357,7 @@ if (artifactAbsent || parseError) {
 }
 
 const analysis = analyzeArtifact(artifact);
-const { measurementProfile, rows, missing, red, yellow, gray, green } = analysis;
+const { measurementProfile, rows, missing, red, yellow, gray, green, duplicates } = analysis;
 
 writeReport(buildReport({ artifact, ...analysis }));
 
@@ -347,15 +374,24 @@ if (jsonOutput) {
       yellow,
       gray,
       green,
+      duplicates,
     })) + "\n",
   );
 }
 
-if (missing.length > 0) {
-  process.stderr.write(
-    `bench-artifact-readiness: ${missing.length} required row(s) missing from artifact: ` +
-      missing.map((r) => r.name).join(", ") + "\n",
-  );
+if (missing.length > 0 || duplicates.length > 0) {
+  if (duplicates.length > 0) {
+    process.stderr.write(
+      `bench-artifact-readiness: ${duplicates.length} required row(s) duplicated in artifact: ` +
+        duplicates.map((r) => `${r.name} (${r.duplicate_count})`).join(", ") + "\n",
+    );
+  }
+  if (missing.length > 0) {
+    process.stderr.write(
+      `bench-artifact-readiness: ${missing.length} required row(s) missing from artifact: ` +
+        missing.map((r) => r.name).join(", ") + "\n",
+    );
+  }
   process.exit(1);
 }
 
