@@ -50,6 +50,7 @@ pub mod symbols;
 pub mod utils;
 
 pub mod fourslash;
+pub mod fourslash_variants;
 
 #[cfg(test)]
 #[path = "../tests/code_actions_tests.rs"]
@@ -57,6 +58,9 @@ mod code_actions_tests;
 #[cfg(test)]
 #[path = "../tests/fourslash_tests.rs"]
 mod fourslash_tests;
+#[cfg(test)]
+#[path = "../tests/fourslash_variant_tests.rs"]
+mod fourslash_variant_tests;
 #[cfg(test)]
 #[path = "../tests/marker_lookalike_tests.rs"]
 mod marker_lookalike_tests;
