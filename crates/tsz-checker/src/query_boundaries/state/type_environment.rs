@@ -110,7 +110,7 @@ pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ve
 }
 
 /// Compute modifier values for a mapped-type property.
-pub(crate) fn compute_mapped_modifiers(
+pub(crate) const fn compute_mapped_modifiers(
     mapped: &tsz_solver::MappedType,
     is_homomorphic: bool,
     source_optional: bool,
@@ -140,7 +140,7 @@ pub(crate) fn collect_homomorphic_source_property_infos(
     tsz_solver::type_queries::collect_homomorphic_source_property_infos(db, source)
 }
 
-/// Expand a mapped type with resolved finite keys into PropertyInfo list.
+/// Expand a mapped type with resolved finite keys into `PropertyInfo` list.
 pub(crate) fn expand_mapped_type_to_properties(
     db: &dyn TypeDatabase,
     mapped: &tsz_solver::MappedType,
@@ -202,7 +202,7 @@ pub(crate) fn keyof_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option
 /// Returns `Some(constraint)` if the type is a `TypeParameter` or `Infer`
 /// with a constraint, `None` otherwise. Used by the checker to discover
 /// types reachable through type parameter constraints for pre-resolution
-/// into the TypeEnvironment, without accessing TypeData directly.
+/// into the `TypeEnvironment`, without accessing TypeData directly.
 pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
 }
@@ -243,7 +243,7 @@ pub(crate) fn extract_string_literal_keys(
     tsz_solver::type_queries::extract_string_literal_keys(db, type_id)
 }
 
-/// Get the name of a type parameter (TypeParameter or Infer).
+/// Get the name of a type parameter (`TypeParameter` or Infer).
 ///
 /// Returns `Some(name)` if the type is a type parameter, `None` otherwise.
 /// Used by the checker to match type parameters against declared parameter
@@ -367,8 +367,8 @@ pub(crate) struct EvalWithCacheResult {
 /// Evaluate a type with a resolver, optionally seeding the evaluator cache.
 ///
 /// Returns the result plus side-effects (depth exceeded, cache drain).
-/// This is the canonical boundary for TypeEvaluator construction with cache
-/// management — checker code must not construct TypeEvaluator directly.
+/// This is the canonical boundary for `TypeEvaluator` construction with cache
+/// management — checker code must not construct `TypeEvaluator` directly.
 pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,

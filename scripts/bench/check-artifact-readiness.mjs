@@ -24,6 +24,10 @@ import {
   REQUIRED_PROJECT_ROWS,
   PROJECT_ROWS_BY_NAME,
 } from "./project-rows.mjs";
+import {
+  isGreen,
+  isIncompleteCompat,
+} from "./row-utils.mjs";
 
 const args = process.argv.slice(2);
 const jsonOutput = args.includes("--json");
@@ -49,9 +53,12 @@ function loadArtifact() {
 function rowState(row) {
   if (!row) return "missing";
   if (row.status) return "red";
+  if (isIncompleteCompat(row)) return "gray";
   const compat = row.compatibility;
   if (!compat) return "gray";
-  return compat.state ?? "gray";
+  if (isGreen(row)) return "green";
+  if (compat.state === "yellow" || compat.state === "red") return compat.state;
+  return "gray";
 }
 
 const STATE_ICON = { green: "✅", yellow: "⚠️", red: "❌", gray: "⬜", missing: "🚫" };
@@ -260,7 +267,7 @@ function buildReport({ artifact, measurementProfile, rows, missing, red, yellow,
   lines.push("|:-----:|-----|----:|----:|--------|------|-------|------------|------:|---------:|---------|----------------|-------------|");
   for (const r of rows) {
     const icon = STATE_ICON[r.state] ?? "?";
-    const blockerFamily = r.owner_family ?? r.known_blockers?.[0] ?? "—";
+    const blockerFamily = r.known_blockers?.[0] ?? r.first_failure_class ?? r.owner_family ?? "—";
     lines.push(
       `| ${icon} | \`${mdCell(r.label)}\` | ${fmtMs(r.tsz_ms)} | ${fmtMs(r.tsgo_ms)} | ${mdCell(r.winner)} | ${mdCell(r.exit_class)} | ${mdCell(r.phase)} | ${mdCell(r.last_successful_phase)} | ${mdCell(fmtFilesReached(r.files_reached, r.files_reached_reason))} | ${mdCell(fmtPeakMemory(r.peak_memory_bytes, r.peak_memory_bytes_reason))} | ${mdCell(r.first_failure_class)} | ${mdCell(blockerFamily)} | ${mdCell(r.diagnostic_status)} |`,
     );

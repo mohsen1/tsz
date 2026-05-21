@@ -1,23 +1,19 @@
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::error_reporter::assignability::is_object_prototype_method;
+use crate::error_reporter::render_failure::RenderContext;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn render_type_mismatch(
-        &mut self,
-        _reason: &tsz_solver::SubtypeFailureReason,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-        depth: u32,
-        start: u32,
-        length: u32,
-        file_name: String,
-    ) -> Diagnostic {
+    pub(super) fn render_type_mismatch(&mut self, ctx: &RenderContext) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
         let declared_numeric_literal_union_source_display = if depth == 0 {
             self.direct_diagnostic_source_expression(idx)
                 .or_else(|| self.assignment_source_expression(idx))

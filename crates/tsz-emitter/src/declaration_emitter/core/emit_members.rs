@@ -298,7 +298,16 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
                 {
-                    if (return_type_id == tsz_solver::types::TypeId::ANY
+                    if method.asterisk_token
+                        && method_body.is_some()
+                        && let Some(type_text) = self.generator_yield_return_type_text(
+                            self.method_is_async(method),
+                            method_body,
+                        )
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if (return_type_id == tsz_solver::types::TypeId::ANY
                         || return_type_id == tsz_solver::types::TypeId::NEVER)
                         && method_body.is_some()
                         && self.body_returns_void(method_body)
@@ -318,6 +327,7 @@ impl<'a> DeclarationEmitter<'a> {
                             self.function_body_preferred_return_type_text(method_body)
                     {
                         self.write(": ");
+                        let type_text = self.wrap_async_method_return_type_text(method, type_text);
                         self.write(&type_text);
                     } else if return_type_id == tsz_solver::types::TypeId::UNKNOWN
                         && method.type_annotation.is_none()
@@ -327,7 +337,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": any");
                     } else {
                         self.write(": ");
-                        self.write(&self.print_type_id(return_type_id));
+                        self.write(&self.inferred_method_return_type_text(method, return_type_id));
                     }
                 } else if self
                     .type_mentions_scoped_type_param_nodes(method_type_id, &all_param_nodes)
@@ -345,24 +355,40 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                     self.write(&text);
                 } else if method_body.is_some() {
-                    if self.body_returns_void(method_body) {
+                    if method.asterisk_token
+                        && let Some(type_text) = self.generator_yield_return_type_text(
+                            self.method_is_async(method),
+                            method_body,
+                        )
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if self.body_returns_void(method_body) {
                         self.write(": void");
                     } else if let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
                     {
                         self.write(": ");
+                        let type_text = self.wrap_async_method_return_type_text(method, type_text);
                         self.write(&type_text);
                     } else if !self.source_is_declaration_file {
                         self.write(": any");
                     }
                 }
             } else if method_body.is_some() {
-                if self.body_returns_void(method_body) {
+                if method.asterisk_token
+                    && let Some(type_text) = self
+                        .generator_yield_return_type_text(self.method_is_async(method), method_body)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
+                } else if self.body_returns_void(method_body) {
                     self.write(": void");
                 } else if let Some(type_text) =
                     self.function_body_preferred_return_type_text(method_body)
                 {
                     self.write(": ");
+                    let type_text = self.wrap_async_method_return_type_text(method, type_text);
                     self.write(&type_text);
                 } else if !self.source_is_declaration_file {
                     self.write(": any");
@@ -372,12 +398,19 @@ impl<'a> DeclarationEmitter<'a> {
             }
         } else if !is_private {
             if method_body.is_some() {
-                if self.body_returns_void(method_body) {
+                if method.asterisk_token
+                    && let Some(type_text) = self
+                        .generator_yield_return_type_text(self.method_is_async(method), method_body)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
+                } else if self.body_returns_void(method_body) {
                     self.write(": void");
                 } else if let Some(type_text) =
                     self.function_body_preferred_return_type_text(method_body)
                 {
                     self.write(": ");
+                    let type_text = self.wrap_async_method_return_type_text(method, type_text);
                     self.write(&type_text);
                 } else if !self.source_is_declaration_file {
                     self.write(": any");
@@ -472,7 +505,15 @@ impl<'a> DeclarationEmitter<'a> {
                 } else if let Some(return_type_id) =
                     type_queries::get_return_type(*interner, method_type_id)
                 {
-                    if return_type_id == tsz_solver::types::TypeId::ANY
+                    if method.asterisk_token
+                        && method_body.is_some()
+                        && let Some(type_text) = self.generator_yield_return_type_text(
+                            self.method_is_async(method),
+                            method_body,
+                        )
+                    {
+                        self.write_type_text_with_current_indent(&type_text);
+                    } else if return_type_id == tsz_solver::types::TypeId::ANY
                         && method_body.is_some()
                         && self.body_returns_void(method_body)
                     {
@@ -481,28 +522,44 @@ impl<'a> DeclarationEmitter<'a> {
                         && let Some(type_text) =
                             self.function_body_preferred_return_type_text(method_body)
                     {
+                        let type_text = self.wrap_async_method_return_type_text(method, type_text);
                         self.write_type_text_with_current_indent(&type_text);
                     } else {
-                        let type_text = self.print_type_id(return_type_id);
+                        let type_text =
+                            self.inferred_method_return_type_text(method, return_type_id);
                         self.write_type_text_with_current_indent(&type_text);
                     }
                 } else if method_body.is_some() {
-                    if self.body_returns_void(method_body) {
+                    if method.asterisk_token
+                        && let Some(type_text) = self.generator_yield_return_type_text(
+                            self.method_is_async(method),
+                            method_body,
+                        )
+                    {
+                        self.write_type_text_with_current_indent(&type_text);
+                    } else if self.body_returns_void(method_body) {
                         self.write("void");
                     } else if let Some(type_text) =
                         self.function_body_preferred_return_type_text(method_body)
                     {
+                        let type_text = self.wrap_async_method_return_type_text(method, type_text);
                         self.write_type_text_with_current_indent(&type_text);
                     } else if !self.source_is_declaration_file {
                         self.write("any");
                     }
                 }
             } else if method_body.is_some() {
-                if self.body_returns_void(method_body) {
+                if method.asterisk_token
+                    && let Some(type_text) = self
+                        .generator_yield_return_type_text(self.method_is_async(method), method_body)
+                {
+                    self.write_type_text_with_current_indent(&type_text);
+                } else if self.body_returns_void(method_body) {
                     self.write("void");
                 } else if let Some(type_text) =
                     self.function_body_preferred_return_type_text(method_body)
                 {
+                    let type_text = self.wrap_async_method_return_type_text(method, type_text);
                     self.write_type_text_with_current_indent(&type_text);
                 } else if !self.source_is_declaration_file {
                     self.write("any");
@@ -511,11 +568,17 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write("any");
             }
         } else if method_body.is_some() {
-            if self.body_returns_void(method_body) {
+            if method.asterisk_token
+                && let Some(type_text) =
+                    self.generator_yield_return_type_text(self.method_is_async(method), method_body)
+            {
+                self.write_type_text_with_current_indent(&type_text);
+            } else if self.body_returns_void(method_body) {
                 self.write("void");
             } else if let Some(type_text) =
                 self.function_body_preferred_return_type_text(method_body)
             {
+                let type_text = self.wrap_async_method_return_type_text(method, type_text);
                 self.write_type_text_with_current_indent(&type_text);
             } else if !self.source_is_declaration_file {
                 self.write("any");
@@ -2454,6 +2517,27 @@ impl<'a> DeclarationEmitter<'a> {
                         decl.initializer,
                         is_exported,
                     ) {
+                        if let Some(dn) = self.arena.get(decl_idx) {
+                            let skip_end =
+                                self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);
+                            self.skip_comments_in_node(dn.pos, skip_end);
+                        }
+                        continue;
+                    }
+                    // When an exported variable has a class expression initializer with no
+                    // explicit type annotation, tsc synthesizes a class declaration using the
+                    // binding name. Covers namespace-exported class expressions:
+                    // `export const C = class { }`, `export const C = class C { }`,
+                    // generic class expressions, and class expressions with heritage.
+                    // (Top-level `export const` goes through emit_exported_variable instead.)
+                    if is_exported
+                        && decl.type_annotation.is_none()
+                        && self.emit_js_named_class_expression_declaration(
+                            decl.name,
+                            decl.initializer,
+                            is_exported,
+                        )
+                    {
                         if let Some(dn) = self.arena.get(decl_idx) {
                             let skip_end =
                                 self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);

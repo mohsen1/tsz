@@ -6,6 +6,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   COMPILE_CANARY_PROJECT_ROWS,
+  COMPILE_GUARD_CANARY_PROJECT_ROWS,
+  COMPILE_GUARD_REQUIRED_ROWS,
   COMPATIBILITY_CORPUS_ROWS,
   PROJECT_ROW_DEFINITIONS,
   REQUIRED_PROJECT_ROWS,
@@ -74,6 +76,37 @@ tsz_project_fixture_sources "${rowName}"
   return result.stdout.trim().split(/\r?\n/).filter(Boolean);
 }
 
+function shellSyncedProjectRowGroups() {
+  const script = `
+set -euo pipefail
+source "${path.join(ROOT, "scripts/bench/project-fixtures.sh")}"
+tsz_sync_project_row_groups
+printf 'required\\n'
+printf '%s\\n' "\${TSZ_COMPILE_GUARD_REQUIRED_ROWS[@]}"
+printf 'canary\\n'
+printf '%s\\n' "\${TSZ_COMPILE_GUARD_CANARY_ROWS[@]}"
+`;
+  const result = spawnSync("bash", ["-lc", script], {
+    cwd: ROOT,
+    env: process.env,
+    encoding: "utf8",
+  });
+  assert.equal(
+    result.status,
+    0,
+    `tsz_sync_project_row_groups failed:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  const lines = result.stdout.trim().split(/\r?\n/).filter(Boolean);
+  const requiredIndex = lines.indexOf("required");
+  const canaryIndex = lines.indexOf("canary");
+  assert.equal(requiredIndex, 0, "synced project row groups must start with required marker");
+  assert.ok(canaryIndex > requiredIndex, "synced project row groups must include canary marker");
+  return {
+    required: lines.slice(requiredIndex + 1, canaryIndex),
+    canary: lines.slice(canaryIndex + 1),
+  };
+}
+
 function sharedConfigWriterName(row) {
   if (row.generated_by !== undefined) return null;
   if (row.guard_set === null || row.guard_set === undefined) return null;
@@ -134,9 +167,19 @@ const mappedRoadmapRequiredRows = roadmapRequiredRows.map((label) => (
 ));
 
 assertNoDuplicates("REQUIRED_PROJECT_ROWS", REQUIRED_PROJECT_ROWS);
+assertNoDuplicates("COMPILE_GUARD_REQUIRED_ROWS", COMPILE_GUARD_REQUIRED_ROWS);
 assertNoDuplicates("COMPILE_CANARY_PROJECT_ROWS", COMPILE_CANARY_PROJECT_ROWS);
+assertNoDuplicates("COMPILE_GUARD_CANARY_PROJECT_ROWS", COMPILE_GUARD_CANARY_PROJECT_ROWS);
 assertNoDuplicates("COMPATIBILITY_CORPUS_ROWS", compatibilityRows);
 assertNoDuplicates("ROADMAP required project rows", roadmapRequiredRows);
+assert.deepEqual(
+  shellSyncedProjectRowGroups(),
+  {
+    required: COMPILE_GUARD_REQUIRED_ROWS,
+    canary: COMPILE_GUARD_CANARY_PROJECT_ROWS,
+  },
+  "project-fixtures.sh runtime row groups must sync from scripts/bench/project-rows.mjs",
+);
 assert.deepEqual(
   sortedUnique(ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL.keys()),
   sortedUnique(roadmapRequiredRows),

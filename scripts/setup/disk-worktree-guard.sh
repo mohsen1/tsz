@@ -58,9 +58,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 df_kb="$(df -Pk "$WORKTREE_PARENT" | awk 'NR==2 {print $4}')"
-free_gb=$(( df_kb / 1024 / 1024 ))
+free_mb=$(( df_kb / 1024 ))
+free_gb=$(( free_mb / 1024 ))
 
 printf 'disk_free_gb=%s path=%s\n' "$free_gb" "$WORKTREE_PARENT"
+printf 'disk_free_mb=%s\n' "$free_mb"
 
 prune_incremental() {
   local pruned=0
@@ -69,6 +71,11 @@ prune_incremental() {
     for tdir in "$wt/target" "$wt/.target" "$wt/.target-bench"; do
       [[ -d "$tdir" ]] || continue
       while IFS= read -r inc; do
+        stale="$(
+          find "$inc" -mindepth 1 -maxdepth 1 -type d -mtime +7 \
+            -print -quit 2>/dev/null || true
+        )"
+        [[ -n "$stale" ]] || continue
         find "$inc" -mindepth 1 -maxdepth 1 -type d -mtime +7 \
           -exec rm -rf {} + 2>/dev/null || true
         pruned=1
@@ -83,8 +90,10 @@ if (( free_gb < MIN_FREE_GB )); then
   if [[ "$AUTO_PRUNE" == true ]]; then
     prune_incremental
     df_kb="$(df -Pk "$WORKTREE_PARENT" | awk 'NR==2 {print $4}')"
-    free_gb=$(( df_kb / 1024 / 1024 ))
+    free_mb=$(( df_kb / 1024 ))
+    free_gb=$(( free_mb / 1024 ))
     printf 'disk_free_gb_after=%s\n' "$free_gb"
+    printf 'disk_free_mb_after=%s\n' "$free_mb"
   fi
 else
   printf 'disk_status=ok min_free_gb=%s\n' "$MIN_FREE_GB"
@@ -97,6 +106,7 @@ git -C "$REPO_ROOT" worktree list --porcelain \
   | awk '
       /^worktree / { if (path) print path "\t" branch; path=substr($0,10); branch="" }
       /^branch / { branch=substr($0,8) }
+      /^detached / { branch="detached:" substr($0,10) }
       END { if (path) print path "\t" branch }
     ' \
   | while IFS=$'\t' read -r wt branch; do

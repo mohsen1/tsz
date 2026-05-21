@@ -54,6 +54,72 @@ pub(crate) struct EmitOutputsContext<'a> {
     pub(crate) type_caches: &'a FxHashMap<std::path::PathBuf, tsz::checker::TypeCache>,
 }
 
+fn source_file_has_external_module_syntax(arena: &NodeArena, source_file: NodeIndex) -> bool {
+    let Some(source) = arena
+        .get(source_file)
+        .and_then(|node| arena.get_source_file(node))
+    else {
+        return false;
+    };
+
+    for &stmt_idx in &source.statements.nodes {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                || k == syntax_kind_ext::EXPORT_DECLARATION
+                || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+            {
+                return true;
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if let Some(var_stmt) = arena.get_variable(node)
+                    && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.is_declare(&var_stmt.modifiers)
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = arena.get_function(node)
+                    && arena.has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.is_declare(&func.modifiers)
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = arena.get_class(node)
+                    && arena.has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.is_declare(&class.modifiers)
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_decl) = arena.get_enum(node)
+                    && arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.is_declare(&enum_decl.modifiers)
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module) = arena.get_module(node)
+                    && arena.has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.is_declare(&module.modifiers)
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 pub(crate) fn emit_outputs(
     context: EmitOutputsContext<'_>,
 ) -> Result<(Vec<OutputFile>, Vec<tsz_common::diagnostics::Diagnostic>)> {
@@ -198,6 +264,14 @@ pub(crate) fn emit_outputs(
                 &input_path,
             )
             && ts_output_paths.contains(&js_path)
+        {
+            continue;
+        }
+
+        if js_bundle_path.is_some()
+            && matches!(context.options.printer.module, ModuleKind::None)
+            && is_js_input
+            && source_file_has_external_module_syntax(&file.arena, file.source_file)
         {
             continue;
         }
@@ -365,16 +439,20 @@ pub(crate) fn emit_outputs(
             );
 
             // Run the lowering pass to generate transform directives
+            let module_none_out_file =
+                js_bundle_path.is_some() && matches!(printer_options.module, ModuleKind::None);
             let mut ctx = tsz::context::emit::EmitContext::with_options(printer_options.clone());
             // Enable auto-detect module: when module is None and file has imports/exports,
             // the emitter should switch to CommonJS (matching tsc behavior)
             ctx.auto_detect_module = true;
+            ctx.module_none_out_file = module_none_out_file;
             let emit_plan =
                 tsz::lowering::LoweringPass::new(&file.arena, &ctx).run_plan(file.source_file);
 
             let mut printer =
                 Printer::with_emit_plan_and_options(&file.arena, emit_plan, printer_options);
             printer.set_auto_detect_module(true);
+            printer.set_module_none_out_file(module_none_out_file);
             // Always set source text for comment preservation and single-line detection
             if let Some(source_text) = file
                 .arena
@@ -836,6 +914,17 @@ fn apply_external_const_enum_values(
             continue;
         };
         if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import_data) = file.arena.get_import_decl(stmt_node)
+                && !import_data.is_type_only
+                && let Some(module_spec) = literal_text(&file.arena, import_data.module_specifier)
+                && let Some(target_path) =
+                    resolve_relative_module_file(&file.file_name, &module_spec, &file_lookup)
+                && let Some(source_exports) = exports_by_file.get(&target_path)
+            {
+                let local_name = identifier_text(&file.arena, import_data.import_clause);
+                add_namespace_const_enum_values(options, &local_name, source_exports);
+            }
             continue;
         }
         let Some(import_data) = file.arena.get_import_decl(stmt_node) else {
@@ -874,35 +963,68 @@ fn apply_external_const_enum_values(
         if clause.named_bindings.is_some()
             && let Some(bindings_node) = file.arena.get(clause.named_bindings)
             && let Some(named_imports) = file.arena.get_named_imports(bindings_node)
-            && named_imports.name.is_none()
         {
-            for &spec_idx in &named_imports.elements.nodes {
-                let Some(spec_node) = file.arena.get(spec_idx) else {
-                    continue;
-                };
-                let Some(spec) = file.arena.get_specifier(spec_node) else {
-                    continue;
-                };
-                if spec.is_type_only {
-                    continue;
-                }
-                let imported_name = if spec.property_name.is_some() {
-                    identifier_text(&file.arena, spec.property_name)
-                } else {
-                    identifier_text(&file.arena, spec.name)
-                };
-                let local_name = identifier_text(&file.arena, spec.name);
-                if imported_name.is_empty() || local_name.is_empty() {
-                    continue;
-                }
-                if let Some(values) = exports.named.get(&imported_name) {
-                    options
-                        .external_const_enum_values
-                        .insert(local_name.clone(), values.clone());
-                    options.external_const_enum_bindings.insert(local_name);
+            if named_imports.name.is_some() {
+                let local_name = identifier_text(&file.arena, named_imports.name);
+                add_namespace_const_enum_values(options, &local_name, exports);
+            } else {
+                for &spec_idx in &named_imports.elements.nodes {
+                    let Some(spec_node) = file.arena.get(spec_idx) else {
+                        continue;
+                    };
+                    let Some(spec) = file.arena.get_specifier(spec_node) else {
+                        continue;
+                    };
+                    if spec.is_type_only {
+                        continue;
+                    }
+                    let imported_name = if spec.property_name.is_some() {
+                        identifier_text(&file.arena, spec.property_name)
+                    } else {
+                        identifier_text(&file.arena, spec.name)
+                    };
+                    let local_name = identifier_text(&file.arena, spec.name);
+                    if imported_name.is_empty() || local_name.is_empty() {
+                        continue;
+                    }
+                    if let Some(values) = exports.named.get(&imported_name) {
+                        options
+                            .external_const_enum_values
+                            .insert(local_name.clone(), values.clone());
+                        options.external_const_enum_bindings.insert(local_name);
+                    }
                 }
             }
         }
+    }
+}
+
+fn add_namespace_const_enum_values(
+    options: &mut tsz::emitter::PrinterOptions,
+    local_name: &str,
+    exports: &DeclarationConstEnumExports,
+) {
+    if local_name.is_empty() {
+        return;
+    }
+
+    for (export_name, values) in &exports.named {
+        if export_name.is_empty() {
+            continue;
+        }
+        let local_path = format!("{local_name}.{export_name}");
+        options
+            .external_const_enum_values
+            .insert(local_path.clone(), values.clone());
+        options.external_const_enum_bindings.insert(local_path);
+    }
+
+    if let Some(values) = &exports.default {
+        let local_path = format!("{local_name}.default");
+        options
+            .external_const_enum_values
+            .insert(local_path.clone(), values.clone());
+        options.external_const_enum_bindings.insert(local_path);
     }
 }
 
@@ -1082,6 +1204,17 @@ fn collect_const_enum_import_aliases(
             continue;
         };
         if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import_data) = file.arena.get_import_decl(stmt_node)
+                && !import_data.is_type_only
+                && let Some(module_spec) = literal_text(&file.arena, import_data.module_specifier)
+                && let Some(target_path) =
+                    resolve_relative_module_file(&file.file_name, &module_spec, file_lookup)
+                && let Some(source_exports) = exports_by_file.get(&target_path)
+            {
+                let local_name = identifier_text(&file.arena, import_data.import_clause);
+                add_namespace_const_enum_aliases(&mut aliases, &local_name, source_exports);
+            }
             continue;
         }
         let Some(import_data) = file.arena.get_import_decl(stmt_node) else {
@@ -1115,30 +1248,53 @@ fn collect_const_enum_import_aliases(
         if clause.named_bindings.is_some()
             && let Some(bindings_node) = file.arena.get(clause.named_bindings)
             && let Some(named_imports) = file.arena.get_named_imports(bindings_node)
-            && named_imports.name.is_none()
         {
-            for &spec_idx in &named_imports.elements.nodes {
-                let Some(spec_node) = file.arena.get(spec_idx) else {
-                    continue;
-                };
-                let Some(spec) = file.arena.get_specifier(spec_node) else {
-                    continue;
-                };
-                let imported_name = if spec.property_name.is_some() {
-                    identifier_text(&file.arena, spec.property_name)
-                } else {
-                    identifier_text(&file.arena, spec.name)
-                };
-                let local_name = identifier_text(&file.arena, spec.name);
-                if let Some(values) = source_exports.named.get(&imported_name)
-                    && !local_name.is_empty()
-                {
-                    aliases.insert(local_name, values.clone());
+            if named_imports.name.is_some() {
+                let local_name = identifier_text(&file.arena, named_imports.name);
+                add_namespace_const_enum_aliases(&mut aliases, &local_name, source_exports);
+            } else {
+                for &spec_idx in &named_imports.elements.nodes {
+                    let Some(spec_node) = file.arena.get(spec_idx) else {
+                        continue;
+                    };
+                    let Some(spec) = file.arena.get_specifier(spec_node) else {
+                        continue;
+                    };
+                    let imported_name = if spec.property_name.is_some() {
+                        identifier_text(&file.arena, spec.property_name)
+                    } else {
+                        identifier_text(&file.arena, spec.name)
+                    };
+                    let local_name = identifier_text(&file.arena, spec.name);
+                    if let Some(values) = source_exports.named.get(&imported_name)
+                        && !local_name.is_empty()
+                    {
+                        aliases.insert(local_name, values.clone());
+                    }
                 }
             }
         }
     }
     aliases
+}
+
+fn add_namespace_const_enum_aliases(
+    aliases: &mut FxHashMap<String, ConstEnumValues>,
+    local_name: &str,
+    exports: &DeclarationConstEnumExports,
+) {
+    if local_name.is_empty() {
+        return;
+    }
+
+    for (export_name, values) in &exports.named {
+        if !export_name.is_empty() {
+            aliases.insert(format!("{local_name}.{export_name}"), values.clone());
+        }
+    }
+    if let Some(values) = &exports.default {
+        aliases.insert(format!("{local_name}.default"), values.clone());
+    }
 }
 
 fn source_statements(file: &BoundFile) -> Option<&tsz_parser::parser::NodeList> {

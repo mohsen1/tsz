@@ -385,6 +385,7 @@ run_lint() {
   node scripts/ci/test-pr-ownership-report.mjs || return $?
   node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
   node scripts/ci/test-pr-ready-state.mjs || return $?
+  node scripts/ci/test-check-stale-ci-runs.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
@@ -1089,8 +1090,9 @@ run_conformance() {
   echo "Conformance skipped: ${skipped_tests}"
 
   local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
-  grep -a '^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
-    | sed 's/^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
+  # XFAIL is known failing debt in conformance math, so keep it in the shard
+  # failure list used by aggregate accepted-regression checks.
+  awk '/^(FAIL|XFAIL|CRASH|TIMEOUT) / { print $2 }' "$log_file" \
     | sort -u > "$failures_file" 2>/dev/null || true
 
   if [[ "$rc" -ne 0 ]]; then

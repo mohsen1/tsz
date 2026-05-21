@@ -537,7 +537,8 @@ pub fn default_build_info_path(
 
     let extless = match (out_dir, root_dir) {
         (Some(out), Some(root)) => {
-            let rel = diff_paths(&config_extless, root).unwrap_or_else(|| config_extless.clone());
+            let rel = crate::fs::diff_paths(&config_extless, root)
+                .unwrap_or_else(|| config_extless.clone());
             normalize_path(&out.join(rel))
         }
         (Some(out), None) => {
@@ -567,30 +568,6 @@ fn strip_json_extension(config_path: &Path) -> PathBuf {
     } else {
         config_path.to_path_buf()
     }
-}
-
-/// Compute a relative path from `base` to `path`, collapsing common prefix
-/// components and emitting `..` for each remaining component of `base`.
-fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
-    use std::path::Component;
-    let path_components: Vec<Component<'_>> = path.components().collect();
-    let base_components: Vec<Component<'_>> = base.components().collect();
-    let common_len = path_components
-        .iter()
-        .zip(base_components.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
-    if common_len == 0 && path.is_absolute() != base.is_absolute() {
-        return None;
-    }
-    let mut result = PathBuf::new();
-    for _ in common_len..base_components.len() {
-        result.push("..");
-    }
-    for component in &path_components[common_len..] {
-        result.push(component);
-    }
-    Some(result)
 }
 
 /// Collapse `..` and `.` components syntactically (no filesystem access).

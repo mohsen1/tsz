@@ -98,6 +98,10 @@ name = "tuple_infer_mapped_recursive_tests"
 path = "tests/tuple_infer_mapped_recursive_tests.rs"
 
 [[test]]
+name = "reverse_mapped_inference_tests"
+path = "tests/reverse_mapped_inference_tests.rs"
+
+[[test]]
 name = "recursive_alias_resolution_tests"
 path = "tests/recursive_alias_resolution_tests.rs"
 
@@ -1404,6 +1408,10 @@ path = "tests/ts2542_readonly_index_coemission_tests.rs"
 [[test]]
 name = "issue_7681_super_decorator_tests"
 path = "tests/issue_7681_super_decorator_tests.rs"
+
+[[test]]
+name = "decorator_this_binding_tests"
+path = "tests/decorator_this_binding_tests.rs"
 
 [[test]]
 name = "index_signature_argument_assignability_tests"

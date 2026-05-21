@@ -1782,15 +1782,17 @@ fn compile_inner(
     let collect_compile_stats =
         args.diagnostics || args.extended_diagnostics || args.generate_trace.is_some();
     let collected = collect_diagnostics_with_source_resolutions(
-        &program,
-        &resolved,
-        &base_dir,
+        &CollectDiagnosticsInput {
+            program: &program,
+            options: &resolved,
+            base_dir: &base_dir,
+            checker_libs: &checker_libs,
+            typescript_dom_replacement_globals,
+            has_deprecation_diagnostics,
+            collect_compile_stats,
+        },
         effective_cache,
-        &checker_libs,
-        typescript_dom_replacement_globals,
         &parallel_type_caches,
-        has_deprecation_diagnostics,
-        collect_compile_stats,
         Some(&module_resolutions),
     );
     let mut diagnostics: Vec<Diagnostic> = collected.diagnostics;
@@ -3129,7 +3131,9 @@ mod check;
 mod check_module_graph;
 #[path = "check_utils.rs"]
 mod check_utils;
-use check::{collect_diagnostics_with_source_resolutions, load_checker_libs};
+use check::{
+    CollectDiagnosticsInput, collect_diagnostics_with_source_resolutions, load_checker_libs,
+};
 
 #[path = "plan.rs"]
 mod plan;

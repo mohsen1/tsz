@@ -545,6 +545,213 @@ fn test_async_do_while_single_if_body_continue_jumps_to_condition() {
     );
 }
 
+// Structural rule (added 2026-05-20, issue #8515):
+// When the top-level expression of a `while` or `do-while` condition inside an
+// async function is `await <expr>`, the condition must be lowered into a
+// generator yield. `_a.sent()` then becomes the boolean tested by the IfBreak,
+// so no raw `await` syntax remains in the generator body.
+//
+// Each test uses a different name choice for the awaited callee (`ok`,
+// `keepGoing`, `tick`, `done`, `skip`, `body`) to prove the rule is structural
+// rather than keyed on any particular identifier.
+
+#[test]
+fn test_async_while_condition_await_yields_then_branches_on_sent() {
+    let output = transform_and_print("async function f() { while (await ok()) { work(); } }");
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, ok()];"),
+        "While condition await should lower into the loop-entry yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!_a.sent()) return [3 /*break*/, 2];"),
+        "Post-resume IfBreak must read `_a.sent()` instead of the original condition.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 0];"),
+        "Loop body must jump back to the yield case to re-evaluate the condition.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_while_condition_await_and_body_await_chain_yields() {
+    let output = transform_and_print("async function f() { while (await ok()) { await tick(); } }");
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain when both condition and body suspend.\nOutput:\n{output}"
+    );
+    let cond_yield = output.find("return [4 /*yield*/, ok()];");
+    let body_yield = output.find("return [4 /*yield*/, tick()];");
+    assert!(
+        cond_yield.is_some()
+            && body_yield.is_some()
+            && cond_yield.expect("condition yield present")
+                < body_yield.expect("body yield present"),
+        "Condition yield must precede body yield in the generated case order.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_condition_await_yields_after_body_in_same_case() {
+    let output =
+        transform_and_print("async function f() { do { work(); } while (await keepGoing()); }");
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain when only the do-while condition suspends.\nOutput:\n{output}"
+    );
+    // Without `continue` in the body, body and condition-yield share a single
+    // case: the body runs, then the yield is the case's terminating return.
+    assert!(
+        output.contains("work();"),
+        "Body statement should still be emitted in the first case.\nOutput:\n{output}"
+    );
+    let body_pos = output.find("work();");
+    let yield_pos = output.find("return [4 /*yield*/, keepGoing()];");
+    assert!(
+        body_pos.is_some()
+            && yield_pos.is_some()
+            && body_pos.expect("body present") < yield_pos.expect("condition yield present"),
+        "Body must precede the condition yield (do-while semantics).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!_a.sent()) return [3 /*break*/, 2];"),
+        "Resume case must test `_a.sent()` to decide loop exit.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 0];"),
+        "Truthy condition must jump back to the loop-entry case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_both_body_and_condition_await_lower_separately() {
+    let output = transform_and_print(
+        "async function f() { do { await tick(); } while (await keepGoing()); }",
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain when both body and condition suspend.\nOutput:\n{output}"
+    );
+    let body_yield = output.find("return [4 /*yield*/, tick()];");
+    let cond_yield = output.find("return [4 /*yield*/, keepGoing()];");
+    assert!(
+        body_yield.is_some()
+            && cond_yield.is_some()
+            && body_yield.expect("body yield present")
+                < cond_yield.expect("condition yield present"),
+        "Body yield must precede condition yield for do-while semantics.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_parenthesized_await_condition_still_lowers() {
+    // Redundant parens around the await must be stripped before the
+    // top-level-await pattern match so this case is treated identically.
+    let output =
+        transform_and_print("async function f() { do { work(); } while ((await keepGoing())); }");
+    assert!(
+        output.contains("return [4 /*yield*/, keepGoing()];"),
+        "Parenthesised await condition must still lower to a yield.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "No raw await syntax should remain after parenthesised condition lowering.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_condition_await_with_continue_uses_own_case_for_yield() {
+    // With `continue`, the yield case must be separate from the body case so
+    // continue can jump to the condition check without re-running the body.
+    let output = transform_and_print(
+        "async function f(skip) { do { if (skip) continue; body(); } while (await keepGoing()); }",
+    );
+    assert!(
+        !output.contains("continue;"),
+        "Unlabeled continue inside an awaited do-while body must become a generator branch.\nOutput:\n{output}"
+    );
+    // The continue jumps to the yield case; that case label is whatever
+    // `label_assignment_before` recorded right before the awaited condition.
+    let condition_yield_label = label_assignment_before(&output, "return [4 /*yield*/, keepGoing");
+    assert!(
+        output.contains(&format!("return [3 /*break*/, {condition_yield_label}];")),
+        "Continue must jump to the awaited-condition yield case (label {condition_yield_label}).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_condition_await_with_break_jumps_to_exit() {
+    let output = transform_and_print(
+        "async function f(done) { do { if (done) break; body(); } while (await keepGoing()); }",
+    );
+    assert!(
+        !output.contains("break;"),
+        "Unlabeled break inside an awaited do-while body must become a generator branch.\nOutput:\n{output}"
+    );
+    let exit_label = if_break_target_after(&output, "if (!_a.sent())");
+    assert!(
+        count_substring(&output, &format!("return [3 /*break*/, {exit_label}];")) >= 2,
+        "Both the body break and the false-condition branch should target the loop exit case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_while_condition_await_with_continue_jumps_back_to_yield_case() {
+    let output = transform_and_print(
+        "async function f(skip) { while (await keepGoing()) { if (skip) continue; body(); } }",
+    );
+    assert!(
+        !output.contains("continue;"),
+        "Unlabeled continue inside an awaited while body must become a generator branch.\nOutput:\n{output}"
+    );
+    // For `while`, the yield case is also the loop-entry case (case 0). The
+    // continue must jump back to it so the condition re-evaluates next cycle.
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, keepGoing()];"),
+        "Loop entry should be the condition yield case.\nOutput:\n{output}"
+    );
+    assert!(
+        count_substring(&output, "return [3 /*break*/, 0];") >= 2,
+        "Both the continue and the natural loop back-edge should jump to the loop-entry case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_while_condition_await_with_break_jumps_to_exit_case() {
+    let output = transform_and_print(
+        "async function f(done) { while (await keepGoing()) { if (done) break; body(); } }",
+    );
+    assert!(
+        !output.contains("break;"),
+        "Unlabeled break inside an awaited while body must become a generator branch.\nOutput:\n{output}"
+    );
+    let exit_label = if_break_target_after(&output, "if (!_a.sent())");
+    assert!(
+        count_substring(&output, &format!("return [3 /*break*/, {exit_label}];")) >= 2,
+        "Both the body break and the false-condition branch should target the loop exit case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_condition_await_renamed_identifiers_not_hardcoded() {
+    // Different identifier names must produce the same structural shape; the
+    // rule is about the AST kind (AwaitExpression at top-level of the
+    // condition), not the spelling of the callee.
+    let output =
+        transform_and_print("async function gizmo() { do { step(); } while (await poll()); }");
+    assert!(
+        output.contains("return [4 /*yield*/, poll()];"),
+        "Renamed callee should still produce the same yield lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!_a.sent()) return [3 /*break*/, 2];"),
+        "Renamed callee should still drive the post-resume IfBreak on `_a.sent()`.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn test_return_await() {
     let output = transform_and_print("async function foo() { return await bar(); }");

@@ -806,6 +806,7 @@ impl<'a> AstToIr<'a> {
         if func.is_async {
             let mut transformer = AsyncES5Transformer::new(self.arena);
             transformer.set_temp_var_counter(self.temp_var_counter.get());
+            transformer.set_module_kind(self.module_kind);
             if let Some(source_text) = self.source_text {
                 transformer.set_source_text(source_text);
             }
@@ -1287,8 +1288,9 @@ impl<'a> AstToIr<'a> {
 
     fn convert_wrapped_dynamic_import(&self, args: Option<&NodeList>) -> IRNode {
         let first_arg = self.first_dynamic_import_argument(args);
-        let first_arg_is_string_like =
-            first_arg.is_none_or(|arg| self.dynamic_import_arg_is_string_like(arg));
+        let first_arg_is_string_like = first_arg.is_none_or(|arg| {
+            crate::transforms::emit_utils::dynamic_import_arg_is_string_like(self.arena, arg)
+        });
 
         let mut specifier = first_arg
             .map(|arg| self.emit_ir_fragment_to_string(&self.convert_expression(arg)))
@@ -1320,35 +1322,11 @@ impl<'a> AstToIr<'a> {
     }
 
     fn first_dynamic_import_argument(&self, args: Option<&NodeList>) -> Option<NodeIndex> {
-        args.and_then(|args| {
-            args.nodes
-                .iter()
-                .copied()
-                .find(|&idx| self.call_argument_should_emit(idx))
-        })
-    }
-
-    fn call_argument_should_emit(&self, idx: NodeIndex) -> bool {
-        if idx.is_none() {
-            return false;
-        }
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-        if node.end <= node.pos || node.kind == SyntaxKind::Unknown as u16 {
-            return false;
-        }
-        self.arena
-            .get_identifier(node)
-            .is_none_or(|ident| !ident.escaped_text.is_empty())
-    }
-
-    fn dynamic_import_arg_is_string_like(&self, arg: NodeIndex) -> bool {
-        self.arena.get(arg).is_some_and(|node| {
-            node.kind == SyntaxKind::StringLiteral as u16
-                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                || node.end <= node.pos
-        })
+        args?
+            .nodes
+            .iter()
+            .copied()
+            .find(|&idx| crate::transforms::emit_utils::call_argument_should_emit(self.arena, idx))
     }
 
     fn emit_ir_fragment_to_string(&self, ir: &IRNode) -> String {
@@ -1364,9 +1342,7 @@ impl<'a> AstToIr<'a> {
     }
 
     fn dynamic_import_commonjs_branch(&self, specifier: &str) -> String {
-        format!(
-            "Promise.resolve().then(function () {{ return __importStar(require({specifier})); }})"
-        )
+        crate::transforms::emit_utils::dynamic_import_cjs_form(specifier)
     }
 
     fn dynamic_import_amd_branch(&self, specifier: &str) -> String {
@@ -1730,16 +1706,21 @@ impl<'a> AstToIr<'a> {
             .expect("NodeIndex must be valid in arena");
         // Array and Object literals use LiteralExprData (elements = properties)
         if let Some(obj) = self.arena.get_literal_expr(node) {
-            // Check if ES5 computed property lowering is needed
-            let needs_es5_lowering = obj.elements.nodes.iter().any(|&elem_idx| {
+            let has_spread = obj.elements.nodes.iter().any(|&elem_idx| {
+                crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
+            });
+            if has_spread {
+                return IRNode::ASTRef(idx);
+            }
+
+            let needs_computed_es5_lowering = obj.elements.nodes.iter().any(|&elem_idx| {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
-                    || crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
                     || self.arena.get(elem_idx).is_some_and(|n| {
                         n.kind == syntax_kind_ext::GET_ACCESSOR
                             || n.kind == syntax_kind_ext::SET_ACCESSOR
                     })
             });
-            if needs_es5_lowering {
+            if needs_computed_es5_lowering {
                 return self.lower_object_literal_es5(&obj.elements.nodes);
             }
 
@@ -1784,7 +1765,6 @@ impl<'a> AstToIr<'a> {
             .iter()
             .position(|&elem_idx| {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
-                    || crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
                     || self.arena.get(elem_idx).is_some_and(|n| {
                         n.kind == syntax_kind_ext::GET_ACCESSOR
                             || n.kind == syntax_kind_ext::SET_ACCESSOR

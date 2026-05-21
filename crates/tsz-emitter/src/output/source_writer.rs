@@ -397,6 +397,16 @@ impl SourceWriter {
         self.indent_str.len() as u32
     }
 
+    /// Build a leading-indent string for the given level, using the
+    /// writer's configured `indent_str` (so tab-indented configurations
+    /// produce tabs, matching `write_line` output). Useful for code
+    /// paths that captured an indent level earlier (e.g. an insertion
+    /// anchor) and need to materialize the indent now, after the live
+    /// `indent_level` has moved on.
+    pub(crate) fn indent_string_at(&self, level: u32) -> String {
+        self.indent_str.repeat(level as usize)
+    }
+
     // =========================================================================
     // Position Tracking
     // =========================================================================

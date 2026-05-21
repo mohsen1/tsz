@@ -2291,6 +2291,82 @@ export default validate;
 }
 
 #[test]
+fn module_none_outfile_dynamic_import_downlevels_without_bundling_js_module() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "none",
+    "allowJs": true,
+    "outFile": "a.js"
+  },
+  "files": ["a.ts", "b.js"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(dir.path().join("a.ts"), r#"const foo = import("./b");"#).expect("write a");
+    fs::write(dir.path().join("b.js"), "export default 1;\n").expect("write b");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let bundle_path = dir.path().join("a.js");
+    assert!(
+        result.emitted_files.iter().any(|path| path == &bundle_path),
+        "expected bundle to be written, emitted: {:?}",
+        result.emitted_files
+    );
+    let bundle = fs::read_to_string(bundle_path).expect("read bundle");
+    assert!(
+        bundle.contains(r#"const foo = Promise.resolve().then(() => __importStar(require("b")));"#),
+        "module none outFile dynamic import should downlevel through require().\nOutput:\n{bundle}"
+    );
+    assert!(
+        !bundle.contains("exports.default") && !bundle.contains("Object.defineProperty(exports"),
+        "dynamic JS module dependency should not be concatenated into the script bundle.\nOutput:\n{bundle}"
+    );
+}
+
+#[test]
+fn module_none_outfile_native_dynamic_import_still_skips_js_module_body() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "none",
+    "allowJs": true,
+    "outFile": "a.js"
+  },
+  "files": ["a.ts", "b.js"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(dir.path().join("a.ts"), r#"const foo = import("./b");"#).expect("write a");
+    fs::write(dir.path().join("b.js"), "export default 1;\n").expect("write b");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    compile(&args, dir.path()).expect("compile succeeds");
+
+    let bundle = fs::read_to_string(dir.path().join("a.js")).expect("read bundle");
+    assert!(
+        bundle.contains(r#"const foo = import("./b");"#),
+        "native dynamic import should be preserved for ES2020.\nOutput:\n{bundle}"
+    );
+    assert!(
+        !bundle.contains("exports.default") && !bundle.contains("Object.defineProperty(exports"),
+        "dynamic JS module dependency should not be concatenated into the script bundle.\nOutput:\n{bundle}"
+    );
+}
+
+#[test]
 fn jsdoc_bare_module_imports_inline_commonjs_callable_static_surface_in_declaration_emit() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(

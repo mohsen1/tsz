@@ -35,6 +35,91 @@ fn test_type_printer_preserves_union_display_origin() {
 }
 
 #[test]
+fn public_named_import_rewrites_private_import_type_reference() {
+    let source = r#"import { PrismaClient } from "@prisma/client";
+declare const value: unknown;"#;
+
+    let (rewritten, module, imported, alias) =
+        DeclarationEmitter::rewrite_leading_import_type_with_public_named_import(
+            source,
+            r#"import(".prisma/client").PrismaClient"#,
+        )
+        .expect("expected public named import rewrite");
+
+    assert_eq!(rewritten, "PrismaClient");
+    assert_eq!(module, "@prisma/client");
+    assert_eq!(imported, "PrismaClient");
+    assert_eq!(alias, None);
+}
+
+#[test]
+fn public_named_import_rewrite_uses_local_alias() {
+    let source = r#"import { PrismaClient as Client } from "@prisma/client";"#;
+
+    let (rewritten, module, imported, alias) =
+        DeclarationEmitter::rewrite_leading_import_type_with_public_named_import(
+            source,
+            r#"import(".prisma/client").PrismaClient<import(".prisma/client").PrismaClientOptions>"#,
+        )
+        .expect("expected aliased public named import rewrite");
+
+    assert_eq!(
+        rewritten,
+        r#"Client<import(".prisma/client").PrismaClientOptions>"#
+    );
+    assert_eq!(module, "@prisma/client");
+    assert_eq!(imported, "PrismaClient");
+    assert_eq!(alias.as_deref(), Some("Client"));
+}
+
+#[test]
+fn public_named_import_rewrite_preserves_foreign_default_type_arguments() {
+    let mut dependency_parser = tsz_parser::ParserState::new(
+        "/node_modules/.private/client/index.d.ts".to_string(),
+        "export interface Options {}\nexport class Client<T = Options> {}\n".to_string(),
+    );
+    let dependency_root = dependency_parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&dependency_parser.arena, dependency_root);
+
+    let client_sym = binder.file_locals.get("Client").expect("missing Client");
+    let options_sym = binder.file_locals.get("Options").expect("missing Options");
+    let dependency_arena = std::sync::Arc::new(dependency_parser.arena.clone());
+    let mut symbol_arenas = rustc_hash::FxHashMap::default();
+    symbol_arenas.insert(client_sym, std::sync::Arc::clone(&dependency_arena));
+    symbol_arenas.insert(options_sym, std::sync::Arc::clone(&dependency_arena));
+    binder.symbol_arenas = std::sync::Arc::new(symbol_arenas);
+
+    let (parser, _) = parse_test_source(r#"import { Client } from "@public/client";"#);
+    let interner = TypeInterner::new();
+    let mut emitter = DeclarationEmitter::with_type_info(
+        &parser.arena,
+        TypeCacheView::default(),
+        &interner,
+        &binder,
+    );
+    emitter.source_file_text = Some(r#"import { Client } from "@public/client";"#.into());
+    emitter.current_file_path = Some("/index.ts".to_string());
+    let mut arena_to_path = rustc_hash::FxHashMap::default();
+    arena_to_path.insert(
+        std::sync::Arc::as_ptr(&dependency_arena) as usize,
+        "/node_modules/.private/client/index.d.ts".to_string(),
+    );
+    emitter.set_arena_to_path(arena_to_path);
+
+    let (rewritten, module, imported, alias) = emitter
+        .rewrite_current_source_public_import_type_text_with_import(
+            r#"import(".private/client").Client"#,
+        )
+        .expect("expected public rewrite with default type arguments");
+
+    assert_eq!(rewritten, r#"Client<import(".private/client").Options>"#);
+    assert_eq!(module, "@public/client");
+    assert_eq!(imported, "Client");
+    assert_eq!(alias, None);
+}
+
+#[test]
 fn test_type_printer_deduplicates_identical_rendered_union_members() {
     let interner = TypeInterner::new();
     let x = interner.intern_string("x");
@@ -93,6 +178,115 @@ fn test_type_printer_prints_named_unique_symbol_as_typeof() {
         .print_type(union);
 
     assert_eq!(printed, "typeof x | typeof y");
+}
+
+#[test]
+fn test_inferred_declarations_widen_unique_symbol_references() {
+    let source = "const key = Symbol();\nconst copied = key;\n";
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let copied_decl = parser
+        .arena
+        .get(source_file.statements.nodes[1])
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|stmt| parser.arena.get(stmt.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable(node))
+        .and_then(|decl_list| parser.arena.get(decl_list.declarations.nodes[0]))
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing copied declaration");
+
+    let interner = TypeInterner::new();
+    let unique = interner.unique_symbol(SymbolRef(1));
+    let array = interner.array(unique);
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("key"),
+        unique,
+    )]);
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    assert_eq!(
+        emitter.declaration_emittable_type_text(copied_decl.initializer, unique, "typeof key"),
+        "symbol"
+    );
+    assert_eq!(
+        emitter.declaration_emittable_type_text(copied_decl.initializer, array, "typeof key[]"),
+        "symbol[]"
+    );
+    assert_eq!(
+        emitter.declaration_emittable_type_text(
+            copied_decl.initializer,
+            object,
+            "{ key: typeof key }"
+        ),
+        "{\n    key: symbol;\n}"
+    );
+}
+
+#[test]
+fn test_async_method_return_wrapper_uses_lib_promise_identity() {
+    let source = r#"
+interface Promise<T> {}
+class C {
+    async m() {
+        return 1;
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let class_idx = source_file.statements.nodes[1];
+    let method_idx = parser
+        .arena
+        .get(class_idx)
+        .and_then(|node| parser.arena.get_class(node))
+        .and_then(|class| class.members.nodes.first().copied())
+        .expect("missing class method");
+    let method = parser
+        .arena
+        .get(method_idx)
+        .and_then(|node| parser.arena.get_method_decl(node))
+        .expect("missing method data");
+    let promise_sym = binder.file_locals.get("Promise").expect("missing Promise");
+
+    let interner = TypeInterner::new();
+    let promise_def = DefId(9121);
+    let promise_type = interner.application(interner.lazy(promise_def), vec![TypeId::NUMBER]);
+    let mut type_cache = TypeCacheView::default();
+    type_cache.def_to_symbol.insert(promise_def, promise_sym);
+
+    {
+        let emitter = DeclarationEmitter::with_type_info(
+            &parser.arena,
+            type_cache.clone(),
+            &interner,
+            &binder,
+        );
+        assert_eq!(
+            emitter.inferred_method_return_type_text(method, promise_type),
+            "Promise<Promise<number>>"
+        );
+    }
+
+    Arc::make_mut(&mut binder.lib_symbol_ids).insert(promise_sym);
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    assert_eq!(
+        emitter.inferred_method_return_type_text(method, promise_type),
+        "Promise<number>"
+    );
 }
 
 #[test]
