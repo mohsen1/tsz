@@ -248,6 +248,28 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Whether recomputing `cached` against `expected_type` would fix a stale,
+    /// un-widened literal parameter — the only situation in which the
+    /// context-sensitive-callback refresh should re-type a callable argument that
+    /// is currently non-assignable. Returns true iff `cached` is not assignable to
+    /// the expected signature but its deeply-widened form is. This excludes
+    /// genuinely different/broader callable shapes (where widening cannot help),
+    /// so a non-assignable callback whose body holds a real error is left alone.
+    fn cached_callable_recompute_would_widen_literals(
+        &mut self,
+        cached: TypeId,
+        expected_type: Option<TypeId>,
+    ) -> bool {
+        let Some(expected) = expected_type else {
+            return false;
+        };
+        if self.is_assignable_to_with_env(cached, expected) {
+            return false;
+        }
+        let widened = common::widen_type_deep(self.ctx.types.as_type_database(), cached);
+        widened != cached && self.is_assignable_to_with_env(widened, expected)
+    }
+
     pub(crate) fn refreshed_generic_call_arg_type_with_context(
         &mut self,
         arg_idx: NodeIndex,
@@ -401,6 +423,17 @@ impl<'a> CheckerState<'a> {
                             call_checker::get_contextual_signature(self.ctx.types, evaluated)
                         })
                         .is_some()
+                    // Keep the cached callable type as final unless recomputing would fix
+                    // a *stale un-widened literal* parameter. Round-2 inference can type a
+                    // context-sensitive callback's parameters against an earlier, un-widened
+                    // type-parameter substitution (e.g. `(state: 0) => number` when the final
+                    // inferred type is `number`); deeply widening the cached literals then
+                    // makes it assignable, so recomputing against the final contextual
+                    // signature is correct. But when the cached type is non-assignable for
+                    // any other reason — a genuinely different/broader shape, or a body that
+                    // holds a real error — widening does not help, and recomputing would
+                    // clobber the callback span's diagnostics; so keep the cached type.
+                    && !self.cached_callable_recompute_would_widen_literals(cached_arg_type, expected_type)
                 {
                     return cached_arg_type;
                 }
