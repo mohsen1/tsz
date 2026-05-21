@@ -768,7 +768,7 @@ const y = x;
 #[test]
 fn test_find_references_no_matching_references() {
     let source = "const x = 1;\nconst y = 2;";
-    let (parser, root, binder) = bind_test_source(source);
+    let (parser, root, mut binder) = bind_test_source(source);
     let arena = parser.get_arena();
     let _ = root;
 
