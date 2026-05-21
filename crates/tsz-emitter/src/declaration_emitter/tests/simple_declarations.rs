@@ -3295,6 +3295,23 @@ module.exports = {
 }
 
 #[test]
+fn test_js_module_exports_object_uses_renamed_require_property_import_alias() {
+    let source = r#"
+const Widget = require("fs").Something;
+const item = new Widget();
+module.exports = {
+    item
+};
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert_eq!(
+        output.trim(),
+        "export const item: Widget;\nimport Widget_1 = require(\"fs\");\nimport Widget = Widget_1.Something;"
+    );
+}
+
+#[test]
 fn test_js_nested_module_exports_object_emits_namespace_with_import_alias() {
     let source = r#"
 const Something = require("fs").Something;

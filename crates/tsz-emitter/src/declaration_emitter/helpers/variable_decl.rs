@@ -289,7 +289,9 @@ impl<'a> DeclarationEmitter<'a> {
                     .get(name.as_str())
                     .cloned()
             });
-        let exported_call_initializer = self.variable_declaration_has_effective_export(decl_idx)
+        let declaration_has_effective_export =
+            self.variable_declaration_has_effective_export(decl_idx);
+        let exported_call_initializer = declaration_has_effective_export
             && self
                 .arena
                 .get(initializer)
@@ -445,6 +447,12 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 let type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);
+                let type_text = if declaration_has_effective_export {
+                    self.record_js_require_property_import_alias_for_new_expression(initializer)
+                        .unwrap_or(type_text)
+                } else {
+                    type_text
+                };
                 self.write(&type_text);
             } else if has_initializer
                 && self.initializer_is_new_expression(initializer)
@@ -455,6 +463,12 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 let type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);
+                let type_text = if declaration_has_effective_export {
+                    self.record_js_require_property_import_alias_for_new_expression(initializer)
+                        .unwrap_or(type_text)
+                } else {
+                    type_text
+                };
                 self.write(&type_text);
             } else if has_initializer
                 && let Some(type_text) = self.json_import_reference_type_text(initializer)
@@ -987,6 +1001,12 @@ impl<'a> DeclarationEmitter<'a> {
                 let selected_type_text =
                     Self::unwrap_return_type_zero_arg_import_type(&selected_type_text)
                         .unwrap_or(selected_type_text);
+                let selected_type_text = if has_initializer && declaration_has_effective_export {
+                    self.record_js_require_property_import_alias_for_new_expression(initializer)
+                        .unwrap_or(selected_type_text)
+                } else {
+                    selected_type_text
+                };
                 if has_initializer {
                     self.insert_import_for_reused_static_call_type(
                         initializer,

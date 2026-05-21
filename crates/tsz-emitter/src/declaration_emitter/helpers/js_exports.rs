@@ -3173,32 +3173,51 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_require_property_import_aliases = aliases;
     }
 
+    pub(in crate::declaration_emitter) fn record_js_require_property_import_alias(
+        &mut self,
+        local_name: String,
+        module_name: String,
+        export_name: String,
+    ) {
+        let alias = (local_name, module_name, export_name);
+        if !self
+            .js_require_property_import_aliases
+            .iter()
+            .any(|existing| existing == &alias)
+        {
+            self.js_require_property_import_aliases.push(alias);
+        }
+    }
+
     pub(in crate::declaration_emitter) fn record_js_require_property_import_alias_for_new_expression(
         &mut self,
         expr_idx: NodeIndex,
-    ) {
+    ) -> Option<String> {
         let Some(expr_node) = self.arena.get(expr_idx) else {
-            return;
+            return None;
         };
         if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
-            return;
+            return None;
         }
         let Some(new_expr) = self.arena.get_call_expr(expr_node) else {
-            return;
+            return None;
         };
         let Some(local_name) = self.get_identifier_text(new_expr.expression) else {
-            return;
+            return None;
         };
         let Some(binder) = self.binder else {
-            return;
+            return None;
         };
         let Some(sym_id) = self.resolve_identifier_symbol(new_expr.expression, &local_name) else {
-            return;
+            return None;
         };
         let Some(symbol) = binder.symbols.get(sym_id) else {
-            return;
+            return None;
         };
         for decl_idx in symbol.declarations.iter().copied() {
+            if !self.variable_declaration_is_top_level_source_file_statement(decl_idx) {
+                continue;
+            }
             let Some(decl_node) = self.arena.get(decl_idx) else {
                 continue;
             };
@@ -3207,16 +3226,50 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
-            let alias = (local_name, module_name, export_name);
-            if !self
-                .js_require_property_import_aliases
-                .iter()
-                .any(|existing| existing == &alias)
-            {
-                self.js_require_property_import_aliases.push(alias);
-            }
-            return;
+            self.record_js_require_property_import_alias(
+                local_name.clone(),
+                module_name,
+                export_name,
+            );
+            return Some(local_name);
         }
+
+        None
+    }
+
+    fn variable_declaration_is_top_level_source_file_statement(&self, decl_idx: NodeIndex) -> bool {
+        let Some(source_idx) = self.current_source_file_idx else {
+            return false;
+        };
+        let Some(source_node) = self.arena.get(source_idx) else {
+            return false;
+        };
+        let Some(source_file) = self.arena.get_source_file(source_node) else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    return false;
+                };
+                let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                    return false;
+                };
+                var_stmt.declarations.nodes.iter().copied().any(|list_idx| {
+                    let Some(list_node) = self.arena.get(list_idx) else {
+                        return false;
+                    };
+                    let Some(decl_list) = self.arena.get_variable(list_node) else {
+                        return false;
+                    };
+                    decl_list.declarations.nodes.contains(&decl_idx)
+                })
+            })
     }
 
     pub(crate) fn collect_js_module_exports_nested_namespaces(
