@@ -126,16 +126,19 @@ impl<'a> CheckerState<'a> {
 
             if type_parameters.is_none() {
                 let factory = self.ctx.types.factory();
-                for (name, is_const) in func_jsdoc
+                for (name, is_const, default_str) in func_jsdoc
                     .as_ref()
                     .map(|jsdoc| Self::jsdoc_template_type_params(jsdoc))
                     .unwrap_or_default()
                 {
                     let atom = self.ctx.types.intern_string(&name);
+                    let default = default_str
+                        .as_deref()
+                        .and_then(|s| self.resolve_jsdoc_reference(s));
                     let info = tsz_solver::TypeParamInfo {
                         name: atom,
                         constraint: None,
-                        default: None,
+                        default,
                         is_const,
                     };
                     let ty = factory.type_param(info);

@@ -474,6 +474,10 @@ name = "ts2353_tests"
 path = "tests/ts2353_tests.rs"
 
 [[test]]
+name = "excess_property_check_recursive_intersection_tests"
+path = "tests/excess_property_check_recursive_intersection_tests.rs"
+
+[[test]]
 name = "ts2353_omit_pick_excess_property_tests"
 path = "tests/ts2353_omit_pick_excess_property_tests.rs"
 
