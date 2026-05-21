@@ -798,6 +798,34 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol_with_libs(sym_id, &lib_binders)
             .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
+
+        // A type alias that circularly references itself collapses to a
+        // non-generic error type. Applying type arguments to it is therefore
+        // "Type 'X' is not generic" (TS2315), matching tsc's errorType
+        // behavior; a bare reference yields no diagnostic. This must override
+        // the normal arity checks below, which would otherwise read the stale
+        // generic parameter list off the AST and emit TS2314.
+        if self.type_reference_alias_collapsed_to_error(sym_id) {
+            if !type_args_list.nodes.is_empty() {
+                let error_anchor = self
+                    .ctx
+                    .arena
+                    .get(type_ref_idx)
+                    .and_then(|node| self.ctx.arena.get_type_ref(node))
+                    .map(|tr| tr.type_name)
+                    .unwrap_or(type_ref_idx);
+                self.error_at_node_msg(
+                    error_anchor,
+                    crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                    &[base_name.as_str()],
+                );
+                for &arg_idx in &type_args_list.nodes {
+                    self.get_type_of_node(arg_idx);
+                }
+            }
+            return false;
+        }
+
         let type_params = self.get_reference_type_params_for_symbol(sym_id, &base_name);
         if type_params.is_empty() {
             // Before emitting TS2315, check if this symbol's declaration actually has

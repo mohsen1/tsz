@@ -427,6 +427,114 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Look through enclosing parentheses to the first non-parenthesized type
+    /// node. Used by circular-alias detection so `(A<T>)` is treated like
+    /// `A<T>`.
+    pub(crate) fn unwrap_parenthesized_type(&self, type_node: NodeIndex) -> Option<NodeIndex> {
+        let mut current = type_node;
+        loop {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind != syntax_kind_ext::PARENTHESIZED_TYPE {
+                return Some(current);
+            }
+            current = self.ctx.arena.get_wrapped_type(node)?.type_node;
+        }
+    }
+
+    /// The type-name node of an unwrapped simple type reference. Returns `None`
+    /// for any structurally wrapping form (object/array/tuple/union/
+    /// intersection/function/conditional/...), which breaks a circular chain.
+    fn unwrapped_type_reference_name(&self, type_node: NodeIndex) -> Option<NodeIndex> {
+        let inner = self.unwrap_parenthesized_type(type_node)?;
+        let node = self.ctx.arena.get(inner)?;
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            self.ctx.arena.get_type_ref(node).map(|tr| tr.type_name)
+        } else if node.kind == SyntaxKind::Identifier as u16 {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    /// `(has_type_parameters, body_node)` for `sym_id`'s type-alias
+    /// declaration, if it is a type alias with a declaration node.
+    fn type_alias_decl_parts(&self, sym_id: SymbolId) -> Option<(bool, NodeIndex)> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS == 0 {
+            return None;
+        }
+        symbol.declarations.iter().find_map(|&decl_idx| {
+            let node = self.ctx.arena.get(decl_idx)?;
+            if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return None;
+            }
+            let ta = self.ctx.arena.get_type_alias(node)?;
+            Some((ta.type_parameters.is_some(), ta.type_node))
+        })
+    }
+
+    /// True when `sym_id` is a generic type alias that collapses to a
+    /// non-generic error type because its unwrapped body is a self-application
+    /// cycle (see [`Self::generic_alias_body_is_self_circular`]). A structural
+    /// re-check so the answer does not depend on resolution order at
+    /// type-reference sites.
+    pub(crate) fn type_alias_is_generic_self_circular(&self, sym_id: SymbolId) -> bool {
+        match self.type_alias_decl_parts(sym_id) {
+            Some((true, body)) => self.generic_alias_body_is_self_circular(sym_id, body),
+            _ => false,
+        }
+    }
+
+    /// True when a type reference to `sym_id` should resolve to the collapsed
+    /// non-generic error type: either it was already recorded as circular, or
+    /// it is a generic self-application cycle.
+    pub(crate) fn type_reference_alias_collapsed_to_error(&self, sym_id: SymbolId) -> bool {
+        self.ctx.circular_type_aliases.contains(&sym_id)
+            || self.type_alias_is_generic_self_circular(sym_id)
+    }
+
+    /// True when a *generic* type alias's unwrapped body is a self-application
+    /// that cycles back to `root_sym` through simple-reference alias hops
+    /// (`type A<T> = A<T>`, or `type Foo<T> = Bar<T>; type Bar<T> = Foo<T>`).
+    ///
+    /// tsc resolves the alias body eagerly via `pushTypeResolution`, so an
+    /// unwrapped self-application re-enters the alias mid-resolution and
+    /// collapses it to a non-generic error type (TS2456 + TS2315). Structural
+    /// wrappers defer resolution and are NOT followed here, so legitimate
+    /// recursion such as `type List<T> = T | List<T>[]` is never flagged.
+    pub(crate) fn generic_alias_body_is_self_circular(
+        &self,
+        root_sym: SymbolId,
+        body_node: NodeIndex,
+    ) -> bool {
+        let mut current = body_node;
+        let mut visited: FxHashSet<SymbolId> = FxHashSet::default();
+        visited.insert(root_sym);
+        loop {
+            let Some(name_idx) = self.unwrapped_type_reference_name(current) else {
+                return false;
+            };
+            let Some(sym_raw) = self.resolve_type_symbol_for_lowering(name_idx) else {
+                return false;
+            };
+            let sym_id = SymbolId(sym_raw);
+            if sym_id == root_sym {
+                return true;
+            }
+            // Only simple-reference alias hops can extend the cycle. A type
+            // parameter, interface, class, enum, or builtin breaks it. A repeat
+            // visit is a cycle that does not pass through `root_sym`; that alias
+            // reports its own diagnostic when it is computed.
+            if !visited.insert(sym_id) {
+                return false;
+            }
+            match self.type_alias_decl_parts(sym_id) {
+                Some((_, body)) => current = body,
+                None => return false,
+            }
+        }
+    }
+
     /// True for direct circular aliases (`type A = B; type B = A`), false for
     /// structurally wrapped recursion. Marks all aliases on the resolution stack.
     pub(crate) fn is_direct_circular_reference(
@@ -1653,13 +1761,6 @@ impl<'a> CheckerState<'a> {
                                 .alias_partner_for(self.ctx.binder, sym_id)
                                 .and_then(|pid| self.ctx.binder.get_symbol(pid))
                                 .is_some_and(|p| p.flags & tsz_binder::symbol_flags::ALIAS != 0);
-                            // Suppress TS2456 when the type alias has type
-                            // parameters and the body is a bare self-reference.
-                            // A generic self-reference like `type T<out out> = T`
-                            // goes through instantiation and is not directly
-                            // circular in TSC.
-                            let generic_self_ref = ta.type_parameters.is_some()
-                                && self.is_simple_type_reference(ta.type_node);
                             // Suppress TS2456 when the type alias body provides
                             // structural wrapping (cross-file deferred cycles),
                             // but keep TS2456 for non-generic mapped-type key
@@ -1674,7 +1775,6 @@ impl<'a> CheckerState<'a> {
                             if name_matches
                                 && !has_parse_error_tp
                                 && !has_import_partner
-                                && !generic_self_ref
                                 && !body_is_deferred
                                 && !is_jsx_runtime_bridge_alias
                                 && !self.ctx.import_conflict_names.contains(&name)

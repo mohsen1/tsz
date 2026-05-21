@@ -133,6 +133,22 @@ impl<'a> CheckerState<'a> {
                     Vec::new()
                 };
 
+                // A generic type alias whose unwrapped body is a self-application
+                // (`type A<T> = A<T>`, or a cycle through simple-reference alias
+                // hops) collapses to a non-generic error type in tsc: TS2456 at
+                // the declaration plus TS2315 at every site that applies type
+                // arguments to it. Mark it circular *before* lowering the body so
+                // the body's own self-reference and downstream use sites observe
+                // the collapsed, non-generic form.
+                let generic_self_circular = type_alias.type_parameters.is_some()
+                    && self.generic_alias_body_is_self_circular(sym_id, type_alias.type_node);
+                if generic_self_circular {
+                    self.ctx.circular_type_aliases.insert(sym_id);
+                    if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                        self.ctx.definition_store.mark_circular_def(def_id);
+                    }
+                }
+
                 let (mut alias_type, params) = if has_cross_arena_metadata {
                     let mut result = self.lower_cross_arena_type_alias_declaration(
                         sym_id, decl_idx, decl_arena, type_alias,
@@ -234,19 +250,11 @@ impl<'a> CheckerState<'a> {
                 let circularity_eligible = flags & (symbol_flags::ALIAS | symbol_flags::NAMESPACE)
                     == 0
                     && !decl_has_parse_error;
-                // When the type alias has type parameters and the body is a bare
-                // self-reference (simple type reference without type arguments),
-                // TSC does NOT consider it circular.  The bare `T` in
-                // `type T<out out> = T` refers to the generic type constructor and
-                // goes through instantiation, so it is structurally wrapped.
-                let generic_self_ref =
-                    !params.is_empty() && self.is_simple_type_reference(type_alias.type_node);
                 let is_non_generic_mapped_cycle = params.is_empty()
                     && self.is_non_generic_mapped_type_circular(sym_id, type_alias.type_node);
                 let is_jsx_runtime_bridge_alias = self
                     .is_jsx_import_source_runtime_bridge_alias(decl_arena, type_alias.type_node);
                 let is_circular = circularity_eligible
-                    && !generic_self_ref
                     && !is_jsx_runtime_bridge_alias
                     && (self.is_direct_circular_reference(
                         sym_id,
@@ -287,8 +295,14 @@ impl<'a> CheckerState<'a> {
                     // space as a direct circularity and still emits TS2456.
                     // We check the local AST rather than a resolved type to
                     // avoid SymbolId/arena collisions during driver-mode runs.
-                    let body_is_deferred =
-                        self.alias_ast_is_deferred(sym_id) && !is_non_generic_mapped_cycle;
+                    // A self-application like `type A<T> = A<T>` is "deferred"
+                    // at the AST level (it lowers to an application), but tsc
+                    // still reports TS2456 because the unwrapped body cycles
+                    // straight back to the alias. Do not let the structural-
+                    // wrapping suppression hide that case.
+                    let body_is_deferred = self.alias_ast_is_deferred(sym_id)
+                        && !is_non_generic_mapped_cycle
+                        && !generic_self_circular;
                     if !file_has_any_parse_diag && !has_import_partner && !body_is_deferred {
                         let name = escaped_name;
                         let message = format_message(
@@ -309,6 +323,19 @@ impl<'a> CheckerState<'a> {
                             &[],
                             sym_id,
                         );
+                    }
+                    if generic_self_circular {
+                        // tsc collapses the circular generic alias to a
+                        // non-generic error type. Drop the type parameters and
+                        // record an error body so use sites that apply type
+                        // arguments report TS2315 ("Type 'X' is not generic")
+                        // instead of cascading from a stale generic shape.
+                        let def_id = self.ctx.get_or_create_def_id(sym_id);
+                        self.ctx
+                            .definition_store
+                            .register_type_to_def(TypeId::ERROR, def_id);
+                        self.ctx.definition_store.set_body(def_id, TypeId::ERROR);
+                        return (TypeId::ERROR, Vec::new());
                     }
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     if !params.is_empty() {

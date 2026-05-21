@@ -217,6 +217,15 @@ impl<'a> CheckerState<'a> {
             .map(|sid| self.ctx.symbol_resolution_set.insert(sid))
             .unwrap_or(false);
 
+        // A generic alias whose unwrapped body is a self-application cycle
+        // collapses to a non-generic error type (TS2456 + TS2315). Its body is
+        // a "deferred self-reference", so the normal `check_type_node` pass that
+        // would emit the body's TS2315 is skipped below; we emit it explicitly
+        // and force the registered alias type to ERROR so use sites do not
+        // cascade off a stale generic shape.
+        let is_generic_self_circular =
+            alias_sym_id.is_some_and(|sid| self.type_alias_is_generic_self_circular(sid));
+
         let variance_annotations_supported =
             self.check_variance_annotations_supported_for_type_alias(alias);
 
@@ -246,7 +255,11 @@ impl<'a> CheckerState<'a> {
                 );
             }
             self.check_styled_component_inner_component_constraint(alias.type_node);
-            body_type
+            if is_generic_self_circular {
+                TypeId::ERROR
+            } else {
+                body_type
+            }
         };
         let body_construction_too_complex = self.ctx.types.take_union_too_complex();
         let mut body_produced_too_large_tuple = self.alias_body_owns_too_large_tuple(body_type);
@@ -459,6 +472,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if is_generic_self_circular {
+            self.validate_collapsed_alias_body_reference(alias.type_node);
+        }
         if has_deferred_self_reference {
             if let Some(owner_name) = alias_name_str.as_deref() {
                 self.check_type_literal_self_indexed_property_annotations(
@@ -490,6 +506,36 @@ impl<'a> CheckerState<'a> {
         // via the `type_query_override` callback during `ensure_type_alias_resolved`.
         self.precompute_type_query_flow_types(alias.type_node);
         self.pop_type_parameters(updates);
+    }
+
+    /// Emit the body-position TS2315 for a generic alias that collapsed to a
+    /// non-generic error type. The body's direct (parenthesis-unwrapped) type
+    /// reference applies type arguments to the now-non-generic alias, so the
+    /// argument-bearing form is "Type 'X' is not generic". A bare body
+    /// reference (no type arguments) produces no diagnostic, matching tsc. The
+    /// validation cache prevents a duplicate when a use site already triggered
+    /// this node's validation.
+    fn validate_collapsed_alias_body_reference(&mut self, body_node: NodeIndex) {
+        let Some(ref_idx) = self.unwrap_parenthesized_type(body_node) else {
+            return;
+        };
+        let Some(node) = self.ctx.arena.get(ref_idx) else {
+            return;
+        };
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return;
+        };
+        let Some(args) = type_ref
+            .type_arguments
+            .clone()
+            .filter(|a| !a.nodes.is_empty())
+        else {
+            return;
+        };
+        let Some(raw) = self.resolve_type_symbol_for_lowering(type_ref.type_name) else {
+            return;
+        };
+        self.validate_type_reference_type_arguments(tsz_binder::SymbolId(raw), &args, ref_idx);
     }
 
     fn too_complex_union_member_anchor(&mut self, type_node: NodeIndex) -> Option<NodeIndex> {
