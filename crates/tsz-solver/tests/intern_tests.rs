@@ -1315,28 +1315,36 @@ fn test_template_empty_string_removal() {
 }
 
 #[test]
-fn test_template_unknown_widening() {
+fn test_template_unknown_deferred() {
     let interner = TypeInterner::new();
 
-    // `` `${unknown}` `` should widen to string
+    // `` `${unknown}` `` must remain a deferred TemplateLiteralType — tsc does NOT
+    // collapse it to `string`. Only `${string}` (which spans the full string domain)
+    // can be collapsed. `string` is NOT assignable to `` `${unknown}` `` in tsc.
     let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::UNKNOWN)]);
-    assert_eq!(
-        template,
-        TypeId::STRING,
-        "Template with unknown should widen to string"
+    assert!(
+        matches!(
+            interner.lookup(template),
+            Some(TypeData::TemplateLiteral(_))
+        ),
+        "Template `${{unknown}}` must remain as TemplateLiteralType, not collapse to string"
     );
 }
 
 #[test]
-fn test_template_any_widening() {
+fn test_template_any_deferred() {
     let interner = TypeInterner::new();
 
-    // `` `${any}` `` should widen to string (any is infectious in templates)
+    // `` `${any}` `` must remain a deferred TemplateLiteralType — tsc does NOT
+    // collapse it to `string`. `string` is NOT assignable to `` `${any}` `` in tsc
+    // (TS2322), while string literals like `"x"` are assignable.
     let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::ANY)]);
-    assert_eq!(
-        template,
-        TypeId::STRING,
-        "Template with any should widen to string"
+    assert!(
+        matches!(
+            interner.lookup(template),
+            Some(TypeData::TemplateLiteral(_))
+        ),
+        "Template `${{any}}` must remain as TemplateLiteralType, not collapse to string"
     );
 }
 

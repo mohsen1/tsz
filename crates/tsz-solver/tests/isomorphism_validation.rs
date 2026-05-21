@@ -317,8 +317,9 @@ fn test_any_widening_in_template() {
 }
 
 #[test]
-fn test_unknown_widening_in_template() {
-    // unknown in template should widen to string
+fn test_unknown_in_template_stays_deferred() {
+    // `${unknown}` must NOT widen to `string` — tsc keeps it as a deferred
+    // TemplateLiteralType. `string` is not assignable to `` `${unknown}` ``.
     let interner = create_test_interner();
 
     let spans = vec![
@@ -328,10 +329,12 @@ fn test_unknown_widening_in_template() {
     ];
     let template = interner.template_literal(spans);
 
-    assert_eq!(
-        template,
-        TypeId::STRING,
-        "Unknown widening in template failed"
+    assert!(
+        matches!(
+            interner.lookup(template),
+            Some(TypeData::TemplateLiteral(_))
+        ),
+        "`a${{unknown}}b` must remain TemplateLiteralType, not collapse to string"
     );
 }
 

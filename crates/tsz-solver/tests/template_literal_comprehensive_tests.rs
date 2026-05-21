@@ -284,7 +284,8 @@ fn test_template_literal_with_any() {
 
     let result = evaluate_type(&interner, template);
 
-    // `prefix-${any}` should be string (since any converts to string)
+    // `prefix-${any}` is a TemplateLiteralType and is a subtype of string
+    // (all template literals are subtypes of string).
     let mut checker = SubtypeChecker::new(&interner);
     assert!(
         checker.is_subtype_of(result, TypeId::STRING),

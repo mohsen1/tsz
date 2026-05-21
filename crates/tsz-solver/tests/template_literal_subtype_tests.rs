@@ -615,8 +615,7 @@ fn test_template_to_template_string_not_subtype_of_number() {
 
 #[test]
 fn test_template_literal_with_prefixed_any_keeps_fixed_text() {
-    // `a${any}` remains a pattern with an `a` prefix; only bare `${any}`
-    // collapses to `string`.
+    // `a${any}` remains a TemplateLiteralType pattern (prefix + any placeholder).
     let interner = TypeInterner::new();
 
     let pattern = interner.template_literal(vec![

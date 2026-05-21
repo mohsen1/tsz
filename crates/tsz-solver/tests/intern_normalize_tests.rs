@@ -1532,10 +1532,15 @@ fn template_literal_with_never_is_never() {
 }
 
 #[test]
-fn template_literal_with_any_is_string() {
+fn template_literal_with_any_stays_deferred() {
+    // `${any}` must remain a TemplateLiteralType — tsc does not collapse it to `string`.
+    // `string` is NOT assignable to `` `${any}` `` (tsc TS2322).
     let i = TypeInterner::new();
     let t = i.template_literal(vec![TemplateSpan::Type(TypeId::ANY)]);
-    assert_eq!(t, TypeId::STRING);
+    assert!(
+        matches!(i.lookup(t), Some(TypeData::TemplateLiteral(_))),
+        "`${{any}}` must remain TemplateLiteralType, not collapse to string"
+    );
 }
 
 #[test]

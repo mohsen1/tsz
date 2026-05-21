@@ -1226,6 +1226,10 @@ name = "template_literal_bigint_placeholder_tests"
 path = "tests/template_literal_bigint_placeholder_tests.rs"
 
 [[test]]
+name = "template_literal_any_unknown_placeholder_tests"
+path = "tests/template_literal_any_unknown_placeholder_tests.rs"
+
+[[test]]
 name = "template_literal_empty_placeholder_tests"
 path = "tests/template_literal_empty_placeholder_tests.rs"
 

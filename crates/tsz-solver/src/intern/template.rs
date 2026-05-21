@@ -433,22 +433,11 @@ impl TypeInterner {
             }
         }
 
-        // Bare `${unknown}` and `${any}` collapse to string. Do not widen
-        // prefixed/suffixed `any` patterns like `a${any}`: the fixed text
-        // remains part of the assignability contract.
-        if let [TemplateSpan::Type(type_id)] = spans.as_slice()
-            && (*type_id == TypeId::UNKNOWN || *type_id == TypeId::ANY)
-        {
-            return TypeId::STRING;
-        }
-
-        for span in &spans {
-            if let TemplateSpan::Type(type_id) = span
-                && *type_id == TypeId::UNKNOWN
-            {
-                return TypeId::STRING;
-            }
-        }
+        // Note: `${any}` and `${unknown}` must NOT collapse to `string`.
+        // In tsc, only the `${string}` span can be collapsed (it spans the
+        // full string domain). `${any}` and `${unknown}` remain as deferred
+        // TemplateLiteralType so that `string` is NOT assignable to them
+        // (tsc TS2322) while string literals still are (via match_template_literal_recursive).
 
         // Normalize spans by merging consecutive text spans (Pass 2)
         let normalized = self.normalize_template_spans(spans);
