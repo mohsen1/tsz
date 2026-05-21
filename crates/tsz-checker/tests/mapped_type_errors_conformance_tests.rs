@@ -513,3 +513,39 @@ function bad<T>(x: GetPrefixed<T>): SetPrefixed<T> {
          got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn identity_as_clause_is_assignable_to_plain_mapped_type() {
+    // `{ [K in keyof T as K]: T[K] }` is structurally equivalent to
+    // `{ [K in keyof T]: T[K] }`. The identity `as K` clause must NOT produce TS2322.
+    let source = r#"
+type IdentityMapped<T> = { [K in keyof T as K]: T[K] };
+type PlainMapped<T>    = { [K in keyof T]: T[K] };
+function okA<T>(x: IdentityMapped<T>): PlainMapped<T> { return x; }
+function okB<T>(x: PlainMapped<T>): IdentityMapped<T> { return x; }
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2322),
+        "Expected NO TS2322 for identity `as K` mapped type assigned to plain mapped type, \
+         got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn identity_as_clause_renamed_binders_is_assignable_to_plain_mapped_type() {
+    // Same as above but with renamed iteration variables (P vs Q) to prove
+    // the fix is structural, not name-dependent.
+    let source = r#"
+type IdentityMapped<T> = { [P in keyof T as P]: T[P] };
+type PlainMapped<T>    = { [Q in keyof T]: T[Q] };
+function okA<T>(x: IdentityMapped<T>): PlainMapped<T> { return x; }
+function okB<T>(x: PlainMapped<T>): IdentityMapped<T> { return x; }
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2322),
+        "Expected NO TS2322 for identity `as P` mapped type (renamed binders) \
+         assigned to plain mapped type, got: {diagnostics:#?}"
+    );
+}
