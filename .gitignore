@@ -40,6 +40,8 @@ target-*/
 # scripts/ci/typescript-submodule-ref). Ignore the working-tree directory so
 # `git status` stays clean after `git submodule update --init`.
 /TypeScript/
+/TypeScript-tests
+/TypeScript-tests/
 TypeScript/tests/baselines/local/*
 TypeScript/tests/baselines/local.old/*
 TypeScript/tests/baselines/prototyping/local/*

@@ -2571,16 +2571,18 @@ impl<'a> CheckerState<'a> {
 
     /// Extract `@template` type parameter names from a `JSDoc` comment.
     ///
-    /// Returns `(name, is_const)` pairs. The `is_const` flag is true when
-    /// the `const` modifier precedes the type parameter name (e.g.,
-    /// `@template const T`).
+    /// Returns `(name, is_const, default_type_str)` triples. `is_const` is true when
+    /// the `const` modifier precedes the type parameter name (e.g. `@template const T`).
+    /// `default_type_str` is `Some(expr)` when the bracket-default form `[T=expr]` is
+    /// used (e.g. `@template [T=string]` → `Some("string")`); otherwise `None`.
     ///
-    /// Supports simple forms like:
+    /// Supports:
     /// - `@template T`
     /// - `@template T,U`
     /// - `@template const T`
     /// - `@template const T, U` (both T and U are const per tsc)
-    pub(crate) fn jsdoc_template_type_params(jsdoc: &str) -> Vec<(String, bool)> {
+    /// - `@template [T=string]` (T with default `string`)
+    pub(crate) fn jsdoc_template_type_params(jsdoc: &str) -> Vec<(String, bool, Option<String>)> {
         let mut out = Vec::new();
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
@@ -2622,7 +2624,8 @@ impl<'a> CheckerState<'a> {
                     // this form; without unwrapping the `[`, the identifier
                     // scan below sees `[` as a non-identifier byte and skips
                     // the segment entirely (issue #4005).
-                    if bytes[cursor] as char == '[' {
+                    let in_bracket = bytes[cursor] as char == '[';
+                    if in_bracket {
                         cursor += 1;
                         while cursor < bytes.len() && (bytes[cursor] as char).is_ascii_whitespace()
                         {
@@ -2661,8 +2664,35 @@ impl<'a> CheckerState<'a> {
                     if name == "in" || name == "out" {
                         continue;
                     }
-                    if !out.iter().any(|(existing, _)| existing == name) {
-                        out.push((name.to_string(), *saw_const));
+                    // Extract default type string from bracket form `[T=default]`.
+                    let default_str = if in_bracket {
+                        // After the identifier, skip whitespace and look for `=`
+                        let mut pos = cursor;
+                        while pos < bytes.len() && (bytes[pos] as char).is_ascii_whitespace() {
+                            pos += 1;
+                        }
+                        if pos < bytes.len() && bytes[pos] as char == '=' {
+                            pos += 1; // skip '='
+                            // Find `]` or end of segment
+                            let default_start = pos;
+                            while pos < bytes.len() && bytes[pos] as char != ']' {
+                                pos += 1;
+                            }
+                            let raw = &segment[default_start..pos];
+                            let trimmed_default = raw.trim();
+                            if trimmed_default.is_empty() {
+                                None
+                            } else {
+                                Some(trimmed_default.to_string())
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    if !out.iter().any(|(existing, _, _)| existing == name) {
+                        out.push((name.to_string(), *saw_const, default_str));
                     }
                     break;
                 }
