@@ -849,6 +849,46 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Robustly detect whether `source` is an iterable-like type for
+    /// contextual return-context substitution.
+    ///
+    /// The naive `is_iterable_like_for_substitution(evaluate_type_with_env(source))`
+    /// fails when `source` is `Application(Iterable_DefId, [T])` and the
+    /// type environment has not yet registered Iterable's resolved body —
+    /// `evaluate_type_with_env` returns the Application unchanged, which
+    /// has no object shape, so the iterable check returns false. That
+    /// sends `Iterable<T>` matched against an array source through the
+    /// naive "T = whole array" decomposition further down, corrupting
+    /// later rounds of inference.
+    ///
+    /// The fix is targeted: only when `evaluate_type_with_env` returned
+    /// an Application (the symptom of unfinished evaluation) do we force
+    /// one extra round through `evaluate_application_type` before
+    /// checking the shape. For any other shape we trust the original
+    /// result and avoid unnecessary work that could surface caching
+    /// side-effects in other inference paths. The sibling helper
+    /// `array_or_number_index_element_type` immediately below runs an
+    /// unconditional resolution chain; the asymmetry is deliberate
+    /// because that one feeds an extraction (read-only) for the target
+    /// side of a substitution, while this one feeds a decision gate on
+    /// the source side where over-eager resolution risks disturbing peer
+    /// inference state.
+    fn source_is_iterable_like_for_substitution(&mut self, source: TypeId) -> bool {
+        let evaluated = self.evaluate_type_with_env(source);
+        if self.is_iterable_like_for_substitution(evaluated) {
+            return true;
+        }
+        if common::application_info(self.ctx.types, evaluated).is_none() {
+            return false;
+        }
+        let resolved = self.evaluate_application_type(evaluated);
+        if resolved == evaluated {
+            return false;
+        }
+        let resolved = self.evaluate_type_with_env(resolved);
+        self.is_iterable_like_for_substitution(resolved)
+    }
+
     fn array_or_number_index_element_type(&mut self, type_id: TypeId) -> Option<TypeId> {
         if let Some(elem) = common::array_element_type(self.ctx.types, type_id) {
             return Some(elem);
@@ -1264,11 +1304,9 @@ impl<'a> CheckerState<'a> {
                     // letting the solver infer T = number.
                     let target_is_array_like =
                         self.array_or_number_index_element_type(target).is_some();
-                    let source_is_iterable_like =
-                        target_is_array_like && !source_args.is_empty() && {
-                            let evaluated = self.evaluate_type_with_env(source);
-                            self.is_iterable_like_for_substitution(evaluated)
-                        };
+                    let source_is_iterable_like = target_is_array_like
+                        && !source_args.is_empty()
+                        && self.source_is_iterable_like_for_substitution(source);
                     if source_is_iterable_like {
                         // Extract the array element type and widen it (e.g., 0|2|8 → number)
                         // before mapping against the source type args. This prevents the
