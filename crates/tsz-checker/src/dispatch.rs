@@ -1816,9 +1816,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         && expr_node.kind == SyntaxKind::ImportKeyword as u16
                         && let Some(type_arguments) = &data.type_arguments
                     {
+                        // Bail early — the generic path would call instantiation_expression_applicability_error_type(VOID) producing a spurious extra error.
                         for &type_arg in &type_arguments.nodes {
                             let _ = self.checker.get_type_from_type_node(type_arg);
                         }
+                        return TypeId::ERROR;
                     }
                     let expr_type = self.checker.get_type_of_node(data.expression);
                     if self
