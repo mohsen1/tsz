@@ -280,6 +280,36 @@ withTempDir((dir) => {
 console.log("✅ partial yellow compatibility is gray");
 
 // ---------------------------------------------------------------------------
+// Test: duplicate required rows are ambiguous, not authoritative green rows.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const duplicatedName = REQUIRED_PROJECT_ROWS[0];
+  const duplicateRed = makeRow(duplicatedName, "red");
+  const duplicateGreen = makeRow(duplicatedName, "green");
+  const rows = [
+    duplicateRed,
+    duplicateGreen,
+    ...REQUIRED_PROJECT_ROWS.slice(1).map((name) => makeRow(name, "green")),
+  ];
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 1, `duplicate required row should fail readiness:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.green, REQUIRED_PROJECT_ROWS.length - 1, "duplicate row must not count as green");
+  assert.equal(parsed.gray, 1, "duplicate row should count as gray/incomplete");
+  assert.deepEqual(
+    parsed.duplicate_rows,
+    [{ name: duplicatedName, count: 2 }],
+    "duplicate required row should be named with its count",
+  );
+  assert.equal(parsed.rows[0].state, "gray", "duplicate row should render as gray");
+  assert.equal(parsed.rows[0].exit_class, "duplicate row", "duplicate row should name the metadata ambiguity");
+  assert.match(result.stderr, new RegExp(`${duplicatedName} \\(2\\)`));
+});
+console.log("✅ duplicate required rows fail readiness");
+
+// ---------------------------------------------------------------------------
 // Test: complete red compatibility still reports as red.
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {
