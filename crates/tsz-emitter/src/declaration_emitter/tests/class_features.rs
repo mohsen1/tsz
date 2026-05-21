@@ -118,13 +118,14 @@ fn test_optional_parenthesized_parameter_property_preserves_explicit_undefined()
     "#,
     );
 
+    // tsc strips redundant parens from parenthesized types in DTS: `(string | undefined)` → `string | undefined`.
     assert!(
-        output.contains("x?: (string | undefined);"),
-        "Expected optional parameter property to preserve parenthesized undefined union: {output}"
+        output.contains("x?: string | undefined;"),
+        "Expected optional parameter property to strip redundant parens: {output}"
     );
     assert!(
-        output.contains("constructor(x?: (string | undefined));"),
-        "Expected constructor parameter to preserve parenthesized undefined union: {output}"
+        output.contains("constructor(x?: string | undefined);"),
+        "Expected constructor parameter to strip redundant parens: {output}"
     );
     assert!(
         !output.contains("(string | undefined) | undefined"),

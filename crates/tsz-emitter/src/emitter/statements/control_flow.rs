@@ -187,8 +187,7 @@ impl<'a> Printer<'a> {
         // `for (using d1 = expr, d2 = expr2;;) { body }`
         // becomes:
         // `{ const env_1 = ...; try { const d1 = __addDisposable(env_1, expr, false), d2 = ...; for (;;) { body } } catch ... finally ... }`
-        if !self.ctx.target_es5
-            && !self.ctx.options.target.supports_es2025()
+        if !self.ctx.options.target.supports_es2025()
             && self.for_initializer_has_using(loop_stmt.initializer)
         {
             self.emit_for_with_using_lowering(node, loop_stmt);
@@ -1732,14 +1731,19 @@ impl<'a> Printer<'a> {
         let using_async = node_flags::is_await_using(flags);
         let decl_list = self.arena.get_variable(init_node).unwrap();
         let (env_name, error_name, result_name) = self.next_disposable_env_names();
+        let decl_keyword = if self.ctx.target_es5 {
+            "var "
+        } else {
+            "const "
+        };
 
         // Emit wrapping block: {
         self.write("{");
         self.write_line();
         self.increase_indent();
 
-        // Emit: const env_1 = { stack: [], error: void 0, hasError: false };
-        self.write("const ");
+        // Emit: const/var env_1 = { stack: [], error: void 0, hasError: false };
+        self.write(decl_keyword);
         self.write(&env_name);
         self.write(" = { stack: [], error: void 0, hasError: false };");
         self.write_line();
@@ -1749,7 +1753,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Emit: const d1 = __addDisposableResource(env_1, expr, false), d2 = ...;
+        // Emit: const/var d1 = __addDisposableResource(env_1, expr, false), d2 = ...;
         let initialized_decls: Vec<_> = decl_list
             .declarations
             .nodes
@@ -1764,7 +1768,7 @@ impl<'a> Printer<'a> {
             .collect();
 
         if !initialized_decls.is_empty() {
-            self.write("const ");
+            self.write(decl_keyword);
             for (i, &decl_idx) in initialized_decls.iter().enumerate() {
                 if let Some(decl_node) = self.arena.get(decl_idx)
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
