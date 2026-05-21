@@ -121,11 +121,10 @@ impl BlockScopeState {
 
         let needs_rename = is_builtin_shadow
             || self.reserved_names.contains(original_name)
-            || (!at_function_level
-                && self
-                    .function_scope_shadowed_names
-                    .last()
-                    .is_some_and(|names| names.contains(original_name)))
+            || self
+                .function_scope_shadowed_names
+                .last()
+                .is_some_and(|names| names.contains(original_name))
             || if at_function_level {
                 // At function body level: only check the current function scope itself
                 // (for redeclarations within the same scope)
