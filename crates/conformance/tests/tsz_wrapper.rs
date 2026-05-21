@@ -1693,13 +1693,29 @@ fn parity_fingerprint_catalog_entries_all_link_to_parity_issues() {
 #[test]
 fn parity_fingerprint_catalog_drop_entries_resolve_to_expected_issue() {
     // (code, scope, text, expected parity issue number).
-    // `NormalizedMessage` cases pass the bare normalized diagnostic message.
+    // `NormalizedMessage` cases pass the bare normalized diagnostic message;
+    // `RawLine` cases pass the position-prefixed line tsc/tsz emit.
     let cases: &[(u32, MatchScope, &str, u32)] = &[
         (
             2322,
             MatchScope::NormalizedMessage,
             "Type '(number | (ValueOrArray<number>)[] | (number | (ValueOrArray<number>)[])[])[]' is not assignable to type 'ValueOrArray<number>'.",
             8423,
+        ),
+        // Both `'A'` and `'B'` rules exercised so the test fails if either
+        // catalog entry is dropped. One in each scope so the test fails if
+        // the `Contains` matcher stops covering `RawLine`.
+        (
+            2430,
+            MatchScope::NormalizedMessage,
+            "Interface 'I' incorrectly extends interface 'A'.",
+            9609,
+        ),
+        (
+            2430,
+            MatchScope::RawLine,
+            "test.ts(2,1): error TS2430: Interface 'I' incorrectly extends interface 'B'.",
+            9609,
         ),
     ];
 
@@ -1718,6 +1734,35 @@ fn parity_fingerprint_catalog_drop_entries_resolve_to_expected_issue() {
             "TS{code} entry must link to parity issue {expected_issue}",
         );
     }
+}
+
+#[test]
+fn parity_fingerprint_catalog_signature_inheritance_does_not_overmatch() {
+    // The Contains-mode TS2430 entries target the upstream fixture's
+    // `'I'`/`'A'`/`'B'` spelling. They must not silently match an arbitrary
+    // TS2430 with different identifiers — the parity fix in #9609 has to
+    // reduce diagnostic count across all spellings, so catalog drift on
+    // other spellings has to stay visible.
+    assert!(classify_normalized(
+        2430,
+        "Interface 'Derived' incorrectly extends interface 'Base'.",
+    )
+    .is_none());
+}
+
+#[test]
+fn parity_fingerprint_catalog_drops_signature_inheritance_b_entry_end_to_end() {
+    // The pre-existing `test_parse_batch_output_drops_fingerprints_for_filtered_codes`
+    // already exercises the `'A'` rule through the deleted predicate's old
+    // code path. The `'B'` rule never had its own end-to-end pin, so cover
+    // it explicitly to prove the second catalog entry resolves identically.
+    let raw = "test.ts(1,1): error TS2430: Interface 'I' incorrectly extends interface 'B'.\n\
+test.ts(2,1): error TS2304: Cannot find name 'kept'.";
+    let result = parse_batch_output(raw, Path::new("/tmp"), HashMap::new());
+
+    assert_eq!(result.error_codes, vec![2304]);
+    assert_eq!(result.diagnostic_fingerprints.len(), 1);
+    assert_eq!(result.diagnostic_fingerprints[0].code, 2304);
 }
 
 #[test]
@@ -1783,16 +1828,13 @@ fn parity_fingerprint_catalog_drops_recursive_alias_fingerprint_end_to_end() {
 #[test]
 fn tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers() {
     // Architecture guard: the catalog in `parity/fingerprints.rs` is the only
-    // sanctioned place to hardcode fingerprint shapes. New ad-hoc
-    // `is_extra_*` predicates in `tsz_wrapper.rs` recreate the §25 anti-pattern.
-    //
-    // One historical helper (`is_extra_signature_inheritance_*`) is grandfathered
-    // until #8349 lands the inheritance entry into the catalog. Any other
-    // `is_extra_*` function must go through the catalog.
-    // Match the function name regardless of visibility (`fn`, `pub fn`,
-    // `pub(crate) fn`, `pub(super) fn`, ...). The pattern is intentionally
-    // permissive so visibility renames or attribute-prefixed forms still
-    // trip the guard.
+    // sanctioned place to hardcode fingerprint shapes. Any `is_extra_*`
+    // predicate in `tsz_wrapper.rs` recreates the §25 anti-pattern
+    // (line/column/identifier-spelled message strings driving suppression).
+    // The previously-grandfathered `is_extra_signature_inheritance_*` helper
+    // was migrated to the catalog under parity issue #9609; the guard is now
+    // unconditional. Match the function name regardless of visibility so
+    // `pub fn`, `pub(crate) fn`, attribute-prefixed forms still trip it.
     let source = include_str!("../src/tsz_wrapper.rs");
     let needle = "fn is_extra_";
     let mut ad_hoc = Vec::new();
@@ -1808,9 +1850,6 @@ fn tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers() {
             continue;
         }
         let rest = &source[start + needle.len()..];
-        if rest.starts_with("signature_inheritance_") {
-            continue;
-        }
         let name = rest
             .split(|c: char| !c.is_alphanumeric() && c != '_')
             .next()

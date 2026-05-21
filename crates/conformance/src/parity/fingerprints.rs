@@ -18,8 +18,16 @@
 /// How a rendered message is matched against a diagnostic line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MessageMatch {
-    /// Exact equality after `normalize_message_paths`.
+    /// Exact equality after `normalize_message_paths`. Only meaningful in
+    /// `MatchScope::NormalizedMessage`; a raw line still carries the
+    /// `<file>(<l>,<c>): error TS…: ` prefix so equality against the bare
+    /// message can never hold.
     Exact,
+    /// Substring match. Matches in either scope: `NormalizedMessage` lets a
+    /// single entry cover the fingerprint path (which compares the bare
+    /// message) and `RawLine` lets the same entry cover the code-list path
+    /// (which sees the position-prefixed line) without re-stating the rule.
+    Contains,
 }
 
 /// What the conformance wrapper does when an output diagnostic matches a
@@ -110,6 +118,28 @@ pub(crate) const KNOWN_PARITY_FINGERPRINTS: &[ParityFingerprintRule] = &[
         parity_issue: ParityIssue(8423),
         action: ParityAction::Drop,
     },
+    // #9609 — multi-base interface inheritance: tsz emits an extra TS2430
+    // per violated base where tsc emits one. The `'I'`/`'A'`/`'B'` spelling
+    // mirrors the upstream fixture; the structural rule in #9609 covers any
+    // spelling. `Contains` so the entry covers both the normalized-message
+    // (fingerprint) and raw-line (code-list) paths, preserving the
+    // diagnostic-level drop the predecessor predicate gave us.
+    ParityFingerprintRule {
+        code: 2430,
+        message: "Interface 'I' incorrectly extends interface 'A'.",
+        message_match: MessageMatch::Contains,
+        reason: "Derived interface extends multiple bases with a member incompatible with each; tsc emits one TS2430 per violated base, tsz emits extras.",
+        parity_issue: ParityIssue(9609),
+        action: ParityAction::Drop,
+    },
+    ParityFingerprintRule {
+        code: 2430,
+        message: "Interface 'I' incorrectly extends interface 'B'.",
+        message_match: MessageMatch::Contains,
+        reason: "Companion `'B'` entry for the same upstream fixture; see the `'A'` rule above.",
+        parity_issue: ParityIssue(9609),
+        action: ParityAction::Drop,
+    },
 ];
 
 /// Scope a classification query against the parity catalog uses.
@@ -144,5 +174,6 @@ fn rule_matches(rule: &ParityFingerprintRule, text: &str, scope: MatchScope) -> 
         // so equality against the bare rendered message is by construction
         // impossible — reject without spending the comparison.
         (MatchScope::RawLine, MessageMatch::Exact) => false,
+        (_, MessageMatch::Contains) => text.contains(rule.message),
     }
 }
