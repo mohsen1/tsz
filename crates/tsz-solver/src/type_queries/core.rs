@@ -697,7 +697,7 @@ fn is_definitely_falsy_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// - Normalizes an explicit `extends any` constraint to `unknown` along the
 ///   way, mirroring tsc's `getConstraintFromTypeParameter` (which rewrites
 ///   `T extends any` to `T extends unknown` outside mapped-type contexts).
-fn get_base_constraint_or_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+pub fn get_base_constraint_or_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     let mut current = type_id;
     let mut depth: u32 = 0;
     loop {

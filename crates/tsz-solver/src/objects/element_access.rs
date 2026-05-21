@@ -60,6 +60,17 @@ impl<'a> ElementAccessEvaluator<'a> {
             return ElementAccessResult::Success(TypeId::ANY);
         }
 
+        // Structural index-access checks (indexability, tuple bounds, missing
+        // index signature) operate on the apparent type: a `TypeParameter` /
+        // `Infer` is indexed via the apparent type of its base constraint,
+        // matching tsc's `getApparentType`. The result-type computation already
+        // routes through `evaluate_index_access`, which substitutes the
+        // constraint when concrete; without this apparent-type walk, the
+        // structural gate below would reject every generic-parameter receiver
+        // as `NotIndexable` and collapse `t[K]` to `TypeId::ERROR`.
+        let apparent_object =
+            crate::type_queries::get_base_constraint_or_type(self.interner, evaluated_object);
+
         // Use the existing index access evaluator to get the type
         let result_type = evaluate_index_access_with_options(
             self.interner,
@@ -69,7 +80,7 @@ impl<'a> ElementAccessEvaluator<'a> {
         );
 
         // 1. Check if object is indexable
-        if !self.is_indexable(evaluated_object) {
+        if !self.is_indexable(apparent_object) {
             return ElementAccessResult::NotIndexable {
                 type_id: evaluated_object,
             };
@@ -78,7 +89,7 @@ impl<'a> ElementAccessEvaluator<'a> {
         // 2. Check for Tuple out of bounds.
         // Also handle ReadonlyType(Tuple) — readonly tuples have the same positional
         // bounds as their inner tuple; the wrapper only restricts writes.
-        let tuple_inner = self.unwrap_readonly_tuple(evaluated_object);
+        let tuple_inner = self.unwrap_readonly_tuple(apparent_object);
         if let Some(TypeData::Tuple(elements)) = self.interner.lookup(tuple_inner)
             && let Some(index) = literal_index
         {
@@ -99,7 +110,7 @@ impl<'a> ElementAccessEvaluator<'a> {
         // When all tuple members of a union are out of bounds for a literal index,
         // tsc emits TS2339 "Property 'N' does not exist on type 'X'".
         // Union members may be ReadonlyType(Tuple) — unwrap those too.
-        if let Some(TypeData::Union(members_id)) = self.interner.lookup(evaluated_object)
+        if let Some(TypeData::Union(members_id)) = self.interner.lookup(apparent_object)
             && let Some(index) = literal_index
         {
             let members = self.interner.type_list(members_id);
@@ -130,7 +141,7 @@ impl<'a> ElementAccessEvaluator<'a> {
 
         // 3. Check for index signature (if not a specific property access)
         if result_type == TypeId::UNDEFINED
-            && self.should_report_no_index_signature(evaluated_object, index_type)
+            && self.should_report_no_index_signature(apparent_object, index_type)
         {
             return ElementAccessResult::NoIndexSignature {
                 type_id: evaluated_object,
@@ -470,6 +481,207 @@ mod tests {
                 }
             ),
             "Out-of-bounds access on ReadonlyType(Tuple) should return IndexOutOfBounds"
+        );
+    }
+
+    fn type_param_with_constraint(interner: &TypeInterner, constraint: TypeId) -> TypeId {
+        interner.type_param(TypeParamInfo {
+            name: Atom::NONE,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+        })
+    }
+
+    /// `T extends number[]` ⇒ `T[0]` must resolve to `number`, not collapse
+    /// to `ERROR` via the indexability gate. This is the structural rule
+    /// behind issue #9716.
+    #[test]
+    fn type_param_constrained_to_array_resolves_element_type() {
+        let interner = TypeInterner::new();
+        let arr = interner.array(TypeId::NUMBER);
+        let t = type_param_with_constraint(&interner, arr);
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        let literal_0 = interner.literal_number(0.0);
+        let result = evaluator.resolve_element_access(t, literal_0, Some(0));
+        assert!(
+            matches!(result, ElementAccessResult::Success(t) if t == TypeId::NUMBER),
+            "T[0] for T extends number[] should evaluate to number, got {result:?}",
+        );
+    }
+
+    /// Renamed type parameter (`P` instead of `T`) must behave identically:
+    /// the rule is structural, not name-based.
+    #[test]
+    fn renamed_type_param_constrained_to_array_resolves_element_type() {
+        let interner = TypeInterner::new();
+        let arr = interner.array(TypeId::STRING);
+        let p = interner.type_param(TypeParamInfo {
+            name: Atom::NONE, // identifier name is irrelevant
+            constraint: Some(arr),
+            default: None,
+            is_const: false,
+        });
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        let literal_0 = interner.literal_number(0.0);
+        let result = evaluator.resolve_element_access(p, literal_0, Some(0));
+        assert!(
+            matches!(result, ElementAccessResult::Success(t) if t == TypeId::STRING),
+            "P[0] for P extends string[] should evaluate to string, got {result:?}",
+        );
+    }
+
+    /// Unconstrained `T` (or `T extends unknown[]`) keeps the element type
+    /// of the constraint, which is `unknown` for the bottom case.
+    #[test]
+    fn type_param_constrained_to_unknown_array_resolves_unknown() {
+        let interner = TypeInterner::new();
+        let arr = interner.array(TypeId::UNKNOWN);
+        let t = type_param_with_constraint(&interner, arr);
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        let literal_0 = interner.literal_number(0.0);
+        let result = evaluator.resolve_element_access(t, literal_0, Some(0));
+        assert!(
+            matches!(result, ElementAccessResult::Success(t) if t == TypeId::UNKNOWN),
+            "T[0] for T extends unknown[] should evaluate to unknown, got {result:?}",
+        );
+    }
+
+    /// Tuple constraint: `T extends [string, number]` ⇒ `T[0]` resolves to
+    /// the constrained tuple's element type.
+    #[test]
+    fn type_param_constrained_to_tuple_resolves_positional_element() {
+        let interner = TypeInterner::new();
+        let tuple = interner.tuple(vec![
+            crate::types::TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            crate::types::TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+        let t = type_param_with_constraint(&interner, tuple);
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        let literal_0 = interner.literal_number(0.0);
+        let r0 = evaluator.resolve_element_access(t, literal_0, Some(0));
+        assert!(
+            matches!(r0, ElementAccessResult::Success(t) if t == TypeId::STRING),
+            "T[0] for T extends [string, number] should be string, got {r0:?}",
+        );
+        let literal_1 = interner.literal_number(1.0);
+        let r1 = evaluator.resolve_element_access(t, literal_1, Some(1));
+        assert!(
+            matches!(r1, ElementAccessResult::Success(t) if t == TypeId::NUMBER),
+            "T[1] for T extends [string, number] should be number, got {r1:?}",
+        );
+    }
+
+    /// Tuple constraint with an out-of-bounds literal index must surface
+    /// `IndexOutOfBounds` (TS2493), not collapse to `NotIndexable` because
+    /// the receiver is a type parameter.
+    #[test]
+    fn type_param_constrained_to_tuple_reports_out_of_bounds() {
+        let interner = TypeInterner::new();
+        let tuple = interner.tuple(vec![crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        }]);
+        let t = type_param_with_constraint(&interner, tuple);
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        let literal_5 = interner.literal_number(5.0);
+        let result = evaluator.resolve_element_access(t, literal_5, Some(5));
+        assert!(
+            matches!(
+                result,
+                ElementAccessResult::IndexOutOfBounds {
+                    index: 5,
+                    length: 1,
+                    ..
+                }
+            ),
+            "T[5] for T extends [string] should be IndexOutOfBounds, got {result:?}",
+        );
+    }
+
+    /// Indirect type-parameter chain: `T extends number[]`, `U extends T` ⇒
+    /// `U[0]` must still see the apparent element type through the chain.
+    #[test]
+    fn nested_type_param_chain_resolves_through_apparent_type() {
+        let interner = TypeInterner::new();
+        let arr = interner.array(TypeId::NUMBER);
+        let t = type_param_with_constraint(&interner, arr);
+        let u = type_param_with_constraint(&interner, t);
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        let literal_0 = interner.literal_number(0.0);
+        let result = evaluator.resolve_element_access(u, literal_0, Some(0));
+        assert!(
+            matches!(result, ElementAccessResult::Success(t) if t == TypeId::NUMBER),
+            "U[0] for U extends T extends number[] should be number, got {result:?}",
+        );
+    }
+
+    /// `T` with a non-indexable constraint (`number`) still reports
+    /// `NotIndexable`. The apparent-type walk must preserve the original
+    /// negative gate for non-indexable apparent shapes.
+    #[test]
+    fn type_param_constrained_to_non_indexable_reports_not_indexable() {
+        let interner = TypeInterner::new();
+        let t = type_param_with_constraint(&interner, TypeId::NUMBER);
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        let literal_0 = interner.literal_number(0.0);
+        let result = evaluator.resolve_element_access(t, literal_0, Some(0));
+        assert!(
+            matches!(result, ElementAccessResult::NotIndexable { .. }),
+            "T[0] for T extends number should be NotIndexable, got {result:?}",
+        );
+    }
+
+    /// Unconstrained `T` is the implicit-`unknown` case: still not
+    /// indexable, no regression.
+    #[test]
+    fn unconstrained_type_param_reports_not_indexable() {
+        let interner = TypeInterner::new();
+        let t = interner.type_param(TypeParamInfo {
+            name: Atom::NONE,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        let literal_0 = interner.literal_number(0.0);
+        let result = evaluator.resolve_element_access(t, literal_0, Some(0));
+        assert!(
+            matches!(result, ElementAccessResult::NotIndexable { .. }),
+            "T[0] for unconstrained T should be NotIndexable, got {result:?}",
+        );
+    }
+
+    /// An explicit `extends any` constraint must be normalized to `unknown`
+    /// for the apparent-type walk, matching `getConstraintFromTypeParameter`.
+    /// The receiver is not indexable in this case.
+    #[test]
+    fn type_param_extends_any_normalizes_to_unknown_and_not_indexable() {
+        let interner = TypeInterner::new();
+        let t = type_param_with_constraint(&interner, TypeId::ANY);
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        let literal_0 = interner.literal_number(0.0);
+        let result = evaluator.resolve_element_access(t, literal_0, Some(0));
+        // The fast `evaluated_object == ANY` short-circuit at the top of
+        // resolve_element_access does not fire here because the receiver is
+        // a `TypeParameter` whose constraint is `any`. Apparent-type walking
+        // normalizes `any` to `unknown`, which is correctly not indexable.
+        assert!(
+            matches!(result, ElementAccessResult::NotIndexable { .. }),
+            "T[0] for T extends any should be NotIndexable after apparent-type \
+             normalization, got {result:?}",
         );
     }
 }
