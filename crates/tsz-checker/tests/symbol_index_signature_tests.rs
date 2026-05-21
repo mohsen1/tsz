@@ -788,3 +788,112 @@ type C1 = Expect<Equal<keyof O, typeof s | 'a'>>;
         "Expect<Equal<...>> must not fail (TS2344): keyof inline type literal should equal keyof named alias, codes: {codes:?}",
     );
 }
+
+// When a computed key is a numeric literal (`[0]`) and the target has a
+// matching named property (`{ 0: string }`), tsc emits TS2322, not TS2418.
+// Structural rule: a computed literal key that resolves to a concrete named
+// property is equivalent to a direct property assignment — the type
+// mismatch code is TS2322, and the literal value is widened (1 → number).
+#[test]
+fn numeric_literal_computed_key_matching_named_property_reports_ts2322() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+const o: { 0: string } = { [0]: 1 };
+"#,
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected TS2322 for numeric-literal computed key matching named property, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "did not expect TS2418 when computed key resolves to a named property, got {codes:?}",
+    );
+}
+
+// Same rule with a renamed numeric literal key variable name to prove the
+// fix is structural, not keyed on any specific identifier spelling.
+#[test]
+fn numeric_literal_computed_key_matching_named_property_reports_ts2322_renamed_key() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+const o: { 1: boolean } = { [1]: "not-a-bool" };
+"#,
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected TS2322 for renamed numeric-literal computed key, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "did not expect TS2418 when computed key resolves to a named property, got {codes:?}",
+    );
+}
+
+// Multiple numeric literal computed keys — each mismatch should be TS2322.
+#[test]
+fn multiple_numeric_literal_computed_keys_matching_named_properties_report_ts2322() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+const o: { 0: string; 1: number } = { [0]: 1, [1]: "x" };
+"#,
+    );
+    let ts2322_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    assert_eq!(
+        ts2322_count, 2,
+        "expected two TS2322 errors for two mismatched numeric-literal computed keys, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "did not expect any TS2418 when all computed keys resolve to named properties, got {codes:?}",
+    );
+}
+
+// String literal computed key matching a named string property → TS2322.
+#[test]
+fn string_literal_computed_key_matching_named_property_reports_ts2322() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+const o: { foo: string } = { ["foo"]: 42 };
+"#,
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected TS2322 for string-literal computed key matching named property, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "did not expect TS2418 when string-literal computed key resolves to a named property, got {codes:?}",
+    );
+}
+
+// Negative: a computed key against a real index signature must still use TS2418.
+#[test]
+fn computed_key_against_real_number_index_signature_keeps_ts2418() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+const o: { [k: number]: string } = { [0]: 42 };
+"#,
+    );
+    assert!(
+        codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "expected TS2418 for computed key against a number index signature, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "did not expect TS2322 for index-signature mismatch, got {codes:?}",
+    );
+}
