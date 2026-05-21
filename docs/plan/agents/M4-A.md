@@ -24,26 +24,30 @@ scripts/agents/list-owned-work.sh M4-A
 
 - Initial priority: land, close, or clearly hand off existing PRs in this lane
   before claiming issue backlog.
-- Current ready PR to drain: `#9804`.
-- Current draft cluster to reconcile before new branches: `#9816`, `#9776`,
-  `#9656`, `#9647`, `#9644`, `#9640`, `#9624`, `#9515`, `#9205`, `#9820`,
-  and `#9586`.
+- Current ready PRs to drain: `#9856`, `#9816`, `#9804`, `#9647`, and
+  `#9642`. They are ready, squash auto-merge is armed, and they are blocked on
+  required runner-backed checks while `#9918` is unresolved.
+- Current draft cluster to reconcile before new branches: `#9894`, `#9872`,
+  `#9858`, `#9845`, `#9826`, `#9820`, `#9817`, `#9812`, `#9796`, `#9793`,
+  `#9644`, `#9640`, `#9638`, `#9632`, `#9608`, `#9586`, `#9577`, `#9515`,
+  `#9465`, and `#9205`.
 - Issue context: `#9784`, `#9777`, `#9772`, `#9767`, `#9759`, `#9749`,
   `#9743`, `#9740`, `#9305`, `#8778`, `#8726`, `#8702`, `#8687`, `#8423`,
   and `#7648`.
 - Track: roadmap Track 2.
-- Next concrete step: get `#9804` through current CI if it is still ready, then
-  cluster the recursive conditional, tuple/rest, template-literal infer, and
-  mapped-key issues into one owner per structural rule.
+- Next concrete step: monitor `#9918` and land the ready queue as soon as the
+  `tsz-cloud-run` pool returns. Do not promote more drafts while their
+  runner-backed light checks are still queued; instead keep emit/DTS drafts
+  current and documented.
 
 ## Existing Work To Inspect First
 
-- Recent ready work moved from the old `#9304` queue to `#9804`.
+- Recent ready work moved from the old `#9304` queue to `#9804`; `#9804` has
+  now been promoted and armed for squash auto-merge.
 - `#9515`, `#9820`, and `#9642` overlap template-literal/keyof/conformance
   work; avoid reopening the same invariant under another generated lane.
-- Emit/DTS-looking M4-A drafts (`#9776`, `#9656`, `#9647`, `#9644`, `#9640`,
-  `#9624`, `#9205`) should be handed to Studio-C/Studio-D if they stop being
-  solver/evaluation blockers.
+- Emit/DTS-looking M4-A drafts (`#9638`, `#9644`, `#9640`, `#9205`) should be
+  handed to Studio-C/Studio-D if they stop being solver/evaluation blockers.
 
 ## Non-Overlap Rules
 
