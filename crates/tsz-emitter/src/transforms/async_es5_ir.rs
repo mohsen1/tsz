@@ -2560,13 +2560,20 @@ impl<'a> AsyncES5Transformer<'a> {
                             },
                         ))));
                     } else if self.contains_await_recursive(ret.expression) {
-                        let value = if let Some(lowered_call) = self
-                            .lower_call_callee_before_suspension(
+                        let value = if let Some(lowered_comma) = self
+                            .lower_return_comma_before_suspension(
                                 ret.expression,
                                 cases,
                                 current_statements,
                                 current_label,
                             ) {
+                            lowered_comma
+                        } else if let Some(lowered_call) = self.lower_call_callee_before_suspension(
+                            ret.expression,
+                            cases,
+                            current_statements,
+                            current_label,
+                        ) {
                             lowered_call
                         } else {
                             self.emit_nested_suspension(
@@ -2846,6 +2853,16 @@ impl<'a> AsyncES5Transformer<'a> {
             }
 
             // `L OP await R` (non-assignment, non-short-circuit)
+            if let Some(lowered) = self.lower_exponentiation_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered)));
+                return;
+            }
+
             if let Some(lowered) = self.lower_binary_non_short_circuit_before_suspension(
                 idx,
                 cases,

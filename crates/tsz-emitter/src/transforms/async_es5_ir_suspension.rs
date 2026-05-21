@@ -807,6 +807,138 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
+    /// Lower exponentiation with one suspended operand in an async ES5 body.
+    ///
+    /// Structural rule: after exponentiation is downleveled, `Math.pow` is the
+    /// call target. If one argument suspends, tsc captures the callee and any
+    /// already-evaluated arguments before yielding, then resumes through
+    /// `callee.apply(thisArg, args)`.
+    pub(super) fn lower_exponentiation_before_suspension(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> Option<IRNode> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let bin = self.arena.get_binary_expr(node)?;
+        if bin.operator_token != tsz_scanner::SyntaxKind::AsteriskAsteriskToken as u16 {
+            return None;
+        }
+
+        let left_suspends = self.contains_await_recursive(bin.left);
+        let right_suspends = self.contains_await_recursive(bin.right);
+        if left_suspends == right_suspends {
+            return None;
+        }
+
+        let (callee_temp, this_temp) =
+            self.capture_math_pow_callee_before_suspension(current_statements);
+
+        if left_suspends {
+            self.emit_nested_suspension(bin.left, cases, current_statements, current_label);
+            return Some(IRNode::CallExpr {
+                callee: Box::new(IRNode::prop(IRNode::id(callee_temp), "apply")),
+                arguments: vec![
+                    IRNode::id(this_temp),
+                    IRNode::ArrayLiteral(vec![
+                        IRNode::Parenthesized(Box::new(IRNode::GeneratorSent)),
+                        self.expression_to_ir(bin.right),
+                    ]),
+                ],
+            });
+        }
+
+        let args_temp = self.generate_hoisted_temp();
+        current_statements.push(IRNode::VarDecl {
+            name: args_temp.clone().into(),
+            initializer: None,
+        });
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(args_temp.clone()),
+            IRNode::ArrayLiteral(vec![self.expression_to_ir(bin.left)]),
+        ))));
+        self.emit_nested_suspension(bin.right, cases, current_statements, current_label);
+        Some(IRNode::CallExpr {
+            callee: Box::new(IRNode::prop(IRNode::id(callee_temp), "apply")),
+            arguments: vec![
+                IRNode::id(this_temp),
+                IRNode::CallExpr {
+                    callee: Box::new(IRNode::prop(IRNode::id(args_temp), "concat")),
+                    arguments: vec![IRNode::ArrayLiteral(vec![IRNode::GeneratorSent])],
+                },
+            ],
+        })
+    }
+
+    fn capture_math_pow_callee_before_suspension(
+        &self,
+        current_statements: &mut Vec<IRNode>,
+    ) -> (String, String) {
+        let this_temp = self.generate_hoisted_temp();
+        let callee_temp = self.generate_hoisted_temp();
+        current_statements.push(IRNode::VarDecl {
+            name: this_temp.clone().into(),
+            initializer: None,
+        });
+        current_statements.push(IRNode::VarDecl {
+            name: callee_temp.clone().into(),
+            initializer: None,
+        });
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(callee_temp.clone()),
+            IRNode::prop(
+                IRNode::Parenthesized(Box::new(IRNode::assign(
+                    IRNode::id(this_temp.clone()),
+                    IRNode::id("Math"),
+                ))),
+                "pow",
+            ),
+        ))));
+        (callee_temp, this_temp)
+    }
+
+    pub(super) fn lower_return_comma_before_suspension(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> Option<IRNode> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let bin = self.arena.get_binary_expr(node)?;
+        if bin.operator_token != tsz_scanner::SyntaxKind::CommaToken as u16 {
+            return None;
+        }
+
+        let left_suspends = self.contains_await_recursive(bin.left);
+        let right_suspends = self.contains_await_recursive(bin.right);
+        if left_suspends == right_suspends {
+            return None;
+        }
+
+        if left_suspends {
+            self.emit_nested_suspension(bin.left, cases, current_statements, current_label);
+            return Some(IRNode::Parenthesized(Box::new(IRNode::BinaryExpr {
+                left: Box::new(self.expression_to_ir(bin.left)),
+                operator: ",".into(),
+                right: Box::new(self.expression_to_ir(bin.right)),
+            })));
+        }
+
+        current_statements.push(IRNode::ExpressionStatement(Box::new(
+            self.expression_to_ir(bin.left),
+        )));
+        self.emit_nested_suspension(bin.right, cases, current_statements, current_label);
+        Some(self.expression_to_ir(bin.right))
+    }
+
     /// Lower a binary expression `L OP await R` where OP is not a short-circuit
     /// operator and only the right operand contains a suspension.
     ///
