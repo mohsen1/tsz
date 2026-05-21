@@ -24,17 +24,9 @@ mod symbol_id_tests {
 
     #[test]
     fn some_values_are_not_none() {
-        let id = SymbolId(0);
-        assert!(id.is_some());
-        assert!(id.is_some());
-
-        let id = SymbolId(42);
-        assert!(id.is_some());
-        assert!(id.is_some());
-
-        let id = SymbolId(u32::MAX - 1);
-        assert!(id.is_some());
-        assert!(id.is_some());
+        assert!(SymbolId(0).is_some());
+        assert!(SymbolId(42).is_some());
+        assert!(SymbolId(u32::MAX - 1).is_some());
     }
 
     #[test]
@@ -395,8 +387,7 @@ mod symbol_arena_tests {
 
     #[test]
     fn new_with_base_offsets_ids() {
-        let arena = SymbolArena::new_with_base(1000);
-        let mut arena = arena;
+        let mut arena = SymbolArena::new_with_base(1000);
 
         let id = arena.alloc(symbol_flags::FUNCTION, "f".to_string());
 
