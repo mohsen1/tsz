@@ -1133,10 +1133,125 @@ impl TypeInterner {
     /// Normalizes optional element types: when exact optional properties are
     /// disabled, strips explicit `undefined` from `optional=true` union types
     /// since optionality already implies `| undefined`.
+    ///
+    /// Also normalizes adjacent rest elements whose types are concrete arrays:
+    /// `[...X[], ...Y[]]` → `(X | Y)[]`.  When the merged result has no fixed
+    /// elements it degenerates into a plain array.
     pub fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
         let elements = self.normalize_optional_tuple_elements(elements);
+        let elements = self.merge_adjacent_rest_arrays(elements);
+        // A single anonymous rest element wrapping an Array collapses to a plain array type.
+        if elements.len() == 1
+            && elements[0].rest
+            && elements[0].name.is_none()
+            && !elements[0].optional
+            && let Some(TypeData::Array(elem)) = self.lookup(elements[0].type_id)
+        {
+            return self.array(elem);
+        }
         let list_id = self.intern_tuple_list(elements);
         self.intern(TypeData::Tuple(list_id))
+    }
+
+    /// Merge consecutive concrete rest elements into a single rest element whose type
+    /// is a union array.  `[...X[], ...Y[]]` → `[...(X | Y)[]]`.
+    ///
+    /// Rest slots may hold either the full `Array(X)` type (as produced by instantiation)
+    /// or just the bare element type `X` (as produced by `evaluate.rs` which strips the
+    /// `Array` wrapper).  Both are handled.  Type parameters, lazy refs, and other
+    /// unevaluated meta-types are left intact.
+    fn merge_adjacent_rest_arrays(&self, elements: Vec<TupleElement>) -> Vec<TupleElement> {
+        if elements.len() < 2 {
+            return elements;
+        }
+        let mut result: Vec<TupleElement> = Vec::with_capacity(elements.len());
+        let mut changed = false;
+        let mut i = 0;
+        while i < elements.len() {
+            let elem = elements[i];
+            if elem.rest
+                && let Some(first_elem_type) = self.concrete_rest_elem_type(elem.type_id)
+            {
+                let name = elem.name;
+                let optional = elem.optional;
+                let mut elem_types = vec![first_elem_type];
+                i += 1;
+                while i < elements.len() {
+                    let next = elements[i];
+                    if next.rest
+                        && let Some(next_elem_type) = self.concrete_rest_elem_type(next.type_id)
+                    {
+                        elem_types.push(next_elem_type);
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+                if elem_types.len() == 1 {
+                    // No adjacent merge — keep the original element unchanged.
+                    result.push(elem);
+                } else {
+                    changed = true;
+                    result.push(TupleElement {
+                        type_id: self.array(self.union(elem_types)),
+                        name,
+                        optional,
+                        rest: true,
+                    });
+                }
+                continue;
+            }
+            result.push(elem);
+            i += 1;
+        }
+        if changed { result } else { elements }
+    }
+
+    /// Extract the element type from a rest element's `type_id` when merging is safe.
+    ///
+    /// Returns `Some(elem_type)` when the rest element's type is concrete enough to merge:
+    /// - `Array(X)` → `X` (instantiation stores the full array type in the rest slot)
+    /// - `ReadonlyType(Array(X))` → `X` (treated identically to mutable arrays)
+    /// - Intrinsics and fully-evaluated concrete types → the type itself (`evaluate.rs` strips the
+    ///   `Array` wrapper when it lowers a rest element, leaving the bare element type)
+    ///
+    /// Returns `None` for unevaluated/generic types (type params, lazy refs, conditionals, etc.)
+    /// that cannot yet be safely merged.
+    fn concrete_rest_elem_type(&self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(TypeData::Array(elem)) = self.lookup(type_id) {
+            return Some(elem);
+        }
+        if let Some(TypeData::ReadonlyType(inner)) = self.lookup(type_id)
+            && let Some(TypeData::Array(elem)) = self.lookup(inner)
+        {
+            return Some(elem);
+        }
+        // Intrinsics are always fully concrete, so safe to use as element types directly.
+        if type_id.is_intrinsic() {
+            return Some(type_id);
+        }
+        match self.lookup(type_id) {
+            Some(
+                TypeData::TypeParameter(_)
+                | TypeData::BoundParameter(_)
+                | TypeData::Lazy(_)
+                | TypeData::Application(_)
+                | TypeData::Conditional(_)
+                | TypeData::Mapped(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::TemplateLiteral(_)
+                | TypeData::StringIntrinsic { .. }
+                | TypeData::Infer(_)
+                | TypeData::Recursive(_)
+                | TypeData::NoInfer(_),
+            )
+            | None => None,
+            // Fully-evaluated concrete types (Object, Union, Intersection, Tuple, Function,
+            // Callable, UniqueSymbol, etc.) — element type is the type itself.
+            Some(_) => Some(type_id),
+        }
     }
 
     /// For optional tuple elements, strip `undefined` from the element type
