@@ -35,6 +35,7 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::line_column_for_offset;
 use tsz_parser::parser::ParserState;
 use tsz_solver::construction::TypeInterner;
 
@@ -109,28 +110,13 @@ fn diagnostics_for_two_files(js_source: &str, ts_source: &str) -> Vec<(u32, u32,
         .diagnostics
         .iter()
         .map(|d| {
-            // Compute 1-based line + column for the diagnostic start position.
-            let (line, column) = line_and_column_for_offset(ts_source, d.start);
+            // Compute 1-based line + column for the diagnostic start position
+            // via the shared `tsz_checker::test_utils::line_column_for_offset`
+            // helper (issue #8488).
+            let (line, column) = line_column_for_offset(ts_source, d.start);
             (d.code, line, column, d.message_text.clone())
         })
         .collect()
-}
-
-fn line_and_column_for_offset(source: &str, offset: u32) -> (u32, u32) {
-    let mut line: u32 = 1;
-    let mut col: u32 = 1;
-    for (idx, ch) in source.char_indices() {
-        if (idx as u32) == offset {
-            return (line, col);
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-    }
-    (line, col)
 }
 
 #[test]
