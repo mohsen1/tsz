@@ -483,6 +483,36 @@ const v = tup[s];
     );
 }
 
+// Negative control for the CI conformance drift: array-like receivers can still
+// have exact unique-symbol members such as `[Symbol.iterator]`; the wide-symbol
+// array fallback must not turn those reads into TS7015/TS7053.
+#[test]
+fn array_like_exact_symbol_member_access_is_clean() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Symbol: { readonly iterator: unique symbol };
+interface Iterator<T> {
+    next(): { value: T; done: boolean };
+}
+interface Array<T> {
+    [Symbol.iterator](): Iterator<T>;
+}
+
+const arr: number[] = [1];
+const iter = arr[Symbol.iterator]();
+"#,
+    );
+
+    assert!(
+        !codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN),
+        "exact symbol member access on an array-like receiver should not trigger TS7053, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE),
+        "exact symbol member access on an array-like receiver should not trigger TS7015, got {codes:?}",
+    );
+}
+
 // A non-identifier `symbol`-typed index expression (no binding identity to
 // convert) must still report — proves the fix is not limited to identifiers.
 #[test]

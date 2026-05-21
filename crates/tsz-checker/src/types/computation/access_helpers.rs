@@ -1013,13 +1013,11 @@ impl<'a> CheckerState<'a> {
     /// is the wide `symbol` primitive or a `unique symbol`) lacks a matching
     /// member on `object_type`.
     ///
-    /// A symbol key is satisfied only when the type provides a `symbol` index
+    /// A symbol key is satisfied when the type provides a `symbol` index
     /// signature (`{ [k: symbol]: V }`) or declares a member keyed by that exact
-    /// symbol binding. Arrays, tuples, and other number-indexed containers
-    /// resolve symbol keys leniently to their element type, so their non-`undefined`
-    /// resolution must not be mistaken for a real symbol member — they can never
-    /// declare one and therefore always fail unless they carry an explicit symbol
-    /// index signature (e.g. via an intersection).
+    /// symbol binding. Arrays, tuples, and other number-indexed containers resolve
+    /// wide `symbol` keys leniently to their element type, so that fallback must
+    /// not be mistaken for a real symbol member.
     ///
     /// `index_type_for_access` carries the binding-identity `UniqueSymbol(ref)`
     /// produced for a `symbol`-typed identifier, so resolving with it finds members
@@ -1027,6 +1025,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn symbol_keyed_access_is_missing(
         &self,
         object_type: TypeId,
+        index_type: TypeId,
         index_type_for_access: TypeId,
     ) -> bool {
         // A `symbol` index signature accepts any symbol key. Probe it with the wide
@@ -1039,9 +1038,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Number-indexed containers (array/tuple/string-like) can never declare a
-        // symbol-keyed member; their lenient element resolution is not a match.
-        if self.is_array_like_type(object_type) {
+        // A wide `symbol` index on arrays/tuples only sees the array element
+        // fallback, not a declared symbol member.
+        if index_type == TypeId::SYMBOL && self.is_array_like_type(object_type) {
             return true;
         }
 

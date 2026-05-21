@@ -1722,10 +1722,13 @@ impl<'a> CheckerState<'a> {
                 // Union: report when ANY member fails to accept the symbol key, since
                 // a single uncovered member makes the element access implicitly `any`.
                 Some(members) => members.iter().any(|&member| {
-                    self.symbol_keyed_access_is_missing(member, index_type_for_access)
+                    self.symbol_keyed_access_is_missing(member, index_type, index_type_for_access)
                 }),
-                None => self
-                    .symbol_keyed_access_is_missing(object_type_for_access, index_type_for_access),
+                None => self.symbol_keyed_access_is_missing(
+                    object_type_for_access,
+                    index_type,
+                    index_type_for_access,
+                ),
             };
             if missing {
                 report_no_index = true;
