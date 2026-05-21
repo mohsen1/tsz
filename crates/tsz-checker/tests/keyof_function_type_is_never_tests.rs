@@ -1,9 +1,11 @@
 //! End-to-end checker coverage for issue #9721: `keyof <function type>` must
 //! normalize to `never` so `[K] extends [never]` reasoning matches tsc.
 //!
-//! Bare function types lower to `TypeData::Function`; bare constructor types
-//! lower to `TypeData::Callable` with only construct signatures.  Both have
-//! no own properties or index signatures, so both must collapse to `never`.
+//! Bare function and constructor types have no own properties and no index
+//! signatures, so their key space is empty and `keyof` must collapse to
+//! `never`.  The solver-internal asymmetry between the two lowering forms is
+//! covered by the solver-side unit tests; this file pins the user-observable
+//! behaviour at the checker boundary.
 
 use crate::diagnostics::diagnostic_codes;
 use crate::test_utils::check_source_diagnostics;
