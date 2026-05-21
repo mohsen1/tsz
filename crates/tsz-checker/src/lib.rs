@@ -664,6 +664,9 @@ mod synthetic_unique_atom_union_display_tests;
 #[path = "tests/this_context_self_type_tests.rs"]
 mod this_context_self_type_tests;
 #[cfg(test)]
+#[path = "tests/this_void_method_call_tests.rs"]
+mod this_void_method_call_tests;
+#[cfg(test)]
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
 #[cfg(test)]
@@ -672,6 +675,9 @@ mod ts1170_computed_property_syntactic_form_tests;
 #[cfg(test)]
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;
+#[cfg(test)]
+#[path = "../tests/ts18048_unary_arithmetic_nullish_tests.rs"]
+mod ts18048_unary_arithmetic_nullish_tests;
 #[cfg(test)]
 #[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
 mod ts2322_private_field_narrowing_write_tests;
