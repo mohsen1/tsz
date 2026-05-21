@@ -29,9 +29,11 @@ scripts/agents/list-owned-work.sh Studio-C
 - Related PRs already drained: `#9287`, `#9308`, `#9303`, `#9299`, `#9111`,
   `#9579`, `#9625`.
 - Track: roadmap Track 9.
-- Next concrete step: pick a low-overlap JS emit family and reduce one baseline
-  class through a transform-layer fix. Avoid active draft overlap in
-  async/generator, module/import/export, class/decorator, and DTS lanes.
+- Next concrete step: do not claim backlog until the open Studio-C PR queue
+  below is landed, closed, or clearly handed off. Once the queue is drained,
+  pick a low-overlap JS emit family and reduce one baseline class through a
+  transform-layer fix. Avoid active draft overlap in async/generator,
+  module/import/export, class/decorator, and DTS lanes.
 - Fresh probes from 2026-05-21:
   - `optionalChainingInLoop`, `newTarget`, and `tslib` are green on current
     `origin/main` despite stale checked-in snapshot entries.
@@ -44,8 +46,24 @@ scripts/agents/list-owned-work.sh Studio-C
 
 ## Existing Work To Inspect First
 
-- No open Studio-C PRs at last refresh. Confirm with
-  `scripts/agents/list-owned-work.sh Studio-C` each cycle.
+- `#9874` draft: empty binding evaluation emit fix. Refreshed onto the merged
+  shared architecture-cap unblocker `#9899`; inspect the latest draft-light CI
+  and mark ready only after the refreshed head is clean.
+- `#9879` draft: ES5 class property initializer outer block-scope rename map.
+  Refreshed onto `#9899` after resolving its temporary local cap-bump conflict;
+  inspect the latest draft-light CI before further emitter investigation.
+- `#9831` draft: System-module export destructuring binding patterns. Refreshed
+  onto `#9899` from the remote PR head after the local worktree branch proved
+  stale; inspect the latest draft-light CI for branch-local failures.
+- `#9553` draft: async ES5 binary expressions, assignment targets, and control
+  flow. Refreshed onto `#9899`; inspect the latest draft-light CI, especially
+  any unit Cloud Build timeout, before marking ready.
+- `#9645` draft: suspending switch statements in the ES5 generator state
+  machine. Refreshed onto `#9899`; it was previously ready/auto-merge before
+  queue safety moved it back to draft, so promote it only after the refreshed
+  light CI is clean and no new emitter-specific failure appears.
+- Confirm current state with `scripts/agents/list-owned-work.sh Studio-C` each
+  cycle because labels and CI can change quickly.
 
 ## Non-Overlap Rules
 
