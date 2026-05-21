@@ -360,6 +360,9 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
 
+                // TS18048/TS18047: possibly-null/undefined operand under strictNullChecks.
+                self.check_nullish_unary_operand(unary.operand, operand_type);
+
                 // TS18050: unary +/- on literal null/undefined keywords.
                 // tsc emits this regardless of strictNullChecks.
                 if self.is_literal_null_or_undefined_node(unary.operand) {
@@ -475,8 +478,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // ~ (bitwise NOT) — returns bigint for bigint operands, number otherwise.
-            // Note: tsc does NOT validate operand types for ~ in general,
-            // but DOES emit TS2469 when the operand is a symbol type.
+            // Emits TS2469 for symbol operands and TS18048/TS18047 for possibly-nullish
+            // operands under strictNullChecks.
             k if k == SyntaxKind::TildeToken as u16 => {
                 // Evaluate operand for side effects / flow analysis
                 let operand_type = self.get_type_of_node(unary.operand);
@@ -500,6 +503,9 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
+
+                // TS18048/TS18047: possibly-null/undefined operand under strictNullChecks.
+                self.check_nullish_unary_operand(unary.operand, operand_type);
 
                 // Return bigint for bigint operands, number otherwise.
                 {

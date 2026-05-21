@@ -237,6 +237,17 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Under `strictNullChecks`, emit TS18047/TS18048 if `operand_type` contains
+    /// a nullish union member. Shared by the unary `+`, `-`, and `~` arms.
+    pub(crate) fn check_nullish_unary_operand(&mut self, operand: NodeIndex, operand_type: TypeId) {
+        if self.ctx.strict_null_checks() {
+            let (_, nullish_cause) = self.split_nullish_type(operand_type);
+            if let Some(cause) = nullish_cause {
+                self.emit_nullish_operand_error(operand, cause);
+            }
+        }
+    }
+
     /// Check if a type is string-like (intrinsic `string` or a string literal).
     /// Used to determine if `+` is string concatenation rather than arithmetic.
     fn is_string_like_type(&self, type_id: TypeId) -> bool {
