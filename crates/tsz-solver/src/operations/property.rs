@@ -382,10 +382,25 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 .db
                 .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
             if evaluated == obj_type {
-                // Truly deferred: use the apparent type (union of branches) to check
-                // whether the property genuinely exists. union2 normalises any|T→any
-                // and never|T→T, so `any`-branch or `never`-branch cases are handled.
                 let cond = self.interner().get_conditional(cond_id);
+                // Skip the strict check if either branch is a raw type parameter.
+                // When a branch is a type param (e.g., `T extends string ? T : string`),
+                // the raw param is unconstrained in the union check but tsc knows it
+                // is constrained by the conditional's check type in the true branch.
+                // Applying the union check would produce false TS2339 for properties
+                // that exist on the constraint (e.g., `.length` on T that extends string).
+                let is_type_param = |t: TypeId| {
+                    matches!(
+                        self.interner().lookup(t),
+                        Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+                    )
+                };
+                if is_type_param(cond.true_type) || is_type_param(cond.false_type) {
+                    return result;
+                }
+                // Truly deferred with concrete branches: use the apparent type (union
+                // of branches) to check whether the property genuinely exists.
+                // union2 normalises any|T→any and never|T→T.
                 let apparent = self.interner().union2(cond.true_type, cond.false_type);
                 match self.resolve_property_access_inner(apparent, prop_name, None) {
                     PropertyAccessResult::PropertyNotFound { .. } => {
