@@ -308,6 +308,15 @@ impl<'a> Printer<'a> {
             return Vec::new();
         }
 
+        let usage = self.scan_jsx_usage();
+        if !usage.needs_jsx
+            && !usage.needs_jsxs
+            && !usage.needs_fragment
+            && !usage.needs_create_element
+        {
+            return Vec::new();
+        }
+
         self.jsx_pragmas.classic_factory_roots(
             self.ctx.options.jsx_factory.as_deref(),
             self.ctx.options.jsx_fragment_factory.as_deref(),
