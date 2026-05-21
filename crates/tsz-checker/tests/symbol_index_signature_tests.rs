@@ -1,7 +1,8 @@
+use tsz_checker::CheckerOptions;
 use tsz_checker::diagnostics::diagnostic_codes;
 use tsz_checker::test_utils::{
     check_js_source_diagnostics, check_multi_file, check_source_code_messages,
-    check_source_diagnostics,
+    check_source_diagnostics, check_source_with_libs, load_lib_files,
 };
 use tsz_common::common::ModuleKind;
 
@@ -659,5 +660,131 @@ const _v: number = t[sym];
     assert!(
         !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "object literal with wide-symbol key must satisfy `{{ [k: symbol]: V }}` targets, got {codes:?}",
+    );
+}
+
+// Issue #9701: keyof of inline/anonymous object type literal drops unique symbol computed keys.
+//
+// Structural rule: `keyof { [s]: V; ... }` where `s: unique symbol` must include `typeof s`
+// in the key union, identically to `type O = { [s]: V; ... }; keyof O`.
+#[test]
+fn keyof_inline_type_literal_unique_symbol_key_symbol_only() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const s: unique symbol;
+const _key: keyof { [s]: 1 } = s;
+"#,
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "s should be assignable to keyof of inline symbol-only type literal (got never), codes: {codes:?}",
+    );
+}
+
+#[test]
+fn keyof_inline_type_literal_unique_symbol_key_mixed_keys() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const s: unique symbol;
+const _key: keyof { [s]: 1; a: 2 } = s;
+"#,
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "s should be assignable to keyof of inline mixed type literal (symbol key dropped), codes: {codes:?}",
+    );
+}
+
+#[test]
+fn keyof_inline_type_literal_unique_symbol_named_with_different_variable() {
+    // Same rule applies regardless of the variable name used for the symbol.
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const mySymbol: unique symbol;
+declare const anotherSym: unique symbol;
+const _k1: keyof { [mySymbol]: string } = mySymbol;
+const _k2: keyof { [anotherSym]: number; prop: boolean } = anotherSym;
+"#,
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "unique symbol key in inline type literal must be in keyof regardless of name, codes: {codes:?}",
+    );
+}
+
+#[test]
+fn keyof_inline_type_literal_unique_symbol_const_sym_call_with_lib() {
+    // `const t = Symbol()` (no annotation) must be recognised as a unique symbol when the
+    // global Symbol constructor is available from lib.  Both inline and named-alias forms
+    // must produce the same keyof result so cross-assignment is error-free.
+    let libs = load_lib_files(&["es5.d.ts", "es2015.symbol.d.ts"]);
+    if libs.is_empty() {
+        return;
+    }
+    let diags = check_source_with_libs(
+        r#"
+const t = Symbol();
+const u = Symbol();
+const _a: keyof { [t]: number } = t;
+const _b: keyof { [u]: string; prop: boolean } = u;
+const _c: keyof { [u]: string; prop: boolean } = "prop";
+type Named = { [t]: number };
+declare let namedKey: keyof Named;
+const _d: keyof { [t]: number } = namedKey;
+"#,
+        "test.ts",
+        CheckerOptions::default(),
+        &libs,
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Symbol()-initialised const must appear in keyof of inline type literal when lib is loaded, diags: {diags:?}",
+    );
+}
+
+#[test]
+fn keyof_inline_type_literal_named_alias_and_inline_agree() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const s: unique symbol;
+type Named = { [s]: 1; a: 2 };
+type Inline = { [s]: 1; a: 2 };
+declare let namedKey: keyof Named;
+declare let inlineKey: keyof Inline;
+const _a: keyof Named = inlineKey;
+const _b: keyof Inline = namedKey;
+"#,
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "keyof of named alias and inline type literal with same shape must be identical, codes: {codes:?}",
+    );
+}
+
+#[test]
+fn keyof_inline_type_literal_equal_to_named_alias_via_conditional_types() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2)
+    ? true
+    : false;
+type Expect<T extends true> = T;
+
+declare const s: unique symbol;
+
+type B1 = Expect<Equal<keyof { [s]: 1 }, typeof s>>;
+type B2 = Expect<Equal<keyof { [s]: 1; a: 2 }, typeof s | 'a'>>;
+
+type O = { [s]: 1; a: 2 };
+type C1 = Expect<Equal<keyof O, typeof s | 'a'>>;
+"#,
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT),
+        "Expect<Equal<...>> must not fail (TS2344): keyof inline type literal should equal keyof named alias, codes: {codes:?}",
     );
 }
