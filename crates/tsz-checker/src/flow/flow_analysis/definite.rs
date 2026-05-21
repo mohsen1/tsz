@@ -3,7 +3,8 @@
 use crate::FlowAnalyzer;
 use crate::query_boundaries::assignability::are_types_overlapping_with_env;
 use crate::query_boundaries::flow_analysis::{
-    are_types_mutually_subtype_with_env, tuple_elements_for_type, union_members_for_type,
+    are_types_mutually_subtype_with_env, is_literal_type_through_type_constraints,
+    object_shape_for_type, tuple_elements_for_type, union_members_for_type,
 };
 use crate::query_boundaries::state::checking::find_property_in_object_by_str;
 use crate::state::CheckerState;
@@ -110,7 +111,7 @@ impl<'a> CheckerState<'a> {
                 return declared_type;
             }
 
-            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, declared_type)
+            if object_shape_for_type(self.ctx.types, declared_type)
                 .is_some_and(|shape| shape.string_index.is_some() || shape.number_index.is_some())
             {
                 return declared_type;
@@ -193,10 +194,7 @@ impl<'a> CheckerState<'a> {
         if let Some(node) = self.ctx.arena.get(idx)
             && (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-            && crate::query_boundaries::common::is_literal_type_through_type_constraints(
-                self.ctx.types,
-                declared_type,
-            )
+            && is_literal_type_through_type_constraints(self.ctx.types, declared_type)
         {
             return declared_type;
         }

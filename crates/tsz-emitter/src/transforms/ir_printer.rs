@@ -88,6 +88,7 @@ pub struct IRPrinter<'a> {
     generator_state_name: &'static str,
     namespace_ast_name: Option<String>,
     namespace_ast_exported_names: rustc_hash::FxHashSet<String>,
+    block_scope_shadowed_names: Vec<String>,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -344,6 +345,7 @@ impl<'a> IRPrinter<'a> {
             generator_state_name: "_a",
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
+            block_scope_shadowed_names: Vec::new(),
         }
     }
 
@@ -372,6 +374,7 @@ impl<'a> IRPrinter<'a> {
             generator_state_name: "_a",
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
+            block_scope_shadowed_names: Vec::new(),
         }
     }
 
@@ -400,6 +403,7 @@ impl<'a> IRPrinter<'a> {
             generator_state_name: "_a",
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
+            block_scope_shadowed_names: Vec::new(),
         }
     }
 
@@ -437,6 +441,10 @@ impl<'a> IRPrinter<'a> {
         self.namespace_ast_exported_names = names.into_iter().collect();
     }
 
+    pub fn set_block_scope_shadowed_names(&mut self, names: Vec<String>) {
+        self.block_scope_shadowed_names = names;
+    }
+
     fn configure_ast_printer_namespace(&self, printer: &mut AstPrinter<'a>) {
         if let Some(namespace) = self.namespace_ast_name.clone() {
             printer.in_namespace_iife = true;
@@ -461,6 +469,7 @@ impl<'a> IRPrinter<'a> {
         if let Some(source_text) = self.source_text {
             printer.set_source_text(source_text);
         }
+        printer.seed_function_scope_shadowed_names(&self.block_scope_shadowed_names);
         printer
     }
 

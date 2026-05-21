@@ -783,6 +783,7 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
         let should_join_single_line_jsdoc_type_comment = self.source_is_js_file
             && kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && !self.inside_declare_namespace
             && self.emitted_leading_single_line_jsdoc_type_comment_for_pos(stmt_node.pos);
         if has_jsdoc_overload_signatures {
             // JSDoc overload comments are emitted once per structured signature

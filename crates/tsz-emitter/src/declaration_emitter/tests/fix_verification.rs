@@ -1763,11 +1763,15 @@ const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumbe
 "#,
     );
 
+    // When the left operand has an explicitly-annotated non-empty string literal type,
+    // it is always truthy, so tsc gives just the left type (right is unreachable).
     for expected in [
-        r#"declare const explicitStringOrNumber: "string" | "number";"#,
-        r#"declare const explicitStringOrBoolean: "string" | "boolean";"#,
-        r#"declare const explicitBooleanOrNumber: "number" | "boolean";"#,
-        r#"declare const explicitStringOrBooleanOrNumber: "string" | "number" | "boolean";"#,
+        r#"declare const explicitStringOrNumber: "string";"#,
+        r#"declare const explicitStringOrBoolean: "string";"#,
+        r#"declare const explicitBooleanOrNumber: "number";"#,
+        r#"declare const explicitStringOrBooleanOrNumber: "string";"#,
+        // Inferred const literals are widened intentionally in short-circuit operand
+        // position (matching the tsc DTS surface for mutable bindings built from them).
         "declare const inferredStringOrNumber: string;",
         "declare const inferredStringOrBoolean: string;",
         "declare const inferredBooleanOrNumber: string;",

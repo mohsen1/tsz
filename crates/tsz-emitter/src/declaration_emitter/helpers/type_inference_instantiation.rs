@@ -42,6 +42,21 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(left_parts);
         }
 
+        // When every component of the left type is semantically always truthy (e.g. a
+        // non-empty string literal, non-zero number literal, or `true`), the right operand
+        // of `||` is unreachable — mirrors tsc's evaluate_logical returning `left` when
+        // narrow_to_falsy(left) == never.  The `!left_parts.is_empty()` guard is required
+        // because `.all(…)` on an empty iterator is vacuously true.
+        if operator == SyntaxKind::BarBarToken as u16
+            && !left_parts.is_empty()
+            && left_parts
+                .iter()
+                .all(|part| Self::short_circuit_part_is_always_truthy(&part.text))
+        {
+            Self::dedupe_and_sort_short_circuit_type_parts(&mut left_parts);
+            return Some(left_parts);
+        }
+
         let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
 
         if operator == SyntaxKind::BarBarToken as u16 {
@@ -234,6 +249,25 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn short_circuit_nullish_excludes_left_type(type_text: &str) -> bool {
         matches!(type_text.trim(), "null" | "undefined" | "void")
+    }
+
+    fn short_circuit_part_is_always_truthy(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        // Mixed-truthiness primitives — can be empty string, zero, false, etc.
+        if matches!(
+            trimmed,
+            "string" | "number" | "boolean" | "bigint" | "any" | "unknown" | "object" | "never"
+        ) {
+            return false;
+        }
+        // Delegates to the canonical falsy-set (null/undefined/void/false/0/-0/0n/""/''
+        // as tracked by `short_circuit_or_excludes_left_type`).
+        if Self::short_circuit_or_excludes_left_type(trimmed) {
+            return false;
+        }
+        Self::is_short_circuit_string_literal_type(trimmed)
+            || Self::is_short_circuit_number_literal_type(trimmed)
+            || trimmed == "true"
     }
 
     fn dedupe_and_sort_short_circuit_type_parts(parts: &mut Vec<ShortCircuitTypePart>) {

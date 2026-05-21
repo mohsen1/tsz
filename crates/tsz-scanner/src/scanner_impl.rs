@@ -145,6 +145,7 @@ pub struct ScannerState {
     token_atom: Atom,
 }
 
+// `#[wasm_bindgen]` forbids `const fn`; suppress the lint for this impl block only.
 #[wasm_bindgen]
 #[allow(clippy::missing_const_for_fn)]
 impl ScannerState {

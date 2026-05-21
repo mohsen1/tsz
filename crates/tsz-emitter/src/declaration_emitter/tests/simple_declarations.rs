@@ -29,6 +29,50 @@ fn test_function_declaration() {
 }
 
 #[test]
+fn namespace_overload_names_do_not_hide_outer_function_implementation() {
+    let source = r#"
+declare namespace ns {
+    function f(): C;
+    class C {}
+}
+
+function f() {
+    return ns.f();
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare function f(): C;"),
+        "Expected outer function declaration despite namespace overload: {output}"
+    );
+}
+
+#[test]
+fn non_ambient_namespace_without_exported_surface_emits_empty_namespace() {
+    let source = r#"
+namespace hidden {
+    class C {
+        private value;
+    }
+    interface I {
+        [n: number]: C;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare namespace hidden {\n}"),
+        "Expected hidden namespace to emit without private members: {output}"
+    );
+    assert!(
+        !output.contains("class C"),
+        "Expected hidden class to stay private: {output}"
+    );
+}
+
+#[test]
 fn test_invalid_ambient_style_getter_defaults_to_any() {
     let source = r#"
 export class C {
@@ -4818,6 +4862,38 @@ var x = foo(5);
     assert!(
         !output.contains("declare var x: 5;"),
         "Did not expect mutable generic call literal result to stay narrow: {output}"
+    );
+}
+
+#[test]
+fn test_js_var_with_attached_jsdoc_preserves_mutable_declaration_kind() {
+    let output = emit_js_dts(
+        r#"
+/** {@link https://example.test} */
+var linked = true;
+
+/** Plain docs */
+var count = 1, label = "x";
+
+var narrow = false;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var linked: boolean;"),
+        "Expected documented JS var boolean literal to widen as mutable: {output}"
+    );
+    assert!(
+        output.contains("declare var count: number, label: string;"),
+        "Expected documented JS var group to keep var and widen literals: {output}"
+    );
+    assert!(
+        output.contains("declare const narrow: false;"),
+        "Undocumented JS var promotion should stay unchanged: {output}"
+    );
+    assert!(
+        !output.contains("declare const linked: true;"),
+        "Did not expect attached JSDoc JS var to be promoted to const: {output}"
     );
 }
 

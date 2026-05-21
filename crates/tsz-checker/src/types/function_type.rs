@@ -1872,16 +1872,18 @@ impl<'a> CheckerState<'a> {
 
             // TS2366/TS2355/TS7030: Check return completeness
             self.check_function_return_completeness(
-                is_function_declaration,
-                body,
-                idx,
-                annotated_return_type,
-                return_type,
-                has_type_annotation,
-                type_annotation,
-                function_is_generator,
-                name_node,
-                idx,
+                super::function_type_helpers::FunctionReturnCheckCtx {
+                    is_function_declaration,
+                    body,
+                    func_idx: idx,
+                    annotated_return_type,
+                    return_type,
+                    has_type_annotation,
+                    type_annotation,
+                    function_is_generator,
+                    name_node,
+                    idx,
+                },
             );
 
             // Determine if this is an async function for context tracking

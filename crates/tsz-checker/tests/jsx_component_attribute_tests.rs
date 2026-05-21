@@ -2903,6 +2903,194 @@ fn test_jsx_excess_props_and_assignability_react16_fixture_matches_tsc() {
     );
 }
 
+// =============================================================================
+// JSX class-component target display (issue #8696)
+// =============================================================================
+//
+// Structural rule: when the JSX target is a React-style class component whose
+// instance `props` field is a wrapper expression (`Readonly<P> & Readonly<{...}>`
+// or any other generic-application intersection), tsc renders TS2322 with that
+// wrapper expression in the target text, NOT the bare constructor parameter
+// alias. Mirror that so the per-attribute and whole-object TS2322 anchors
+// converge on the same tsc-faithful target rendering.
+//
+// The tests below use deliberately renamed identifiers per CLAUDE.md §25:
+// renaming the type-parameter (`P`/`Q`/`Z`), the wrapper alias name, and the
+// component class name should not change the structural outcome.
+
+// `cross_file_jsx_diagnostics_with_options_and_default_libs` exercises an
+// import-resolution path that diverges from the in-file JSX validator the
+// display rule under test lives in. The inline `Readonly<T>` keeps the
+// fixture independent of `lib.es5.d.ts`, which the test harness does not
+// load by default. Library-level names (`Component`, `ComponentClass`) are
+// fixed because the JSX validator's React-alias detection
+// (`extraction_react_alias.rs`) is keyed on those built-in names; the
+// §25 rename axis targets the class's type-parameter names instead.
+fn inline_react_class_component_fixture(
+    props_field_text: &str,
+    type_param_names: [&str; 3],
+) -> String {
+    let [p, s, ss] = type_param_names;
+    format!(
+        r#"
+type Readonly<T> = {{ readonly [K in keyof T]: T[K] }};
+
+declare namespace JSX {{
+    interface Element {{}}
+    interface ElementClass {{ props: any }}
+    interface ElementAttributesProperty {{ props: {{}} }}
+    interface IntrinsicAttributes extends React.Attributes {{}}
+    interface IntrinsicClassAttributes<T> extends React.ClassAttributes<T> {{}}
+}}
+declare namespace React {{
+    interface Attributes {{ key?: any }}
+    interface ClassAttributes<T> {{ ref?: any }}
+    interface ReactNode {{}}
+    class Component<{p} = {{}}, {s} = any, {ss} = any> {{
+        props: {props_field_text};
+    }}
+    interface ComponentClass<{p} = {{}}> {{ new (props: {p}): Component<{p}, any, any> }}
+}}
+"#
+    )
+}
+
+#[test]
+fn jsx_class_component_target_display_uses_class_props_wrapper() {
+    // Reported repro (renamed) — `Component<P>.props = Readonly<P> & Readonly<{...}>`.
+    let lib = inline_react_class_component_fixture(
+        "Readonly<P> & Readonly<{ children?: ReactNode | undefined }>",
+        ["P", "S", "SS"],
+    );
+    let source = format!(
+        r#"
+{lib}
+
+const myHoc = <ComposedComponentProps extends any>(
+    ComposedComponent: React.ComponentClass<ComposedComponentProps>,
+) => {{
+    type WrapperComponentProps = ComposedComponentProps & {{ myProp: string }};
+    const WrapperComponent: React.ComponentClass<WrapperComponentProps> = null as any;
+    const props: ComposedComponentProps = null as any;
+
+    <WrapperComponent {{...props}} myProp={{1000000}} />;
+}};
+"#
+    );
+    let diags = jsx_diagnostics_with_pos_mode(&source, JsxMode::React);
+
+    assert!(
+        has_code_with_message_pos(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            "Readonly<...> & Readonly<...>"
+        ),
+        "TS2322 target must expand class.props wrapper expression for the reported repro shape, got: {diags:?}"
+    );
+    assert!(
+        !has_code_with_message_pos(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            "& WrapperComponentProps'"
+        ),
+        "TS2322 target must not collapse to the bare constructor-parameter alias, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_class_component_target_display_renamed_user_identifiers_use_class_props_wrapper() {
+    // §25 rename axis on USER-chosen identifiers only. Library-level names like
+    // `Component`/`ComponentClass` are well-known React names that the JSX
+    // validator recognizes through React-alias detection
+    // (`crates/tsz-checker/src/checkers/jsx/extraction_react_alias.rs`), so
+    // renaming them probes a separate code path (props-type recovery falls
+    // back to the instance `.props` access). The structural display rule
+    // under test is about user-defined wrapper aliases and the user's local
+    // type parameter:
+    //   - generic-param `ComposedComponentProps` -> `BaseShape`
+    //   - wrapper alias `WrapperComponentProps` -> `WrappedShape`
+    //   - extra prop name `myProp` -> `extraValue`
+    //   - extra-prop declared type still `string`; supplied value still numeric.
+    let lib = inline_react_class_component_fixture(
+        "Readonly<P> & Readonly<{ children?: ReactNode | undefined }>",
+        ["P", "S", "SS"],
+    );
+    let source = format!(
+        r#"
+{lib}
+
+const wrap = <BaseShape extends any>(
+    Inner: React.ComponentClass<BaseShape>,
+) => {{
+    type WrappedShape = BaseShape & {{ extraValue: string }};
+    const Outer: React.ComponentClass<WrappedShape> = null as any;
+    const inProps: BaseShape = null as any;
+
+    <Outer {{...inProps}} extraValue={{42}} />;
+}};
+"#
+    );
+    let diags = jsx_diagnostics_with_pos_mode(&source, JsxMode::React);
+
+    assert!(
+        has_code_with_message_pos(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            "Readonly<...> & Readonly<...>"
+        ),
+        "renamed user-identifier fixture must still expand class.props wrapper, got: {diags:?}"
+    );
+    assert!(
+        !has_code_with_message_pos(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            "& WrappedShape'"
+        ),
+        "renamed user-identifier fixture must not collapse to the bare constructor-parameter alias `WrappedShape`, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_class_component_target_display_no_wrapper_keeps_constructor_param_alias() {
+    // Negative case: when `Component<P>.props` is just `P` (no wrapper expression),
+    // the existing display behavior is preserved — the target should reference
+    // the constructor parameter alias directly. This pins that the fix only
+    // changes display when the class instance `.props` *differs* from the
+    // constructor parameter type.
+    // `props: P` (no wrapper). class.props is identical to the constructor
+    // parameter, so the takeover gate must skip.
+    let lib = inline_react_class_component_fixture("P", ["P", "S", "SS"]);
+    let source = format!(
+        r#"
+{lib}
+
+const myHoc = <CompProps extends any>(
+    Base: React.ComponentClass<CompProps>,
+) => {{
+    type Wrapped = CompProps & {{ myProp: string }};
+    const W: React.ComponentClass<Wrapped> = null as any;
+    const baseProps: CompProps = null as any;
+
+    <W {{...baseProps}} myProp={{1000000}} />;
+}};
+"#
+    );
+    let diags = jsx_diagnostics_with_pos_mode(&source, JsxMode::React);
+
+    // With `props: P`, class.props is identical to the constructor parameter
+    // type after instantiation, so the takeover gate skips and the legacy
+    // display path keeps the constructor-parameter alias `Wrapped` in the
+    // TS2322 target.
+    assert!(
+        has_code_with_message_pos(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            "Wrapped",
+        ),
+        "no-wrapper case must keep the constructor-parameter alias in the TS2322 target, got: {diags:?}"
+    );
+}
+
 #[test]
 fn test_jsx_fragment_factory_no_unused_locals_react16_fixture_checks_nested_callback_body() {
     let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {

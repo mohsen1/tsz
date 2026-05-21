@@ -8,6 +8,22 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+pub(crate) struct SpreadCheckOpts<'a> {
+    pub(crate) spread_type: TypeId,
+    pub(crate) spread_source_type: TypeId,
+    pub(crate) props_type: TypeId,
+    pub(crate) tag_name_idx: NodeIndex,
+    pub(crate) overridden_names: &'a rustc_hash::FxHashSet<&'a str>,
+    pub(crate) overridden_for_missing: &'a rustc_hash::FxHashSet<&'a str>,
+    pub(crate) earlier_explicit_attrs: &'a rustc_hash::FxHashMap<String, NodeIndex>,
+    pub(crate) has_later_spreads: bool,
+    pub(crate) suppress_missing_props: bool,
+    pub(crate) suppress_unanchored_type_mismatch: bool,
+    pub(crate) display_target: &'a str,
+    pub(crate) preferred_target_display: Option<&'a str>,
+    pub(crate) merged_attrs_display: Option<&'a str>,
+}
+
 /// Local mirror of `tsz_solver::diagnostics::format::needs_property_name_quotes`.
 /// The solver helper is private to its module, so duplicate the small predicate
 /// here for the JSX spread structural display below. Keeps the rule in lockstep
@@ -56,23 +72,22 @@ impl<'a> CheckerState<'a> {
     /// "specified more than once" is emitted), with the per-property message
     /// ("Type 'X' is not assignable to type 'Y'") rather than the whole-type
     /// message at the JSX tag name.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn check_spread_property_types(
-        &mut self,
-        spread_type: TypeId,
-        spread_source_type: TypeId,
-        props_type: TypeId,
-        tag_name_idx: NodeIndex,
-        overridden_names: &rustc_hash::FxHashSet<&str>,
-        overridden_for_missing: &rustc_hash::FxHashSet<&str>,
-        earlier_explicit_attrs: &rustc_hash::FxHashMap<String, NodeIndex>,
-        has_later_spreads: bool,
-        suppress_missing_props: bool,
-        suppress_unanchored_type_mismatch: bool,
-        display_target: &str,
-        preferred_target_display: Option<&str>,
-        merged_attrs_display: Option<&str>,
-    ) -> bool {
+    pub(crate) fn check_spread_property_types(&mut self, opts: SpreadCheckOpts<'_>) -> bool {
+        let SpreadCheckOpts {
+            spread_type,
+            spread_source_type,
+            props_type,
+            tag_name_idx,
+            overridden_names,
+            overridden_for_missing,
+            earlier_explicit_attrs,
+            has_later_spreads,
+            suppress_missing_props,
+            suppress_unanchored_type_mismatch,
+            display_target,
+            preferred_target_display,
+            merged_attrs_display,
+        } = opts;
         use crate::query_boundaries::common::PropertyAccessResult;
 
         // Safety guard: skip when types already contain checker error states.

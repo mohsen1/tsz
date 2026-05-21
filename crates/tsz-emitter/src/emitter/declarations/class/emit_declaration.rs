@@ -134,6 +134,9 @@ impl<'a> Printer<'a> {
                     );
                 let alias_name = needs_alias.then(|| self.make_unique_name_from_base(&class_name));
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
+                es5_emitter.set_block_scope_shadowed_names(
+                    self.ctx.block_scope_state.visible_original_names(),
+                );
                 es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
                 es5_emitter.set_async_generator_inner_name_counts(
                     self.async_generator_inner_name_counts.clone(),
@@ -346,6 +349,9 @@ impl<'a> Printer<'a> {
 
         if self.ctx.target_es5 {
             let mut es5_emitter = ClassES5Emitter::new(self.arena);
+            es5_emitter.set_block_scope_shadowed_names(
+                self.ctx.block_scope_state.visible_original_names(),
+            );
             es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
             es5_emitter.set_async_generator_inner_name_counts(
                 self.async_generator_inner_name_counts.clone(),
@@ -470,6 +476,8 @@ impl<'a> Printer<'a> {
         };
 
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
+        es5_emitter
+            .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         es5_emitter
             .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());

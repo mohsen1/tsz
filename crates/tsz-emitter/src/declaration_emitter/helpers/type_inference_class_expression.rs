@@ -577,12 +577,58 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 out.push_str(replacement);
                 i += needle.len();
+                if bytes.get(i).copied() == Some(b'<') {
+                    if let Some(end) = Self::scan_type_argument_list(bytes, i) {
+                        i = end;
+                    }
+                }
             } else {
                 out.push(bytes[i] as char);
                 i += 1;
             }
         }
         out
+    }
+
+    fn scan_type_argument_list(bytes: &[u8], start: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut i = start;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'<' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b'>' => {
+                    if depth == 0 {
+                        return None;
+                    }
+                    depth -= 1;
+                    i += 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                b'"' | b'\'' => {
+                    let quote = bytes[i];
+                    i += 1;
+                    while i < bytes.len() {
+                        if bytes[i] == b'\\' {
+                            i = (i + 2).min(bytes.len());
+                        } else if bytes[i] == quote {
+                            i += 1;
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        None
     }
 
     fn class_expression_self_name_boundary(bytes: &[u8], start: usize, end: usize) -> bool {

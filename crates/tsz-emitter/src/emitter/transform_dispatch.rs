@@ -861,6 +861,8 @@ impl<'a> Printer<'a> {
         &mut self,
         es5_emitter: &mut ClassES5Emitter<'a>,
     ) {
+        es5_emitter
+            .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         es5_emitter
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);

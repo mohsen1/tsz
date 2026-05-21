@@ -2002,6 +2002,38 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn es5_class_method_nested_block_keeps_outer_names_nameable() {
+        let source = "declare function use(a: any): void;\nvar shadowed: any;\nclass C {\n    m() {\n        {\n            let shadowed = 1;\n            use(shadowed);\n        }\n        use(shadowed);\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var shadowed_1 = 1;"),
+            "Nested method block declaration should not capture the outer name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("use(shadowed_1);"),
+            "Nested method block references should follow the renamed binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("        use(shadowed);\n"),
+            "Method-scope reference after the nested block should still name the outer binding.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_single_leaf_nested_destructuring_inlines_access_path() {
         let source = "var z1: any, z3: any;\n{\n    const [{ a: z1 }] = [{ a: 1 }];\n    use(z1);\n    const { a: { b: z3 } } = { a: { b: 1 } };\n    use(z3);\n}\n";
 

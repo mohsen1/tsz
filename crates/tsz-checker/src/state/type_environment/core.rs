@@ -335,24 +335,22 @@ impl<'a> CheckerState<'a> {
         // like Record, Partial, Pick, Omit due to interning dedup).
         if result != type_id {
             let app_info = query::application_info(self.ctx.types, type_id);
+            let db = self.ctx.types.as_type_database();
             let has_param_args = if let Some((_, args)) = &app_info {
-                args.iter().any(|&arg| {
-                    crate::query_boundaries::common::contains_type_parameters(
-                        self.ctx.types.as_type_database(),
-                        arg,
-                    )
-                })
+                args.iter()
+                    .any(|&arg| crate::query_boundaries::common::contains_type_parameters(db, arg))
             } else {
                 false
             };
-            let is_safe_for_generic_alias = crate::query_boundaries::common::is_conditional_type(
-                self.ctx.types.as_type_database(),
-                result,
-            )
-                || crate::query_boundaries::common::is_index_access_type(
-                    self.ctx.types.as_type_database(),
-                    result,
-                );
+            // Freshly-instantiated Mapped types are structurally unique per
+            // application when args contain type parameters (each distinct set of
+            // TypeParam TypeIds produces a distinct MappedType node). Storing the
+            // alias here lets diagnostics show e.g. `Mapped2<K>` instead of the
+            // expanded `{ [P in K as \`get${P}\`]: ... }` form, matching tsc.
+            let is_safe_for_generic_alias =
+                crate::query_boundaries::common::is_conditional_type(db, result)
+                    || crate::query_boundaries::common::is_index_access_type(db, result)
+                    || crate::query_boundaries::common::is_mapped_type(db, result);
             let result_is_non_empty_object = query::object_shape(self.ctx.types, result)
                 .is_some_and(|shape| {
                     !shape.properties.is_empty()

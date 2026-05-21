@@ -4,51 +4,12 @@ use super::*;
 mod completions;
 #[path = "tests_navigation.rs"]
 mod navigation;
+#[path = "tests_response_taxonomy.rs"]
+mod response_taxonomy;
+#[path = "tests_support.rs"]
+mod support;
 
-fn make_server() -> Server {
-    Server {
-        completion_import_module_specifier_ending: None,
-        import_module_specifier_preference: None,
-        organize_imports_type_order: None,
-        organize_imports_ignore_case: false,
-        auto_import_file_exclude_patterns: Vec::new(),
-        lib_dir: PathBuf::from("/nonexistent"),
-        tests_lib_dir: PathBuf::from("/nonexistent"),
-        lib_cache: FxHashMap::default(),
-        unified_lib_cache: None,
-        checks_completed: 0,
-        response_seq: 0,
-        open_files: FxHashMap::default(),
-        external_project_files: FxHashMap::default(),
-        _server_mode: ServerMode::Semantic,
-        _log_config: LogConfig {
-            level: LogLevel::Off,
-            file: None,
-            trace_to_console: false,
-        },
-        enable_telemetry: false,
-        allow_importing_ts_extensions: false,
-        inferred_check_options: CheckOptions::default(),
-        inferred_projectinfo_options: None,
-        auto_imports_allowed_for_inferred_projects: true,
-        inferred_module_is_none_for_projects: false,
-        auto_import_specifier_exclude_regexes: Vec::new(),
-        include_completions_with_class_member_snippets: false,
-        include_inlay_parameter_name_hints: None,
-        generate_return_in_doc_template: None,
-        new_line_character: None,
-        plugin_configs: FxHashMap::default(),
-        native_ts_worker: None,
-        pending_events: Vec::new(),
-    }
-}
-
-fn make_server_with_real_libs() -> Server {
-    let mut server = make_server();
-    server.lib_dir = Server::find_lib_dir().expect("lib dir should be discoverable in tests");
-    server.tests_lib_dir = Server::find_tests_lib_dir(&server.lib_dir);
-    server
-}
+use support::*;
 
 #[test]
 fn test_find_lib_dir_finds_workspace_libs() {
@@ -69,15 +30,6 @@ fn test_find_tests_lib_dir_returns_existing_directory() {
         "expected tests lib dir fallback to exist, got {}",
         tests_lib_dir.display()
     );
-}
-
-fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest {
-    TsServerRequest {
-        seq: 1,
-        _msg_type: "request".to_string(),
-        command: command.to_string(),
-        arguments,
-    }
 }
 
 #[test]
@@ -1133,74 +1085,6 @@ fn project_info_uses_external_project_identity_and_files() {
             ],
         }))
     );
-}
-
-fn apply_tsserver_text_edits(mut source: String, edits: &[serde_json::Value]) -> String {
-    let mut spans: Vec<(usize, usize, String)> = edits
-        .iter()
-        .filter_map(|edit| {
-            let start = edit.get("start")?;
-            let end = edit.get("end")?;
-            let start_line = start.get("line")?.as_u64()? as u32;
-            let start_offset = start.get("offset")?.as_u64()? as u32;
-            let end_line = end.get("line")?.as_u64()? as u32;
-            let end_offset = end.get("offset")?.as_u64()? as u32;
-            let new_text = edit.get("newText")?.as_str()?.to_string();
-            let start_byte = Server::line_offset_to_byte(&source, start_line, start_offset);
-            let end_byte = Server::line_offset_to_byte(&source, end_line, end_offset);
-            Some((start_byte, end_byte, new_text))
-        })
-        .collect();
-
-    spans.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-    for (start, end, new_text) in spans {
-        if start <= end && end <= source.len() {
-            source.replace_range(start..end, &new_text);
-        }
-    }
-    source
-}
-
-fn assert_full_comment_text_changes(body: &serde_json::Value) {
-    let changes = body
-        .as_array()
-        .expect("comment edit body should be an array");
-    assert!(
-        !changes.is_empty(),
-        "expected at least one edit, got {body:#}"
-    );
-    for change in changes {
-        assert!(
-            change.get("start").is_none(),
-            "full comment edit should not use simplified start/end shape: {change:#}"
-        );
-        assert!(
-            change.get("end").is_none(),
-            "full comment edit should not use simplified start/end shape: {change:#}"
-        );
-        assert!(
-            change
-                .get("newText")
-                .and_then(serde_json::Value::as_str)
-                .is_some(),
-            "full comment edit should include newText: {change:#}"
-        );
-        let span = change
-            .get("span")
-            .expect("full comment edit should include span");
-        assert!(
-            span.get("start")
-                .and_then(serde_json::Value::as_u64)
-                .is_some(),
-            "full comment edit span should include numeric start: {change:#}"
-        );
-        assert!(
-            span.get("length")
-                .and_then(serde_json::Value::as_u64)
-                .is_some(),
-            "full comment edit span should include numeric length: {change:#}"
-        );
-    }
 }
 
 #[test]
@@ -6645,131 +6529,4 @@ fn move_to_file_suggestions_derive_new_file_name_from_declaration() {
         !file_set.contains(a_str.as_str()),
         "files must not include the source file itself, got: {files:?}"
     );
-}
-
-// =============================================================================
-// Response taxonomy tests
-// =============================================================================
-
-#[test]
-fn response_taxonomy_success_response_is_success_with_body() {
-    let server = make_server();
-    let request = make_request("status", serde_json::json!({}));
-    let resp = server.success_response(42, &request, Some(serde_json::json!({"k": "v"})));
-    assert_eq!(resp.seq, 42);
-    assert_eq!(resp.msg_type, "response");
-    assert_eq!(resp.command, "status");
-    assert_eq!(resp.request_seq, request.seq);
-    assert!(resp.success);
-    assert!(resp.message.is_none());
-    assert_eq!(resp.body, Some(serde_json::json!({"k": "v"})));
-}
-
-#[test]
-fn response_taxonomy_success_response_supports_empty_result_body() {
-    let server = make_server();
-    let request = make_request("completions", serde_json::json!({}));
-    let resp = server.success_response(1, &request, Some(serde_json::json!([])));
-    assert!(resp.success);
-    assert_eq!(resp.body, Some(serde_json::json!([])));
-    assert!(resp.message.is_none());
-}
-
-#[test]
-fn response_taxonomy_acknowledge_response_has_no_body() {
-    let server = make_server();
-    let request = make_request("geterr", serde_json::json!({}));
-    let resp = server.acknowledge_response(7, &request);
-    assert!(resp.success);
-    assert!(resp.message.is_none());
-    assert!(resp.body.is_none());
-}
-
-#[test]
-fn response_taxonomy_unimplemented_response_is_failure_with_reason() {
-    let server = make_server();
-    let request = make_request("someCmd", serde_json::json!({}));
-    let resp = server.unimplemented_response(99, &request, "no command host available");
-    assert!(!resp.success);
-    assert!(resp.body.is_none());
-    let message = resp.message.expect("must carry a reason");
-    assert!(message.contains("not implemented"), "got {message:?}");
-    assert!(message.contains("someCmd"), "got {message:?}");
-    assert!(
-        message.contains("no command host available"),
-        "got {message:?}"
-    );
-}
-
-#[test]
-fn response_taxonomy_unsupported_response_is_failure_with_reason() {
-    let server = make_server();
-    let request = make_request("debugCommand", serde_json::json!({}));
-    let resp = server.unsupported_response(11, &request, "outside tsz scope");
-    assert!(!resp.success);
-    assert!(resp.body.is_none());
-    let message = resp.message.expect("must carry a reason");
-    assert!(message.contains("not supported"), "got {message:?}");
-    assert!(message.contains("debugCommand"), "got {message:?}");
-    assert!(message.contains("outside tsz scope"), "got {message:?}");
-}
-
-#[test]
-fn response_taxonomy_unrecognized_command_dispatches_to_failure() {
-    let mut server = make_server();
-    let request = make_request("nonExistentTsserverCommand", serde_json::json!({}));
-    let resp = server.handle_tsserver_request(request);
-    assert!(!resp.success);
-    assert!(resp.body.is_none());
-    let message = resp.message.expect("must carry a reason");
-    assert!(message.contains("Unrecognized"), "got {message:?}");
-    assert!(
-        message.contains("nonExistentTsserverCommand"),
-        "got {message:?}"
-    );
-}
-
-#[test]
-fn response_taxonomy_geterr_returns_acknowledge_after_emitting_events() {
-    let mut server = make_server();
-    server
-        .open_files
-        .insert("/test.ts".to_string(), "const x: string = 1;".to_string());
-    let request = make_request(
-        "geterr",
-        serde_json::json!({"files": ["/test.ts"], "delay": 0}),
-    );
-    let resp = server.handle_tsserver_request(request);
-    assert!(resp.success);
-    assert!(resp.body.is_none());
-    assert!(resp.message.is_none());
-    let has_request_completed = server
-        .pending_events
-        .iter()
-        .any(|event| event.get("event").and_then(|v| v.as_str()) == Some("requestCompleted"));
-    assert!(has_request_completed, "geterr must emit requestCompleted");
-}
-
-#[test]
-fn response_taxonomy_get_code_fixes_returns_empty_success_for_no_matches() {
-    let mut server = make_server();
-    server.open_files.insert(
-        "/codefix-empty.ts".to_string(),
-        "const x = 1;\n".to_string(),
-    );
-    let request = make_request(
-        "getCodeFixes",
-        serde_json::json!({
-            "file": "/codefix-empty.ts",
-            "startLine": 1,
-            "startOffset": 1,
-            "endLine": 1,
-            "endOffset": 2,
-            "errorCodes": [],
-        }),
-    );
-    let resp = server.handle_tsserver_request(request);
-    assert!(resp.success);
-    assert!(resp.message.is_none());
-    assert_eq!(resp.body, Some(serde_json::json!([])));
 }

@@ -54,6 +54,72 @@ pub(crate) struct EmitOutputsContext<'a> {
     pub(crate) type_caches: &'a FxHashMap<std::path::PathBuf, tsz::checker::TypeCache>,
 }
 
+fn source_file_has_external_module_syntax(arena: &NodeArena, source_file: NodeIndex) -> bool {
+    let Some(source) = arena
+        .get(source_file)
+        .and_then(|node| arena.get_source_file(node))
+    else {
+        return false;
+    };
+
+    for &stmt_idx in &source.statements.nodes {
+        let Some(node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                || k == syntax_kind_ext::EXPORT_DECLARATION
+                || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+            {
+                return true;
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if let Some(var_stmt) = arena.get_variable(node)
+                    && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.is_declare(&var_stmt.modifiers)
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = arena.get_function(node)
+                    && arena.has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.is_declare(&func.modifiers)
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = arena.get_class(node)
+                    && arena.has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.is_declare(&class.modifiers)
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_decl) = arena.get_enum(node)
+                    && arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.is_declare(&enum_decl.modifiers)
+                {
+                    return true;
+                }
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module) = arena.get_module(node)
+                    && arena.has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.is_declare(&module.modifiers)
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 pub(crate) fn emit_outputs(
     context: EmitOutputsContext<'_>,
 ) -> Result<(Vec<OutputFile>, Vec<tsz_common::diagnostics::Diagnostic>)> {
@@ -198,6 +264,14 @@ pub(crate) fn emit_outputs(
                 &input_path,
             )
             && ts_output_paths.contains(&js_path)
+        {
+            continue;
+        }
+
+        if js_bundle_path.is_some()
+            && matches!(context.options.printer.module, ModuleKind::None)
+            && is_js_input
+            && source_file_has_external_module_syntax(&file.arena, file.source_file)
         {
             continue;
         }
@@ -365,16 +439,20 @@ pub(crate) fn emit_outputs(
             );
 
             // Run the lowering pass to generate transform directives
+            let module_none_out_file =
+                js_bundle_path.is_some() && matches!(printer_options.module, ModuleKind::None);
             let mut ctx = tsz::context::emit::EmitContext::with_options(printer_options.clone());
             // Enable auto-detect module: when module is None and file has imports/exports,
             // the emitter should switch to CommonJS (matching tsc behavior)
             ctx.auto_detect_module = true;
+            ctx.module_none_out_file = module_none_out_file;
             let emit_plan =
                 tsz::lowering::LoweringPass::new(&file.arena, &ctx).run_plan(file.source_file);
 
             let mut printer =
                 Printer::with_emit_plan_and_options(&file.arena, emit_plan, printer_options);
             printer.set_auto_detect_module(true);
+            printer.set_module_none_out_file(module_none_out_file);
             // Always set source text for comment preservation and single-line detection
             if let Some(source_text) = file
                 .arena

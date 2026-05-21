@@ -240,6 +240,64 @@ withTempDir((dir) => {
 console.log("✅ yellow row present exits 0");
 
 // ---------------------------------------------------------------------------
+// Test: partial compatibility metadata cannot be reported as green.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const partialGreen = makeRow(REQUIRED_PROJECT_ROWS[0], "green");
+  delete partialGreen.compatibility.phase;
+  const rows = REQUIRED_PROJECT_ROWS.map((name, i) =>
+    i === 0 ? partialGreen : makeRow(name, "green"),
+  );
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 0, `partial green compatibility should not fail readiness:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.green, REQUIRED_PROJECT_ROWS.length - 1, "partial green row must not count as green");
+  assert.equal(parsed.gray, 1, "partial green row should count as gray/incomplete");
+  assert.equal(parsed.rows[0].state, "gray", "partial green row should render as gray");
+});
+console.log("✅ partial green compatibility is gray");
+
+// ---------------------------------------------------------------------------
+// Test: partial yellow metadata is incomplete, not an authoritative yellow.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const partialYellow = makeRow(REQUIRED_PROJECT_ROWS[0], "yellow");
+  delete partialYellow.compatibility.exit_class;
+  const rows = REQUIRED_PROJECT_ROWS.map((name, i) =>
+    i === 0 ? partialYellow : makeRow(name, "green"),
+  );
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 0, `partial yellow compatibility should not fail readiness:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.yellow, 0, "partial yellow row must not count as yellow");
+  assert.equal(parsed.gray, 1, "partial yellow row should count as gray/incomplete");
+  assert.equal(parsed.rows[0].state, "gray", "partial yellow row should render as gray");
+});
+console.log("✅ partial yellow compatibility is gray");
+
+// ---------------------------------------------------------------------------
+// Test: complete red compatibility still reports as red.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name, i) =>
+    i === 0 ? makeRow(name, "red") : makeRow(name, "green"),
+  );
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 0, `complete red compatibility should remain present:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.red, 1, "complete red row should count as red");
+  assert.equal(parsed.rows[0].state, "red", "complete red row should render as red");
+  assert.equal(parsed.rows[0].phase, "check", "complete red row should preserve phase metadata");
+});
+console.log("✅ complete red compatibility stays red");
+
+// ---------------------------------------------------------------------------
 // Test: --json flag writes ONLY JSON to stdout (markdown goes to stderr)
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {

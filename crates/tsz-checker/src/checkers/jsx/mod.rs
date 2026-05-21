@@ -20,7 +20,7 @@ mod orchestration;
 mod overloads;
 mod props;
 pub(crate) mod runtime;
-mod spread;
+pub(crate) mod spread;
 
 #[cfg(test)]
 mod contextual_children_tests;

@@ -1481,7 +1481,7 @@ fn parse_markers(file: &str, source: &str) -> (String, Vec<Marker>) {
 }
 
 /// Find the end of a marker name (position of `*/` relative to start).
-fn find_marker_end(bytes: &[u8]) -> Option<usize> {
+pub(crate) fn find_marker_end(bytes: &[u8]) -> Option<usize> {
     for i in 0..bytes.len().saturating_sub(1) {
         if bytes[i] == b'*' && bytes[i + 1] == b'/' {
             // Only match if marker name is "valid" (no spaces, not a multi-line comment)
@@ -1523,6 +1523,21 @@ fn offset_to_line_col(text: &str, offset: u32) -> (u32, u32) {
 /// import { x } from "./a";
 /// /*ref*/x;
 /// ```
+/// If `trimmed_line` begins with a `// @filename:` directive (in either
+/// space-after-slashes spelling), return `(prefix, suffix)` where `prefix`
+/// is the literal directive token and `suffix` is everything after it.
+/// Otherwise return `None`. Shared by `parse_multi_file` and the variant
+/// generator so the two recognizers always agree.
+pub(crate) fn strip_filename_directive(trimmed_line: &str) -> Option<(&'static str, &str)> {
+    if let Some(rest) = trimmed_line.strip_prefix("// @filename:") {
+        Some(("// @filename:", rest))
+    } else {
+        trimmed_line
+            .strip_prefix("//@filename:")
+            .map(|rest| ("//@filename:", rest))
+    }
+}
+
 fn parse_multi_file(content: &str) -> Vec<(String, String)> {
     let mut files: Vec<(String, String)> = Vec::new();
     let mut current_file = String::new();
@@ -1530,10 +1545,7 @@ fn parse_multi_file(content: &str) -> Vec<(String, String)> {
 
     for line in content.lines() {
         let trimmed = line.trim();
-        if let Some(filename) = trimmed
-            .strip_prefix("// @filename:")
-            .or_else(|| trimmed.strip_prefix("//@filename:"))
-        {
+        if let Some((_, filename)) = strip_filename_directive(trimmed) {
             if !current_file.is_empty() {
                 files.push((current_file, current_content));
                 current_content = String::new();

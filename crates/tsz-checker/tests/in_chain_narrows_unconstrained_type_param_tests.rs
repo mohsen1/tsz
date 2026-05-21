@@ -115,6 +115,54 @@ if ('name' in r) {
 }
 
 #[test]
+fn in_operator_false_branch_keeps_optional_mapped_union_property_member() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type Rewrite<UnionType, SelectedKey, Overrides> = {
+  [Field in keyof UnionType]: Field extends SelectedKey
+    ? Field extends keyof Overrides
+      ? Overrides[Field]
+      : never
+    : UnionType[Field]
+};
+
+type MaybeNamed = { kind: 'maybe'; name?: string; maybeOnly: boolean };
+type RequiredNamed = { kind: 'required'; name: string; requiredOnly: number };
+type Counted = { kind: 'counted'; count: number };
+
+type Named = Rewrite<MaybeNamed | RequiredNamed | Counted, 'name', { name: boolean }>;
+
+declare const item: Named;
+
+if ('name' in item) {
+  const trueBranch: Rewrite<MaybeNamed | RequiredNamed, 'name', { name: boolean }> = item;
+} else {
+  const falseBranch: Rewrite<MaybeNamed | Counted, 'name', { name: boolean }> = item;
+}
+
+type MaybeLabeled = { tag: 'maybe'; label?: number; maybeFlag: true };
+type RequiredLabeled = { tag: 'required'; label: number; requiredFlag: true };
+type Fallback = { tag: 'fallback'; fallback: string };
+
+type Labeled = Rewrite<MaybeLabeled | RequiredLabeled | Fallback, 'label', { label: string }>;
+
+declare const labeled: Labeled;
+
+if ('label' in labeled) {
+  const trueBranch: Rewrite<MaybeLabeled | RequiredLabeled, 'label', { label: string }> = labeled;
+} else {
+  const falseBranch: Rewrite<MaybeLabeled | Fallback, 'label', { label: string }> = labeled;
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected mapped-union `in` false branch to keep optional-property members while excluding required-property members, got {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn nested_in_check_preserves_outer_mapped_union_member_narrowing() {
     let diagnostics = tsz_checker::test_utils::check_source_code_messages(
         r#"
