@@ -1977,7 +1977,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// For example: `type Partial<T> = { [P in keyof T]?: T[P] }`
     ///   `Partial<[number, string]>` should produce `[number?, string?]`
     ///
-    /// We instantiate the template with `K = 0, 1, 2...` for each tuple element.
+    /// We instantiate the template with `K = "0", "1", "2"...` (string-literal
+    /// index keys) for each tuple element, matching `keyof tuple` semantics.
     /// This preserves tuple structure including optional and rest elements.
     fn evaluate_mapped_tuple(&mut self, mapped: &MappedType, tuple_id: TupleListId) -> TypeId {
         use crate::types::TupleElement;
@@ -2004,8 +2005,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.evaluate_mapped_tuple(mapped, inner_tuple_id)
                     }
                     _ => {
-                        // Fallback: try index substitution (may not work correctly)
-                        let index_type = self.interner().literal_number(i as f64);
+                        // Fallback: try index substitution (may not work correctly).
+                        // tsc binds the iteration variable to the string-literal index
+                        // key ("0", "1", ...), matching `keyof tuple` semantics.
+                        let index_type = self.interner().literal_string(&i.to_string());
                         let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
                         self.evaluate(instantiate_type(self.interner(), mapped.template, &subst))
                     }
@@ -2028,9 +2031,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 continue;
             }
 
-            // Non-rest elements: use index substitution
-            // Create a literal number type for this tuple position
-            let index_type = self.interner().literal_number(i as f64);
+            // Non-rest elements: tsc binds the iteration variable to the
+            // string-literal index key ("0", "1", ...), not the numeric literal,
+            // matching `keyof tuple` semantics.
+            let index_type = self.interner().literal_string(&i.to_string());
 
             let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
 
