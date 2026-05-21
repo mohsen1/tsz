@@ -633,6 +633,15 @@ impl<'a> AstToIr<'a> {
             .get(idx)
             .expect("NodeIndex must be valid in arena");
         if let Some(block) = self.arena.get_block(node) {
+            if block
+                .statements
+                .nodes
+                .iter()
+                .any(|&stmt_idx| self.is_block_scoped_variable_statement(stmt_idx))
+            {
+                return IRNode::ASTRef(idx);
+            }
+
             let stmts: Vec<IRNode> = block
                 .statements
                 .nodes
@@ -643,6 +652,29 @@ impl<'a> AstToIr<'a> {
         } else {
             IRNode::ASTRef(idx)
         }
+    }
+
+    fn is_block_scoped_variable_statement(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+
+        let Some(var_data) = self.arena.get_variable(node) else {
+            return false;
+        };
+
+        var_data.declarations.nodes.iter().any(|&decl_idx| {
+            self.arena.get(decl_idx).is_some_and(|decl_node| {
+                decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    && (decl_node.flags as u32
+                        & (tsz_parser::parser::node_flags::LET
+                            | tsz_parser::parser::node_flags::CONST))
+                        != 0
+            })
+        })
     }
 
     fn convert_expression_statement(&self, idx: NodeIndex) -> IRNode {

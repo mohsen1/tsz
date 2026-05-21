@@ -121,10 +121,11 @@ impl BlockScopeState {
 
         let needs_rename = is_builtin_shadow
             || self.reserved_names.contains(original_name)
-            || self
-                .function_scope_shadowed_names
-                .last()
-                .is_some_and(|names| names.contains(original_name))
+            || (!at_function_level
+                && self
+                    .function_scope_shadowed_names
+                    .last()
+                    .is_some_and(|names| names.contains(original_name)))
             || if at_function_level {
                 // At function body level: only check the current function scope itself
                 // (for redeclarations within the same scope)
@@ -342,6 +343,20 @@ impl BlockScopeState {
             }
         }
         None
+    }
+
+    /// Return source names currently visible to nested ES5 class emitters.
+    pub fn visible_original_names(&self) -> Vec<String> {
+        let mut names = FxHashSet::default();
+        for scope in &self.scope_stack {
+            for name in scope.keys() {
+                names.insert(name.clone());
+            }
+        }
+
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort();
+        names
     }
 
     /// Get the next loop function name
