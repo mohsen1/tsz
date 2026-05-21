@@ -27,7 +27,7 @@ scripts/agents/list-owned-work.sh Studio-B
   as the three-point recursive-utility hotspot guard for this lane. `#8870` is
   closed.
 - Issue context: `#8868`, `#8858`, `#8356`, `#7574`, `#7378`, `#7531`,
-  `#8857`, and the closed-but-informative `#8869`/`#8870`.
+  and the closed-but-informative `#8857`/`#8869`/`#8870`.
 - Related recent merges to inspect for benchmark-readiness guardrails:
   `#9813`, `#9794`, `#9789`, `#9626`, `#9587`, and `#9581`.
 - Track: roadmap Tracks 2 and 10.
@@ -41,6 +41,10 @@ scripts/agents/list-owned-work.sh Studio-B
   do not bypass those artifacts when proving a performance win.
 - `#9819`/`#9829` add recursive utility alias hotspot rows; keep them as
   benchmark guards rather than broad speed-tuning branches.
+- `#9836` made the residual synthetic-row attribution commands visible in the
+  tsgo-winner report. `#8858` still needs fresh timing-mode evidence before any
+  closure claim; `#8857` is now closed and should be used only as prior
+  attribution context.
 - If a benchmark row is red because of diagnostics, hand it to the owning
   semantic lane before measuring runtime.
 
