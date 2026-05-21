@@ -516,7 +516,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted down by 5 after literal alias / literal widening
         # diagnostic display probes moved through query_boundaries::diagnostics.
-        3372,
+        #
+        # Bumped for the optional-chain continuation repair on #9875.
+        3412,
     ),
 ]
 
