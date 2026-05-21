@@ -685,11 +685,29 @@ impl<'a> Printer<'a> {
             );
             self.write_semicolon();
         } else {
-            self.emit_expression(initializer);
-            self.write(" = ");
-            self.write(result_name);
-            self.write(".value");
-            self.write_semicolon();
+            // Assignment-target patterns: ARRAY_LITERAL_EXPRESSION or OBJECT_LITERAL_EXPRESSION.
+            // When the pattern is empty (`[] of x` or `{} of x`), tsc emits just
+            // `result.value;` to advance the iterator without creating any bindings.
+            let is_empty_literal = if init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                self.arena
+                    .get_literal_expr(init_node)
+                    .is_some_and(|lit| lit.elements.nodes.is_empty())
+            } else {
+                false
+            };
+            if is_empty_literal {
+                self.write(result_name);
+                self.write(".value");
+                self.write_semicolon();
+            } else {
+                self.emit_expression(initializer);
+                self.write(" = ");
+                self.write(result_name);
+                self.write(".value");
+                self.write_semicolon();
+            }
         }
     }
 

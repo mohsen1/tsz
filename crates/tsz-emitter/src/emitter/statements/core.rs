@@ -339,6 +339,15 @@ impl<'a> Printer<'a> {
             None
         };
 
+        // For ES5 downlevel iteration, pre-allocate return temps for ALL sequential
+        // for-of loops in this function body before any loop starts emitting.
+        // tsc assigns return temps (_a, _b, ...) for all sibling for-of loops in
+        // source order before allocating any loop-body temps (_g, _h, ...).
+        // Without this pre-pass, interleaved temp allocation produces wrong names.
+        if is_function_body_block && self.ctx.target_es5 && self.ctx.options.downlevel_iteration {
+            self.visit_for_of_return_temp_prealloc(idx);
+        }
+
         // Pre-collect statement indices so we can look up the next statement's
         // position as an upper bound for trailing comment scanning. Our parser sets
         // stmt_node.end past the statement boundary into the next statement's tokens,
