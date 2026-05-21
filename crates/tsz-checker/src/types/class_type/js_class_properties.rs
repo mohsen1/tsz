@@ -630,62 +630,14 @@ impl CheckerState<'_> {
                     || crate::query_boundaries::common::array_element_type(self.ctx.types, rhs_type)
                         == Some(TypeId::ANY)
                 {
-                    // RHS evaluates to `any` or `any[]` — check if it came from
-                    // an explicitly-typed source (e.g., a parameter with @param {any}).
-                    // If so, the member's `any` type is explicit, not implicit.
-                    //
-                    // Also treat expressions rooted on `this` as explicit:
-                    // `this.z = this.y`, `this[x] = this[y].bind(this)`, etc.
-                    // The property type comes from the class/constructor, so the
-                    // `any` is due to incomplete `this` context during class building,
-                    // not a genuinely untyped source. tsc does not emit TS7008 here.
-                    if self.expression_roots_in_this(rhs_idx) {
+                    // A borrowed `any`/`any[]` — from an identifier reference (incl.
+                    // an implicit-any param that already reports TS7006), a property
+                    // access, a call, or `this` — owes no member-level implicit-any
+                    // error. Only a fresh widening from a missing/null/undefined/
+                    // empty-array initializer (`provisional_open`) does. tsc flags the
+                    // source, not the member, so neither do we.
+                    if !provisional_open {
                         any_is_explicit = true;
-                    }
-                    if let Some(rhs_node) = self.ctx.arena.get(rhs_idx)
-                        && rhs_node.kind == SyntaxKind::Identifier as u16
-                        && let Some(sym_id) =
-                            self.ctx.binder.resolve_identifier(self.ctx.arena, rhs_idx)
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    {
-                        let decl = symbol.value_declaration;
-                        if decl.is_some() {
-                            // Check if the declaration has an inline type annotation
-                            let has_inline_type = self.ctx.arena.get(decl).is_some_and(|d| {
-                                self.ctx
-                                    .arena
-                                    .get_parameter(d)
-                                    .is_some_and(|p| p.type_annotation.is_some())
-                            });
-                            // Check if the enclosing function's JSDoc has
-                            // a @param {type} tag for this parameter
-                            let has_jsdoc_param_type = if !has_inline_type {
-                                let param_name = self
-                                    .ctx
-                                    .arena
-                                    .get(decl)
-                                    .and_then(|d| self.ctx.arena.get_parameter(d))
-                                    .and_then(|p| self.ctx.arena.get(p.name))
-                                    .and_then(|n| self.ctx.arena.get_identifier(n))
-                                    .map(|id| id.escaped_text.as_str());
-                                if let Some(pname) = param_name {
-                                    // Walk to enclosing function via extended node parent
-                                    let func_idx = self.ctx.arena.parent_of(decl);
-                                    func_idx
-                                        .and_then(|fidx| self.get_jsdoc_for_function(fidx))
-                                        .is_some_and(|jsdoc| {
-                                            Self::jsdoc_has_param_type(&jsdoc, pname)
-                                        })
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            };
-                            if has_inline_type || has_jsdoc_param_type {
-                                any_is_explicit = true;
-                            }
-                        }
                     }
                 }
                 if is_readonly {
@@ -922,33 +874,6 @@ impl CheckerState<'_> {
                 }
             }
             _ => {}
-        }
-    }
-
-    /// Check if an expression is rooted in `this` — i.e., is `this`,
-    /// `this.x`, `this[x]`, `this.x.bind(...)`, `this[x].call(...)`, etc.
-    /// Used to suppress TS7008 when the `any` type comes from incomplete
-    /// `this` context during class type building, not a genuinely untyped source.
-    fn expression_roots_in_this(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-        match node.kind {
-            k if k == SyntaxKind::ThisKeyword as u16 => true,
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
-            {
-                self.ctx
-                    .arena
-                    .get_access_expr(node)
-                    .is_some_and(|a| self.expression_roots_in_this(a.expression))
-            }
-            k if k == syntax_kind_ext::CALL_EXPRESSION => self
-                .ctx
-                .arena
-                .get_call_expr(node)
-                .is_some_and(|c| self.expression_roots_in_this(c.expression)),
-            _ => false,
         }
     }
 

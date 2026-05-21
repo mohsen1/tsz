@@ -2584,3 +2584,150 @@ i.newProperty = i.args;
         "Expected prototype-method arrows to contribute instance properties, got: {diagnostics:?}"
     );
 }
+
+fn ts_codes(diagnostics: &[(u32, String)], code: u32) -> Vec<&str> {
+    diagnostics
+        .iter()
+        .filter(|(c, _)| *c == code)
+        .map(|(_, m)| m.as_str())
+        .collect()
+}
+
+// Issue #9774: a JS this-property initialized from an implicit-any parameter
+// borrows that `any`; tsc reports only the parameter's TS7006 and does not
+// additionally flag the member with TS7008. Only fresh widening initializers
+// (missing / null / undefined / empty-array) carry a member-level implicit-any
+// obligation.
+
+#[test]
+fn test_this_property_from_implicit_any_param_no_ts7008() {
+    let source = r#"
+function Animal(name) {
+    this.name = name;
+}
+"#;
+    let diagnostics = check_js(source);
+    assert_eq!(
+        ts_codes(&diagnostics, 7006).len(),
+        1,
+        "Expected the implicit-any parameter to report TS7006 once, got: {diagnostics:?}"
+    );
+    assert!(
+        ts_codes(&diagnostics, 7008).is_empty(),
+        "Expected no redundant TS7008 on a member borrowing an implicit-any param, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_this_property_from_implicit_any_param_renamed_no_ts7008() {
+    // Same rule, different identifier spellings — the fix must not be keyed on names.
+    let source = r#"
+function Widget(label) {
+    this.title = label;
+}
+"#;
+    let diagnostics = check_js(source);
+    assert_eq!(
+        ts_codes(&diagnostics, 7006).len(),
+        1,
+        "Expected one TS7006 regardless of identifier names, got: {diagnostics:?}"
+    );
+    assert!(
+        ts_codes(&diagnostics, 7008).is_empty(),
+        "Expected no TS7008 regardless of identifier names, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_this_property_from_typed_param_no_errors() {
+    // Negative control: an annotated param removes both TS7006 and TS7008.
+    let source = r#"
+/** @param {string} name */
+function Animal(name) {
+    this.name = name;
+}
+/** @param {string} label */
+function Widget(label) {
+    this.title = label;
+}
+"#;
+    let diagnostics = check_js(source);
+    assert!(
+        ts_codes(&diagnostics, 7006).is_empty() && ts_codes(&diagnostics, 7008).is_empty(),
+        "Expected typed params to clear both TS7006 and TS7008, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_multiple_this_properties_from_same_any_param_single_ts7006_no_ts7008() {
+    let source = r#"
+function Point(value) {
+    this.x = value;
+    this.y = value;
+    this.z = value;
+}
+"#;
+    let diagnostics = check_js(source);
+    assert_eq!(
+        ts_codes(&diagnostics, 7006).len(),
+        1,
+        "Expected a single TS7006 for the shared implicit-any param, got: {diagnostics:?}"
+    );
+    assert!(
+        ts_codes(&diagnostics, 7008).is_empty(),
+        "Expected no TS7008 for any of the members borrowing the param, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_this_property_from_borrowed_any_expressions_no_ts7008() {
+    // Broader rule: a borrowed `any` from a property access or call expression
+    // (not a fresh null/undefined/empty-array widening) suppresses TS7008 too.
+    let source = r#"
+function Box(source) {
+    this.viaProp = source.inner;
+    this.viaCall = source.make();
+    this.viaIndex = source["slot"];
+}
+"#;
+    let diagnostics = check_js(source);
+    assert!(
+        ts_codes(&diagnostics, 7008).is_empty(),
+        "Expected no TS7008 for members borrowing `any` from access/call expressions, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_fresh_widening_initializers_still_emit_ts7008_alongside_borrowed_any() {
+    // The borrowed-any suppression must not leak into the fresh-widening cases:
+    // null / undefined / empty-array initializers still owe a TS7008, while a
+    // sibling member borrowing an implicit-any param does not.
+    let source = r#"
+function Mixed(param) {
+    this.borrowed = param;
+    this.nulled = null;
+    this.undef = undefined;
+    this.arr = [];
+}
+"#;
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts7008 = ts_codes(&diagnostics, 7008);
+    assert!(
+        ts7008.iter().any(|m| m.contains("Member 'nulled'"))
+            && ts7008.iter().any(|m| m.contains("Member 'undef'"))
+            && ts7008.iter().any(|m| m.contains("Member 'arr'")),
+        "Expected fresh widening members to still report TS7008, got: {diagnostics:?}"
+    );
+    assert!(
+        ts7008.iter().all(|m| !m.contains("Member 'borrowed'")),
+        "Expected the member borrowing an implicit-any param to not report TS7008, got: {diagnostics:?}"
+    );
+}
