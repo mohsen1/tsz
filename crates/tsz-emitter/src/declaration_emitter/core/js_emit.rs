@@ -2794,6 +2794,7 @@ impl<'a> DeclarationEmitter<'a> {
                         None
                     }
                 })
+                .or_else(|| self.anonymous_module_exports_class_new_expression_type_text(rhs_idx))
                 .or_else(|| {
                     resolved_type
                         .as_ref()
