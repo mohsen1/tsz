@@ -43304,6 +43304,158 @@ fn intermediate_application_alias_preserves_newly_introduced_intermediate() {
     );
 }
 
+/// When `store_intermediate_application_display_alias` is called with a
+/// freshly-allocated Mapped type as `evaluated`, the display alias must be
+/// stored even when the Application's args contain generic type parameters.
+///
+/// Structural rule: a generic type alias whose body evaluates to a fresh
+/// `MappedType` (constraint baked into interned key → each instantiation
+/// produces a distinct node) gets its `Application → MappedType` alias stored
+/// so that `IndexAccess(MappedType, idx)` formats as `Alias<K>[idx]`.
+#[test]
+fn intermediate_application_alias_stores_for_fresh_generic_mapped_type() {
+    let interner = TypeInterner::new();
+
+    let k = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+
+    // Application is allocated first (as it would be when `Alias<K>` appears in source).
+    let app = interner.application(interner.lazy(DefId(9901)), vec![k]);
+
+    // MappedType is allocated second — simulating `instantiate_generic` producing a fresh node.
+    let p = interner.type_param(TypeParamInfo::simple(interner.intern_string("P")));
+    let prefix = interner.intern_string("get");
+    let name_type = interner.template_literal(vec![
+        crate::types::TemplateSpan::Text(prefix),
+        crate::types::TemplateSpan::Type(p),
+    ]);
+    let prop = interner.intern_string("a");
+    let template = interner.object(vec![PropertyInfo::new(prop, p)]);
+    let mapped = interner.mapped(MappedType {
+        type_param: TypeParamInfo::simple(interner.intern_string("P")),
+        constraint: k,
+        template,
+        name_type: Some(name_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Call the function under test directly — no pre-seeding via store_display_alias.
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(mapped, app, mapped, &[k]);
+
+    assert_eq!(
+        interner.get_display_alias(mapped),
+        Some(app),
+        "Generic alias evaluating to a fresh Mapped type must have its display alias stored"
+    );
+}
+
+/// Non-Mapped structural types (Object, Intersection) must NEVER receive a
+/// display alias when the Application's args contain generic type parameters.
+/// Only freshly-allocated Mapped types are safe because their constraint is
+/// baked into the interned key (guaranteeing per-instantiation uniqueness).
+/// Both shapes are tested so a future change that widens alias storage to
+/// generic Objects or Intersections trips the boundary assertion.
+#[test]
+fn intermediate_application_alias_skips_generic_args_for_non_mapped_structural_type() {
+    let interner = TypeInterner::new();
+
+    let k = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    // --- Object shape ---
+    let app_obj = interner.application(interner.lazy(DefId(9902)), vec![k]);
+    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), k)]);
+
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(obj, app_obj, obj, &[k]);
+
+    assert_eq!(
+        interner.get_display_alias(obj),
+        None,
+        "Object with generic args must not receive a display alias"
+    );
+
+    // --- Intersection shape ---
+    let app_int = interner.application(interner.lazy(DefId(9909)), vec![k]);
+    let intersect = interner.intersection(vec![TypeId::STRING, k]);
+
+    evaluator.store_intermediate_application_display_alias(intersect, app_int, intersect, &[k]);
+
+    assert_eq!(
+        interner.get_display_alias(intersect),
+        None,
+        "Intersection with generic args must not receive a display alias"
+    );
+}
+
+/// Prove the formatter uses the evaluator-stored alias (no manual pre-seeding).
+/// `store_intermediate_application_display_alias` stores `mapped → app`, and
+/// then `format(IndexAccess(mapped, idx))` must use the Application form.
+#[test]
+fn evaluator_stored_mapped_alias_appears_in_index_access_format() {
+    use crate::diagnostics::format::TypeFormatter;
+
+    let interner = TypeInterner::new();
+
+    let k = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+
+    // Allocation order: Application first, then fresh Mapped.
+    let app = interner.application(interner.lazy(DefId(9903)), vec![k]);
+
+    let p = interner.type_param(TypeParamInfo::simple(interner.intern_string("P")));
+    let prefix = interner.intern_string("get");
+    let name_type = interner.template_literal(vec![
+        crate::types::TemplateSpan::Text(prefix),
+        crate::types::TemplateSpan::Type(p),
+    ]);
+    let prop = interner.intern_string("a");
+    let template = interner.object(vec![PropertyInfo::new(prop, p)]);
+    let mapped = interner.mapped(MappedType {
+        type_param: TypeParamInfo::simple(interner.intern_string("P")),
+        constraint: k,
+        template,
+        name_type: Some(name_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Store via the evaluator path — not via store_display_alias_preferring_application.
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(mapped, app, mapped, &[k]);
+
+    // Build the IndexAccess and format it.
+    let idx = interner.template_literal(vec![
+        crate::types::TemplateSpan::Text(prefix),
+        crate::types::TemplateSpan::Type(k),
+    ]);
+    let access = interner.index_access(mapped, idx);
+
+    let mut fmt = TypeFormatter::new(&interner);
+    let result = fmt.format(access);
+
+    // The alias was stored by the evaluator, so the formatter must not show the
+    // expanded `{ [P in K as ...]: ... }[...]` structural form.
+    assert!(
+        !result.contains("[P in K as"),
+        "formatter must use the evaluator-stored alias, not the expanded mapped form; got: {result}"
+    );
+}
+
 /// Tests for distributive conditional instantiation over union type parameters.
 ///
 /// Structural rule: when a distributive conditional `K extends K ? K : never`

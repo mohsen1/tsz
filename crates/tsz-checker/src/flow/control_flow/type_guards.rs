@@ -1,7 +1,6 @@
 //! Type guard extraction for flow-based narrowing (typeof, instanceof,
 //! discriminants, type predicates, Array.isArray, array.every).
 
-use crate::query_boundaries::common::TypeResolver;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -12,7 +11,7 @@ use tsz_solver::{ParamInfo, SymbolRef, TypeId, TypePredicate, TypePredicateTarge
 use crate::state::MAX_TREE_WALK_ITERATIONS;
 
 use super::FlowAnalyzer;
-use crate::query_boundaries::flow_analysis as flow_query;
+use crate::query_boundaries::flow_analysis::{self as flow_query, TypeResolver};
 
 impl<'a> FlowAnalyzer<'a> {
     /// Check if a reference node is a mutable variable (let/var) as opposed to const.
@@ -1164,7 +1163,7 @@ impl<'a> FlowAnalyzer<'a> {
         let (param_idx, param_name) =
             self.match_guard_target_to_parameter(target, params_list, params)?;
         let param_type = params.get(param_idx)?.type_id;
-        if !crate::query_boundaries::common::is_type_parameter_like(self.interner, param_type) {
+        if !flow_query::is_type_parameter_like(self.interner, param_type) {
             return None;
         }
 
@@ -1339,9 +1338,7 @@ impl<'a> FlowAnalyzer<'a> {
         if matches!(type_id, TypeId::NEVER | TypeId::NULL | TypeId::UNDEFINED) {
             return true;
         }
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.interner, type_id)
-        {
+        if let Some(members) = flow_query::union_members_for_type(self.interner, type_id) {
             return !members.is_empty()
                 && members
                     .iter()

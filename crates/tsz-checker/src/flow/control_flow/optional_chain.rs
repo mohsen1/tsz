@@ -1,5 +1,5 @@
 use super::FlowAnalyzer;
-use crate::query_boundaries::common::union_members;
+use crate::query_boundaries::flow_analysis::union_members_for_type;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::syntax_kind_ext;
@@ -193,7 +193,7 @@ impl<'a> FlowAnalyzer<'a> {
         if type_id == needle {
             return true;
         }
-        union_members(self.interner, type_id)
+        union_members_for_type(self.interner, type_id)
             .map(|members| {
                 members
                     .into_iter()
