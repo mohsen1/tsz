@@ -69,6 +69,23 @@ function runFixture(pullRequests, args = []) {
 
 assert.deepEqual(wipStateFindings([pr({ comments: [signedComment()] })]), []);
 
+assert.deepEqual(wipStateFindings([{
+  number: 456,
+  title: "fix(checker): graph shape",
+  isDraft: true,
+  labels: { nodes: [] },
+  timelineItems: {
+    nodes: [{
+      __typename: "ConvertToDraftEvent",
+      createdAt: "2026-05-19T00:00:00Z",
+      actor: { login: "mohsen1" },
+    }],
+  },
+  comments: {
+    nodes: [signedComment()],
+  },
+}]), []);
+
 assert.deepEqual(
   wipStateFindings([pr()]),
   [{
@@ -178,3 +195,30 @@ assert.match(enforce.stdout, /missing signed WIP-state comment/);
 const clean = runFixture([pr({ comments: [signedComment()] })], ["--enforce"]);
 assert.equal(clean.status, 0, clean.stderr);
 assert.match(clean.stdout, /No WIP-state comment gaps found/);
+
+const fakeGhDir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-wip-state-fake-gh-"));
+try {
+  const fakeGh = path.join(fakeGhDir, "gh");
+  fs.writeFileSync(fakeGh, "#!/usr/bin/env bash\nsleep 5\n");
+  fs.chmodSync(fakeGh, 0o755);
+  const timeoutResult = spawnSync(process.execPath, [
+    SCRIPT,
+    "--repository",
+    "owner/repo",
+    "--max-prs",
+    "1",
+    "--gh-timeout-ms",
+    "50",
+  ], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${fakeGhDir}${path.delimiter}${process.env.PATH || ""}`,
+    },
+  });
+  assert.equal(timeoutResult.status, 1, timeoutResult.stdout);
+  assert.match(timeoutResult.stderr, /timed out after 50ms/);
+} finally {
+  fs.rmSync(fakeGhDir, { recursive: true, force: true });
+}
