@@ -484,6 +484,8 @@ function reproFrom(diagnosticDeltas) {
   const tsconfigPath = relativeToFixture(process.env.COMPAT_TSCONFIG_PATH || "");
   const sourceRoot = relativeToFixture(process.env.COMPAT_SOURCE_ROOT || "");
   const reducedReproPath = location?.path || sourceRoot || tsconfigPath || null;
+  const tszCommandEnvPrefix = String(process.env.COMPAT_TSZ_COMMAND_ENV_PREFIX || "").trim();
+  const commandPrefix = tszCommandEnvPrefix ? `${tszCommandEnvPrefix} ` : "";
 
   return {
     tsconfig_path: tsconfigPath,
@@ -493,7 +495,7 @@ function reproFrom(diagnosticDeltas) {
     first_failure_column: location?.column ?? null,
     first_failure_code: location?.code || null,
     reduced_repro_path: reducedReproPath,
-    command: tsconfigPath ? `$TSZ_BIN --noEmit -p ${tsconfigPath}` : null,
+    command: tsconfigPath ? `${commandPrefix}$TSZ_BIN --noEmit -p ${tsconfigPath}` : null,
   };
 }
 

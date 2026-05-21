@@ -3,6 +3,7 @@
 //! Provides a simple API to compile TypeScript code and extract error codes.
 
 use crate::compiler_options::canonical_option_name;
+use crate::options_convert::default_libs_for_target;
 use crate::parity::fingerprints::{classify_parity, MatchScope, ParityAction};
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
@@ -1341,6 +1342,21 @@ fn convert_options_to_tsconfig(
         };
 
         opts.insert(tsconfig_key.to_string(), json_value);
+    }
+
+    if opts.contains_key("target") && !opts.contains_key("lib") && !opts.contains_key("noLib") {
+        if let Some(serde_json::Value::String(target)) = opts.get("target") {
+            if let Some(libs) = default_libs_for_target(target) {
+                opts.insert(
+                    "lib".to_string(),
+                    serde_json::Value::Array(
+                        libs.iter()
+                            .map(|lib| serde_json::Value::String((*lib).to_string()))
+                            .collect(),
+                    ),
+                );
+            }
+        }
     }
 
     // Mirror TypeScript harness behavior by leaving `strict` absent unless the
