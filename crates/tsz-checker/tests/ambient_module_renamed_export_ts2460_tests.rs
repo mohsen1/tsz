@@ -358,6 +358,122 @@ import { Shared } from "beta";
     );
 }
 
+// ───────────────────── 8a. augmented ambient module ─────────────────────────
+
+/// Augmented ambient modules: one block renames the local declaration while
+/// another block directly exports the same name. The direct export wins —
+/// TS2460 must NOT fire. (Conformance regression target: this is the common
+/// `DefinitelyTyped` pattern where multiple `declare module "X"` blocks
+/// contribute to a single logical module.)
+#[test]
+fn ambient_module_augmentation_with_direct_export_in_another_block_does_not_emit_ts2460() {
+    let diags = diagnostics(
+        &[
+            (
+                "lib.d.ts",
+                r#"
+declare module "lib" {
+  interface Local {}
+  export { Local as Foo };
+}
+declare module "lib" {
+  export interface Foo {}
+}
+"#,
+            ),
+            (
+                "use.ts",
+                r#"
+import { Foo } from "lib";
+"#,
+            ),
+        ],
+        "use.ts",
+    );
+    assert!(
+        !diags.iter().any(|(c, _)| *c == TS2460),
+        "augmented direct export must silence the rename-driven TS2460; got {diags:#?}"
+    );
+}
+
+/// Same scenario but the direct export lives in a separate file's
+/// augmentation (more realistic — the rename block is in user code, the
+/// direct export comes from the package's @types). TS2460 must NOT fire.
+#[test]
+fn ambient_module_direct_export_in_separate_augmentation_file_silences_rename_ts2460() {
+    let diags = diagnostics(
+        &[
+            // Original ambient declaration from the package's @types.
+            (
+                "lib.d.ts",
+                r#"
+declare module "lib" {
+  export interface Foo {}
+}
+"#,
+            ),
+            // User augmentation that *also* renames a local declaration to
+            // `Foo`. This must not contaminate the direct export above.
+            (
+                "lib-aug.d.ts",
+                r#"
+declare module "lib" {
+  interface LocalFoo {}
+  export { LocalFoo as Foo };
+}
+"#,
+            ),
+            (
+                "use.ts",
+                r#"
+import { Foo } from "lib";
+"#,
+            ),
+        ],
+        "use.ts",
+    );
+    assert!(
+        !diags.iter().any(|(c, _)| *c == TS2460),
+        "direct export in a separate augmentation file must silence TS2460; got {diags:#?}"
+    );
+}
+
+/// Ambient module body *without* an external module indicator: all
+/// declarations are implicitly exported. Even when another augmentation
+/// renames the same name, the implicit direct export must silence TS2460.
+#[test]
+fn ambient_module_implicit_direct_export_silences_rename_ts2460() {
+    let diags = diagnostics(
+        &[
+            // Block 1: no `import`/`export` statement → all declarations
+            // implicitly exported. `Foo` is therefore a direct export of "lib".
+            (
+                "lib.d.ts",
+                r#"
+declare module "lib" {
+  interface Foo {}
+}
+declare module "lib" {
+  interface Local {}
+  export { Local as Foo };
+}
+"#,
+            ),
+            (
+                "use.ts",
+                r#"
+import { Foo } from "lib";
+"#,
+            ),
+        ],
+        "use.ts",
+    );
+    assert!(
+        !diags.iter().any(|(c, _)| *c == TS2460),
+        "implicit-export ambient module body must silence TS2460 from a sibling rename; got {diags:#?}"
+    );
+}
+
 // ───────────────────── 8. direct + renamed export — no TS2460 ──────────────
 
 /// If the original name is ALSO exported directly (`export { Orig }`),
