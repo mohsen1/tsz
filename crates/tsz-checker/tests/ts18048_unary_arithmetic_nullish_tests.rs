@@ -169,6 +169,46 @@ fn binary_arithmetic_on_possibly_undefined_still_emits_ts18048() {
 }
 
 // =========================================================================
+// Purely-nullish types: no TS18047/18048 — tsc emits TS2362 instead
+// =========================================================================
+
+#[test]
+fn unary_minus_on_pure_null_no_ts18047() {
+    let codes = check_source_strict_codes("declare const x: null;\nconst _ = -x;\n");
+    assert!(
+        !codes.contains(&18047),
+        "unary - on purely-null type must not emit TS18047 (tsc emits TS2362); got: {codes:?}"
+    );
+}
+
+#[test]
+fn unary_minus_on_pure_undefined_no_ts18048() {
+    let codes = check_source_strict_codes("declare const x: undefined;\nconst _ = -x;\n");
+    assert!(
+        !codes.contains(&18048),
+        "unary - on purely-undefined type must not emit TS18048 (tsc emits TS2362); got: {codes:?}"
+    );
+}
+
+#[test]
+fn unary_minus_on_nonarithmetic_union_no_ts18048() {
+    let codes = check_source_strict_codes("declare const s: string | undefined;\nconst _ = -s;\n");
+    assert!(
+        !codes.contains(&18048),
+        "unary - on `string | undefined` must not emit TS18048 (tsc emits TS2362); got: {codes:?}"
+    );
+}
+
+#[test]
+fn unary_tilde_on_pure_null_no_ts18047() {
+    let codes = check_source_strict_codes("declare const y: null;\nconst _ = ~y;\n");
+    assert!(
+        !codes.contains(&18047),
+        "unary ~ on purely-null type must not emit TS18047 (tsc emits TS2362); got: {codes:?}"
+    );
+}
+
+// =========================================================================
 // Without strictNullChecks: no nullish errors
 // =========================================================================
 
