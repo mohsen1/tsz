@@ -398,7 +398,20 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = jsdoc_type_text.as_deref()
             {
                 self.write(": ");
-                self.write(&self.jsdoc_type_text_for_declaration_emit(type_text));
+                let type_text = self.jsdoc_type_text_for_declaration_emit(type_text);
+                self.write(&type_text);
+                if keyword == "const"
+                    && has_initializer
+                    && (self.get_identifier_text(initializer).as_deref() == Some("undefined")
+                        || self
+                            .arena
+                            .get(initializer)
+                            .is_some_and(|node| node.kind == SyntaxKind::UndefinedKeyword as u16))
+                    && !matches!(type_text.as_str(), "void" | "undefined" | "null")
+                    && !Self::type_text_has_undefined_branch(&type_text)
+                {
+                    self.write(" | undefined");
+                }
             } else if self.source_is_js_file
                 && has_initializer
                 && let Some(type_text) = self.js_special_initializer_type_text(initializer)

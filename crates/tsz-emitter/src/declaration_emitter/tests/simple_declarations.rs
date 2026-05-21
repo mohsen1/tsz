@@ -8932,3 +8932,88 @@ const propValue = c.prop;
         "Expected property access to recover the paired setter type: {output}"
     );
 }
+
+#[test]
+fn test_jsdoc_redirected_builtin_lookup_names_normalize_in_js_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {String} */ const text = "";
+/** @type {Number} */ const count = 0;
+/** @type {Boolean} */ const flag = true;
+/** @type {Void} */ const nothing = undefined;
+/** @type {Undefined} */ const absent = undefined;
+/** @type {Null} */ const empty = null;
+/** @type {function} */ const callback = () => void 0;
+/** @type {array} */ const values = [];
+/** @type {promise} */ const ready = Promise.resolve(0);
+"#,
+    );
+
+    for expected in [
+        "declare const text: string;",
+        "declare const count: number;",
+        "declare const flag: boolean;",
+        "declare const nothing: void;",
+        "declare const absent: undefined;",
+        "declare const empty: null;",
+        "declare const callback: Function;",
+        "declare const values: any[];",
+        "declare const ready: Promise<any>;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "Expected redirected JSDoc lookup `{expected}` in output: {output}"
+        );
+    }
+}
+
+#[test]
+fn test_jsdoc_unrecognized_lookup_names_remain_unresolved_in_js_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {bool} */ const maybe = true;
+/** @type {integer} */ const count = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const maybe: bool;"),
+        "Expected unrecognized JSDoc lookup `bool` to remain unresolved: {output}"
+    );
+    assert!(
+        output.contains("declare const count: integer;"),
+        "Expected unrecognized JSDoc lookup `integer` to remain unresolved: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_object_index_type_prevents_namespace_object_emit() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {Object<string, string>} */ const labels = {x: "x"};
+"#,
+    );
+
+    assert!(
+        output.contains("/** @type {Object<string, string>} */ declare const labels: {\n    [x: string]: string;\n};"),
+        "Expected Object<K,V> JSDoc to emit an index-signature const declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare namespace labels"),
+        "Did not expect an explicit JSDoc object type to be emitted as a namespace object: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_redirected_event_const_undefined_includes_undefined() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {event} */ const evt = undefined;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const evt: Event | undefined;"),
+        "Expected redirected `event` lookup with undefined initializer to preserve undefined: {output}"
+    );
+}

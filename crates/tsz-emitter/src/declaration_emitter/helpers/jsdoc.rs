@@ -517,7 +517,12 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_text: &str,
     ) -> String {
-        let portable = self.qualify_jsdoc_typeof_self_exports(type_text);
+        let normalized = if Self::jsdoc_name_like_type_reference(type_text) {
+            Self::normalize_jsdoc_type_expr(type_text)
+        } else {
+            type_text.to_string()
+        };
+        let portable = self.qualify_jsdoc_typeof_self_exports(&normalized);
         let portable = self.rewrite_ambient_module_relative_import_type_text(&portable);
         let portable = self.rewrite_jsdoc_bare_module_import_type_text(&portable);
         Self::format_jsdoc_declaration_type_text(&portable)
@@ -1410,14 +1415,22 @@ impl<'a> DeclarationEmitter<'a> {
         }
         match s {
             "*" | "?" => "any".to_string(),
+            "String" => "string".to_string(),
+            "Number" => "number".to_string(),
+            "Boolean" => "boolean".to_string(),
+            "Void" => "void".to_string(),
+            "Undefined" => "undefined".to_string(),
+            "Null" => "null".to_string(),
+            "function" => "Function".to_string(),
+            "event" => "Event".to_string(),
             // `Array<>` is the form after `normalize_jsdoc_type_expr` strips
             // the legacy `.<` → `<` so both `Array` and `Array.<>` reach this
             // arm. tsc treats empty-args generic JSDoc references as
             // implicit-any (`Array.<>` → `any[]`); without the `Array<>` arm
             // the DTS surfaces a literal `Array<>` token that is not valid
             // TypeScript.
-            "Array" | "Array.<>" | "Array<>" => "any[]".to_string(),
-            "Promise" | "Promise.<>" | "Promise<>" => "Promise<any>".to_string(),
+            "array" | "Array" | "Array.<>" | "Array<>" => "any[]".to_string(),
+            "promise" | "Promise" | "Promise.<>" | "Promise<>" => "Promise<any>".to_string(),
             _ => s.to_string(),
         }
     }
