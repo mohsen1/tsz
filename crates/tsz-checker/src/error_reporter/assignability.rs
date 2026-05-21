@@ -1371,6 +1371,13 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         target_display: String,
     ) -> String {
+        // Conditional types separate the false branch with `:` (`C extends E ? X : Y`),
+        // which the text-based member-literal widener mistakes for an object member and
+        // widens (`... : 2` → `... : number`, `... : "no"` → `... : string`). tsc renders
+        // deferred conditional branches verbatim, so never text-widen a conditional target.
+        if crate::query_boundaries::common::is_conditional_type(self.ctx.types, target) {
+            return target_display;
+        }
         // Callable types use syntax like `{ (x: "foo"): number; }` which has `: "` pattern
         // but these are parameter literals that should be preserved, not object property
         // literals that should be widened. Skip rewriting for callable types.
