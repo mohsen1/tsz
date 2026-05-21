@@ -5431,3 +5431,117 @@ fn test_regex_hex_escape_keeps_real_hex_digit_validation() {
         "regex `\\u\\i...` must still emit TS1125 for non-hex non-separator chars, got {diagnostics:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Invalid let-array recovery (state_statements_recovery module)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn invalid_let_array_reserved_word_emits_destructuring_diagnostic() {
+    // `let [while]` — `while` is a reserved word; not a valid binding element.
+    let source = "let [while];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "expected array-element-destructuring diagnostic for `let [while]`, got {diags:?}",
+    );
+}
+
+#[test]
+fn invalid_let_array_for_keyword_emits_destructuring_diagnostic() {
+    // `let [for]` — different reserved word; same structural rule.
+    let source = "let [for];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "expected array-element-destructuring diagnostic for `let [for]`, got {diags:?}",
+    );
+}
+
+#[test]
+fn invalid_let_array_numeric_literal_emits_destructuring_diagnostic() {
+    // `let [42]` — numeric literal; not a binding name.
+    let source = "let [42];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "expected array-element-destructuring diagnostic for `let [42]`, got {diags:?}",
+    );
+}
+
+#[test]
+fn invalid_let_array_string_literal_emits_destructuring_diagnostic() {
+    // `let ["key"]` — string literal; not a binding name.
+    let source = r#"let ["key"];"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "expected array-element-destructuring diagnostic for `let [\"key\"]`, got {diags:?}",
+    );
+}
+
+#[test]
+fn valid_let_array_identifier_does_not_trigger_recovery() {
+    // `let [x] = []` — valid destructuring; no recovery diagnostic.
+    let source = "let [x] = [];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "valid `let [x] = []` must not emit array-element-destructuring diagnostic, got {diags:?}",
+    );
+}
+
+#[test]
+fn valid_let_array_empty_brackets_does_not_trigger_recovery() {
+    // `let [] = []` — valid empty destructuring.
+    let source = "let [] = [];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "valid `let [] = []` must not emit array-element-destructuring diagnostic, got {diags:?}",
+    );
+}
+
+#[test]
+fn valid_let_array_rest_element_does_not_trigger_recovery() {
+    // `let [...rest] = []` — valid rest-element pattern.
+    let source = "let [...rest] = [];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "valid `let [...rest] = []` must not emit array-element-destructuring diagnostic, got {diags:?}",
+    );
+}
+
+#[test]
+fn invalid_let_array_recovery_does_not_crash_on_assignment() {
+    // `let [+] = 1` — bad first element followed by `=`; parser must not panic.
+    let source = "let [+] = 1;\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        !diags.is_empty(),
+        "expected at least one diagnostic for `let [+] = 1`, got none",
+    );
+}

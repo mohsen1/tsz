@@ -6,6 +6,11 @@ relaunching a lane under the same name.
 Every session starts by reading its own goal file from repo source, then keeps
 using that file as the remote-control surface.
 
+Every implementation session must complete or explicitly hand off draft PRs
+carrying its canonical `agent:*` label before opening new issue work. A handoff
+requires a signed PR comment with `AgentName:`, current findings, blocker or
+reason for stopping, verification already run, and the next owner/action.
+
 ## M1
 
 ```text

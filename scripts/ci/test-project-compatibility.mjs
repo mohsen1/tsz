@@ -51,6 +51,7 @@ withTempDir((dir) => {
     COMPAT_TSCONFIG_PATH: tsconfig,
     COMPAT_SOURCE_ROOT: sourceRoot,
     COMPAT_FIXTURE_ROOT: path.join(dir, "fixture"),
+    COMPAT_TSZ_COMMAND_ENV_PREFIX: "TSZ_USE_EMBEDDED_LIBS=1",
     COMPAT_GENERATED_AT: "2026-05-19T01:02:03.000Z",
     COMPAT_SOURCE_COMMIT: "abcdef1234567890",
     COMPAT_WORKFLOW_NAME: "CI",
@@ -92,6 +93,7 @@ withTempDir((dir) => {
   assert.equal(row.repro.source_root, "src");
   assert.equal(row.repro.first_failure_path, "src/index.ts");
   assert.equal(row.repro.first_failure_code, "TS2344");
+  assert.equal(row.repro.command, "TSZ_USE_EMBEDDED_LIBS=1 $TSZ_BIN --noEmit -p tsconfig.json");
   assert.deepEqual(row.fixture_sources, [
     {
       name: "type-fest",
