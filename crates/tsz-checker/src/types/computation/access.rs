@@ -1701,49 +1701,34 @@ impl<'a> CheckerState<'a> {
             report_no_index = true;
         }
 
-        // For unique symbol indices on union types, check that ALL members
-        // support the symbol property. The solver's index access evaluator
-        // silently drops UNDEFINED results from union members, which is correct
-        // for string/number indices (covered by index signatures) but wrong for
-        // unique symbols that can't fall through to index signatures.
-        if !report_no_index
-            && use_index_signature_check
-            && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
-                .is_some()
-            && crate::query_boundaries::common::union_members(
+        // Symbol-typed index keys — the wide `symbol` primitive or a concrete
+        // `unique symbol` — can only index a type that either provides a `symbol`
+        // index signature (`{ [k: symbol]: V }`) or declares a member under that
+        // exact symbol binding. The string/number indexability gate above cannot
+        // express symbol-key existence, so it is decided here: when the type
+        // offers neither, tsc reports an implicit-any element access (TS7053 for
+        // objects, TS7015 for arrays/tuples). The solver's index access evaluator
+        // silently drops UNDEFINED results from union members, which is correct for
+        // string/number indices (covered by index signatures) but wrong for symbol
+        // keys that cannot fall through to those signatures.
+        let index_is_symbol_typed = index_type == TypeId::SYMBOL
+            || crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                .is_some();
+        if !report_no_index && use_index_signature_check && index_is_symbol_typed {
+            let missing = match crate::query_boundaries::common::union_members(
                 self.ctx.types,
                 object_type_for_access,
-            )
-            .is_none()
-        {
-            let member_result = self.ctx.types.resolve_element_access_type(
-                object_type_for_access,
-                index_type,
-                None,
-            );
-            if member_result == TypeId::ERROR || member_result == TypeId::UNDEFINED {
+            ) {
+                // Union: report when ANY member fails to accept the symbol key, since
+                // a single uncovered member makes the element access implicitly `any`.
+                Some(members) => members.iter().any(|&member| {
+                    self.symbol_keyed_access_is_missing(member, index_type_for_access)
+                }),
+                None => self
+                    .symbol_keyed_access_is_missing(object_type_for_access, index_type_for_access),
+            };
+            if missing {
                 report_no_index = true;
-            }
-        }
-
-        if !report_no_index
-            && use_index_signature_check
-            && crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
-                .is_some()
-            && let Some(members) = crate::query_boundaries::common::union_members(
-                self.ctx.types,
-                object_type_for_access,
-            )
-        {
-            for member in &members {
-                let member_result = self
-                    .ctx
-                    .types
-                    .resolve_element_access_type(*member, index_type, None);
-                if member_result == TypeId::ERROR || member_result == TypeId::UNDEFINED {
-                    report_no_index = true;
-                    break;
-                }
             }
         }
 
