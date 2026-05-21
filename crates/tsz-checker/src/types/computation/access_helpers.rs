@@ -1009,23 +1009,22 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.unique_symbol(SymbolRef(current.0)))
     }
 
-    /// Decide whether a `symbol`-typed element access (`obj[key]` where `key`
-    /// is the wide `symbol` primitive or a `unique symbol`) lacks a matching
-    /// member on `object_type`.
+    /// Decide whether a wide-`symbol` element access made through a
+    /// `symbol`-typed identifier lacks a matching member on `object_type`, i.e.
+    /// whether tsc would report an implicit-any element access (TS7053/TS7015).
     ///
-    /// A symbol key is satisfied when the type provides a `symbol` index
-    /// signature (`{ [k: symbol]: V }`) or declares a member keyed by that exact
-    /// symbol binding. Arrays, tuples, and other number-indexed containers resolve
-    /// wide `symbol` keys leniently to their element type, so that fallback must
-    /// not be mistaken for a real symbol member.
+    /// `index_type_for_access` is the binding-identity `UniqueSymbol(ref)` the
+    /// binder produced for the identifier. The key is satisfied when the type
+    /// provides a `symbol` index signature (`{ [k: symbol]: V }`) or declares a
+    /// member under that exact binding; otherwise it is missing.
     ///
-    /// `index_type_for_access` carries the binding-identity `UniqueSymbol(ref)`
-    /// produced for a `symbol`-typed identifier, so resolving with it finds members
-    /// keyed by that binding while still failing for keys the type does not declare.
+    /// Array/tuple/string-like receivers can never declare a member keyed by such
+    /// a binding — their element resolver leniently returns the element type for
+    /// any symbol key — so they are always missing unless an explicit `symbol`
+    /// index signature is present.
     pub(crate) fn symbol_keyed_access_is_missing(
         &self,
         object_type: TypeId,
-        index_type: TypeId,
         index_type_for_access: TypeId,
     ) -> bool {
         // A `symbol` index signature accepts any symbol key. Probe it with the wide
@@ -1038,9 +1037,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // A wide `symbol` index on arrays/tuples only sees the array element
-        // fallback, not a declared symbol member.
-        if index_type == TypeId::SYMBOL && self.is_array_like_type(object_type) {
+        if self.is_array_like_type(object_type) {
             return true;
         }
 
