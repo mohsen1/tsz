@@ -1494,3 +1494,164 @@ fn async_function_state_machine_lowers_nullish_coalescing() {
         "The hoisted nullish temp must be declared in the awaiter wrapper scope.\nOutput:\n{output}"
     );
 }
+
+// Structural rule: when an async ES5 function contains
+// `for (init; cond; incr) body` where any of init/cond/incr/body suspends on
+// `await`, the generator state machine must lower it like `while` — the
+// continue target is the incrementor case (so `continue` runs the incrementor
+// and re-checks the condition), the backedge returns to the condition case,
+// and `break` exits the loop. `var`s declared in the initializer are hoisted
+// into the awaiter wrapper. None of this is keyed on identifier spelling.
+
+#[test]
+fn async_for_body_await_lowers_to_generator_cases() {
+    let output = transform_and_print("async function f() { for (x; y; z) { await a; } }");
+
+    assert!(
+        !output.contains("for ("),
+        "Raw for statement must not remain around a suspended body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!y) return [3 /*break*/, 4];"),
+        "Loop condition should branch to the exit case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, a];"),
+        "Await in the body should become a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 1];"),
+        "Body should jump back to the condition case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_condition_await_yields_before_test() {
+    let output = transform_and_print("async function f() { for (x; await y; z) { a; } }");
+
+    assert!(
+        output.contains("return [4 /*yield*/, y];"),
+        "A top-level await in the condition should lower to a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!_a.sent()) return [3 /*break*/, 4];"),
+        "The yielded condition result should be tested via `_a.sent()`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_incrementor_await_yields_before_backedge() {
+    let output = transform_and_print("async function f() { for (x; y; await z) { a; } }");
+
+    assert!(
+        output.contains("return [4 /*yield*/, z];"),
+        "A top-level await in the incrementor should lower to a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 1];"),
+        "After the incrementor yield, the loop should branch back to the condition case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_initializer_await_yields_before_loop() {
+    let output = transform_and_print("async function f() { for (await x; y; z) { a; } }");
+
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, x];"),
+        "A top-level await in the initializer should yield in the entry case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!y) return [3 /*break*/, 4];"),
+        "The condition check should follow the initializer in its own case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_lowering_is_not_keyed_on_identifier_spelling() {
+    // Same structure as `async_for_body_await_lowers_to_generator_cases` with
+    // every identifier renamed; the lowering must be identical.
+    let output =
+        transform_and_print("async function loop() { for (init; cond; step) { await work; } }");
+
+    assert!(
+        !output.contains("for (") && !output.contains("await "),
+        "Renamed for-loop must lower the same way.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!cond) return [3 /*break*/, 4];"),
+        "Renamed condition should still branch to the exit case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, work];"),
+        "Renamed body await should still yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 1];"),
+        "Renamed loop should still branch back to the condition case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_continue_routes_to_incrementor_case() {
+    let output = transform_and_print("async function f() { for (x; y; z) { await a; continue; } }");
+
+    // continue must jump to the incrementor case (not the condition case),
+    // so the incrementor runs before the condition is re-tested.
+    assert!(
+        output.contains("if (!y) return [3 /*break*/, 4];"),
+        "Condition should branch to the exit case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 3];"),
+        "`continue` should target the incrementor case (label 3).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 1];"),
+        "The incrementor case should branch back to the condition case (label 1).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_var_initializer_is_hoisted_without_state_machine() {
+    // No suspension anywhere: tsc keeps the `for` as-is but hoists the
+    // initializer `var` into the awaiter wrapper and rewrites the init to a
+    // bare assignment.
+    let output = transform_and_print("async function f() { for (var c = x; y; z) { a; } }");
+
+    assert!(
+        output.contains("var c;"),
+        "The for-initializer `var` must be hoisted into the awaiter wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (c = x; y; z)"),
+        "The hoisted initializer must be rewritten to a bare assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("for (var c"),
+        "The `var` keyword must not remain in the for-initializer.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_var_initializer_without_value_is_hoisted() {
+    let output = transform_and_print("async function f() { for (var b; y; z) { a; } }");
+
+    assert!(
+        output.contains("var b;"),
+        "An uninitialized for `var` must still be hoisted.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (; y; z)"),
+        "With no initializer value the for-init slot must be empty.\nOutput:\n{output}"
+    );
+}
+
+// Negative/fallback case (no suspension and no hoistable `var` -> the for loop
+// is emitted verbatim, not a state machine) is covered end-to-end by the
+// `es5-asyncFunctionForStatements` emit baseline (`forStatement0`); the
+// standalone IR-printer test harness cannot render verbatim AST references.
