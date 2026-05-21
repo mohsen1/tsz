@@ -718,9 +718,14 @@ impl<'a> DeclarationEmitter<'a> {
                 .filter(|&name| self.is_js_export_equals_name(name)),
             _ => None,
         };
+        let has_jsdoc_type_function_signature =
+            self.leading_jsdoc_type_ref_resolves_to_function_typedef(stmt_node.pos);
         if let Some(name) = js_export_equals_declaration_name {
             self.emit_pending_js_export_equals_for_name(name);
-        } else if has_effective_export && !is_variable_like_export {
+        } else if has_effective_export
+            && !is_variable_like_export
+            && !has_jsdoc_type_function_signature
+        {
             self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos, has_effective_export);
         }
         if kind == syntax_kind_ext::VARIABLE_STATEMENT
@@ -774,9 +779,6 @@ impl<'a> DeclarationEmitter<'a> {
         let suppress_jsdoc_type_alias_comments = has_jsdoc_type_alias
             && (self.statement_emits_js_object_literal_namespace(stmt_idx)
                 || emitted_leading_typedef_aliases);
-        let has_jsdoc_type_function_signature = self
-            .statement_jsdoc_type_function_signature_node(stmt_idx)
-            .is_some();
         let jsdoc_overload_function_node =
             self.jsdoc_overload_function_node_for_statement(stmt_idx);
         let has_jsdoc_overload_signatures = jsdoc_overload_function_node
@@ -975,6 +977,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let has_leading_jsdoc_typedef = self.source_is_js_file
             && self.js_export_equals_names.is_empty()
+            && !self.leading_jsdoc_type_ref_resolves_to_function_typedef(stmt_node.pos)
             && jsdoc_chain
                 .iter()
                 .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));

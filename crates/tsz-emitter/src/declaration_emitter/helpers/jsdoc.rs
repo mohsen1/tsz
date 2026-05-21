@@ -2390,6 +2390,21 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn leading_jsdoc_type_ref_resolves_to_function_typedef(
+        &self,
+        pos: u32,
+    ) -> bool {
+        let Some(type_name) = self.jsdoc_name_like_type_expr_for_pos(pos) else {
+            return false;
+        };
+        self.jsdoc_type_alias_decls_before_pos(pos)
+            .iter()
+            .any(|decl| {
+                decl.name == type_name
+                    && parse_jsdoc_function_type_signature(&decl.type_text).is_some()
+            })
+    }
+
     pub(in crate::declaration_emitter) fn statement_jsdoc_type_function_signature_node(
         &self,
         stmt_idx: NodeIndex,

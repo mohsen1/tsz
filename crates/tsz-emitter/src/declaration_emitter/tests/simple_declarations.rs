@@ -2885,6 +2885,16 @@ export function inJs(l) {
         output.contains("export type IFn = <T>(m: T) => T;"),
         "Expected the JSDoc typedef alias to still be emitted: {output}"
     );
+    let function_pos = output
+        .find("export function inJs<T>(m: T): T;")
+        .expect("Expected JSDoc-typed function declaration");
+    let alias_pos = output
+        .find("export type IFn = <T>(m: T) => T;")
+        .expect("Expected JSDoc function typedef alias");
+    assert!(
+        function_pos < alias_pos,
+        "Expected @type function declaration to stay before the trailing typedef alias: {output}"
+    );
     assert!(
         !output.contains("@typedef"),
         "Did not expect source-only typedef comment to be duplicated before the function: {output}"
@@ -2971,6 +2981,16 @@ export function mapValue(value) {
     assert!(
         output.contains("export type Mapper = <Value>(input: Value) => Value;"),
         "Expected renamed typedef alias to still be emitted: {output}"
+    );
+    let function_pos = output
+        .find("export function mapValue<Value>(input: Value): Value;")
+        .expect("Expected renamed JSDoc-typed function declaration");
+    let alias_pos = output
+        .find("export type Mapper = <Value>(input: Value) => Value;")
+        .expect("Expected renamed JSDoc function typedef alias");
+    assert!(
+        function_pos < alias_pos,
+        "Expected renamed @type function declaration before trailing typedef alias: {output}"
     );
     assert!(
         !output.contains("@typedef"),
