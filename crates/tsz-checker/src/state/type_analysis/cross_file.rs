@@ -1284,7 +1284,7 @@ impl<'a> CheckerState<'a> {
             && *type_id != TypeId::ERROR
         {
             self.ctx.definition_store.cache_resolved_cross_file_query(
-                CrossFileQueryKind::ClassInstanceType.as_storage_kind(),
+                CrossFileQueryKind::ClassInstance.as_storage_kind(),
                 file_idx as u32,
                 sym_id.0,
                 0,

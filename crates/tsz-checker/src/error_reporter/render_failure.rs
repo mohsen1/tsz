@@ -944,29 +944,47 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
                     )
                 } else {
+                    // At depth > 0 we are rendering a nested property/element
+                    // failure. The outer anchor index no longer points at the
+                    // sub-expression whose type is `source`; using the
+                    // `AssignmentSource` role would look up the outer RHS
+                    // expression and render its type (e.g. the enclosing class
+                    // instance) instead of the mismatched parameter's actual
+                    // type. Use the structural formatter at depth > 0 so the
+                    // rendered source matches the solver's `source` TypeId.
                     let (source_str, target_str) = if strict_callback_case {
                         self.strict_callback_assignment_display_pair(source, target, *param_index)
                             .unwrap_or_else(|| {
-                                (
+                                let source_str = if depth > 0 {
+                                    self.format_type_for_assignability_message(source)
+                                } else {
                                     self.format_type_for_diagnostic_role(
                                         source,
                                         DiagnosticTypeDisplayRole::AssignmentSource {
                                             target,
                                             anchor_idx: idx,
                                         },
-                                    ),
+                                    )
+                                };
+                                (
+                                    source_str,
                                     self.format_assignability_type_for_message(target, source),
                                 )
                             })
                     } else {
-                        (
+                        let source_str = if depth > 0 {
+                            self.format_type_for_assignability_message(source)
+                        } else {
                             self.format_type_for_diagnostic_role(
                                 source,
                                 DiagnosticTypeDisplayRole::AssignmentSource {
                                     target,
                                     anchor_idx: idx,
                                 },
-                            ),
+                            )
+                        };
+                        (
+                            source_str,
                             self.format_assignability_type_for_message(target, source),
                         )
                     };

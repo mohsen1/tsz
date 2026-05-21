@@ -77,6 +77,10 @@ impl<'a> FlowAnalyzer<'a> {
         };
         let annotation_node = self.arena.get(annotation)?;
         match annotation_node.kind {
+            k if k == syntax_kind_ext::LITERAL_TYPE => {
+                let literal = self.arena.get_literal_type(annotation_node)?;
+                self.literal_type_from_node(literal.literal)
+            }
             k if k == syntax_kind_ext::TYPE_OPERATOR => {
                 let op = self.arena.get_type_operator(annotation_node)?;
                 if op.operator == SyntaxKind::UniqueKeyword as u16

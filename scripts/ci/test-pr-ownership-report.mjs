@@ -55,6 +55,15 @@ withTempDir((dir) => {
       body: "AgentName: gamma\nDepends on #10\n",
     },
     {
+      number: 42,
+      title: "fix(checker): preserve mapped access (#42)",
+      isDraft: true,
+      baseRefName: "main",
+      headRefName: "agent/self-ref",
+      labels: [],
+      body: "AgentName: delta\nSelf-references PR #42 in coordination notes.\n",
+    },
+    {
       number: 13,
       title: "docs: update note",
       isDraft: true,
@@ -84,18 +93,19 @@ withTempDir((dir) => {
   assert.match(result.stdout, /unknown-base: unknown root; children #13/);
   assert.match(result.stdout, /fix\(checker\): preserve mapped access: #10, #11/);
   assert.match(result.stdout, /#42: PR #10, PR #11/);
+  assert.doesNotMatch(result.stdout, /#42: PR #10, PR #11, PR #42/);
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.deepEqual(report.counts, {
-    open: 5,
-    draft: 4,
+    open: 6,
+    draft: 5,
     ready: 1,
     stacked: 2,
     missingAgentName: 2,
   });
   assert.deepEqual(report.byBase, [
     { base: "agent/mapped-a", prs: [12] },
-    { base: "main", prs: [10, 11, 14] },
+    { base: "main", prs: [10, 11, 14, 42] },
     { base: "unknown-base", prs: [13] },
   ]);
   assert.deepEqual(report.stacks, [
@@ -103,11 +113,12 @@ withTempDir((dir) => {
     { base: "unknown-base", root: null, children: [13] },
   ]);
   assert.deepEqual(report.duplicateTitleScopes, [
-    { scope: "fix(checker): preserve mapped access", prs: [10, 11] },
+    { scope: "fix(checker): preserve mapped access", prs: [10, 11, 42] },
   ]);
   assert.deepEqual(report.duplicateIssueRefs, [
     { issue: 42, prs: [10, 11] },
   ]);
+  assert.deepEqual(report.prs.find((pr) => pr.number === 42).issueRefs, []);
   assert.equal(report.prs.find((pr) => pr.number === 13).agentName, null);
   assert.equal(report.prs.find((pr) => pr.number === 14).agentName, null);
 });

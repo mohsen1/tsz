@@ -1424,7 +1424,7 @@ impl<'a> Printer<'a> {
                         );
                         self.emit_assignment_separator(first);
                         if !self.emit_commonjs_live_export_assignment_target_name(&name) {
-                            self.write(&name);
+                            self.emit_assignment_target(shorthand.name);
                         }
                         self.write(" = ");
                         self.emit_assignment_object_key_access(

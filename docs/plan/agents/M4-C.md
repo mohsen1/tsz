@@ -23,18 +23,28 @@ scripts/agents/list-owned-work.sh M4-C
 
 - Initial priority: land, close, or clearly hand off existing PRs in this lane
   before claiming issue backlog.
-- Issue context: `#8773`, `#8711`, `#8707`, `#8703`, `#6407`.
-- Related PRs to inspect: `#9257`, `#9224`, `#9200`, `#9103`, `#9002`,
-  `#8901`, `#8471`, `#8466`.
+- Current ready queue: `#9827`, `#9814`, `#9808`, and `#9799`.
+- Current draft cluster to reconcile before new branches: `#9810`, `#9809`,
+  `#9801`, `#9797`, `#9792`, `#9508`, `#9224`, and `#9200`.
+- Issue context: `#9785`, `#9778`, `#9775`, `#9774`, `#9773`, `#9769`,
+  `#9768`, `#9766`, `#9765`, `#9762`, `#9761`, `#9760`, `#9758`,
+  `#9757`, `#9756`, `#9754`, `#9747`, `#9746`, `#9745`, `#8773`, `#8711`,
+  `#8707`, `#8703`, and `#6407`.
 - Track: roadmap Track 3.
-- Next concrete step: drain ready PR `#9103` if still open, then focus on the
-  Kysely/Zod contextual generic constructor path with a reduced targeted test.
+- Next concrete step: let green auto-merge complete on the ready queue, fix the
+  current failing CI if one remains, then group the new issues by inference
+  mode: literal widening/`satisfies`, JSDoc context, unique-symbol/keyof, and
+  nullish/operator diagnostics.
 
 ## Existing Work To Inspect First
 
-- `#8901` targets Kysely generic relation blockers.
-- `#9200` targets Zod contextual this factory returns.
-- `#8471` and `#8466` stage typed solver request/result boundaries.
+- `#9801` is the JSDoc enforcement branch and is draft again after a failed
+  conformance aggregate; do not start another `@implements` branch until that
+  result is resolved or handed off.
+- `#9814`, `#9799`, `#9785`, `#9773`, `#9765`, and `#9758` all touch
+  literal widening and `satisfies` or const-context state.
+- `#9808`, `#9810`, `#9766`, `#9755`, and `#9747` overlap unique-symbol,
+  `keyof`, and element-access diagnostics.
 
 ## Non-Overlap Rules
 
