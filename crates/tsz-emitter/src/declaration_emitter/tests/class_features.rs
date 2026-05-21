@@ -540,7 +540,7 @@ fn test_private_identifier_emits_private_marker() {
 }
 
 // =============================================================================
-// Class Expression Synthesis
+// Class Expression Variable Declarations
 // tsc rule: JS exports with class expression initializers synthesize class
 // declarations, while TS exports keep the variable shape and emit structural
 // constructor object types.
@@ -628,6 +628,38 @@ fn ts_export_const_generic_class_expr_emits_structural_constructor_type() {
 }
 
 #[test]
+fn ts_export_const_class_expr_with_private_unique_symbol_types_emits_constructor_type() {
+    let output = emit_dts(
+        r#"
+declare const key: unique symbol;
+interface Shape {
+    readonly token: unique symbol;
+}
+export const C = class {
+    method(p: typeof key): typeof key { return p; }
+    other(p: Shape["token"]): Shape["token"] { return p; }
+};
+"#,
+    );
+    assert!(
+        output.contains("export declare const C: {"),
+        "class expression with private unique-symbol types should remain a value declaration: {output}"
+    );
+    assert!(
+        !output.contains("export declare class C"),
+        "class expression variable should not be promoted to a class declaration: {output}"
+    );
+    assert!(
+        output.contains("method(p: typeof key): typeof key;"),
+        "unique-symbol method signature should be preserved in constructor instance type: {output}"
+    );
+    assert!(
+        output.contains("other(p: Shape[\"token\"]): Shape[\"token\"];"),
+        "indexed unique-symbol method signature should be preserved in constructor instance type: {output}"
+    );
+}
+
+#[test]
 fn js_export_const_class_expr_synthesizes_class_decl() {
     let output = emit_js_dts("export const C = class {\n    foo() {}\n};");
     assert!(
@@ -647,7 +679,13 @@ fn js_export_const_class_expr_synthesizes_class_decl() {
 #[test]
 fn ts_namespace_export_const_class_expr_emits_structural_constructor_type() {
     let output = emit_dts(
-        "export namespace N {\n    export const C = class {\n        foo(): void {}\n    };\n}",
+        r#"
+export namespace N {
+    export const C = class {
+        foo(): void {}
+    };
+}
+"#,
     );
     assert!(
         output.contains("    const C: {"),
