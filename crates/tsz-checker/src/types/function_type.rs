@@ -479,12 +479,15 @@ impl<'a> CheckerState<'a> {
             && let Some(owner_jsdoc) = self.find_jsdoc_for_function(owner_target)
         {
             let factory = self.ctx.types.factory();
-            for (name, is_const) in Self::jsdoc_template_type_params(&owner_jsdoc) {
+            for (name, is_const, default_str) in Self::jsdoc_template_type_params(&owner_jsdoc) {
                 let atom = self.ctx.types.intern_string(&name);
+                let default = default_str
+                    .as_deref()
+                    .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
                 let info = TypeParamInfo {
                     name: atom,
                     constraint: None,
-                    default: None,
+                    default,
                     is_const,
                 };
                 let ty = factory.type_param(info);
@@ -500,12 +503,15 @@ impl<'a> CheckerState<'a> {
             if !template_names.is_empty() {
                 let mut jsdoc_type_params = Vec::with_capacity(template_names.len());
                 let factory = self.ctx.types.factory();
-                for (name, is_const) in template_names {
+                for (name, is_const, default_str) in template_names {
                     let atom = self.ctx.types.intern_string(&name);
+                    let default = default_str
+                        .as_deref()
+                        .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
                     let info = TypeParamInfo {
                         name: atom,
                         constraint: None,
-                        default: None,
+                        default,
                         is_const,
                     };
                     let ty = factory.type_param(info);

@@ -2435,12 +2435,15 @@ impl<'a> CheckerState<'a> {
         let mut type_params = Vec::with_capacity(template_names.len());
         let mut scope_updates = Vec::with_capacity(template_names.len());
         let factory = self.ctx.types.factory();
-        for (name, is_const) in template_names {
+        for (name, is_const, default_str) in template_names {
             let atom = self.ctx.types.intern_string(&name);
+            let default = default_str
+                .as_deref()
+                .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
             let info = TypeParamInfo {
                 name: atom,
                 constraint: None,
-                default: None,
+                default,
                 is_const,
             };
             let ty = factory.type_param(info);

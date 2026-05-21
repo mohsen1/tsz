@@ -116,8 +116,11 @@ impl CheckerState<'_> {
                     return template_types;
                 };
 
-                for (name, is_const) in Self::jsdoc_template_type_params(&jsdoc) {
+                for (name, is_const, default_str) in Self::jsdoc_template_type_params(&jsdoc) {
                     let atom = self.ctx.types.intern_string(&name);
+                    let default = default_str
+                        .as_deref()
+                        .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
                     template_types.entry(name).or_insert_with(|| {
                         self.ctx
                             .types
@@ -125,7 +128,7 @@ impl CheckerState<'_> {
                             .type_param(tsz_solver::TypeParamInfo {
                                 name: atom,
                                 constraint: None,
-                                default: None,
+                                default,
                                 is_const,
                             })
                     });
@@ -179,8 +182,11 @@ impl CheckerState<'_> {
         let class_template_types = self.enclosing_jsdoc_class_template_types(parent_idx);
         let mut function_template_types = FxHashMap::default();
         if let Some(jsdoc) = jsdoc.as_ref() {
-            for (name, is_const) in Self::jsdoc_template_type_params(jsdoc) {
+            for (name, is_const, default_str) in Self::jsdoc_template_type_params(jsdoc) {
                 let atom = self.ctx.types.intern_string(&name);
+                let default = default_str
+                    .as_deref()
+                    .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
                 function_template_types.entry(name).or_insert_with(|| {
                     self.ctx
                         .types
@@ -188,7 +194,7 @@ impl CheckerState<'_> {
                         .type_param(tsz_solver::TypeParamInfo {
                             name: atom,
                             constraint: None,
-                            default: None,
+                            default,
                             is_const,
                         })
                 });
@@ -395,14 +401,17 @@ impl CheckerState<'_> {
                 }
 
                 if let Some(jsdoc) = self.get_jsdoc_for_function(parent_idx) {
-                    for (name, is_const) in Self::jsdoc_template_type_params(&jsdoc) {
+                    for (name, is_const, default_str) in Self::jsdoc_template_type_params(&jsdoc) {
                         if name == normalized {
                             let atom = self.ctx.types.intern_string(&name);
+                            let default = default_str
+                                .as_deref()
+                                .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
                             return Some(self.ctx.types.factory().type_param(
                                 tsz_solver::TypeParamInfo {
                                     name: atom,
                                     constraint: None,
-                                    default: None,
+                                    default,
                                     is_const,
                                 },
                             ));
@@ -467,13 +476,16 @@ impl CheckerState<'_> {
                     || k == syntax_kind_ext::ARROW_FUNCTION
             );
             if is_function && let Some(jsdoc) = self.get_jsdoc_for_function(parent_idx) {
-                for (name, is_const) in Self::jsdoc_template_type_params(&jsdoc) {
+                for (name, is_const, default_str) in Self::jsdoc_template_type_params(&jsdoc) {
                     if name == normalized {
                         let atom = self.ctx.types.intern_string(&name);
+                        let default = default_str
+                            .as_deref()
+                            .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
                         return Some(self.ctx.types.factory().type_param(TypeParamInfo {
                             name: atom,
                             constraint: None,
-                            default: None,
+                            default,
                             is_const,
                         }));
                     }

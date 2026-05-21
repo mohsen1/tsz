@@ -1613,14 +1613,17 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut params = Vec::with_capacity(names.len());
-        for (name, is_const) in names {
+        for (name, is_const, default_str) in names {
             if name.is_empty() {
                 continue;
             }
+            let default = default_str
+                .as_deref()
+                .and_then(Self::resolve_primitive_jsdoc_default);
             params.push(tsz_solver::TypeParamInfo {
                 name: self.ctx.types.intern_string(&name),
                 constraint: None,
-                default: None,
+                default,
                 is_const,
             });
         }
@@ -1773,14 +1776,17 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut params = Vec::with_capacity(names.len());
-        for (name, is_const) in names {
+        for (name, is_const, default_str) in names {
             if name.is_empty() {
                 continue;
             }
+            let default = default_str
+                .as_deref()
+                .and_then(|s| checker.resolve_jsdoc_reference(s.trim()));
             params.push(tsz_solver::TypeParamInfo {
                 name: checker.ctx.types.intern_string(&name),
                 constraint: None,
-                default: None,
+                default,
                 is_const,
             });
         }
