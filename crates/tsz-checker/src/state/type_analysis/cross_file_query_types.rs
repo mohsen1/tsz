@@ -39,14 +39,11 @@ use tsz_binder::SymbolId;
 /// entries).
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(u8)]
-// Variant names mirror PERFORMANCE_PLAN.md §7 verbatim; the shared "Type"
-// suffix is part of the plan's API contract and must stay.
-#[allow(clippy::enum_variant_names)]
 pub(crate) enum CrossFileQueryKind {
-    InterfaceType = 1,
-    ClassInstanceType = 2,
-    InterfaceMemberSimpleType = 3,
-    SymbolType = 4,
+    Interface = 1,
+    ClassInstance = 2,
+    InterfaceMemberSimple = 3,
+    Symbol = 4,
 }
 
 impl CrossFileQueryKind {
@@ -134,7 +131,7 @@ mod tests {
     #[test]
     fn key_hash_and_eq_round_trip() {
         let key = CrossFileQueryKey {
-            kind: CrossFileQueryKind::SymbolType,
+            kind: CrossFileQueryKind::Symbol,
             target_file_idx: 7,
             symbol_id: SymbolId(42),
             request_key: None,
