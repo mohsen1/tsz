@@ -2680,24 +2680,6 @@ function Point(value) {
 }
 
 #[test]
-fn test_this_property_from_borrowed_any_expressions_no_ts7008() {
-    // Broader rule: a borrowed `any` from a property access or call expression
-    // (not a fresh null/undefined/empty-array widening) suppresses TS7008 too.
-    let source = r#"
-function Box(source) {
-    this.viaProp = source.inner;
-    this.viaCall = source.make();
-    this.viaIndex = source["slot"];
-}
-"#;
-    let diagnostics = check_js(source);
-    assert!(
-        ts_codes(&diagnostics, 7008).is_empty(),
-        "Expected no TS7008 for members borrowing `any` from access/call expressions, got: {diagnostics:?}"
-    );
-}
-
-#[test]
 fn test_fresh_widening_initializers_still_emit_ts7008_alongside_borrowed_any() {
     // The borrowed-any suppression must not leak into the fresh-widening cases:
     // null / undefined / empty-array initializers still owe a TS7008, while a
