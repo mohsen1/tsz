@@ -781,21 +781,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return ConditionalStepOutcome::Done(self.evaluate(sub));
         }
 
-        // Attempt 2: display alias of check_type against raw extends.
-        bindings.clear();
-        visited.clear();
-        if cond.extends_type != extends_type
-            && self.type_contains_infer(cond.extends_type)
-            && let Some(alias) = self.interner().get_display_alias(check_type)
-            && alias != check_type
-            && self.match_infer_pattern(alias, cond.extends_type, bindings, visited, &mut checker)
-            && !bindings.is_empty()
-        {
-            let sub = self.substitute_infer(cond.true_type, bindings);
-            return ConditionalStepOutcome::Done(self.evaluate(sub));
-        }
-
-        // Attempt 3: display alias of check_type against current (evaluated) extends.
+        // Attempt 2: display alias of check_type against raw (or current) extends.
         bindings.clear();
         visited.clear();
         if self.type_contains_infer(cond.extends_type)
@@ -808,7 +794,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return ConditionalStepOutcome::Done(self.evaluate(sub));
         }
 
-        // Attempt 4: main match — check_type against evaluated extends_type.
+        // Attempt 3: main match — check_type against evaluated extends_type.
         // This is the tail-call insertion point: when the substituted true branch
         // is itself a conditional (or an Application that expands to one), signal
         // a tail call so the outer loop absorbs the step without extra recursion.
@@ -862,19 +848,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return ConditionalStepOutcome::Done(self.evaluate(substituted_true));
         }
 
-        // Attempt 5: re-evaluated check_type against evaluated extends.
+        // Attempt 4: re-evaluated check_type against evaluated extends.
         let re_evaluated_check = self.evaluate(check_type);
         if re_evaluated_check != check_type {
             bindings.clear();
             visited.clear();
-            let mut checker2 = self.conditional_subtype_checker();
-            checker2.allow_bivariant_rest = true;
             if self.match_infer_pattern(
                 re_evaluated_check,
                 extends_type,
                 bindings,
                 visited,
-                &mut checker2,
+                &mut checker,
             ) && !bindings.is_empty()
             {
                 let sub = self.substitute_infer(cond.true_type, bindings);
@@ -909,18 +893,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 && constraint != check_type
             {
                 checked_concrete_constraint = true;
-                let mut bindings2 = FxHashMap::default();
-                let mut visited2 = FxHashSet::default();
-                let mut checker2 = self.conditional_subtype_checker();
-                checker2.allow_bivariant_rest = true;
+                bindings.clear();
+                visited.clear();
                 if self.match_infer_pattern(
                     constraint,
                     extends_type,
-                    &mut bindings2,
-                    &mut visited2,
-                    &mut checker2,
+                    bindings,
+                    visited,
+                    &mut checker,
                 ) {
-                    let sub = self.substitute_infer(cond.true_type, &bindings2);
+                    let sub = self.substitute_infer(cond.true_type, bindings);
                     return ConditionalStepOutcome::Done(self.evaluate(sub));
                 }
             }
