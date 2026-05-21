@@ -85,6 +85,24 @@ impl<'a> Printer<'a> {
         self.suppress_ns_qualification = prev_ns;
     }
 
+    /// Emit an object-property key without treating the key as a value reference.
+    pub(super) fn emit_property_key_name(&mut self, idx: NodeIndex) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+
+        if let Some(ident) = self.arena.get_identifier(node) {
+            let emit_text = ident
+                .original_text
+                .as_deref()
+                .unwrap_or(&ident.escaped_text);
+            self.write_identifier(emit_text);
+            return;
+        }
+
+        self.emit_decl_name(idx);
+    }
+
     /// Write a single character.
     pub(super) fn write_char(&mut self, ch: char) {
         if let Some(source_pos) = self.take_pending_source_pos() {

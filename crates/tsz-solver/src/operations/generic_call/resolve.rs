@@ -1492,18 +1492,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let should_defer_to_other_param =
                 appears_in_other_params && (has_covariant_candidates || saw_deferred_arg);
             if !should_defer_to_other_param {
-                let direct_rest_tuple = self
-                    .interner
-                    .lookup(tuple_type)
-                    .and_then(|data| match data {
-                        TypeData::Tuple(elements_id) => Some(self.interner.tuple_list(elements_id)),
-                        _ => None,
-                    })
-                    .is_some_and(|elements| elements.iter().all(|element| !element.rest));
-                let was_type_annotation = infer_ctx.source_is_type_annotation;
-                if direct_rest_tuple {
-                    infer_ctx.source_is_type_annotation = true;
-                }
                 self.constrain_types(
                     &mut infer_ctx,
                     &var_map,
@@ -1511,7 +1499,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     target_type,
                     crate::types::InferencePriority::NakedTypeVariable,
                 );
-                infer_ctx.source_is_type_annotation = was_type_annotation;
             }
         }
 
@@ -2807,13 +2794,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Validate `this` after final substitution so generic `this` params are fully
-        // instantiated (e.g. `this: T` -> `this: Y`).
+        // Validate `this` after substitution; resolved `this: void` opts out.
         if let Some(expected_this) = func.this_type {
             let expected_this =
                 instantiate_call_type(self.interner, expected_this, &final_subst, actual_this_type);
             let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
-            if !self.checker.is_assignable_to(actual_this, expected_this) {
+            let check_this = expected_this != TypeId::VOID;
+            if check_this && !self.checker.is_assignable_to(actual_this, expected_this) {
                 return CallResult::ThisTypeMismatch {
                     expected_this,
                     actual_this,

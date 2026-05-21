@@ -69,6 +69,36 @@ function runFixture(pullRequests, args = []) {
 
 assert.deepEqual(wipStateFindings([pr({ comments: [signedComment()] })]), []);
 
+assert.deepEqual(wipStateFindings([{
+  number: 456,
+  title: "fix(checker): graph shape",
+  isDraft: true,
+  labels: { nodes: [] },
+  timelineItems: {
+    nodes: [{
+      __typename: "ConvertToDraftEvent",
+      createdAt: "2026-05-19T00:00:00Z",
+      actor: { login: "mohsen1" },
+    }],
+  },
+  comments: {
+    nodes: [signedComment()],
+  },
+}]), []);
+
+assert.deepEqual(wipStateFindings([{
+  number: 789,
+  title: "fix(checker): rest timeline shape",
+  draft: true,
+  labels: [],
+  timeline: [{
+    event: "convert_to_draft",
+    created_at: "2026-05-19T00:00:00Z",
+    actor: { login: "mohsen1" },
+  }],
+  comments: [signedComment()],
+}]), []);
+
 assert.deepEqual(
   wipStateFindings([pr()]),
   [{
@@ -178,3 +208,128 @@ assert.match(enforce.stdout, /missing signed WIP-state comment/);
 const clean = runFixture([pr({ comments: [signedComment()] })], ["--enforce"]);
 assert.equal(clean.status, 0, clean.stderr);
 assert.match(clean.stdout, /No WIP-state comment gaps found/);
+
+const fakeLargeGhDir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-wip-state-large-gh-"));
+try {
+  const fakeGh = path.join(fakeLargeGhDir, "gh");
+  fs.writeFileSync(fakeGh, [
+    "#!/usr/bin/env node",
+    "const largeBody = 'x'.repeat(1024 * 1024 + 1);",
+    "console.log(JSON.stringify({ data: { repository: { pullRequests: { nodes: [{",
+    "  number: 321,",
+    "  title: 'chore(queue): large comment payload',",
+    "  isDraft: false,",
+    "  labels: { nodes: [] },",
+    "  timelineItems: { nodes: [] },",
+    "  comments: { nodes: [{ createdAt: '2026-05-19T00:00:00Z', body: largeBody, author: { login: 'mohsen1' } }] },",
+    "}] } } } }));",
+    "",
+  ].join("\n"));
+  fs.chmodSync(fakeGh, 0o755);
+  const largeResult = spawnSync(process.execPath, [
+    SCRIPT,
+    "--repository",
+    "owner/repo",
+    "--max-prs",
+    "1",
+  ], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${fakeLargeGhDir}${path.delimiter}${process.env.PATH || ""}`,
+    },
+  });
+  assert.equal(largeResult.status, 0, largeResult.stderr);
+  assert.match(largeResult.stdout, /No WIP-state comment gaps found/);
+} finally {
+  fs.rmSync(fakeLargeGhDir, { recursive: true, force: true });
+}
+
+const fakeRestFallbackDir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-wip-state-rest-fallback-"));
+try {
+  const fakeGh = path.join(fakeRestFallbackDir, "gh");
+  fs.writeFileSync(fakeGh, [
+    "#!/usr/bin/env node",
+    "const args = process.argv.slice(2);",
+    "const target = args.at(-1) || '';",
+    "if (args.includes('graphql')) {",
+    "  console.error('{\"errors\":[{\"type\":\"RATE_LIMIT\",\"code\":\"graphql_rate_limit\",\"message\":\"API rate limit already exceeded\"}]}');",
+    "  process.exit(1);",
+    "}",
+    "if (target.includes('/pulls?')) {",
+    "  console.log(JSON.stringify([{",
+    "    number: 654,",
+    "    title: 'fix(queue): rest fallback',",
+    "    draft: true,",
+    "    labels: [],",
+    "  }]));",
+    "  process.exit(0);",
+    "}",
+    "if (target.includes('/timeline?')) {",
+    "  console.log(JSON.stringify([{",
+    "    event: 'convert_to_draft',",
+    "    created_at: '2026-05-19T00:00:00Z',",
+    "    actor: { login: 'mohsen1' },",
+    "  }]));",
+    "  process.exit(0);",
+    "}",
+    "if (target.includes('/comments?') && target.includes('since=2026-05-19T00%3A00%3A00Z')) {",
+    "  console.log(JSON.stringify([{",
+    "    created_at: '2026-05-19T01:00:00Z',",
+    "    body: 'AgentName: TestAgent\\nReason: branch is blocked.\\nCurrent work: fixing CI.\\nNext action: mark ready after green.',",
+    "    user: { login: 'mohsen1' },",
+    "  }]));",
+    "  process.exit(0);",
+    "}",
+    "console.error(`unexpected gh target: ${target}`);",
+    "process.exit(1);",
+    "",
+  ].join("\n"));
+  fs.chmodSync(fakeGh, 0o755);
+  const fallbackResult = spawnSync(process.execPath, [
+    SCRIPT,
+    "--repository",
+    "owner/repo",
+    "--max-prs",
+    "1",
+  ], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${fakeRestFallbackDir}${path.delimiter}${process.env.PATH || ""}`,
+    },
+  });
+  assert.equal(fallbackResult.status, 0, fallbackResult.stderr);
+  assert.match(fallbackResult.stdout, /No WIP-state comment gaps found/);
+} finally {
+  fs.rmSync(fakeRestFallbackDir, { recursive: true, force: true });
+}
+
+const fakeGhDir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-wip-state-fake-gh-"));
+try {
+  const fakeGh = path.join(fakeGhDir, "gh");
+  fs.writeFileSync(fakeGh, "#!/usr/bin/env bash\nsleep 5\n");
+  fs.chmodSync(fakeGh, 0o755);
+  const timeoutResult = spawnSync(process.execPath, [
+    SCRIPT,
+    "--repository",
+    "owner/repo",
+    "--max-prs",
+    "1",
+    "--gh-timeout-ms",
+    "50",
+  ], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${fakeGhDir}${path.delimiter}${process.env.PATH || ""}`,
+    },
+  });
+  assert.equal(timeoutResult.status, 1, timeoutResult.stdout);
+  assert.match(timeoutResult.stderr, /timed out after 50ms/);
+} finally {
+  fs.rmSync(fakeGhDir, { recursive: true, force: true });
+}
