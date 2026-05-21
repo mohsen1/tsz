@@ -701,6 +701,10 @@ pub struct IRParam {
 pub struct IRSwitchCase {
     pub test: Option<IRNode>, // None for default case
     pub statements: Vec<IRNode>,
+    /// Render the (single) clause statement on the same line as the `case`
+    /// label, e.g. `case x: return [3 /*break*/, 2];`. tsc emits synthesized
+    /// single-statement clauses inline; user-authored clauses stay multi-line.
+    pub inline: bool,
 }
 
 /// Catch clause

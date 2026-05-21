@@ -71,6 +71,8 @@ mod discovery;
 mod loop_control;
 #[path = "async_es5_ir_state.rs"]
 mod state;
+#[path = "async_es5_ir_switch.rs"]
+mod switch;
 #[path = "async_es5_ir_try_region.rs"]
 mod try_region;
 
@@ -2743,6 +2745,15 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::LABELED_STATEMENT => {
                 self.process_labeled_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+            }
+
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                self.process_switch_statement_in_async(
                     idx,
                     cases,
                     current_statements,
