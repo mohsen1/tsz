@@ -846,6 +846,10 @@ name = "import_type_utility_identity_tests"
 path = "tests/import_type_utility_identity_tests.rs"
 
 [[test]]
+name = "import_type_ambient_module_member_tests"
+path = "tests/import_type_ambient_module_member_tests.rs"
+
+[[test]]
 name = "json_namespace_import_tests"
 path = "tests/json_namespace_import_tests.rs"
 
@@ -1156,6 +1160,10 @@ path = "tests/jsx_pragma_boundary_tests.rs"
 [[test]]
 name = "discriminant_narrow_function_lazy_preserved_tests"
 path = "tests/discriminant_narrow_function_lazy_preserved_tests.rs"
+
+[[test]]
+name = "discriminant_literal_reference_narrowing_tests"
+path = "tests/discriminant_literal_reference_narrowing_tests.rs"
 
 [[test]]
 name = "unique_symbol_discriminant_narrowing_tests"
