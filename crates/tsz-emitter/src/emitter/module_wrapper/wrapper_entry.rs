@@ -456,7 +456,10 @@ impl<'a> Printer<'a> {
         }
 
         self.write("System.register(");
-        if let Some(name) = self.ctx.options.bundled_module_name.clone() {
+        let system_module_name = self
+            .extract_amd_module_name()
+            .or_else(|| self.ctx.options.bundled_module_name.clone());
+        if let Some(name) = system_module_name {
             self.write("\"");
             self.write(&name);
             self.write("\", ");

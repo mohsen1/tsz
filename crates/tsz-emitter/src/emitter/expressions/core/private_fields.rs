@@ -586,62 +586,96 @@ impl<'a> Printer<'a> {
         // and between operator and right operand. TypeScript preserves these
         // line breaks and places the operator at the START of the continuation
         // line, not at the end of the current line.
-        let (has_newline_before_op, has_newline_after_op) = if let Some(text) = self.source_text {
-            if let (Some(left_node), Some(right_node)) =
-                (self.arena.get(binary.left), self.arena.get(binary.right))
-            {
-                let left_end = left_node.end as usize;
-                let right_start = right_node.pos as usize;
-                let end = std::cmp::min(right_start, text.len());
-                let start = std::cmp::min(left_end, end);
-                let gap = &text[start..end];
-                let gap_bytes = gap.as_bytes();
-                // Find operator position by skipping trivia (whitespace + comments)
-                let mut i = 0;
-                let mut op_offset = None;
-                while i < gap_bytes.len() {
-                    match gap_bytes[i] {
-                        b' ' | b'\t' | b'\r' | b'\n' => i += 1,
-                        b'/' if i + 1 < gap_bytes.len() && gap_bytes[i + 1] == b'/' => {
-                            i += 2;
-                            while i < gap_bytes.len() && gap_bytes[i] != b'\n' {
-                                i += 1;
-                            }
-                        }
-                        b'/' if i + 1 < gap_bytes.len() && gap_bytes[i + 1] == b'*' => {
-                            i += 2;
-                            while i + 1 < gap_bytes.len()
-                                && !(gap_bytes[i] == b'*' && gap_bytes[i + 1] == b'/')
-                            {
-                                i += 1;
-                            }
-                            if i + 1 < gap_bytes.len() {
+        let (has_newline_before_op, has_newline_after_op, op_start, op_end) =
+            if let Some(text) = self.source_text {
+                if let (Some(left_node), Some(right_node)) =
+                    (self.arena.get(binary.left), self.arena.get(binary.right))
+                {
+                    let left_end =
+                        self.find_token_end_before_trivia(left_node.pos, left_node.end) as usize;
+                    let right_start = right_node.pos as usize;
+                    let end = std::cmp::min(right_start, text.len());
+                    let start = std::cmp::min(left_end, end);
+                    let gap = &text[start..end];
+                    let gap_bytes = gap.as_bytes();
+                    // Find operator position by skipping trivia (whitespace + comments)
+                    let mut i = 0;
+                    let mut op_offset = None;
+                    while i < gap_bytes.len() {
+                        match gap_bytes[i] {
+                            b' ' | b'\t' | b'\r' | b'\n' => i += 1,
+                            b'/' if i + 1 < gap_bytes.len() && gap_bytes[i + 1] == b'/' => {
                                 i += 2;
+                                while i < gap_bytes.len() && gap_bytes[i] != b'\n' {
+                                    i += 1;
+                                }
                             }
-                        }
-                        _ => {
-                            op_offset = Some(i);
-                            break;
+                            b'/' if i + 1 < gap_bytes.len() && gap_bytes[i + 1] == b'*' => {
+                                i += 2;
+                                while i + 1 < gap_bytes.len()
+                                    && !(gap_bytes[i] == b'*' && gap_bytes[i + 1] == b'/')
+                                {
+                                    i += 1;
+                                }
+                                if i + 1 < gap_bytes.len() {
+                                    i += 2;
+                                }
+                            }
+                            _ => {
+                                op_offset = Some(i);
+                                break;
+                            }
                         }
                     }
-                }
-                if let Some(off) = op_offset {
-                    let op_len = get_operator_text(binary.operator_token).len();
-                    let before = &gap[..off];
-                    let after = &gap[off + op_len..];
-                    (before.contains('\n'), after.contains('\n'))
+                    if let Some(off) = op_offset {
+                        let op_len = get_operator_text(binary.operator_token).len();
+                        let before = &gap[..off];
+                        let after = &gap[off + op_len..];
+                        let abs_start = start + off;
+                        (
+                            before.contains('\n'),
+                            after.contains('\n'),
+                            Some(abs_start as u32),
+                            Some((abs_start + op_len) as u32),
+                        )
+                    } else {
+                        // Some parser spans include trailing trivia in the
+                        // left operand, so the strict gap can begin after the
+                        // operator. Fall back to the whole left-to-right span
+                        // and locate the final operator text before `right`.
+                        let op_text = get_operator_text(binary.operator_token);
+                        let broad_start = std::cmp::min(left_node.pos as usize, end);
+                        let broad_gap = &text[broad_start..end];
+                        if !op_text.is_empty()
+                            && let Some(off) = broad_gap.rfind(op_text)
+                        {
+                            let abs_start = broad_start + off;
+                            let op_len = op_text.len();
+                            let before_start = self
+                                .find_token_end_before_trivia(left_node.pos, abs_start as u32)
+                                as usize;
+                            let before_start = std::cmp::min(before_start, abs_start);
+                            let before = &text[before_start..abs_start];
+                            let after = &text[abs_start + op_len..end];
+                            (
+                                before.contains('\n'),
+                                after.contains('\n'),
+                                Some(abs_start as u32),
+                                Some((abs_start + op_len) as u32),
+                            )
+                        } else {
+                            // Operator absorbed by left.end; gap is between
+                            // operator end and right start. Any newlines are
+                            // AFTER the operator.
+                            (false, gap.contains('\n'), None, None)
+                        }
+                    }
                 } else {
-                    // Operator absorbed by left.end; gap is between
-                    // operator end and right start. Any newlines are
-                    // AFTER the operator.
-                    (false, gap.contains('\n'))
+                    (false, false, None, None)
                 }
             } else {
-                (false, false)
-            }
-        } else {
-            (false, false)
-        };
+                (false, false, None, None)
+            };
         let has_newline_before_right = has_newline_before_op || has_newline_after_op;
 
         // Comma operator: no space before, space after (e.g., `(1, 2, 3)`)
@@ -665,10 +699,18 @@ impl<'a> Printer<'a> {
             if has_newline_before_op && has_newline_after_op {
                 // Operator on its own line, right operand further indented
                 // e.g., source: `a\n    +\n    b` → `a\n    +\n        b`
-                self.write_line();
+                let emitted_before_comment_line =
+                    self.emit_binary_comments_before_operator(binary.left, op_start);
+                if !emitted_before_comment_line {
+                    self.write_line();
+                }
                 self.increase_indent();
                 self.write(get_operator_text(binary.operator_token));
-                self.write_line();
+                let emitted_after_comment_line =
+                    self.emit_binary_comments_after_operator(op_end, binary.right);
+                if !emitted_after_comment_line {
+                    self.write_line();
+                }
                 self.increase_indent();
                 if !is_assignment_or_comma {
                     self.ctx.flags.optional_chain_needs_parens = true;
@@ -685,7 +727,11 @@ impl<'a> Printer<'a> {
             if has_newline_before_op {
                 // Operator at start of continuation line with right operand
                 // e.g., source: `a\n    + b` → `a\n    + b`
-                self.write_line();
+                let emitted_comment_line =
+                    self.emit_binary_comments_before_operator(binary.left, op_start);
+                if !emitted_comment_line {
+                    self.write_line();
+                }
                 self.increase_indent();
                 self.write(get_operator_text(binary.operator_token));
                 self.write_space();
@@ -705,7 +751,11 @@ impl<'a> Printer<'a> {
                 // e.g., source: `a ||\n    b` → `a ||\n    b`
                 self.write(" ");
                 self.write(get_operator_text(binary.operator_token));
-                self.write_line();
+                let emitted_comment_line =
+                    self.emit_binary_comments_after_operator(op_end, binary.right);
+                if !emitted_comment_line {
+                    self.write_line();
+                }
                 self.increase_indent();
                 if !is_assignment_or_comma {
                     self.ctx.flags.optional_chain_needs_parens = true;
@@ -731,6 +781,52 @@ impl<'a> Printer<'a> {
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
         self.ctx.flags.in_binary_operand = prev_in_binary;
+    }
+
+    fn emit_binary_comments_before_operator(
+        &mut self,
+        left: NodeIndex,
+        op_start: Option<u32>,
+    ) -> bool {
+        let Some(op_start) = op_start else {
+            return false;
+        };
+        let Some(left_node) = self.arena.get(left) else {
+            return false;
+        };
+        let left_end = self.find_token_end_before_trivia(left_node.pos, op_start);
+        if self.has_unemitted_comment_between(left_end, op_start) {
+            self.write_space();
+        }
+        self.emit_unemitted_comments_between(left_end, op_start)
+    }
+
+    fn emit_binary_comments_after_operator(
+        &mut self,
+        op_end: Option<u32>,
+        right: NodeIndex,
+    ) -> bool {
+        let Some(op_end) = op_end else {
+            return false;
+        };
+        let Some(right_node) = self.arena.get(right) else {
+            return false;
+        };
+        if !self.has_unemitted_comment_between(op_end, right_node.pos) {
+            return false;
+        }
+        self.write_space();
+        self.emit_unemitted_comments_between(op_end, right_node.pos)
+    }
+
+    fn has_unemitted_comment_between(&self, from_pos: u32, to_pos: u32) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+        self.all_comments
+            .iter()
+            .skip(self.comment_emit_idx)
+            .any(|comment| comment.pos >= from_pos && comment.end <= to_pos)
     }
 
     fn assignment_left_is_recovered_super(&self, left: NodeIndex, op: u16) -> bool {
