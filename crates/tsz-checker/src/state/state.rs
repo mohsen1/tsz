@@ -1141,6 +1141,10 @@ impl<'a> CheckerState<'a> {
     /// non-trivial `this:` constraint AND the callee expression is a property
     /// or element access. Both conditions must hold to avoid perturbing
     /// generic inference for the dominant `this`-less or bare-identifier case.
+    ///
+    /// A `this:` constraint is trivial when it is `any`, `unknown`, `void`,
+    /// `undefined`, `null`, or `error` — the same set the solver's call
+    /// resolver already treats as "no real receiver required."
     pub(crate) fn call_site_receiver_type(
         &mut self,
         callee_type: TypeId,
