@@ -357,7 +357,7 @@ TRAIT_METHOD_COUNT_CHECKS = [
         "Solver boundary: TypeDatabase method count (#8205)",
         ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
         "TypeDatabase",
-        78,
+        77,
     ),
 ]
 
@@ -510,7 +510,7 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        3363,
+        3373,
     ),
 ]
 

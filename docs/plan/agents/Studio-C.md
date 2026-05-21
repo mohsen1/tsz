@@ -46,22 +46,22 @@ scripts/agents/list-owned-work.sh Studio-C
 
 ## Existing Work To Inspect First
 
-- `#9874` ready: empty binding evaluation emit fix. Auto-merge is enabled, but
-  CI is blocked by shared checker `query_boundaries::common` architecture-guard
-  cap drift rather than by the emitter diff. Recheck after the shared lint cap
-  is restored or intentionally updated.
+- `#9874` draft: empty binding evaluation emit fix. Refreshed onto the merged
+  shared architecture-cap unblocker `#9899`; inspect the latest draft-light CI
+  and mark ready only after the refreshed head is clean.
 - `#9879` draft: ES5 class property initializer outer block-scope rename map.
-  Latest handoff says its lint failure is the same shared checker cap drift on
-  an older base; refresh/rebase before further emitter investigation.
-- `#9831` draft: System-module export destructuring binding patterns. Current
-  draft-light run is also blocked by the shared checker lint cap; resume after
-  that clears.
+  Refreshed onto `#9899` after resolving its temporary local cap-bump conflict;
+  inspect the latest draft-light CI before further emitter investigation.
+- `#9831` draft: System-module export destructuring binding patterns. Refreshed
+  onto `#9899` from the remote PR head after the local worktree branch proved
+  stale; inspect the latest draft-light CI for branch-local failures.
 - `#9553` draft: async ES5 binary expressions, assignment targets, and control
-  flow. Current draft-light run is also blocked by the shared checker lint cap;
-  resume after that clears.
+  flow. Refreshed onto `#9899`; inspect the latest draft-light CI, especially
+  any unit Cloud Build timeout, before marking ready.
 - `#9645` draft: suspending switch statements in the ES5 generator state
-  machine. It is older async/generator overlap; only touch it to land, close,
-  or refresh a clear handoff.
+  machine. Refreshed onto `#9899`; it was previously ready/auto-merge before
+  queue safety moved it back to draft, so promote it only after the refreshed
+  light CI is clean and no new emitter-specific failure appears.
 - Confirm current state with `scripts/agents/list-owned-work.sh Studio-C` each
   cycle because labels and CI can change quickly.
 
