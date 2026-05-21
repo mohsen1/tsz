@@ -804,34 +804,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && !bindings.is_empty()
         {
             let substituted_true = self.substitute_infer(cond.true_type, bindings);
-            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                if let Some(TypeData::Conditional(next_cond_id)) =
-                    self.interner().lookup(substituted_true)
-                {
-                    return ConditionalStepOutcome::TailCall {
-                        next_cond: self.interner().get_conditional(next_cond_id),
-                        application_branch: None,
-                    };
-                }
-                if let Some(instantiated) =
-                    self.try_instantiate_application_for_tail_call(substituted_true)
-                {
-                    if let Some(TypeData::Conditional(next_cond_id)) =
-                        self.interner().lookup(instantiated)
-                    {
-                        return ConditionalStepOutcome::TailCall {
-                            next_cond: self.interner().get_conditional(next_cond_id),
-                            application_branch: Some(substituted_true),
-                        };
-                    }
-                    self.apparent_conditional_branch = Some(substituted_true);
-                    return ConditionalStepOutcome::Done(
-                        self.evaluate_preserving_tail_application_branch_alias(
-                            instantiated,
-                            Some(substituted_true),
-                        ),
-                    );
-                }
+            if let Some(outcome) = self.try_tail_call_branch(substituted_true, tail_recursion_count)
+            {
+                return outcome;
             }
             if matches!(
                 self.interner().lookup(substituted_true),
@@ -937,43 +912,54 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // All infer attempts failed — take the false branch. Check for tail-recursion.
-        if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-            if let Some(TypeData::Conditional(next_cond_id)) =
-                self.interner().lookup(cond.false_type)
-            {
-                return ConditionalStepOutcome::TailCall {
-                    next_cond: self.interner().get_conditional(next_cond_id),
-                    application_branch: None,
-                };
-            }
-            if let Some(instantiated) =
-                self.try_instantiate_application_for_tail_call(cond.false_type)
-            {
-                if let Some(TypeData::Conditional(next_cond_id)) =
-                    self.interner().lookup(instantiated)
-                {
-                    return ConditionalStepOutcome::TailCall {
-                        next_cond: self.interner().get_conditional(next_cond_id),
-                        application_branch: Some(cond.false_type),
-                    };
-                }
-                self.apparent_conditional_branch = Some(cond.false_type);
-                return ConditionalStepOutcome::Done(
-                    self.evaluate_preserving_tail_application_branch_alias(
-                        instantiated,
-                        Some(cond.false_type),
-                    ),
-                );
-            }
-            if matches!(
+        if let Some(outcome) = self.try_tail_call_branch(cond.false_type, tail_recursion_count) {
+            return outcome;
+        }
+        if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH
+            && matches!(
                 self.interner().lookup(cond.false_type),
                 Some(TypeData::Application(_))
-            ) {
-                self.apparent_conditional_branch = Some(cond.false_type);
-            }
+            )
+        {
+            self.apparent_conditional_branch = Some(cond.false_type);
         }
 
         ConditionalStepOutcome::Done(self.evaluate(cond.false_type))
+    }
+
+    /// Try to convert `branch` into a tail call for the outer `evaluate_conditional` loop.
+    ///
+    /// Returns `Some(TailCall)` when `branch` is directly a `Conditional` or expands to one via
+    /// `try_instantiate_application_for_tail_call`. Returns `None` when no tail call is possible;
+    /// the caller must evaluate `branch` normally.
+    fn try_tail_call_branch(
+        &mut self,
+        branch: TypeId,
+        tail_recursion_count: usize,
+    ) -> Option<ConditionalStepOutcome> {
+        if tail_recursion_count >= Self::MAX_TAIL_RECURSION_DEPTH {
+            return None;
+        }
+        if let Some(TypeData::Conditional(next_cond_id)) = self.interner().lookup(branch) {
+            return Some(ConditionalStepOutcome::TailCall {
+                next_cond: self.interner().get_conditional(next_cond_id),
+                application_branch: None,
+            });
+        }
+        if let Some(instantiated) = self.try_instantiate_application_for_tail_call(branch) {
+            if let Some(TypeData::Conditional(next_cond_id)) = self.interner().lookup(instantiated)
+            {
+                return Some(ConditionalStepOutcome::TailCall {
+                    next_cond: self.interner().get_conditional(next_cond_id),
+                    application_branch: Some(branch),
+                });
+            }
+            self.apparent_conditional_branch = Some(branch);
+            return Some(ConditionalStepOutcome::Done(
+                self.evaluate_preserving_tail_application_branch_alias(instantiated, Some(branch)),
+            ));
+        }
+        None
     }
 
     /// Subtype-check phase of `evaluate_conditional` (when `!extends_has_infer`).
@@ -1067,7 +1053,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             "conditional subtype check result"
         );
         let result_branch = if is_sub {
-            // T <: U -> true branch
             cond.true_type
         } else if extends_has_type_params
             // Also check if the evaluated check_type is a direct Lazy reference
@@ -1087,9 +1072,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Defer so a later resolver pass (CheckerContext) can expand it.
             || matches!(self.interner().lookup(extends_type), Some(TypeData::Application(_)))
         {
-            // Subtype check failed, but either side contains unresolved type
-            // parameters or lazy references. The result is indeterminate: once
-            // the type parameters are instantiated, the relationship might change.
             return ConditionalStepOutcome::Done(self.interner().conditional(ConditionalType {
                 check_type,
                 extends_type,
@@ -1098,48 +1080,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 is_distributive: cond.is_distributive,
             }));
         } else {
-            // Types are definitely not in a subtype relationship and extends_type
-            // has no type parameters — take the false branch.
             cond.false_type
         };
 
-        // Check if the result branch is directly a conditional for tail-recursion.
-        // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth.
-        if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-            if let Some(TypeData::Conditional(next_cond_id)) = self.interner().lookup(result_branch)
-            {
-                return ConditionalStepOutcome::TailCall {
-                    next_cond: self.interner().get_conditional(next_cond_id),
-                    application_branch: None,
-                };
-            }
-            // Also detect Application that expands to Conditional (tail-call through
-            // type alias like `TrimLeft<R>` which is Application, not Conditional).
-            if let Some(instantiated) =
-                self.try_instantiate_application_for_tail_call(result_branch)
-            {
-                if let Some(TypeData::Conditional(next_cond_id)) =
-                    self.interner().lookup(instantiated)
-                {
-                    return ConditionalStepOutcome::TailCall {
-                        next_cond: self.interner().get_conditional(next_cond_id),
-                        application_branch: Some(result_branch),
-                    };
-                }
-                self.apparent_conditional_branch = Some(result_branch);
-                return ConditionalStepOutcome::Done(
-                    self.evaluate_preserving_tail_application_branch_alias(
-                        instantiated,
-                        Some(result_branch),
-                    ),
-                );
-            }
-            if matches!(
+        if let Some(outcome) = self.try_tail_call_branch(result_branch, tail_recursion_count) {
+            return outcome;
+        }
+        if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH
+            && matches!(
                 self.interner().lookup(result_branch),
                 Some(TypeData::Application(_))
-            ) {
-                self.apparent_conditional_branch = Some(result_branch);
-            }
+            )
+        {
+            self.apparent_conditional_branch = Some(result_branch);
         }
 
         ConditionalStepOutcome::Done(self.evaluate_preserving_tail_application_branch_alias(
