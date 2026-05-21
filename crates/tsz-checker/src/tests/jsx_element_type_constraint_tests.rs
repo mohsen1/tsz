@@ -5,10 +5,16 @@
 //! — is the authoritative constraint for what can appear as a JSX
 //! component. Source: `compiler/jsxElementType.tsx`.
 
+use crate::CheckerOptions;
+use crate::test_utils::check_source;
 use crate::test_utils::check_source_codes_named;
 
 fn diag_codes(source: &str) -> Vec<u32> {
     check_source_codes_named(source, "test.tsx")
+}
+
+fn diagnostics(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+    check_source(source, "test.tsx", CheckerOptions::default())
 }
 
 const JSX_ELEMENT_TYPE_PRELUDE: &str = r#"
@@ -112,6 +118,101 @@ const _ = <Label title="ok" />;
     assert!(
         !codes.contains(&2786),
         "Generic alias ElementType admits string-returning function. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_element_type_alias_assignment_admits_primitive_returning_components() {
+    let source = format!(
+        r#"
+{JSX_ALIAS_APPLICATION_ELEMENT_TYPE_PRELUDE}
+type MergePropTypes<P, T> = P;
+type Defaultize<P, D> = P;
+declare namespace PropTypes {{
+    type InferProps<T> = any;
+}}
+declare global {{
+    namespace JSX {{
+        interface IntrinsicAttributes {{}}
+        type LibraryManagedAttributes<C, P> =
+            C extends {{ propTypes: infer T; defaultProps: infer D; }}
+                ? Defaultize<MergePropTypes<P, PropTypes.InferProps<T>>, D>
+                : C extends {{ propTypes: infer T; }}
+                    ? MergePropTypes<P, PropTypes.InferProps<T>>
+                    : C extends {{ defaultProps: infer D; }}
+                        ? Defaultize<P, D>
+                        : P;
+    }}
+}}
+let Component: JSX.ComponentLike<{{ title: string }}>;
+const Caption = ({{ title }}: {{ title: string }}) => title;
+const Count = ({{ title }}: {{ title: string }}) => title.length;
+Component = Caption;
+Component = Count;
+const a = <Caption extra />;
+const b = <Count extra />;
+"#
+    );
+    let diagnostics = diagnostics(&source);
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code == 2322
+                    && diag
+                        .message_text
+                        .contains("not assignable to type 'JSX.ComponentLike")
+            })
+            .count()
+            == 0,
+        "ElementType constructor alias assignment should not emit TS2322 for primitive returns. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_generic_lma_display_uses_constraint_props_after_invalid_two_param_component() {
+    let source = r#"
+declare namespace React {
+    interface ReactElement<P = any> {}
+    type ForwardedRef<T> = unknown;
+}
+declare global {
+    namespace JSX {
+        interface Element extends React.ReactElement<any> {}
+        interface IntrinsicAttributes {}
+        interface IntrinsicElements {}
+        type LibraryManagedAttributes<C, P> =
+            C extends { propTypes: infer T; defaultProps: infer D; }
+                ? P
+                : C extends { propTypes: infer T; }
+                    ? P
+                    : C extends { defaultProps: infer D; }
+                        ? P
+                        : P;
+        type ElementType = string | ((props: any) => React.ReactElement<any>);
+    }
+}
+
+function IgnoredPrior(props: {}, ref: React.ForwardedRef<typeof IgnoredPrior>) {
+    return null;
+}
+<IgnoredPrior />;
+
+function wrap<T extends (props: {}) => React.ReactElement<any>>(Component: T) {
+    return <Component />;
+}
+"#;
+    let diagnostics = diagnostics(source);
+    let generic_diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322 && diag.message_text.contains("LibraryManagedAttributes"))
+        .expect("expected generic LibraryManagedAttributes TS2322");
+    assert!(
+        generic_diag
+            .message_text
+            .contains("LibraryManagedAttributes<T, {}>")
+            && !generic_diag.message_text.contains("IgnoredPrior"),
+        "Generic LMA display should use the type-parameter constraint props, got: {generic_diag:?}"
     );
 }
 

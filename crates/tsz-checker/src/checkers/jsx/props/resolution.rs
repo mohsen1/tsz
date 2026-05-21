@@ -1627,6 +1627,7 @@ impl<'a> CheckerState<'a> {
             && !skip_prop_checks
             && !has_prop_type_error
             && props_is_type_param
+            && !self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
             && !spread_satisfies_type_param
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
@@ -1710,15 +1711,36 @@ impl<'a> CheckerState<'a> {
                             )
                         })
                         .and_then(|component| {
-                            let props_type = self
+                            let mut props_type = self
                                 .get_jsx_type_parameter_callable_constraint_props_type(component)
                                 .unwrap_or(props_type);
+                            if provided_attrs.is_empty()
+                                && (!crate::query_boundaries::checkers::jsx::has_object_shape(
+                                    self.ctx.types,
+                                    props_type,
+                                ) || self.jsx_type_contains_callable_surface(props_type))
+                            {
+                                props_type = attrs_type;
+                            }
                             self.get_jsx_library_managed_attributes_application(
                                 component, props_type,
                             )
                         })
+                        .or_else(|| {
+                            if provided_attrs.is_empty() {
+                                let component = self
+                                    .jsx_library_managed_attributes_application_args(raw_props_type)
+                                    .and_then(|args| args.first().copied())?;
+                                return self.get_jsx_library_managed_attributes_application(
+                                    component, attrs_type,
+                                );
+                            }
+                            None
+                        })
                         .unwrap_or(raw_props_type);
-                    let mut target = self.format_type(display_props_type);
+                    let mut target = self
+                        .jsx_library_managed_structural_props_display(display_props_type)
+                        .unwrap_or_else(|| self.format_type(display_props_type));
                     if target.starts_with("LibraryManagedAttributes<")
                         && target.ends_with(", Element>")
                     {
@@ -2106,18 +2128,23 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> bool {
-        let Some((base, _args)) =
-            crate::query_boundaries::state::type_environment::application_info(
-                self.ctx.types,
-                type_id,
-            )
-        else {
-            return false;
-        };
+        self.jsx_library_managed_attributes_application_args(type_id)
+            .is_some()
+    }
+
+    fn jsx_library_managed_attributes_application_args(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<Vec<TypeId>> {
+        let (base, args) = crate::query_boundaries::state::type_environment::application_info(
+            self.ctx.types,
+            type_id,
+        )?;
         let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
-            return false;
+            return None;
         };
         self.get_symbol_globally(sym_id)
             .is_some_and(|symbol| symbol.escaped_name == "LibraryManagedAttributes")
+            .then_some(args)
     }
 }

@@ -86,6 +86,12 @@ impl<'a> CheckerState<'a> {
             {
                 return fallback;
             }
+            if !has_managed_props_metadata
+                && !jsx_boundary::has_object_shape(self.ctx.types, evaluated)
+                && jsx_boundary::has_object_shape(self.ctx.types, props_type)
+            {
+                return props_type;
+            }
             // LMA evaluation can produce an intersection whose members are still
             // unreduced applications when the user-defined helper alias inside
             // the conditional (e.g. React's distributive `Defaultize<P, D>` built
@@ -310,10 +316,21 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let constraint =
             crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_param)?;
-        let constraint = self.normalize_jsx_component_type_for_resolution(constraint);
 
+        if let Some(props) = self.jsx_callable_props_type_from_constraint_surface(constraint) {
+            return Some(props);
+        }
+
+        let normalized = self.normalize_jsx_component_type_for_resolution(constraint);
+        self.jsx_callable_props_type_from_constraint_surface(normalized)
+    }
+
+    fn jsx_callable_props_type_from_constraint_surface(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
         if let Some(shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, constraint)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
             && !shape.is_constructor
         {
             return Some(
@@ -326,7 +343,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let sigs =
-            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, constraint)?;
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, type_id)?;
         let non_generic: Vec<_> = sigs
             .iter()
             .filter(|sig| sig.type_params.is_empty())

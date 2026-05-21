@@ -1884,6 +1884,57 @@ fn jsx_library_managed_attributes_function_variable_display_uses_param_props() {
     );
 }
 
+#[test]
+fn jsx_element_type_lma_without_metadata_uses_raw_function_props_for_excess() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type MergePropTypes<P, T> = P;
+        type Defaultize<P, D> = P;
+        declare namespace PropTypes {
+            type InferProps<T> = any;
+        }
+        type CustomElementConstructor<P> =
+            | ((props: P) => JSX.Element | string)
+            | (new (props: P) => { render(): JSX.Element | string });
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements { div: {}; }
+            interface IntrinsicAttributes {}
+            type ElementType = string | CustomElementConstructor<any>;
+            type LibraryManagedAttributes<C, P> =
+                C extends { propTypes: infer T; defaultProps: infer D; }
+                    ? Defaultize<MergePropTypes<P, PropTypes.InferProps<T>>, D>
+                    : C extends { propTypes: infer T; }
+                        ? MergePropTypes<P, PropTypes.InferProps<T>>
+                        : C extends { defaultProps: infer D; }
+                            ? Defaultize<P, D>
+                            : P;
+        }
+
+        const Caption = ({ label }: { label: string }) => label;
+        <Caption spare />;
+        "#,
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one excess-prop TS2322, got: {diagnostics:?}"
+    );
+    let message = &ts2322[0].message_text;
+    assert!(
+        message.contains("IntrinsicAttributes & { label: string; }"),
+        "Expected TS2322 to target raw function props, got: {ts2322:?}"
+    );
+    assert!(
+        !message.contains("propTypes: infer") && !message.contains("CustomElementConstructor"),
+        "TS2322 should not expose unresolved LMA or ElementType constructor text, got: {ts2322:?}"
+    );
+}
+
 /// Reproduces conformance test `compiler/ignoredJsxAttributes.tsx`. When a
 /// function component has no `propTypes`/`defaultProps`, TS2741's target-type
 /// display must use the props alias (`Props`), not the unevaluated
