@@ -101,6 +101,32 @@ pub(crate) fn typeof_switch_domain(
     }
 }
 
+/// Compute the possible switch discriminant type for `left ?? right`.
+///
+/// The checker owns recognizing a nullish-coalescing switch expression and
+/// resolving each operand to a `TypeId`. This boundary owns the reusable flow
+/// type algebra: remove nullish from the left operand and fall back to the
+/// right operand when the left side is wholly nullish.
+pub(crate) fn nullish_coalescing_switch_domain(
+    db: &dyn TypeDatabase,
+    left_type: TypeId,
+    right_type: TypeId,
+) -> Option<TypeId> {
+    if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
+        return None;
+    }
+
+    let left_non_nullish = super::flow::narrow_optional_chain(db, left_type);
+    if left_non_nullish == TypeId::ERROR {
+        return None;
+    }
+    if left_non_nullish == TypeId::NEVER {
+        return Some(right_type);
+    }
+
+    Some(union_types(db, vec![left_non_nullish, right_type]))
+}
+
 pub(crate) fn cases_exhaust_type(
     db: &dyn QueryDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
@@ -577,5 +603,44 @@ mod tests {
         assert_eq!(members.len(), 2);
         assert!(members.contains(&db.literal_string("string")));
         assert!(members.contains(&db.literal_string("number")));
+    }
+
+    #[test]
+    fn nullish_coalescing_switch_domain_rejects_error_operands() {
+        let db = TypeInterner::new();
+
+        assert_eq!(
+            nullish_coalescing_switch_domain(&db, TypeId::ERROR, TypeId::STRING),
+            None
+        );
+        assert_eq!(
+            nullish_coalescing_switch_domain(&db, TypeId::STRING, TypeId::ERROR),
+            None
+        );
+    }
+
+    #[test]
+    fn nullish_coalescing_switch_domain_uses_right_when_left_is_nullish() {
+        let db = TypeInterner::new();
+        let left = db.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
+
+        assert_eq!(
+            nullish_coalescing_switch_domain(&db, left, TypeId::STRING),
+            Some(TypeId::STRING)
+        );
+    }
+
+    #[test]
+    fn nullish_coalescing_switch_domain_unions_non_nullish_left_and_right() {
+        let db = TypeInterner::new();
+        let left = db.union(vec![TypeId::NULL, TypeId::NUMBER]);
+
+        let Some(domain) = nullish_coalescing_switch_domain(&db, left, TypeId::STRING) else {
+            panic!("expected switch domain for number | null ?? string");
+        };
+        let members = union_members_for_type(&db, domain).unwrap_or_else(|| vec![domain]);
+        assert_eq!(members.len(), 2);
+        assert!(members.contains(&TypeId::NUMBER));
+        assert!(members.contains(&TypeId::STRING));
     }
 }
