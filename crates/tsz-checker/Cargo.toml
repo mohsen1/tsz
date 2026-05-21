@@ -1501,5 +1501,9 @@ path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
 name = "type_parameter_canonical_typeid_tests"
 path = "tests/type_parameter_canonical_typeid_tests.rs"
 
+[[test]]
+name = "mapped_keyof_index_access_tests"
+path = "tests/mapped_keyof_index_access_tests.rs"
+
 [lints]
 workspace = true

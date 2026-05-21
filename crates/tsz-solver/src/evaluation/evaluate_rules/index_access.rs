@@ -1607,7 +1607,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.constraints_semantically_match(index_constraint, mapped.constraint)
                     || self.constraints_semantically_match(index_type, mapped.constraint)
             }),
-            _ => generic_covering_index.is_some(),
+            // When the index is a non-TypeParameter generic (e.g. `keyof T` used directly as
+            // the index type), check whether it semantically matches the mapped constraint.
+            // Example: `{ [k in keyof T]: V }[keyof T]` — both index and constraint are
+            // `keyof T`, so the mapped value type `V` is the result.
+            _ => {
+                generic_covering_index.is_some()
+                    || self.constraints_semantically_match(index_type, mapped.constraint)
+            }
         };
 
         if !constraint_matches {
