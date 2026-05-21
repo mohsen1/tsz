@@ -617,6 +617,11 @@ impl<'a> DeclarationEmitter<'a> {
                         element_types.push(item_type);
                     }
                 }
+                // tsc normalizes object literals in a union upon widening, so
+                // a JSON array of object literals with differing keys gains an
+                // optional `key?: undefined` member on every arm that omits a
+                // sibling key — the same rule applied to source array literals.
+                Self::expand_object_union_arms_from_sibling_properties(&mut element_types);
                 if element_types.is_empty() {
                     "any[]".to_string()
                 } else if element_types.len() == 1 {
