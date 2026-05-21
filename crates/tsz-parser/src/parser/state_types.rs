@@ -16,8 +16,7 @@ impl ParserState {
     }
 
     pub(crate) fn finish_type_member_container_close_brace(&mut self) -> u32 {
-        if self.deferred_type_member_close_braces > 0 && self.is_token(SyntaxKind::CloseBraceToken)
-        {
+        if self.deferred_type_member_close_braces > 0 {
             self.deferred_type_member_close_braces -= 1;
             self.token_pos()
         } else {
@@ -47,30 +46,25 @@ impl ParserState {
         );
 
         if self.is_statement_start() {
-            while !self.is_token(SyntaxKind::SemicolonToken)
-                && !self.is_token(SyntaxKind::CloseBraceToken)
-                && !self.is_token(SyntaxKind::EndOfFileToken)
-            {
-                self.next_token();
-            }
-
-            // For malformed type members that start like expressions (for example `<-`),
-            // tsc reports TS1109 at the synchronizing `}` instead of surfacing that
-            // `}` as a top-level TS1128 stray-brace diagnostic.
-            if started_with_expression_like_member && self.is_token(SyntaxKind::CloseBraceToken) {
-                self.parse_error_at_current_token(
-                    "Expression expected.",
-                    tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
-                );
-                return true;
-            }
-
-            if self.is_token(SyntaxKind::SemicolonToken) {
-                self.next_token();
-            }
             self.deferred_type_member_close_braces = self
                 .deferred_type_member_close_braces
                 .max(self.type_member_container_depth);
+            // For malformed type members that start like expressions (for example `<-`),
+            // tsc reports TS1109 at the synchronizing `}` instead of surfacing that
+            // `}` as a top-level TS1128 stray-brace diagnostic.
+            if started_with_expression_like_member {
+                while !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    self.next_token();
+                }
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    self.parse_error_at_current_token(
+                        "Expression expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
+                }
+            }
             true
         } else {
             // Narrow recovery: `<-` inside a type member should surface TS1109 at

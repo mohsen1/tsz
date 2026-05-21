@@ -305,6 +305,10 @@ impl ParserState {
                 members.push(member);
             }
 
+            if self.deferred_type_member_close_braces >= self.type_member_container_depth {
+                break;
+            }
+
             self.parse_type_member_separator_with_asi();
 
             // If we didn't make progress, emit TS1131 and skip tokens to avoid infinite loops.
@@ -1048,17 +1052,11 @@ impl ParserState {
 
         if self.is_token(SyntaxKind::IsKeyword) {
             // `[index: number]: p1 is C;` is not a valid index-signature type.
-            // TSC reports the missing separator at `is`, skips the invalid tail,
-            // and leaves the closing brace to surface as a stray declaration.
+            // TSC reports the missing separator at `is` and then recovers the
+            // invalid tail as ordinary statements after the interface body is
+            // abandoned. Leave the `is C` tokens in the stream so emit can
+            // preserve the recovered expression statements.
             self.error_token_expected(";");
-            self.next_token();
-            while !self.is_token(SyntaxKind::SemicolonToken)
-                && !self.is_token(SyntaxKind::CloseBraceToken)
-                && !self.is_token(SyntaxKind::EndOfFileToken)
-            {
-                self.next_token();
-            }
-            self.parse_optional(SyntaxKind::SemicolonToken);
             self.deferred_type_member_close_braces = self
                 .deferred_type_member_close_braces
                 .max(self.type_member_container_depth);

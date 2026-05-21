@@ -543,23 +543,24 @@ impl ParserState {
                             continue;
                         }
                     }
-                    if self.is_token(SyntaxKind::IsKeyword) {
+                    if self.is_token(SyntaxKind::IsKeyword) && self.is_parameter_start() {
                         // `function f(a: b is A)` is not a legal parameter type
-                        // predicate. TSC treats both `is` and the following type
-                        // name as list elements missing commas.
+                        // predicate. TSC recovers by treating both `is` and the
+                        // following type name as parameter-list elements with
+                        // missing commas, so leave `is` for the next iteration
+                        // instead of consuming it as type syntax.
+                        let snapshot = self.scanner.save_state();
+                        let saved_token = self.current_token;
                         self.next_token();
-                        if !matches!(
-                            self.token(),
-                            SyntaxKind::CommaToken
-                                | SyntaxKind::CloseParenToken
-                                | SyntaxKind::OpenBraceToken
-                                | SyntaxKind::EndOfFileToken
-                        ) {
-                            self.parse_companion_error_at_current_token(
+                        if self.is_parameter_start() {
+                            self.parse_error_at_current_token(
                                 "',' expected.",
                                 tsz_common::diagnostics::diagnostic_codes::EXPECTED,
                             );
                         }
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = saved_token;
+                        continue;
                     }
                     if is_rest_param && self.is_parameter_start() {
                         // `...public rest: T` is invalid, but tsc recovers as if

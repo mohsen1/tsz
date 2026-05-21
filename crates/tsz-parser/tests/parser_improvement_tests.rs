@@ -238,7 +238,7 @@ const fn = (a: number, b: string)
 #[test]
 fn parameter_type_predicate_tail_reports_comma_at_type_name() {
     let source = "function b2(a: b is A) {};";
-    let (parser, _root) = parse_source(source);
+    let (parser, root) = parse_source(source);
     let line_map = LineMap::build(source);
 
     let fingerprints: Vec<(u32, u32, u32, String)> = parser
@@ -273,12 +273,32 @@ fn parameter_type_predicate_tail_reports_comma_at_type_name() {
         )),
         "expected TS1005 at the predicate type name, got {fingerprints:?}"
     );
+
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(root).unwrap();
+    let function_node = arena.get(source_file.statements.nodes[0]).unwrap();
+    let function = arena.get_function(function_node).unwrap();
+    let parameter_texts: Vec<&str> = function
+        .parameters
+        .nodes
+        .iter()
+        .map(|&param_idx| {
+            let param = arena.get_parameter(arena.get(param_idx).unwrap()).unwrap();
+            let name = arena.get(param.name).unwrap();
+            &source[name.pos as usize..name.end as usize]
+        })
+        .collect();
+    assert_eq!(
+        parameter_texts,
+        vec!["a", "is", "A"],
+        "invalid parameter type predicates should recover the tail as parameter names"
+    );
 }
 
 #[test]
 fn index_signature_type_predicate_tail_defers_close_brace() {
     let source = "interface I2 {\n    [index: number]: p1 is C;\n}\n";
-    let (parser, _root) = parse_source(source);
+    let (parser, root) = parse_source(source);
     let line_map = LineMap::build(source);
 
     let fingerprints: Vec<(u32, u32, u32, String)> = parser
@@ -312,6 +332,82 @@ fn index_signature_type_predicate_tail_defers_close_brace() {
             "Declaration or statement expected.".to_string()
         )),
         "expected TS1128 at the deferred interface close brace, got {fingerprints:?}"
+    );
+
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(root).unwrap();
+    let statement_kinds: Vec<u16> = source_file
+        .statements
+        .nodes
+        .iter()
+        .map(|&stmt_idx| arena.get(stmt_idx).unwrap().kind)
+        .collect();
+    assert_eq!(
+        statement_kinds,
+        vec![
+            crate::parser::syntax_kind_ext::INTERFACE_DECLARATION,
+            crate::parser::syntax_kind_ext::EXPRESSION_STATEMENT,
+            crate::parser::syntax_kind_ext::EXPRESSION_STATEMENT,
+        ],
+        "invalid index-signature type-predicate tails should recover as top-level statements"
+    );
+}
+
+#[test]
+fn invalid_type_literal_statement_tail_recovers_as_source_statements() {
+    let source = "type T = {\n    return true;\n}\nlet x = 1;\n";
+    let (parser, root) = parse_source(source);
+    let line_map = LineMap::build(source);
+
+    let fingerprints: Vec<(u32, u32, u32, String)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, source);
+            (
+                diag.code,
+                pos.line + 1,
+                pos.character + 1,
+                diag.message.clone(),
+            )
+        })
+        .collect();
+
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+            2,
+            5,
+            "Property or signature expected.".to_string()
+        )),
+        "expected TS1131 at the invalid type member statement, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            3,
+            1,
+            "Declaration or statement expected.".to_string()
+        )),
+        "expected TS1128 at the deferred type-literal close brace, got {fingerprints:?}"
+    );
+
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(root).unwrap();
+    let statement_kinds: Vec<u16> = source_file
+        .statements
+        .nodes
+        .iter()
+        .map(|&stmt_idx| arena.get(stmt_idx).unwrap().kind)
+        .collect();
+    assert_eq!(
+        statement_kinds,
+        vec![
+            crate::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION,
+            crate::parser::syntax_kind_ext::RETURN_STATEMENT,
+            crate::parser::syntax_kind_ext::VARIABLE_STATEMENT,
+        ],
+        "invalid type-literal statement tails should be preserved for statement recovery"
     );
 }
 
