@@ -36,6 +36,7 @@ mod handlers_code_fixes_jsdoc;
 mod handlers_code_fixes_utils;
 mod handlers_completions;
 mod handlers_completions_display;
+mod handlers_completions_parameters;
 mod handlers_completions_snippets;
 mod handlers_diagnostics;
 mod handlers_editing;
