@@ -109,7 +109,7 @@ const _ = <DataGrid rows={{[1, 2]}} />;
     );
 }
 
-/// Arrow-function component (call-only) is also rejected when ElementType
+/// Arrow-function component (call-only) is also rejected when `ElementType`
 /// requires a constructor.
 #[test]
 fn jsx_constructor_only_element_type_rejects_arrow_function_component() {
@@ -127,7 +127,7 @@ const _ = <Alert msg="hi" />;
     );
 }
 
-/// A class component (construct signature) is accepted even when ElementType
+/// A class component (construct signature) is accepted even when `ElementType`
 /// only allows constructors.
 #[test]
 fn jsx_constructor_only_element_type_accepts_class_component() {
