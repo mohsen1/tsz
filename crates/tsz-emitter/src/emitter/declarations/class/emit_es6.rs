@@ -666,6 +666,7 @@ impl<'a> Printer<'a> {
 
         let target_needs_static_block_lowering =
             (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+        let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
 
         let static_initializer_alias_source_nodes: Vec<NodeIndex> =
             if target_needs_static_block_lowering {
@@ -732,11 +733,18 @@ impl<'a> Printer<'a> {
             && (static_initializer_needs_this_alias
                 || has_static_privates
                 || private_member_def_needs_class_alias);
+        let has_legacy_class_decorators = self.ctx.options.legacy_decorators
+            && !self.collect_class_decorators(&class.modifiers).is_empty();
+        let externalized_static_initializer_uses_undefined_receiver = !is_class_expression
+            && target_needs_static_block_lowering
+            && has_legacy_class_decorators;
+        let static_initializer_needs_live_class_alias =
+            !externalized_static_initializer_uses_undefined_receiver
+                && (static_initializer_needs_this_alias || static_initializer_needs_class_alias);
 
         // Determine if we need a class alias for static private fields.
         let class_value_alias = if has_static_privates
-            || static_initializer_needs_this_alias
-            || static_initializer_needs_class_alias
+            || static_initializer_needs_live_class_alias
             || private_member_def_needs_class_alias
         {
             Some(self.make_class_static_temp_name(_idx))
@@ -748,14 +756,12 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
-        let static_initializer_class_alias = if static_initializer_needs_this_alias
-            || static_initializer_needs_class_alias
-            || private_member_def_needs_class_alias
-        {
-            class_value_alias.clone()
-        } else {
-            None
-        };
+        let static_initializer_class_alias =
+            if static_initializer_needs_live_class_alias || private_member_def_needs_class_alias {
+                class_value_alias.clone()
+            } else {
+                None
+            };
 
         // Save the previous private-name maps (for nested classes). Private
         // names are lexically scoped, so nested classes must still be able to
@@ -1088,7 +1094,6 @@ impl<'a> Printer<'a> {
         // For class expressions with private field lowering, we need to wrap the class
         // in a comma expression: `(_a = class C { ... }, _WeakMap = new WeakMap(), ..., _a)`
         // tsc uses this pattern so the WeakMap/WeakSet initialization happens inline.
-        let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
         let emits_as_class_expression = is_class_expression || assignment_prefix.is_some();
         let needs_private_comma_expr = is_class_expression && has_any_private_lowering;
 
@@ -1397,11 +1402,6 @@ impl<'a> Printer<'a> {
             &class.heritage_clauses,
         );
         let needs_static_block_lowering = target_needs_static_block_lowering;
-        let has_legacy_class_decorators = self.ctx.options.legacy_decorators
-            && !self.collect_class_decorators(&class.modifiers).is_empty();
-        let externalized_static_initializer_uses_undefined_receiver =
-            !is_class_expression && needs_static_block_lowering && has_legacy_class_decorators;
-
         let static_initializer_needs_super_alias = has_extends
             && !extends_null
             && !static_initializer_alias_source_nodes.is_empty()

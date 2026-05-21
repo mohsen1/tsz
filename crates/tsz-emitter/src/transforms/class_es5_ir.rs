@@ -2144,7 +2144,7 @@ impl<'a> ES5ClassTransformer<'a> {
         self.computed_prop_temp_map.clear();
         self.current_static_class_alias =
             if self.static_members_need_class_alias(&class_data.members) {
-                Some(generated_auto_accessor_name(0))
+                Some(self.generate_temp_name())
             } else if self
                 .auto_accessors
                 .iter()
