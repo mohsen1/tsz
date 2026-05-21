@@ -2772,7 +2772,6 @@ fn substitution_keys_appear_in(
         TypeData::TypeParameter(info) | TypeData::Infer(info) => {
             substitution.get(info.name).is_some()
         }
-        TypeData::BoundParameter(_) => false,
         TypeData::Union(members) | TypeData::Intersection(members) => {
             let members = interner.type_list(members);
             members
@@ -2790,7 +2789,7 @@ fn substitution_keys_appear_in(
             substitution_keys_appear_in(interner, obj, substitution, visited)
                 || substitution_keys_appear_in(interner, idx, substitution, visited)
         }
-        TypeData::KeyOf(inner) => {
+        TypeData::KeyOf(inner) | TypeData::NoInfer(inner) => {
             substitution_keys_appear_in(interner, inner, substitution, visited)
         }
         TypeData::StringIntrinsic { type_arg, .. } => {
@@ -2867,23 +2866,18 @@ fn substitution_keys_appear_in(
                 }) || substitution_keys_appear_in(interner, sig.return_type, substitution, visited)
             })
         }
-        // Opaque forms: a bare `Lazy(DefId)` / `Recursive` / `TypeQuery` does
-        // not carry its own free variables — any captured type arguments would
-        // arrive via an enclosing `Application` whose `args` are walked above.
-        // Returning false here lets the caller's "fall back to instantiated
-        // constraint" path stay tight for outer-scope type parameters that
-        // just pass through a generic call.
-        TypeData::Lazy(_)
-        | TypeData::Recursive(_)
-        | TypeData::TypeQuery(_)
-        | TypeData::UnresolvedTypeName(_)
-        | TypeData::ModuleNamespace(_) => false,
         TypeData::Enum(_, structural) => {
             substitution_keys_appear_in(interner, structural, substitution, visited)
         }
-        TypeData::NoInfer(inner) => {
-            substitution_keys_appear_in(interner, inner, substitution, visited)
-        }
+        // All other variants — `BoundParameter`, opaque forms (`Lazy(DefId)` /
+        // `Recursive` / `TypeQuery` / `UnresolvedTypeName` / `ModuleNamespace`),
+        // `Intrinsic`, `Literal`, `ThisType`, `UniqueSymbol`, `ReadonlyType`,
+        // `Error` — do not carry their own free substitution-targeted
+        // parameters. Any captured type arguments arrive via an enclosing
+        // `Application` whose `args` are walked above. Returning false here
+        // lets the caller's "fall back to instantiated constraint" path stay
+        // tight for outer-scope type parameters that just pass through a
+        // generic call without `args` of their own.
         _ => false,
     }
 }
