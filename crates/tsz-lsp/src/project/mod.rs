@@ -14,7 +14,8 @@ pub(crate) mod operations;
 #[cfg(test)]
 pub(crate) use self::core::FileIdAllocator;
 pub(crate) use self::core::{
-    ExportMatch, ImportKind, ImportSpecifierTarget, ImportTarget, NamespaceReexportTarget,
+    ExportMatch, ImportKind, ImportSpecifierPreference, ImportSpecifierTarget, ImportTarget,
+    NamespaceReexportTarget,
 };
 pub use self::core::{
     FileRename, FileResidencyInfo, Project, ProjectFile, ProjectPerformance, ProjectRequestKind,

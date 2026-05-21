@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled]
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
   merge_group:
   push:
     branches: [main]
@@ -15,12 +15,10 @@ permissions:
 
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
-  # Draft/light CI should stay fast and replace stale runs. Ready-review CI is
-  # different: canceling it leaves red "cancelled" heavy-check entries on the
-  # PR, and those stale check runs make mergeable PRs look blocked even while a
-  # newer run is healthy. Let ready-review runs finish; a newer head SHA still
-  # becomes the authoritative PR status.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == true }}
+  # A newer pull_request event means the old PR run can no longer satisfy
+  # strict required checks for the current head SHA. Cancel stale PR runs so
+  # exact-head CI does not sit queued behind obsolete ready-review work.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
@@ -313,6 +311,16 @@ jobs:
                 2>/dev/null || echo "false")
               if [[ "${pr_wip_status}" == "true" ]]; then
                 echo "Merged PR #${pr_number} still carried WIP status; running main CI instead of trusting its PR run"
+                main_skip_allowed=false
+              fi
+              pr_base_sha=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
+                --jq '.base.sha // empty' 2>/dev/null || true)
+              main_parent_sha="${{ github.event.before }}"
+              if [[ -n "${pr_base_sha}" \
+                    && -n "${main_parent_sha}" \
+                    && "${main_parent_sha}" != "0000000000000000000000000000000000000000" \
+                    && "${pr_base_sha}" != "${main_parent_sha}" ]]; then
+                echo "Merged PR #${pr_number} was validated against base ${pr_base_sha}, but landed on main parent ${main_parent_sha}; running main CI instead of trusting stale-base PR CI"
                 main_skip_allowed=false
               fi
 
