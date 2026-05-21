@@ -421,7 +421,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_object_literal_initializer_has_namespace_shape(initializer, true)
     }
 
-    fn js_object_literal_initializer_has_namespace_shape(
+    pub(in crate::declaration_emitter) fn js_object_literal_initializer_has_namespace_shape(
         &self,
         initializer: NodeIndex,
         allow_property_references: bool,
@@ -1894,7 +1894,12 @@ impl<'a> DeclarationEmitter<'a> {
             hc.nodes.iter().any(|&clause_idx| {
                 self.arena
                     .get_heritage_clause_at(clause_idx)
-                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+                    .is_some_and(|h| {
+                        h.token == SyntaxKind::ExtendsKeyword as u16
+                            && h.types.nodes.iter().any(|&type_idx| {
+                                !(self.source_is_js_file && self.heritage_type_is_null(type_idx))
+                            })
+                    })
             })
         });
         self.method_names_with_overloads = FxHashSet::default();
@@ -1996,7 +2001,12 @@ impl<'a> DeclarationEmitter<'a> {
             hc.nodes.iter().any(|&clause_idx| {
                 self.arena
                     .get_heritage_clause_at(clause_idx)
-                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+                    .is_some_and(|h| {
+                        h.token == SyntaxKind::ExtendsKeyword as u16
+                            && h.types.nodes.iter().any(|&type_idx| {
+                                !(self.source_is_js_file && self.heritage_type_is_null(type_idx))
+                            })
+                    })
             })
         });
         self.method_names_with_overloads = FxHashSet::default();
@@ -3339,6 +3349,11 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let init_node = self.arena.get(initializer)?;
         match init_node.kind {
+            k if k == SyntaxKind::Identifier as u16
+                && self.get_identifier_text(initializer).as_deref() == Some("undefined") =>
+            {
+                Some("undefined".to_string())
+            }
             k if k == SyntaxKind::StringLiteral as u16 => Some("string".to_string()),
             k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
             k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint".to_string()),
@@ -4647,8 +4662,12 @@ impl<'a> DeclarationEmitter<'a> {
                 .skip_parenthesized_and_assertions_and_comma(body_idx),
         )?;
         if body_node.kind == syntax_kind_ext::JSX_ELEMENT
+            || body_node.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
             || body_node.kind == syntax_kind_ext::JSX_FRAGMENT
         {
+            return Some("JSX.Element".to_string());
+        }
+        if self.js_function_body_returns_jsx(body_idx) {
             return Some("JSX.Element".to_string());
         }
         if !self
@@ -4668,6 +4687,35 @@ impl<'a> DeclarationEmitter<'a> {
                 self.js_constructor_assignment_expression_type_text(expr_idx, params, 0)
             })
             .filter(|type_text| !type_text.is_empty() && type_text != "any")
+    }
+
+    fn js_function_body_returns_jsx(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return false;
+        };
+        block.statements.nodes.iter().copied().any(|stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                return false;
+            }
+            let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+                return false;
+            };
+            let Some(expr_node) = self.arena.get(
+                self.arena
+                    .skip_parenthesized_and_assertions_and_comma(ret.expression),
+            ) else {
+                return false;
+            };
+            expr_node.kind == syntax_kind_ext::JSX_ELEMENT
+                || expr_node.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                || expr_node.kind == syntax_kind_ext::JSX_FRAGMENT
+        })
     }
 
     pub(in crate::declaration_emitter) fn emit_js_function_like_class_if_needed(
