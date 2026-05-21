@@ -1,13 +1,21 @@
 //! Tests that structural/declaration/import nodes reaching expression-type
-//! dispatch return VOID (not ERROR), preventing poisoning of downstream
+//! dispatch do not return `TypeId::ERROR`, preventing poisoning of downstream
 //! relation checks.
 //!
 //! Structural rule: when `dispatch_type_computation` is called on a node that
-//! is not a value-producing expression (import declaration, import specifier,
-//! parameter declaration, import keyword token, export declaration, etc.), the
-//! result must be `TypeId::VOID`, not `TypeId::ERROR`. An ERROR return
-//! propagates through assignability checks and can suppress legitimate
-//! diagnostics or manufacture spurious ones.
+//! is not a value-producing expression, the result must not be `TypeId::ERROR`.
+//! Two categories apply:
+//!
+//! - **Statement/declaration nodes** (`IMPORT_DECLARATION`, `EXPORT_DECLARATION`,
+//!   `BLOCK`, etc.) produce no value → return `TypeId::VOID`.
+//! - **Binding nodes** (`IMPORT_SPECIFIER`, `EXPORT_SPECIFIER`, `PARAMETER`,
+//!   `NAMESPACE_IMPORT`) refer to named bindings that carry real types. `VOID`
+//!   would be incorrect because `void` participates in assignability and
+//!   triggers spurious diagnostics; `ANY` is returned as a conservative
+//!   permissive placeholder until proper per-node type resolution is in place.
+//!
+//! An `ERROR` return propagates through assignability checks and produces
+//! "uncoded diagnostics" — diagnostics without a standard TS error code.
 //!
 //! Adjacent-case coverage (per CLAUDE.md §25/§26):
 //! - import declaration node family: `import { X } from '...'`
