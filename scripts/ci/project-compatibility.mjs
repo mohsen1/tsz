@@ -838,6 +838,17 @@ function renderStepSummaryMarkdown(summary, options) {
   if (oracleCounts.length) {
     lines.push(`- Oracle classification: ${oracleCounts.join(", ")}`);
   }
+  if (Number(summary.malformed_jsonl_lines || 0) > 0) {
+    lines.push(`- Malformed JSONL lines: ${summary.malformed_jsonl_lines}`);
+    const examples = Array.isArray(summary.malformed_jsonl_examples)
+      ? summary.malformed_jsonl_examples
+      : [];
+    for (const example of examples.slice(0, 3)) {
+      const line = example?.line ?? "unknown";
+      const error = truncateForCell(example?.error || "unknown parse error", 120);
+      lines.push(`  - line ${line}: ${error}`);
+    }
+  }
 
   // Residency for red/yellow rows is surfaced before any speedup/timing
   // section so reviewers can distinguish scale/runtime failure (OOM,
