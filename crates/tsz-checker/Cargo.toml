@@ -774,6 +774,10 @@ name = "homomorphic_mapped_union_distribution_tests"
 path = "tests/homomorphic_mapped_union_distribution_tests.rs"
 
 [[test]]
+name = "homomorphic_remove_optional_conditional_tests"
+path = "tests/homomorphic_remove_optional_conditional_tests.rs"
+
+[[test]]
 name = "ts2344_self_referential_interface_constraint"
 path = "tests/ts2344_self_referential_interface_constraint.rs"
 
