@@ -125,3 +125,35 @@ fn script_file_top_level_type_remains_globally_visible() {
          expected no TS2304 for 'AmbientShape'. Got: {diags:?}"
     );
 }
+
+#[test]
+fn module_augmentation_body_resolves_target_reexport_for_self_reference() {
+    // Regression guard for closing the global file-locals leak: names inside a
+    // relative module augmentation body resolve against the augmented module's
+    // export surface, not a sibling module's accidental globals.
+    let base = "export interface Widget { value: string }\n";
+    let barrel = "export * from \"./base\";\n";
+    let augment = r#"
+export {};
+declare module "./barrel" {
+    interface Widget {
+        child: Widget;
+    }
+}
+"#;
+
+    let diags = check_module_files(
+        &[
+            ("base.ts", base),
+            ("barrel.ts", barrel),
+            ("augment.ts", augment),
+        ],
+        "augment.ts",
+    );
+
+    assert!(
+        !has_cannot_find_name(&diags, "Widget"),
+        "module augmentation body should resolve `Widget` through the augmented \
+         module export surface; got: {diags:?}"
+    );
+}
