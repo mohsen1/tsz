@@ -970,6 +970,20 @@ impl TypeResolver for TypeEnvironment {
         if let Some(&instance_type) = self.class_instance_types.get(&def_id.0) {
             return Some(instance_type);
         }
+        // Issue #8720: when the local per-checker `class_instance_types`
+        // cache is empty (the producer's checker populated its own cache,
+        // not the consumer's), fall through to the shared
+        // `DefinitionStore::get_class_instance_type` slot before
+        // consulting `get_def`. `get_def` falls back to
+        // `DefinitionStore::get_body`, which for class DefIds is the
+        // *constructor* TypeId (kept there for `typeof C`/value-position
+        // lookups); returning that for `Lazy(class_def_id)` would render
+        // the type as `typeof C` in TS2345/TS2322 diagnostics.
+        if let Some(ref store) = self.definition_store
+            && let Some(instance_type) = store.get_class_instance_type(def_id)
+        {
+            return Some(instance_type);
+        }
         if let Some(ty) = self.get_def(def_id) {
             return Some(ty);
         }
@@ -989,6 +1003,11 @@ impl TypeResolver for TypeEnvironment {
             "resolved lazy type through raw SymbolRef fallback"
         );
         if let Some(&instance_type) = self.class_instance_types.get(&real_def.0) {
+            return Some(instance_type);
+        }
+        if let Some(ref store) = self.definition_store
+            && let Some(instance_type) = store.get_class_instance_type(real_def)
+        {
             return Some(instance_type);
         }
         self.get_def(real_def)

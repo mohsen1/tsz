@@ -638,6 +638,19 @@ pub struct DefinitionStore {
     /// `DefId` on demand during type checking.
     class_to_constructor: DefDashMap<DefId, DefId>,
 
+    /// Shared cross-file instance-type cache for class `DefId`s.
+    ///
+    /// A class has two `TypeId`s: the constructor (value side, written into
+    /// `body` for `typeof C` / value-position lookups) and the instance
+    /// (type side, returned for `Lazy(class_def_id)` in type position).
+    /// `TypeEnvironment::class_instance_types` holds the instance type
+    /// *per checker*, which is unsuitable for cross-file resolution: a
+    /// consuming checker's local cache is empty for classes declared in
+    /// another file, and falling back to `body` returns the constructor.
+    /// This map provides a shared instance-type slot that any checker can
+    /// consult, replacing the cross-file fallback's reliance on `body`.
+    class_to_instance: DefDashMap<DefId, TypeId>,
+
     /// Reverse index: `Atom` (name) -> `Vec<DefId>` for name-based lookups.
     ///
     /// Populated during `register()` for every definition. Enables O(1) lookup
@@ -849,6 +862,10 @@ impl DefinitionStore {
             shape_to_def: DefDashMap::default(),
             file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
             class_to_constructor: DefDashMap::with_capacity_and_hasher(
+                id_capacity / 2,
+                Default::default(),
+            ),
+            class_to_instance: DefDashMap::with_capacity_and_hasher(
                 id_capacity / 2,
                 Default::default(),
             ),
@@ -1226,6 +1243,7 @@ impl DefinitionStore {
         self.shape_to_def.clear();
         self.file_to_defs.clear();
         self.class_to_constructor.clear();
+        self.class_to_instance.clear();
         self.name_to_defs.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
         self.bump_generation();
@@ -1325,6 +1343,31 @@ impl DefinitionStore {
     /// companion (e.g., anonymous classes or those created on-demand).
     pub fn get_constructor_def(&self, class_def: DefId) -> Option<DefId> {
         self.class_to_constructor.get(&class_def).map(|r| *r)
+    }
+
+    /// Register the class instance type for a class `DefId` in the shared
+    /// `DefinitionStore` so cross-file consumers can resolve
+    /// `Lazy(class_def_id)` in type position even when their own
+    /// `TypeEnvironment::class_instance_types` cache is empty.
+    ///
+    /// The owning checker should call this once the class instance type has
+    /// been fully built (after `class_instance_type_with_params_from_symbol`
+    /// finalizes the type) so subsequent cross-checker resolutions see the
+    /// instance type instead of falling back to the constructor TypeId
+    /// stored in `body`.
+    pub fn register_class_instance_type(&self, class_def: DefId, instance_type: TypeId) {
+        self.class_to_instance.insert(class_def, instance_type);
+        self.bump_generation();
+    }
+
+    /// Look up the shared class instance type for a class `DefId`.
+    ///
+    /// Returns `Some(instance_type)` once the owning checker has populated
+    /// it via `register_class_instance_type`. Returns `None` for classes
+    /// not yet processed by any checker (e.g., pre-populated `DefId`s whose
+    /// type body has not been built yet).
+    pub fn get_class_instance_type(&self, class_def: DefId) -> Option<TypeId> {
+        self.class_to_instance.get(&class_def).map(|r| *r)
     }
 
     /// Get exports for a namespace/module `DefId`.
