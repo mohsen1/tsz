@@ -16,6 +16,10 @@ pub(crate) struct ObjectLiteralFinalizeCtx {
     pub(crate) string_index_types: Vec<TypeId>,
     /// Value types for number index signatures collected from spreads.
     pub(crate) number_index_types: Vec<TypeId>,
+    /// Value types contributed by computed property names whose key type is
+    /// the wide `symbol` (non-`unique`). Per tsc, such keys synthesize a
+    /// `[k: symbol]: V` index signature rather than a named member.
+    pub(crate) symbol_index_types: Vec<TypeId>,
     /// Parameter name atom for the string index signature, if present.
     pub(crate) string_index_param_name: Option<Atom>,
     /// Parameter name atom for the number index signature, if present.
@@ -321,6 +325,7 @@ impl<'a> CheckerState<'a> {
             display_type_overrides,
             mut string_index_types,
             number_index_types,
+            symbol_index_types,
             string_index_param_name,
             number_index_param_name,
             has_spread,
@@ -362,7 +367,10 @@ impl<'a> CheckerState<'a> {
             let mut properties: Vec<PropertyInfo> = properties.into_values().collect();
             properties.sort_by_key(|p| p.declaration_order);
 
-            if string_index_types.is_empty() && number_index_types.is_empty() {
+            if string_index_types.is_empty()
+                && number_index_types.is_empty()
+                && symbol_index_types.is_empty()
+            {
                 if has_spread {
                     let mut display_props = properties.clone();
                     crate::query_boundaries::common::normalize_display_property_order(
@@ -436,6 +444,42 @@ impl<'a> CheckerState<'a> {
                     })
                 } else {
                     None
+                };
+
+                let symbol_index = if !symbol_index_types.is_empty() {
+                    let value_type = if self.ctx.in_const_assertion {
+                        order_preserving_union(self.ctx.types.factory(), symbol_index_types)
+                    } else {
+                        self.ctx.types.factory().union(symbol_index_types)
+                    };
+                    Some(IndexSignature {
+                        key_type: TypeId::SYMBOL,
+                        value_type,
+                        readonly: false,
+                        param_name: None,
+                    })
+                } else {
+                    None
+                };
+
+                // `ObjectShape` only has one "string_index" slot, used for both
+                // string-keyed and symbol-keyed index signatures (discriminated
+                // by `key_type`). When both a string and a symbol index were
+                // synthesized, merge them by unioning the key and value types,
+                // matching what type-literal lowering does for
+                // `{ [k: string]: V1; [s: symbol]: V2 }`.
+                let string_index = match (string_index, symbol_index) {
+                    (Some(mut s), Some(sym)) => {
+                        crate::interface_type::merge_string_index_by_union(
+                            &mut s,
+                            sym,
+                            self.ctx.types.factory(),
+                        );
+                        Some(s)
+                    }
+                    (Some(s), None) => Some(s),
+                    (None, Some(sym)) => Some(sym),
+                    (None, None) => None,
                 };
 
                 let number_index = if !number_index_types.is_empty() {

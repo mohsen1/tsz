@@ -25,6 +25,34 @@ const SOURCE_FILE_LEN_OVERFLOW_MESSAGE: &str =
     "source file text length exceeds u32; large file support requires a larger span type";
 
 // =============================================================================
+// LineMapCache - typed lazy `LineMap` storage
+// =============================================================================
+
+/// Lazy storage for a `LineMap`. The cache exposes only `&LineMap` after
+/// construction, so callers cannot observe an uninitialized state.
+#[derive(Debug, Clone, Default)]
+struct LineMapCache {
+    map: Option<LineMap>,
+}
+
+impl LineMapCache {
+    fn built(text: &str) -> Self {
+        Self {
+            map: Some(LineMap::build(text)),
+        }
+    }
+
+    fn ensure(&mut self, text: &str) -> &LineMap {
+        self.map.get_or_insert_with(|| LineMap::build(text))
+    }
+
+    #[cfg(test)]
+    const fn is_built(&self) -> bool {
+        self.map.is_some()
+    }
+}
+
+// =============================================================================
 // SourceFile
 // =============================================================================
 
@@ -46,7 +74,7 @@ pub struct SourceFile {
     /// The source text content
     text: Arc<str>,
     /// Line map for efficient position conversion (lazy initialized)
-    line_map: Option<LineMap>,
+    line_map: LineMapCache,
     /// Length of the text in bytes
     len: u32,
 }
@@ -60,7 +88,7 @@ impl SourceFile {
         Self {
             file_name: file_name.into(),
             text,
-            line_map: None,
+            line_map: LineMapCache::default(),
             len,
         }
     }
@@ -69,7 +97,7 @@ impl SourceFile {
     pub fn with_line_map(file_name: impl Into<String>, text: impl Into<String>) -> Self {
         let text: String = text.into();
         let len = source_file_len_bytes_as_u32(text.len());
-        let line_map = Some(LineMap::build(&text));
+        let line_map = LineMapCache::built(&text);
         let text: Arc<str> = Arc::from(text.into_boxed_str());
         Self {
             file_name: file_name.into(),
@@ -162,38 +190,24 @@ impl SourceFile {
     // Line/Column Conversion
     // =========================================================================
 
-    /// Ensure the line map is built.
-    fn ensure_line_map(&mut self) {
-        if self.line_map.is_none() {
-            self.line_map = Some(LineMap::build(&self.text));
-        }
-    }
-
     /// Get a reference to the line map, building it if necessary.
     pub fn line_map(&mut self) -> &LineMap {
-        self.ensure_line_map();
-        self.line_map
-            .as_ref()
-            .expect("ensure_line_map() guarantees line_map is Some")
+        self.line_map.ensure(&self.text)
     }
 
     /// Convert a byte offset to a Position (line, character).
     ///
     /// Character is counted in UTF-16 code units for LSP compatibility.
     pub fn offset_to_position(&mut self, offset: u32) -> Position {
-        self.ensure_line_map();
         self.line_map
-            .as_ref()
-            .unwrap()
+            .ensure(&self.text)
             .offset_to_position(offset, &self.text)
     }
 
     /// Convert a Position (line, character) to a byte offset.
     pub fn position_to_offset(&mut self, position: Position) -> Option<u32> {
-        self.ensure_line_map();
         self.line_map
-            .as_ref()
-            .unwrap()
+            .ensure(&self.text)
             .position_to_offset(position, &self.text)
     }
 
@@ -213,20 +227,12 @@ impl SourceFile {
 
     /// Get the line count.
     pub fn line_count(&mut self) -> usize {
-        self.ensure_line_map();
-        self.line_map
-            .as_ref()
-            .expect("ensure_line_map() guarantees line_map is Some")
-            .line_count()
+        self.line_map.ensure(&self.text).line_count()
     }
 
     /// Get the text of a specific line (without newline).
     pub fn line_text(&mut self, line: u32) -> Option<&str> {
-        self.ensure_line_map();
-        let line_map = self
-            .line_map
-            .as_ref()
-            .expect("ensure_line_map() guarantees line_map is Some");
+        let line_map = self.line_map.ensure(&self.text);
         let start = line_map.line_start(line as usize)? as usize;
         let end = if (line as usize) + 1 < line_map.line_count() {
             line_map.line_start((line as usize) + 1)? as usize
@@ -585,7 +591,58 @@ mod tests {
     #[test]
     fn test_source_file_with_line_map() {
         let source = SourceFile::with_line_map("test.ts", "a\nb\nc");
-        assert!(source.line_map.is_some());
+        assert!(source.line_map.is_built());
+    }
+
+    #[test]
+    fn test_source_file_new_does_not_pre_build_line_map() {
+        let source = SourceFile::new("test.ts", "a\nb\nc");
+        assert!(!source.line_map.is_built());
+    }
+
+    #[test]
+    fn test_source_file_line_map_access_builds_cache_once() {
+        let mut source = SourceFile::new("test.ts", "a\nb\nc");
+        assert!(!source.line_map.is_built());
+        let line_count_first = source.line_count();
+        assert!(source.line_map.is_built());
+        // Subsequent accesses reuse the built cache and return the same answer.
+        let line_count_second = source.line_count();
+        assert_eq!(line_count_first, line_count_second);
+        assert!(source.line_map.is_built());
+    }
+
+    #[test]
+    fn test_line_map_cache_default_starts_unbuilt() {
+        let cache = LineMapCache::default();
+        assert!(!cache.is_built());
+    }
+
+    #[test]
+    fn test_line_map_cache_built_constructor_is_built() {
+        let cache = LineMapCache::built("a\nb");
+        assert!(cache.is_built());
+    }
+
+    #[test]
+    fn test_line_map_cache_ensure_is_idempotent() {
+        let mut cache = LineMapCache::default();
+        let line_count = cache.ensure("a\nb\nc").line_count();
+        assert_eq!(line_count, 3);
+        assert_eq!(cache.ensure("a\nb\nc").line_count(), line_count);
+        assert!(cache.is_built());
+    }
+
+    #[test]
+    fn test_line_map_cache_ensure_uses_first_text_when_called_again() {
+        // Once built, `ensure` returns the cached map regardless of the text
+        // argument. The caller must pair the cache with a single text source.
+        let mut cache = LineMapCache::default();
+        let first = cache.ensure("a\nb").line_count();
+        let second = cache
+            .ensure("totally different text without newlines")
+            .line_count();
+        assert_eq!(first, second);
     }
 
     #[test]

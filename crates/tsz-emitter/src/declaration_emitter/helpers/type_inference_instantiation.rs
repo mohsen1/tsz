@@ -63,19 +63,36 @@ impl<'a> DeclarationEmitter<'a> {
 
         let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
 
-        let include_right_parts = if operator == SyntaxKind::BarBarToken as u16 {
-            Self::filter_short_circuit_or_left_parts(&mut left_parts, &right_parts)
+        let (include_right_parts, widen_right_parts) = if operator == SyntaxKind::BarBarToken as u16
+        {
+            let (include, widen) =
+                Self::filter_short_circuit_or_left_parts(&mut left_parts, &right_parts);
+            (include, widen)
         } else {
             let include_right_parts = left_parts
                 .iter()
                 .any(|part| Self::short_circuit_nullish_excludes_left_type(&part.text));
             left_parts.retain(|part| !Self::short_circuit_nullish_excludes_left_type(&part.text));
-            include_right_parts
+            (include_right_parts, false)
         };
 
         let mut parts = left_parts;
         if include_right_parts {
-            parts.extend(right_parts);
+            if widen_right_parts {
+                parts.extend(right_parts.into_iter().map(|mut p| {
+                    let trimmed = p.text.trim();
+                    if Self::is_short_circuit_number_literal_type(trimmed) {
+                        p.text = "number".to_string();
+                    } else if Self::is_short_circuit_string_literal_type(trimmed) {
+                        p.text = "string".to_string();
+                    } else if Self::is_short_circuit_bigint_literal_type(trimmed) {
+                        p.text = "bigint".to_string();
+                    }
+                    p
+                }));
+            } else {
+                parts.extend(right_parts);
+            }
         }
         Self::dedupe_and_sort_short_circuit_type_parts(&mut parts);
         if parts.is_empty() {
@@ -364,11 +381,19 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena.get(expr_idx).map(|node| node.pos)
     }
 
+    /// Returns `(include_right_parts, widen_right_parts)`.
+    ///
+    /// `include_right_parts` is true when the right operand of `||` is reachable.
+    /// `widen_right_parts` is true when the right was included because a broad primitive
+    /// type (`string`, `number`, `bigint`, or the `true` half of `boolean`) on the left
+    /// does not fully cover the right — in that case the right literal types should be
+    /// widened to their primitive (matching tsc's union inference for `||`).
     fn filter_short_circuit_or_left_parts(
         left_parts: &mut Vec<ShortCircuitTypePart>,
         right_parts: &[ShortCircuitTypePart],
-    ) -> bool {
+    ) -> (bool, bool) {
         let mut include_right_parts = false;
+        let mut widen_right_parts = false;
         let mut retained = Vec::with_capacity(left_parts.len());
 
         for mut part in left_parts.drain(..) {
@@ -381,15 +406,17 @@ impl<'a> DeclarationEmitter<'a> {
             if trimmed == "boolean" {
                 part.text = "true".to_string();
                 include_right_parts = true;
+                widen_right_parts = true;
             } else if Self::short_circuit_or_broad_primitive_needs_right(trimmed, right_parts) {
                 include_right_parts = true;
+                widen_right_parts = true;
             }
 
             retained.push(part);
         }
 
         *left_parts = retained;
-        include_right_parts
+        (include_right_parts, widen_right_parts)
     }
 
     fn short_circuit_or_broad_primitive_needs_right(

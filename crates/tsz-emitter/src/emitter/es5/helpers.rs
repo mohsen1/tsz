@@ -496,7 +496,7 @@ impl<'a> Printer<'a> {
         match node.kind {
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                 if let Some(shorthand) = self.arena.get_shorthand_property(node) {
-                    self.emit(shorthand.name);
+                    self.emit_property_key_name(shorthand.name);
                     self.write(": ");
                     self.emit(shorthand.name);
                 }
@@ -1104,7 +1104,7 @@ impl<'a> Printer<'a> {
                     self.write(".");
                     self.write_identifier_text(shorthand.name);
                     self.write(" = ");
-                    self.write_identifier_text(shorthand.name);
+                    self.emit(shorthand.name);
                 }
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
