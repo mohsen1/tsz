@@ -1571,11 +1571,6 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Evaluate type arguments before substitution so that unevaluated
-                // IndexAccess types (e.g., `SettingsTypes["audio" | "video"]`) are
-                // resolved to their concrete types. This prevents the instantiated
-                // constraint from containing unresolvable Lazy(DefId) references
-                // inside nested types (KeyOf, IndexAccess, Mapped).
                 let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
                 for (j, p) in type_params.iter().enumerate() {
                     if let Some(&arg) = type_args.get(j) {
@@ -1592,14 +1587,6 @@ impl<'a> CheckerState<'a> {
                         &subst,
                     )
                 };
-                // The constraint shown in the diagnostic must substitute the type
-                // parameters with the type *arguments as written* (reference form)
-                // rather than their evaluated bodies. tsc keeps operator shapes such
-                // as `keyof T` un-evaluated for display, so substituting the evaluated
-                // alias body (e.g. `{ foo: 1; bar: 2 }`) here would render `keyof` as
-                // its literal key union (`"foo" | "bar"`). Mirror the type-parameter
-                // branch's `inst_constraint_for_message`: keep a reference-preserving
-                // form for the message while using the evaluated form for the check.
                 let mut display_subst = crate::query_boundaries::common::TypeSubstitution::new();
                 for (j, p) in type_params.iter().enumerate() {
                     if let Some(&arg) = type_args.get(j) {
@@ -1834,38 +1821,6 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-        }
-    }
-
-    /// Reference (display) form of a type argument for rendering a constraint
-    /// in a diagnostic. A non-generic named type used as a type argument is
-    /// interned as its inlined body, so substituting it into a `keyof T`
-    /// constraint makes the formatter expand `keyof` to its literal key union.
-    /// Rebuilding a `Lazy(DefId)` reference keeps the operator anchored to the
-    /// name (`keyof T`), matching tsc. Returns the argument unchanged when it
-    /// has no non-generic named definition.
-    fn type_arg_reference_form(&self, type_arg: TypeId) -> TypeId {
-        let db = self.ctx.types.as_type_database();
-        // Already a reference shape (e.g. `Lazy(DefId)`): nothing to rewrite.
-        if crate::query_boundaries::common::lazy_def_id(db, type_arg).is_some() {
-            return type_arg;
-        }
-        // Find the non-generic definition this argument inlines — directly from
-        // the type→def map or via its display alias — and rebuild a
-        // `Lazy(DefId)` reference so meta operators stay anchored to the name.
-        let store = &self.ctx.definition_store;
-        let def_id = store
-            .find_def_for_type(type_arg)
-            .or_else(|| store.find_def_for_type(db.get_display_alias(type_arg)?));
-        match def_id {
-            Some(def_id)
-                if store
-                    .get(def_id)
-                    .is_some_and(|def| def.type_params.is_empty()) =>
-            {
-                self.ctx.types.factory().lazy(def_id)
-            }
-            _ => type_arg,
         }
     }
 
