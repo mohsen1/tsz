@@ -1953,8 +1953,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == syntax_kind_ext::IMPORT_SPECIFIER
                 || k == syntax_kind_ext::NAMESPACE_IMPORT
                 || k == syntax_kind_ext::EXPORT_SPECIFIER
-                || k == syntax_kind_ext::NAMESPACE_EXPORT
-                || k == syntax_kind_ext::PARAMETER =>
+                || k == syntax_kind_ext::NAMESPACE_EXPORT =>
             {
                 TypeId::ANY
             }
