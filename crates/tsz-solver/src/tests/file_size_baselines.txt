@@ -14,9 +14,9 @@
 # Manual edits are also fine, but the env-var path keeps the comments below
 # in sync with the actual values.
 
-solver_max_loc      3383
+solver_max_loc      3381
 solver_oversized    20
-solver_file_generic_call_resolve 3383
+solver_file_generic_call_resolve 3381
 solver_file_eval_conditional 3069
 solver_file_evaluate 3102
 solver_file_instantiate 2872
