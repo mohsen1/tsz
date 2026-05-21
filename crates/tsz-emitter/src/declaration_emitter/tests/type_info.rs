@@ -2279,3 +2279,115 @@ export const C = M(B);
         );
     }
 }
+
+#[cfg(test)]
+mod no_implicit_this_tests {
+    use super::*;
+
+    // Structural rule: when a non-static method in an object literal body only
+    // returns `this`, the `this` type is a circular self-reference that cannot be
+    // represented in DTS.  tsc elides it as `/*elided*/ any`.  tsz must match.
+    //
+    // Tests use at least two different method-name spellings to prove the fix
+    // is structural, not tied to a specific identifier.
+
+    #[test]
+    fn test_object_literal_method_returning_this_emits_elided_any() {
+        // Three methods named func1/func2/func3 all returning `this`.
+        let source = r#"
+function createObj() {
+    return {
+        func1() {
+            return this;
+        },
+        func2() {
+            return this;
+        },
+        func3() {
+            return this;
+        }
+    };
+}
+"#;
+        let result = emit_dts_with_binding(source);
+        // Must be compact — the solver's recursive expansion would be 5000+ lines.
+        let lines = result.lines().count();
+        assert!(
+            lines < 30,
+            "Expected compact DTS (< 30 lines), got {lines} lines:\n{result}"
+        );
+        // Each method must use /*elided*/ any, not a recursive object expansion.
+        assert!(
+            result.contains("func1(): /*elided*/ any"),
+            "Expected 'func1(): /*elided*/ any' but got:\n{result}"
+        );
+        assert!(
+            result.contains("func2(): /*elided*/ any"),
+            "Expected 'func2(): /*elided*/ any' but got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_object_literal_method_returning_this_different_names() {
+        // Same structural shape, different method names (greet / respond / reset).
+        let source = r#"
+function makeHandler() {
+    return {
+        greet() {
+            return this;
+        },
+        respond() {
+            return this;
+        },
+        reset() {
+            return this;
+        }
+    };
+}
+"#;
+        let result = emit_dts_with_binding(source);
+        let lines = result.lines().count();
+        assert!(
+            lines < 30,
+            "Expected compact DTS (< 30 lines), got {lines} lines:\n{result}"
+        );
+        assert!(
+            result.contains("greet(): /*elided*/ any"),
+            "Expected 'greet(): /*elided*/ any' but got:\n{result}"
+        );
+        assert!(
+            result.contains("respond(): /*elided*/ any"),
+            "Expected 'respond(): /*elided*/ any' but got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn test_class_method_returning_this_still_emits_this() {
+        // In a class body, `this` is the polymorphic instance type and must
+        // remain `this` in DTS (not be replaced with `any`).
+        let source = r#"
+export class Builder {
+    build() {
+        return this;
+    }
+    reset() {
+        return this;
+    }
+}
+"#;
+        let result = emit_dts_with_binding(source);
+        assert!(
+            result.contains("build(): this"),
+            "Expected 'build(): this' for class method but got:\n{result}"
+        );
+        assert!(
+            result.contains("reset(): this"),
+            "Expected 'reset(): this' for class method but got:\n{result}"
+        );
+        // Must NOT use /*elided*/ any in a class context.
+        assert!(
+            !result.contains("build(): /*elided*/ any"),
+            "Class method must not use /*elided*/ any but got:\n{result}"
+        );
+    }
+}

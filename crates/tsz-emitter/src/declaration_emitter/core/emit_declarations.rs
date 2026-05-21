@@ -1363,6 +1363,13 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         self.write(": ");
                         self.write(&type_text);
+                    } else if let Some((type_text, _)) = scoped_preferred_return.as_ref()
+                        && func_body.is_some()
+                        && self.function_body_returns_object_with_this_only_methods(func_body)
+                    {
+                        // Prefer AST-derived text: solver print of `this`-returning object methods expands exponentially.
+                        self.write(": ");
+                        self.write(type_text);
                     } else if let Some((type_text, substituted_parameter_type_query)) =
                         scoped_preferred_return.as_ref()
                         && let Some(func_name_text) = self.get_identifier_text(func_name)

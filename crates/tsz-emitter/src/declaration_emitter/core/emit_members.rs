@@ -476,7 +476,12 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let is_static = self.arena.is_static(&method.modifiers);
         if !is_static && self.method_body_returns_this(method_body) {
-            self.write("this");
+            // Object-literal `this` is a circular self-ref; tsc elides it as `/*elided*/ any`.
+            if self.enclosing_class_for_member(method_idx).is_some() {
+                self.write("this");
+            } else {
+                self.write("/*elided*/ any");
+            }
             return;
         }
 
@@ -620,7 +625,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn method_body_returns_this(&self, body_idx: NodeIndex) -> bool {
+    pub(in crate::declaration_emitter) fn method_body_returns_this(
+        &self,
+        body_idx: NodeIndex,
+    ) -> bool {
         let Some(body_node) = self.arena.get(body_idx) else {
             return false;
         };
