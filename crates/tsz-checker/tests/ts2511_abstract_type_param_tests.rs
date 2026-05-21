@@ -1,3 +1,4 @@
+//! Tests for TS2511 when instantiating a type parameter constrained to `typeof AbstractClass`.
 use tsz_checker::test_utils::check_source_diagnostics;
 
 fn codes(src: &str) -> Vec<u32> {
