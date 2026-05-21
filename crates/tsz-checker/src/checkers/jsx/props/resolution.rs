@@ -1656,8 +1656,24 @@ impl<'a> CheckerState<'a> {
                 && self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
             {
                 let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-                if !self.diagnostic_relation_boolean_guard(attrs_type, raw_props_type) {
-                    let mut target = self.format_type(raw_props_type);
+                if !self.is_assignable_to(attrs_type, raw_props_type) {
+                    let display_props_type = component_type
+                        .filter(|&component| {
+                            crate::query_boundaries::common::is_type_parameter_like(
+                                self.ctx.types,
+                                component,
+                            )
+                        })
+                        .and_then(|component| {
+                            let props_type = self
+                                .get_jsx_type_parameter_callable_constraint_props_type(component)
+                                .unwrap_or(props_type);
+                            self.get_jsx_library_managed_attributes_application(
+                                component, props_type,
+                            )
+                        })
+                        .unwrap_or(raw_props_type);
+                    let mut target = self.format_type(display_props_type);
                     if target.starts_with("LibraryManagedAttributes<")
                         && target.ends_with(", Element>")
                     {

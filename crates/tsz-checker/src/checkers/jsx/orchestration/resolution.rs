@@ -813,20 +813,36 @@ impl<'a> CheckerState<'a> {
                             preferred_props_display.as_deref(),
                         )
                     });
-                    self.check_jsx_attributes_against_props(
-                        super::super::props::resolution::JsxPropsCheckOpts {
-                            attributes_idx: jsx_opening.attributes,
-                            props_type,
-                            tag_name_idx: jsx_opening.tag_name,
-                            component_type: Some(component_metadata_type),
-                            special_attr_component_type: Some(component_type),
-                            raw_props_has_type_params: raw_has_type_params,
-                            display_target,
-                            preferred_target_display: preferred_props_display.as_deref(),
-                            request,
-                            children_ctx,
-                        },
-                    );
+                    let reported_class_overload_failure =
+                        class_props_from_construct.is_some_and(|class_props| {
+                            self.jsx_class_props_is_readonly_wrapper(class_props)
+                                && self
+                                    .get_jsx_namespace_export_symbol_id("ElementType")
+                                    .is_some()
+                                && self.report_jsx_class_props_overload_failure_if_needed(
+                                    component_type,
+                                    props_type,
+                                    jsx_opening.attributes,
+                                    jsx_opening.tag_name,
+                                    children_ctx.clone(),
+                                )
+                        });
+                    if !reported_class_overload_failure {
+                        self.check_jsx_attributes_against_props(
+                            super::super::props::resolution::JsxPropsCheckOpts {
+                                attributes_idx: jsx_opening.attributes,
+                                props_type,
+                                tag_name_idx: jsx_opening.tag_name,
+                                component_type: Some(component_metadata_type),
+                                special_attr_component_type: Some(component_type),
+                                raw_props_has_type_params: raw_has_type_params,
+                                display_target,
+                                preferred_target_display: preferred_props_display.as_deref(),
+                                request,
+                                children_ctx,
+                            },
+                        );
+                    }
                     let generic_spread_props_type =
                         class_props_from_construct.unwrap_or(props_type);
                     let generic_spread_display_target =

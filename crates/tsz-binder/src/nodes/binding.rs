@@ -2180,7 +2180,8 @@ impl BinderState {
                                     module.modifiers.as_ref(),
                                     SyntaxKind::DeclareKeyword,
                                 ) || is_external
-                            });
+                            })
+                            || self.in_global_augmentation;
 
                         // Filter exports: only include symbols with is_exported = true or EXPORT_VALUE flag
                         let mut exports = SymbolTable::new();

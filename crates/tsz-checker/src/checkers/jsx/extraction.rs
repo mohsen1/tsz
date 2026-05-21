@@ -326,7 +326,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn get_jsx_type_parameter_callable_constraint_props_type(
+    pub(in crate::checkers_domain::jsx) fn get_jsx_type_parameter_callable_constraint_props_type(
         &mut self,
         type_param: TypeId,
     ) -> Option<TypeId> {

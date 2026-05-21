@@ -844,7 +844,9 @@ impl<'a> CheckerState<'a> {
         else {
             return;
         };
-        let element_type = self.type_reference_symbol_type(element_type_sym_id);
+        let props_arg = self.jsx_element_type_props_arg_for_element(element_idx);
+        let raw_element_type = self.jsx_element_type_for_validation(element_type_sym_id, props_arg);
+        let element_type = self.evaluate_type_with_env(raw_element_type);
         if matches!(
             element_type,
             TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
@@ -852,8 +854,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let tag_type = self.ctx.types.literal_string(tag);
-        if self.diagnostic_relation_boolean_guard(tag_type, element_type) {
+        if self.jsx_intrinsic_tag_allowed_by_element_type(tag, element_type) {
             return;
         }
 
@@ -887,7 +888,7 @@ impl<'a> CheckerState<'a> {
         if self.jsx_element_type_alias_has_type_params(element_type_sym_id) {
             return;
         }
-        let element_type = self.type_reference_symbol_type(element_type_sym_id);
+        let element_type = self.jsx_element_type_for_validation(element_type_sym_id, None);
         let evaluated = self.evaluate_type_with_env(element_type);
         if matches!(
             evaluated,
@@ -906,6 +907,61 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT,
             &[tag],
         );
+    }
+
+    fn jsx_element_type_for_validation(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        props_arg: Option<TypeId>,
+    ) -> TypeId {
+        let (body, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        if body == TypeId::ERROR || type_params.is_empty() {
+            return body;
+        }
+
+        let type_args = props_arg.into_iter().collect::<Vec<_>>();
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &type_params,
+            &type_args,
+        );
+        crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &substitution)
+    }
+
+    fn jsx_intrinsic_tag_allowed_by_element_type(
+        &mut self,
+        tag: &str,
+        element_type: TypeId,
+    ) -> bool {
+        let tag_atom = self.ctx.types.intern_string(tag);
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, element_type)
+            .unwrap_or_else(|| vec![element_type]);
+        members.into_iter().any(|member| {
+            if crate::query_boundaries::common::is_string_type(self.ctx.types, member) {
+                return true;
+            }
+            if let Some(crate::query_boundaries::common::LiteralValue::String(atom)) =
+                crate::query_boundaries::common::literal_value(self.ctx.types, member)
+            {
+                return atom == tag_atom;
+            }
+            false
+        })
+    }
+
+    fn jsx_element_type_props_arg_for_element(&mut self, element_idx: NodeIndex) -> Option<TypeId> {
+        let attributes_idx = self
+            .ctx
+            .arena
+            .get(element_idx)
+            .and_then(|node| self.ctx.arena.get_jsx_opening(node))
+            .map(|opening| opening.attributes)?;
+        let provided_attrs = self
+            .collect_jsx_union_resolution_attrs(attributes_idx)?
+            .into_iter()
+            .map(|(name, type_id)| (name, type_id.unwrap_or(TypeId::ANY)))
+            .collect::<Vec<_>>();
+        Some(self.build_jsx_provided_attrs_object_type(&provided_attrs))
     }
 
     /// True when the `JSX.ElementType` symbol resolves to a type alias

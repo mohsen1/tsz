@@ -1467,6 +1467,53 @@ fn jsx_class_overload_synthesized_children_not_excess() {
     );
 }
 
+/// React-style class components whose instance exposes `Readonly<P>` props use
+/// JSX constructor applicability diagnostics for props mismatches. Missing props
+/// anchor at the tag and explicit excess props anchor at the failing attribute,
+/// both as TS2769 rather than whole-object TS2322.
+#[test]
+fn jsx_readonly_class_component_props_mismatch_reports_ts2769() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type Readonly<T> = { readonly [P in keyof T]: T[P]; };
+        declare namespace React {
+            type ReactNode = JSX.Element | string | number | null;
+            class Component<P> {
+                constructor(props: P);
+                props: Readonly<P> & Readonly<{ children?: ReactNode }>;
+                render(): ReactNode;
+            }
+        }
+        type NewElementConstructor<P> = new (props: P) => React.Component<P>;
+        declare namespace JSX {
+            interface Element {}
+            interface ElementClass { render(): React.ReactNode; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements { div: {}; }
+            type ElementType = string | NewElementConstructor<any>;
+        }
+
+        class RenderTitle extends React.Component<{ title: string }> {
+            render() { return this.props.title; }
+        }
+        <RenderTitle />;
+        <RenderTitle title="ok" />;
+        <RenderTitle excessProp />;
+        "#,
+    );
+    let ts2769_count = diagnostics.iter().filter(|diag| diag.code == 2769).count();
+    assert_eq!(
+        ts2769_count, 2,
+        "Missing and excess class props should report TS2769, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diag| diag.code == 2322 || diag.code == 2741),
+        "Class props mismatch should not fall back to TS2322/TS2741, got: {diagnostics:?}"
+    );
+}
+
 /// JSX class components with multi-construct overloads must consult
 /// `static defaultProps` and treat its keys as supplied. A `<Comp />` call
 /// with no attributes must not fail overload resolution just because the
@@ -1842,6 +1889,45 @@ fn jsx_library_managed_attributes_function_component_with_index_signature_props_
     assert!(
         ts2741.message_text.contains("required in type 'Props'"),
         "TS2741 should display the named props alias 'Props', got: {ts2741:?}"
+    );
+}
+
+/// Generic component parameters keep the raw
+/// `LibraryManagedAttributes<T, P>` display. When the raw component is a type
+/// parameter constrained to a function component, `P` is the first parameter
+/// type (`{}` here), not the constraint function type itself.
+#[test]
+fn jsx_generic_component_parameter_lma_display_uses_props_parameter() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {}
+            interface IntrinsicAttributes {}
+            type LibraryManagedAttributes<C, P> =
+                C extends { propTypes: infer T; defaultProps: infer D; }
+                    ? P
+                    : C extends { propTypes: infer T; }
+                        ? P
+                        : C extends { defaultProps: infer D; }
+                            ? P
+                            : P;
+        }
+
+        function f1<T extends (props: {}) => JSX.Element>(Component: T) {
+            return <Component />;
+        }
+        "#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for generic LibraryManagedAttributes target");
+    assert!(
+        diag.message_text
+            .contains("LibraryManagedAttributes<T, {}>")
+            && !diag.message_text.contains("(props: {})"),
+        "Expected raw LMA display to preserve props parameter, got: {diag:?}"
     );
 }
 
