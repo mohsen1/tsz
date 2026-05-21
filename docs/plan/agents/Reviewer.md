@@ -39,12 +39,18 @@ gh pr list --state open --limit 100 --json number,title,isDraft,labels,updatedAt
 
 Priority order:
 
-1. Ready PRs without `WIP`, especially ones touching checker, solver, emitter,
-   benchmark, CI, or roadmap files.
-2. Draft PRs that are old, duplicated, or blocking other work.
-3. Stacked PR roots before stacked children.
-4. PRs labelled with an `agent:*` owner that have not been updated recently.
-5. New PRs that lack `AgentName`, structural rule, verification, or clear
+1. Ready PRs without `WIP`: `#9828`, `#9827`, `#9814`, `#9808`, `#9804`,
+   and `#9799`.
+2. Ready PRs with red or stale summaries before ready PRs that only need time
+   for auto-merge. At the 2026-05-21 10:38 UTC audit, `#9801` and `#9650`
+   had already moved back to draft after earlier ready blockers; inspect their
+   final comments/status before asking for another rerun.
+3. Draft PRs that carry generated/noncanonical `agent:*` labels or no
+   `agent:*` label. These are handoff risks before they are code-review items.
+4. Drafts that are old, duplicated, or blocking other work.
+5. Stacked PR roots before stacked children.
+6. PRs labelled with an `agent:*` owner that have not been updated recently.
+7. New PRs that lack `AgentName`, structural rule, verification, or clear
    ownership.
 
 ## How To Review
@@ -75,6 +81,9 @@ comment for high-level scope, duplication, or readiness concerns.
 - Do not block small behavior-preserving PRs for broad future architecture
   wishes; file or link follow-up issues instead.
 - If a PR is good, say so and name any residual risk or test gap.
+- Do not convert generated Claude Code labels into new ownership lanes. Ask the
+  author/coordinator to choose one of the canonical labels in
+  `docs/plan/agents/README.md`.
 
 ## Waiting Behavior
 
