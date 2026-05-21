@@ -103,3 +103,60 @@ function f(x: string | number) {
         "conditionless for post-loop merge should be reachable through the conditional break edge"
     );
 }
+
+#[test]
+fn do_while_post_loop_uses_false_condition_edge_only() {
+    let (binder, _parser) = parse_and_bind(
+        r#"
+let value: string | number;
+do {
+} while (typeof value === "string");
+value;
+"#,
+    );
+
+    let false_flows: Vec<_> = (0..binder.flow_nodes.len())
+        .map(|idx| FlowNodeId(idx as u32))
+        .filter(|&flow_id| {
+            binder.flow_nodes.get(flow_id).is_some_and(|flow| {
+                flow.has_any_flags(flow_flags::FALSE_CONDITION) && flow.node.is_some()
+            })
+        })
+        .collect();
+    assert!(
+        !false_flows.is_empty(),
+        "do-while condition should create a false-condition flow"
+    );
+
+    let mut saw_post_loop_false_edge = false;
+    for false_flow in false_flows {
+        let Some(false_node) = binder.flow_nodes.get(false_flow) else {
+            continue;
+        };
+        let raw_pre_condition_flow = false_node.antecedent.first().copied();
+
+        for branch_id in (0..binder.flow_nodes.len()).map(|idx| FlowNodeId(idx as u32)) {
+            let Some(branch) = binder.flow_nodes.get(branch_id) else {
+                continue;
+            };
+            if !branch.has_any_flags(flow_flags::BRANCH_LABEL)
+                || !branch.antecedent.contains(&false_flow)
+            {
+                continue;
+            }
+
+            saw_post_loop_false_edge = true;
+            if let Some(raw_pre_condition_flow) = raw_pre_condition_flow {
+                assert!(
+                    !branch.antecedent.contains(&raw_pre_condition_flow),
+                    "post-loop merge must not union the raw pre-condition flow with the false-condition exit"
+                );
+            }
+        }
+    }
+
+    assert!(
+        saw_post_loop_false_edge,
+        "do-while post-loop merge should be reached through the false-condition edge"
+    );
+}
