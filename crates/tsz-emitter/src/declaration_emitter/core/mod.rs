@@ -102,6 +102,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) import_plan: ImportPlan,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
     pub(super) inside_declare_namespace: bool,
+    /// String-literal ambient module currently being emitted, if any.
+    pub(super) current_ambient_module_specifier: Option<String>,
     /// Symbol of the innermost enclosing namespace (for context-relative type names)
     pub(super) enclosing_namespace_symbol: Option<SymbolId>,
     /// Namespace-import alias for self-qualified inferred types inside a namespace.
