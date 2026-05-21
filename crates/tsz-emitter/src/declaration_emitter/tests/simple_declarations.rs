@@ -1951,6 +1951,61 @@ export const ExampleFunctionalComponent = ({ "data-testid": dataTestId, [dynProp
 }
 
 #[test]
+fn test_js_default_exported_arrow_component_emits_function_namespace_members() {
+    let source = r#"
+/// <reference path="/.lib/react16.d.ts" preserve="true" />
+import PropTypes from "prop-types";
+
+const Widget = ({
+}) => {
+    return <div />;
+};
+
+Widget.propTypes = {
+    count: PropTypes.number,
+};
+
+Widget.defaultProps = {
+    tabs: undefined,
+};
+
+export default Widget;
+"#;
+    let mut parser = ParserState::new("test.jsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.jsx".to_string());
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("/// <reference path=\"../../.lib/react16.d.ts\" preserve=\"true\" />"),
+        "Expected preserved harness .lib references to be relativized for declaration emit: {output}"
+    );
+    assert!(
+        output.contains("export default Widget;\ndeclare function Widget({}: {}): JSX.Element;"),
+        "Expected default-exported JS arrow component to emit as a function declaration: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare namespace Widget {\n    namespace propTypes {\n        let count: PropTypes.Requireable<number>;\n    }\n    namespace defaultProps {\n        let tabs: undefined;\n    }\n}"
+        ),
+        "Expected component static object assignments to emit as nested namespaces: {output}"
+    );
+    assert!(
+        output.contains("import PropTypes from \"prop-types\";"),
+        "Expected PropTypes import to be preserved when propTypes validators are emitted: {output}"
+    );
+}
+
+#[test]
 fn test_js_exported_computed_param_key_does_not_emit_synthetic_duplicate() {
     let output = emit_js_dts_with_usage_analysis(
         "export const key = \"x\";\nexport const f = ({ [key]: value }) => value;\n",

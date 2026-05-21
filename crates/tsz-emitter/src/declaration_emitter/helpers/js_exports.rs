@@ -2050,6 +2050,32 @@ impl<'a> DeclarationEmitter<'a> {
                         top_level_names.insert(name);
                     }
                 }
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                        continue;
+                    };
+                    for &decl_list_idx in &var_stmt.declarations.nodes {
+                        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                            continue;
+                        };
+                        let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                            continue;
+                        };
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            let Some(decl_node) = self.arena.get(decl_idx) else {
+                                continue;
+                            };
+                            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                                continue;
+                            };
+                            if self.is_js_function_initializer(decl.initializer)
+                                && let Some(name) = self.get_identifier_text(decl.name)
+                            {
+                                top_level_names.insert(name);
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -2974,14 +3000,19 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => true,
             k if k == SyntaxKind::NullKeyword as u16 => true,
             k if k == SyntaxKind::UndefinedKeyword as u16 => true,
+            k if k == SyntaxKind::Identifier as u16 => {
+                self.get_identifier_text(initializer).as_deref() == Some("undefined")
+            }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 self.js_empty_object_literal_initializer(initializer)
+                    || self.js_object_literal_initializer_has_namespace_shape(initializer, true)
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => true,
             k if k == syntax_kind_ext::NEW_EXPRESSION => true,
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
                 .js_namespace_property_reference_text(initializer)
                 .or_else(|| self.js_namespace_value_member_type_text(initializer))
+                .or_else(|| self.js_prop_types_validator_member_type_text(initializer))
                 .is_some(),
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 self.is_negative_literal(init_node)

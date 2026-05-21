@@ -2827,7 +2827,12 @@ impl<'a> DeclarationEmitter<'a> {
             .as_deref()
             .is_some_and(Self::jsdoc_has_function_signature_tags);
         let has_any_jsdoc = jsdoc.is_some();
-        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc && !is_exported {
+        if !has_jsdoc_tags
+            && !is_export_equals_root
+            && !has_any_jsdoc
+            && !is_exported
+            && !self.emitting_js_default_export_declaration
+        {
             return false;
         }
 
@@ -2938,6 +2943,7 @@ impl<'a> DeclarationEmitter<'a> {
             is_exported,
             initializer,
         );
+        self.emit_js_class_static_members_namespace(decl_name, is_exported);
         self.emit_js_namespace_export_aliases_for_name(decl_name, is_exported);
         true
     }
