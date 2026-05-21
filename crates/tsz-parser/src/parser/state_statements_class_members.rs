@@ -944,19 +944,17 @@ impl ParserState {
     ///
     /// Parses keyword modifiers, combines them with any already-parsed
     /// decorators, handles a misplaced `@` after keywords, and returns a
-    /// [`ClassMemberModifierSet`] whose boolean fields let the rest of
-    /// `parse_class_member` branch on named flags instead of repeated linear
-    /// scans over the node list.
+    /// [`ClassMemberModifierSet`] whose boolean fields let `construct_class_member`
+    /// branch on named flags instead of repeated linear scans over the node list.
     fn scan_class_member_modifier_phase(
         &mut self,
         decorators: Option<NodeList>,
-        has_decorators: bool,
     ) -> ClassMemberModifierSet {
+        let has_decorators = decorators.is_some();
         let diag_len_before_modifiers = self.parse_diagnostics.len();
         let parsed_modifiers = self.parse_class_member_modifiers();
         let had_keyword_modifiers = parsed_modifiers.is_some();
 
-        // Combine decorators + keyword modifiers into one list (decorators first).
         let mut combined = match (decorators, parsed_modifiers) {
             (Some(dec), Some(kw)) => {
                 let mut nodes = dec.nodes;
@@ -990,8 +988,6 @@ impl ParserState {
             }
         }
 
-        // Classify all flags in a single pass — replaces the six separate
-        // linear-scan closures that previously lived in `parse_class_member`.
         let mut has_var_let = false;
         let mut has_static = false;
         let mut has_export = false;
@@ -1000,20 +996,17 @@ impl ParserState {
         let mut has_async = false;
         if let Some(ref mods) = combined {
             for &idx in &mods.nodes {
-                if let Some(node) = self.arena.nodes.get(idx.0 as usize) {
-                    let k = node.kind;
-                    if k == SyntaxKind::VarKeyword as u16 || k == SyntaxKind::LetKeyword as u16 {
-                        has_var_let = true;
-                    } else if k == SyntaxKind::StaticKeyword as u16 {
-                        has_static = true;
-                    } else if k == SyntaxKind::ExportKeyword as u16 {
-                        has_export = true;
-                    } else if k == SyntaxKind::DeclareKeyword as u16 {
-                        has_declare = true;
-                    } else if k == SyntaxKind::AccessorKeyword as u16 {
-                        has_accessor = true;
-                    } else if k == SyntaxKind::AsyncKeyword as u16 {
-                        has_async = true;
+                if let Some(node) = self.arena.get(idx)
+                    && let Some(kind) = SyntaxKind::try_from_u16(node.kind)
+                {
+                    match kind {
+                        SyntaxKind::VarKeyword | SyntaxKind::LetKeyword => has_var_let = true,
+                        SyntaxKind::StaticKeyword => has_static = true,
+                        SyntaxKind::ExportKeyword => has_export = true,
+                        SyntaxKind::DeclareKeyword => has_declare = true,
+                        SyntaxKind::AccessorKeyword => has_accessor = true,
+                        SyntaxKind::AsyncKeyword => has_async = true,
+                        _ => {}
                     }
                 }
             }
@@ -1283,8 +1276,6 @@ impl ParserState {
         use tsz_common::diagnostics::diagnostic_codes;
         let start_pos = self.token_pos();
 
-        // Handle empty statement (semicolon) in class body - this is valid TypeScript/JavaScript
-        // A standalone semicolon in a class body is a SemicolonClassElement
         if self.is_token(SyntaxKind::SemicolonToken) {
             let end_pos = self.token_end();
             self.next_token();
@@ -1339,9 +1330,7 @@ impl ParserState {
             self.current_token = rescanned;
         }
 
-        // Parse decorators if present
         let decorators = self.parse_decorators();
-        let has_decorators = decorators.is_some();
 
         // If decorators were found before a static block, emit TS1206
         // TSC anchors this error at the decorator position, not the `static` keyword.
@@ -1389,8 +1378,7 @@ impl ParserState {
             return NodeIndex::NONE;
         }
 
-        // ── Modifier scan + classification phase ─────────────────────────────
-        let mods = self.scan_class_member_modifier_phase(decorators, has_decorators);
+        let mods = self.scan_class_member_modifier_phase(decorators);
 
         // Handle static block after modifiers: { ... }
         // Case 1: `static` not yet consumed (no preceding modifiers or only decorators)
@@ -1557,25 +1545,20 @@ impl ParserState {
         // Keep `function` as a potential member name here for valid forms like
         // `function() {}` or `function;`.
 
-        // Recovery: Handle 'const'/'let'/'var' used as modifiers in class members
-        // Distinguish between: `const x = 1` (invalid, error) vs `const() {}` (valid method name)
+        // `const x = 1` is invalid; `const() {}` is a valid method name. Trigger only when
+        // an identifier/bracket follows on the same line (no ASI), indicating a modifier misuse.
         if matches!(
             self.token(),
             SyntaxKind::ConstKeyword | SyntaxKind::LetKeyword | SyntaxKind::VarKeyword
         ) {
-            // Look ahead to determine if this is being used as a modifier or as a name
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
-            self.next_token(); // skip const/let/var
+            self.next_token();
             let next_token = self.token();
             let has_line_break = self.scanner.has_preceding_line_break();
             self.scanner.restore_state(snapshot);
             self.current_token = current;
 
-            // If followed by `(`, it's a method name (e.g., `const() {}`), which is valid
-            // If followed by `;`, `}`, `=`, `!`, `?`, or newline (ASI), treat as property name
-            // If followed by identifier ON THE SAME LINE, it's being used as a modifier (invalid: `const x = 1`)
-            // If there's a line break before the next token, ASI applies and the keyword is a property name
             if !has_line_break
                 && matches!(
                     next_token,
@@ -1584,98 +1567,68 @@ impl ParserState {
                         | SyntaxKind::OpenBracketToken
                 )
             {
-                // This is likely being used as a modifier, emit error and recover
                 self.parse_error_at_current_token(
                     "A class member cannot have the 'const', 'let', or 'var' keyword.",
                     diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
                 );
-                // Consume the invalid keyword and continue parsing
-                // The next identifier will be treated as the property/method name
                 self.next_token();
             }
         }
 
-        // Recovery: Handle `try` keyword misplaced in class body.
-        // `try { ... }` is not a valid class member, even after modifiers like
-        // `public`. When followed by `{` on the same line, emit TS1068 to match tsc
-        // rather than parsing `try` as a property name and cascading into TS1434/TS1435.
-        if self.is_token(SyntaxKind::TryKeyword) {
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
-            self.next_token();
-            let next_is_open_brace = self.is_token(SyntaxKind::OpenBraceToken)
-                && !self.scanner.has_preceding_line_break();
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
-            if next_is_open_brace {
-                self.parse_error_at_current_token(
-                    "Unexpected token. A constructor, method, accessor, or property was expected.",
-                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
-                );
-            }
+        // `try { ... }` is not a valid class member even after modifiers like `public`. Emit
+        // TS1068 rather than cascading into TS1434/TS1435. Unlike const/let/var, `try` is a
+        // valid property name so we only emit the diagnostic and let it continue as a name.
+        if self.is_token(SyntaxKind::TryKeyword) && self.look_ahead_is_try_block_same_line() {
+            self.parse_error_at_current_token(
+                "Unexpected token. A constructor, method, accessor, or property was expected.",
+                diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+            );
         }
 
-        // Recovery: Handle `class`/`enum` keywords that are misplaced declarations in a class body.
-        // `class D {}` or `enum E {}` inside a class body are invalid, even after
-        // modifiers like `public`. But `class;` or `class(){}` remain valid property
-        // and method names, so only trigger when an identifier follows on the same line.
+        // `class D {}` / `enum E {}` are invalid class members even after modifiers like `public`.
+        // `class;` and `class(){}` are valid property/method names — only trigger when an
+        // identifier follows on the same line (distinguishes declaration from member name).
         if matches!(
             self.token(),
             SyntaxKind::ClassKeyword | SyntaxKind::EnumKeyword
-        ) {
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
-            self.next_token();
-            let next_is_identifier =
-                self.is_identifier_or_keyword() && !self.scanner.has_preceding_line_break();
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
-
-            if next_is_identifier {
-                // Misplaced class/enum declaration. Emit TS1068 at the keyword position.
-                self.parse_error_at_current_token(
-                    "Unexpected token. A constructor, method, accessor, or property was expected.",
-                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
-                );
-                // Skip keyword + name. If `{` follows, skip the block body but leave
-                // the matching `}` for the outer class when the inner block has exactly
-                // one level of braces and the outer class brace is pending.
-                self.next_token(); // skip class/enum keyword
-                self.next_token(); // skip the identifier name
-                // Skip extends/implements clauses if present (e.g., `class D extends E {`)
-                while self.is_identifier_or_keyword()
-                    && !self.is_token(SyntaxKind::OpenBraceToken)
-                    && !self.is_token(SyntaxKind::CloseBraceToken)
-                    && !self.is_token(SyntaxKind::SemicolonToken)
-                    && !self.is_token(SyntaxKind::EndOfFileToken)
-                {
+        ) && self.look_ahead_next_is_identifier_or_keyword_on_same_line()
+        {
+            self.parse_error_at_current_token(
+                "Unexpected token. A constructor, method, accessor, or property was expected.",
+                diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+            );
+            self.next_token(); // skip class/enum keyword
+            self.next_token(); // skip the identifier name
+            // Skip extends/implements clauses (e.g., `class D extends E {`).
+            while self.is_identifier_or_keyword()
+                && !self.is_token(SyntaxKind::OpenBraceToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                self.next_token();
+                if self.is_token(SyntaxKind::CommaToken) {
                     self.next_token();
-                    // Skip comma-separated items
-                    if self.is_token(SyntaxKind::CommaToken) {
-                        self.next_token();
-                    }
                 }
-                if self.is_token(SyntaxKind::OpenBraceToken) {
-                    // Skip tokens inside the block body until we find the matching }.
-                    // DON'T consume the final } — leave it for the outer class body
-                    // to use as its closing brace (error recovery behavior matching TSC).
-                    let mut depth = 1u32;
-                    self.next_token(); // consume {
-                    while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
-                        if self.is_token(SyntaxKind::OpenBraceToken) {
-                            depth += 1;
-                        } else if self.is_token(SyntaxKind::CloseBraceToken) {
-                            depth -= 1;
-                            if depth == 0 {
-                                // Leave the } for the outer class to consume
-                                break;
-                            }
-                        }
-                        self.next_token();
-                    }
-                }
-                return NodeIndex::NONE;
             }
+            if self.is_token(SyntaxKind::OpenBraceToken) {
+                // DON'T consume the final `}` — leave it for the outer class body to use
+                // as its closing brace (tsc error recovery behavior).
+                let mut depth = 1u32;
+                self.next_token(); // consume `{`
+                while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
+                    if self.is_token(SyntaxKind::OpenBraceToken) {
+                        depth += 1;
+                    } else if self.is_token(SyntaxKind::CloseBraceToken) {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    self.next_token();
+                }
+            }
+            return NodeIndex::NONE;
         }
 
         // Parse member name
@@ -1928,7 +1881,6 @@ impl ParserState {
             .is_token(SyntaxKind::LessThanToken)
             .then(|| self.parse_type_parameters());
 
-        // Method
         let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
         let mut body_already_consumed_by_recovery = false;
         let parameters = if has_open_paren {
@@ -1949,14 +1901,12 @@ impl ParserState {
             self.make_node_list(vec![])
         };
 
-        // Optional return type (supports type predicates: param is T)
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_return_type()
         } else {
             NodeIndex::NONE
         };
 
-        // Parse body
         self.push_label_scope();
         let body = if body_already_consumed_by_recovery {
             NodeIndex::NONE
@@ -2021,10 +1971,6 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // TS1442: Expected '=' for property initializer.
-        // When a class property has a type annotation and the next token is
-        // an expression start (not '=', ';', '}', or EOF), emit TS1442 and
-        // treat the expression as the initializer for recovery.
         let init_saved_flags = self.context_flags;
         self.context_flags &=
             !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_STATIC_BLOCK);
@@ -2040,11 +1986,9 @@ impl ParserState {
             && (((self.is_token(SyntaxKind::StringLiteral)
                 || self.is_token(SyntaxKind::NumericLiteral)
                 || self.is_token(SyntaxKind::BigIntLiteral))
-                // Don't treat string/numeric/bigint literals as initializers if they look
-                // like the next class member property name (followed by `:` or `?`).
-                // e.g., `"d": string; "e": number;` — `"e"` is a property name.
+                // A literal that looks like the next member's property name (followed by
+                // `:` or `?`) starts the next member, not an initializer for this one.
                 && !self.look_ahead_is_next_class_member_property_name())
-                // TS1442 for `.` after a type annotation: `a: this.foo;`.
                 || self.is_token(SyntaxKind::DotToken))
         {
             self.parse_error_at_current_token(
