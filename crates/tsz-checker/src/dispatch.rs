@@ -1816,7 +1816,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         && expr_node.kind == SyntaxKind::ImportKeyword as u16
                         && let Some(type_arguments) = &data.type_arguments
                     {
-                        // Bail early — the generic path would call instantiation_expression_applicability_error_type(VOID) producing a spurious extra error.
+                        // Bail early: the generic path would otherwise report
+                        // a spurious extra error for applying type args to VOID.
                         for &type_arg in &type_arguments.nodes {
                             let _ = self.checker.get_type_from_type_node(type_arg);
                         }
@@ -1950,7 +1951,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // cross-file traversal. They refer to named bindings that carry real
             // types, so VOID would be incorrect (void participates in
             // assignability and triggers spurious diagnostics). Return ANY as a
-            // conservative placeholder — permissive like ERROR but without
+            // conservative placeholder: permissive like ERROR but without
             // triggering the uncoded-diagnostic path.
             k if k == syntax_kind_ext::IMPORT_SPECIFIER
                 || k == syntax_kind_ext::NAMESPACE_IMPORT

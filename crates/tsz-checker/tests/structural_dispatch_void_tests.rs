@@ -16,7 +16,7 @@
 //!   resolution is in place.
 //!
 //! An `ERROR` return propagates through assignability checks and produces
-//! "uncoded diagnostics" — diagnostics without a standard TS error code.
+//! "uncoded diagnostics" - diagnostics without a standard TS error code.
 //!
 //! Adjacent-case coverage (per `CLAUDE.md` §25/§26):
 //! - import declaration node family: `import { X } from '...'`
@@ -116,7 +116,8 @@ const strs: string[] = applyAll(nums, fn1);
 // ── Parameter declaration family ─────────────────────────────────────────────
 
 /// Callback parameters in a generic type must not cause ERROR contamination.
-/// Shape: `(param: T) => R` — the PARAMETER node for `param` must yield VOID.
+/// Shape: `(param: T) => R` - PARAMETER nodes must keep their existing
+/// diagnostic behavior and not be hidden by the structural-node fallback.
 #[test]
 fn parameter_node_in_callback_type_no_false_diagnostics_param_name_x() {
     let source = r#"
