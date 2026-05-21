@@ -573,12 +573,10 @@ impl<'a> CheckerContext<'a> {
             let arena = self
                 .all_arenas
                 .as_ref()
-                .and_then(|arenas| arenas.get(file_idx))
+                .and_then(|a| a.get(file_idx))
                 .map(Arc::as_ref);
             for (name, &sym_id) in binder.file_locals.iter() {
-                if !super::file_local_entry_is_globally_visible(
-                    binder, arena, file_idx, name, sym_id,
-                ) {
+                if !binder.cross_file_local_is_visible(arena, file_idx, name, sym_id) {
                     continue;
                 }
                 file_locals_index
