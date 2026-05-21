@@ -168,6 +168,34 @@ function f<T>(obj: Box<T>, key: keyof T): void {
 // Assignability mismatch: value type mismatch must produce TS2322
 // ============================================================================
 
+// ============================================================================
+// Negative: mismatched keyof types must NOT substitute
+// ============================================================================
+
+/// `{ [K in keyof T]: number }[keyof S]` where T != S must NOT evaluate
+/// to `number` — the index covers a different key-space than the constraint.
+/// Without this guard the `keyof_same_inner` check could accept mismatched
+/// inner types and produce a false substitution.
+#[test]
+fn mapped_keyof_index_access_different_type_params_no_false_substitution() {
+    let source = r#"
+function f<T, S>(obj: { [K in keyof T]: number }, key: keyof S): void {
+    const x: number = obj[key];
+}
+"#;
+
+    let diags = check_strict(source);
+    // tsc emits TS2345 because `keyof S` does not satisfy `keyof T`.
+    assert!(
+        has_code(&diags, 2345) || has_code(&diags, 2322),
+        "keyof S indexing {{ [K in keyof T]: number }} should error (different type params), got: {diags:#?}"
+    );
+}
+
+// ============================================================================
+// Assignability mismatch: value type mismatch must produce TS2322
+// ============================================================================
+
 /// Assigning `{ [k in keyof T]: number }[keyof T]` to `string` must
 /// produce TS2322 — the evaluation gives `number` which is not `string`.
 #[test]

@@ -1414,6 +1414,21 @@ impl<'a> TypeVisitor for TupleKeyVisitor<'a> {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// Returns `true` when both `left` and `right` are `KeyOf(X)` with the same inner `X`.
+    /// Purely structural — no evaluation — so safe for recursive/conditional inner types.
+    fn keyof_same_inner(db: &dyn TypeDatabase, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+        let Some(TypeData::KeyOf(l_inner)) = db.lookup(left) else {
+            return false;
+        };
+        let Some(TypeData::KeyOf(r_inner)) = db.lookup(right) else {
+            return false;
+        };
+        l_inner == r_inner
+    }
+
     fn constraints_semantically_match(&mut self, left: TypeId, right: TypeId) -> bool {
         if left == right {
             return true;
@@ -1607,13 +1622,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.constraints_semantically_match(index_constraint, mapped.constraint)
                     || self.constraints_semantically_match(index_type, mapped.constraint)
             }),
-            // When the index is a non-TypeParameter generic (e.g. `keyof T` used directly as
-            // the index type), check whether it semantically matches the mapped constraint.
-            // Example: `{ [k in keyof T]: V }[keyof T]` — both index and constraint are
-            // `keyof T`, so the mapped value type `V` is the result.
+            // When the index is `keyof T` used directly as the index type, check
+            // structurally whether both index and constraint are `KeyOf` of the same
+            // inner type — no evaluation, so recursive/conditional types are safe.
+            // Example: `{ [K in keyof T]: V }[keyof T]` → both are `KeyOf(T)` → V.
             _ => {
                 generic_covering_index.is_some()
-                    || self.constraints_semantically_match(index_type, mapped.constraint)
+                    || Self::keyof_same_inner(self.interner(), index_type, mapped.constraint)
             }
         };
 
