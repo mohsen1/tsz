@@ -255,8 +255,9 @@ impl Server {
                 .map(to_lsp_diag)
                 .collect();
             if filtered_diagnostics.is_empty()
-                && error_codes
-                    .contains(&tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                && (error_codes.is_empty()
+                    || error_codes
+                        .contains(&tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME))
                 && request_span.is_some_and(|(start, end)| {
                     start == end && start.line == 0 && start.character == 0
                 })

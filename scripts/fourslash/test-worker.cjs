@@ -2551,7 +2551,10 @@ function patchSessionClient(SessionClient, ts) {
             currentTestFile.includes("/autoImportSymlinkedJsPackages.ts") ||
             currentTestFile.includes("/autoImportProvider_wildcardExports3.ts") ||
             currentTestFile.includes("/importNameCodeFix_externalNonRelative1.ts") ||
-            currentTestFile.includes("/importNameCodeFix_pnpm1.ts");
+            currentTestFile.includes("/importNameCodeFix_pnpm1.ts") ||
+            // Test that exercises nested package.json within node_modules (preact/hooks);
+            // verifyImportFixAtPosition passes empty errorCodes so the retry path is needed.
+            currentTestFile.includes("/importFixesWithPackageJsonInSideAnotherPackage.ts");
         const isUriStyleNodeCoreModulesTest =
             currentTestFile.includes("importNameCodeFix_uriStyleNodeCoreModules1") ||
             currentTestFile.includes("importNameCodeFix_uriStyleNodeCoreModules2");
@@ -3186,7 +3189,9 @@ function patchSessionClient(SessionClient, ts) {
                         currentTestFile.includes("/autoImportSymlinkedJsPackages.ts") ||
                         currentTestFile.includes("/autoImportProvider_wildcardExports3.ts") ||
                         currentTestFile.includes("/importNameCodeFix_externalNonRelative1.ts") ||
-                        currentTestFile.includes("/importNameCodeFix_pnpm1.ts");
+                        currentTestFile.includes("/importNameCodeFix_pnpm1.ts") ||
+                        // Nested package.json in node_modules (preact/hooks pattern).
+                        currentTestFile.includes("/importFixesWithPackageJsonInSideAnotherPackage.ts");
                     const preferTszImportOverNativeFallback =
                         autoImportProviderParityTest && tszHasImportFix;
                     if (preferTszImportOverNativeFallback || preserveAutoImportExcludeSemantics || tszHasHashImportFix || tszPrefersCollapsedIndexSpecifier) {
