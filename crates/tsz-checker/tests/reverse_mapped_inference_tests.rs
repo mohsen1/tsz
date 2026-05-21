@@ -691,3 +691,110 @@ f<{ x: number; y: string }, { x: number; y: string }>({ x: 1, y: "hello" });
         "Spurious TS2322 on valid mixed-param intersection-constrained mapped type, got: {codes_valid:?}"
     );
 }
+
+// ============================================================================
+// Issue #8707: reverse-mapped inference through intersection-constrained T
+// ============================================================================
+
+#[test]
+fn reverse_mapped_through_intersection_constrained_type_param() {
+    // When T extends A & B, reverse-mapped inference through { [K in keyof T]: () => T[K] }
+    // must produce T = { a: number; b: string }, not just one side.
+    // tsc correctly infers T from all properties; tsz was losing members from one side.
+    let code = r#"
+interface A { a: number }
+interface B { b: string }
+type Project<T> = { [K in keyof T]: () => T[K] };
+declare function f<T extends A & B>(p: Project<T>): T;
+const r = f({ a: () => 1, b: () => "x" });
+const _a: number = r.a;
+const _b: string = r.b;
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected no TS2339: both .a and .b must be accessible on reverse-inferred T, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322: inferred T must be assignable to both interface members, got: {codes:?}"
+    );
+}
+
+#[test]
+fn reverse_mapped_through_unconstrained_type_param_all_props_inferred() {
+    // Unconstrained T: all properties in the source object must be inferred into T,
+    // not just the first one. Reverse inference runs independently for each property.
+    let code = r#"
+type Project<T> = { [K in keyof T]: () => T[K] };
+declare function f<T>(p: Project<T>): T;
+const r = f({ a: () => 1, b: () => "x" });
+const _a: number = r.a;
+const _b: string = r.b;
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected no TS2339 accessing r.a and r.b — all properties must be inferred into T, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 on assignment of r.a and r.b, got: {codes:?}"
+    );
+}
+
+#[test]
+fn reverse_mapped_through_interface_intersection_full_inference() {
+    // T extends multiple interfaces, each contributing different key-value pairs.
+    // The inferred T must contain all keys from all interfaces.
+    let code = r#"
+interface WithX { x: string }
+interface WithY { y: number }
+interface WithZ { z: boolean }
+type Project<T> = { [K in keyof T]: () => T[K] };
+declare function create<T extends WithX & WithY & WithZ>(p: Project<T>): T;
+const result = create({ x: () => "hi", y: () => 42, z: () => true });
+const _x: string = result.x;
+const _y: number = result.y;
+const _z: boolean = result.z;
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "Expected all three properties accessible on result, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 on all three property assignments, got: {codes:?}"
+    );
+}
+
+#[test]
+fn reverse_mapped_many_properties_all_inferred() {
+    // Reverse inference per property is independent of how many properties the source has:
+    // adding more properties cannot cause earlier ones to be dropped from inferred T.
+    // Uses a renamed alias (`Wrap` not `Project`) to confirm the rule is name-independent.
+    let code = r#"
+type Wrap<T> = { [K in keyof T]: () => T[K] };
+declare function wrap<T>(w: Wrap<T>): T;
+const result = wrap({
+    a: () => 1,
+    b: () => "hello",
+    c: () => true,
+    d: () => null,
+});
+const a: number = result.a;
+const b: string = result.b;
+const c: boolean = result.c;
+const d: null = result.d;
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2339),
+        "All properties (a, b, c, d) must be accessible on result, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "All property types must match the inferred T shape, got: {codes:?}"
+    );
+}
