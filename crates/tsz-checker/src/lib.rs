@@ -664,6 +664,9 @@ mod synthetic_unique_atom_union_display_tests;
 #[path = "tests/this_context_self_type_tests.rs"]
 mod this_context_self_type_tests;
 #[cfg(test)]
+#[path = "tests/this_void_method_call_tests.rs"]
+mod this_void_method_call_tests;
+#[cfg(test)]
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
 #[cfg(test)]
