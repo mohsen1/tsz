@@ -581,7 +581,7 @@ fn test_ts2511_type_param_constrained_to_typeof_concrete_no_error() {
     );
 }
 
-/// Constructible non-abstract constraint — exercises TypeParam with no abstract constraint.
+/// Constructible non-abstract constraint — exercises `TypeParam` with no abstract constraint.
 #[test]
 fn test_ts2511_type_param_constructible_no_error() {
     test_no_specific_error(
