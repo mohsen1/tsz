@@ -469,7 +469,7 @@ impl<'a> Printer<'a> {
         for var in &outer_shadowed_body_vars {
             self.ctx
                 .block_scope_state
-                .register_function_scope_shadowed_name(var);
+                .register_loop_iife_force_rename_name(var);
         }
         for (var, emitted) in captured_vars.iter().zip(captured_param_names.iter()) {
             self.ctx

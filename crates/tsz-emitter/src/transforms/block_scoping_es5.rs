@@ -59,9 +59,17 @@ pub struct BlockScopeState {
     var_registrations: FxHashMap<String, String>,
     /// Saved `var` registrations for outer function scopes.
     var_registration_stack: Vec<FxHashMap<String, String>>,
-    /// Source-level names that should force a block-scoped rename inside the
-    /// current generated function scope.
+    /// Source-level names that should force a rename inside the current
+    /// generated function scope, but only when the declaration is inside a
+    /// nested block (not at function level). Used by the class/nested-context
+    /// seeding path (`seed_function_scope_shadowed_names`).
     function_scope_shadowed_names: Vec<FxHashSet<String>>,
+    /// Source-level names that must force a rename even when at function
+    /// level within the current IIFE. Only populated by the loop-capture IIFE
+    /// transform (`register_loop_iife_force_rename_name`), where the loop
+    /// body is emitted without `enter_scope()` so `let` declarations appear
+    /// at function level inside the IIFE.
+    loop_iife_force_rename_names: Vec<FxHashSet<String>>,
 }
 
 impl BlockScopeState {
@@ -84,6 +92,7 @@ impl BlockScopeState {
         self.var_registrations.clear();
         self.function_scope_shadowed_names
             .push(FxHashSet::default());
+        self.loop_iife_force_rename_names.push(FxHashSet::default());
     }
 
     /// Exit the current block scope
@@ -92,13 +101,27 @@ impl BlockScopeState {
         if self.function_scope_marks.pop().unwrap_or(false) {
             self.var_registrations = self.var_registration_stack.pop().unwrap_or_default();
             self.function_scope_shadowed_names.pop();
+            self.loop_iife_force_rename_names.pop();
         }
     }
 
     /// Force block-scoped declarations with `original_name` to rename in the
-    /// current generated function scope.
+    /// current generated function scope, but only when the declaration is
+    /// inside a nested block (not at function level). Used by the class and
+    /// nested-context seeding path.
     pub fn register_function_scope_shadowed_name(&mut self, original_name: &str) {
         if let Some(current) = self.function_scope_shadowed_names.last_mut() {
+            current.insert(original_name.to_string());
+        }
+    }
+
+    /// Force a rename for `original_name` even when its declaration is at
+    /// function level inside the current IIFE. Used exclusively by the
+    /// loop-capture IIFE transform, where `let` declarations in the loop body
+    /// appear at function level because the body is emitted without
+    /// `enter_scope()`.
+    pub fn register_loop_iife_force_rename_name(&mut self, original_name: &str) {
+        if let Some(current) = self.loop_iife_force_rename_names.last_mut() {
             current.insert(original_name.to_string());
         }
     }
@@ -121,10 +144,19 @@ impl BlockScopeState {
 
         let needs_rename = is_builtin_shadow
             || self.reserved_names.contains(original_name)
+            // Loop-IIFE context: force rename even at function level because the
+            // loop body is emitted without enter_scope() so let decls appear at
+            // function level inside the IIFE.
             || self
-                .function_scope_shadowed_names
+                .loop_iife_force_rename_names
                 .last()
                 .is_some_and(|names| names.contains(original_name))
+            // Class/nested context: only force rename inside a nested block.
+            || (!at_function_level
+                && self
+                    .function_scope_shadowed_names
+                    .last()
+                    .is_some_and(|names| names.contains(original_name)))
             || if at_function_level {
                 // At function body level: only check the current function scope itself
                 // (for redeclarations within the same scope)
@@ -394,6 +426,7 @@ impl BlockScopeState {
         self.var_registrations.clear();
         self.var_registration_stack.clear();
         self.function_scope_shadowed_names.clear();
+        self.loop_iife_force_rename_names.clear();
     }
 }
 
