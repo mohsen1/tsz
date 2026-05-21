@@ -2164,8 +2164,8 @@ x,y,a1,b1,d1;
     );
 }
 
-/// When a source file contains `/// <amd-module name='X'/>`, the System.register
-/// call must include `"X"` as the first argument — matching tsc behavior for
+/// When a source file contains `/// <amd-module name='X'/>`, the
+/// `System.register` call must include `"X"` as the first argument, matching tsc behavior for
 /// `--module system` with the `amd-module` pragma.
 #[test]
 fn system_amd_module_name_directive_names_the_register_call() {
@@ -2194,8 +2194,8 @@ fn system_amd_module_name_directive_names_the_register_call() {
     );
 }
 
-/// The `bundled_module_name` printer option also names the System.register call
-/// (used for out-file bundled output). The `amd-module` directive takes
+/// The `bundled_module_name` printer option also names the `System.register`
+/// call (used for out-file bundled output). The `amd-module` directive takes
 /// precedence when both are present.
 #[test]
 fn system_bundled_module_name_option_names_the_register_call() {
