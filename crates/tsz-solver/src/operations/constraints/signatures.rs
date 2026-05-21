@@ -15,6 +15,14 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tracing::trace;
 
+/// One side (source or target) of a signature constraint comparison.
+struct SignatureSide<'a> {
+    params: &'a [ParamInfo],
+    this_type: Option<TypeId>,
+    return_type: TypeId,
+    type_predicate: Option<&'a TypePredicate>,
+}
+
 // Reusable scratch `FxHashSet<TypeId>` for `type_contains_placeholder` calls
 // in this module. Mirrors the pool pattern from #4722 / #4790 / #4801 /
 // #4805 / #4807 / #4810.
@@ -271,24 +279,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// the outer inference variable widen to `unknown` and the constructor
     /// remains assignable. tsc applies its return bias at a higher layer
     /// (signature inference), and we mirror that selective behaviour here.
-    #[allow(clippy::too_many_arguments)]
     fn constrain_signature_bodies(
         &mut self,
         ctx: &mut InferenceContext,
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
-        source_params: &[ParamInfo],
-        target_params: &[ParamInfo],
-        source_this: Option<TypeId>,
-        target_this: Option<TypeId>,
-        source_return: TypeId,
-        target_return: TypeId,
-        source_pred: Option<&TypePredicate>,
-        target_pred: Option<&TypePredicate>,
+        source: &SignatureSide<'_>,
+        target: &SignatureSide<'_>,
         priority: crate::types::InferencePriority,
         is_constructor: bool,
     ) {
-        self.constrain_params_with_rest(ctx, var_map, source_params, target_params, priority);
-        if let (Some(s_this), Some(t_this)) = (source_this, target_this) {
+        self.constrain_params_with_rest(ctx, var_map, source.params, target.params, priority);
+        if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
             self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
         }
         // Return types must never be inferred at NakedTypeVariable priority — cap
@@ -300,11 +301,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         } else {
             priority.max(crate::types::InferencePriority::ReturnType)
         };
-        self.constrain_types(ctx, var_map, source_return, target_return, return_priority);
+        self.constrain_types(
+            ctx,
+            var_map,
+            source.return_type,
+            target.return_type,
+            return_priority,
+        );
         // Constrain type predicates if both have them.
         // Predicates are marked as a type-annotation source so literal predicate
         // types (e.g. `x is 'B'`) are not marked fresh and won't be widened.
-        self.constrain_type_predicates(ctx, var_map, source_pred, target_pred, return_priority);
+        self.constrain_type_predicates(
+            ctx,
+            var_map,
+            source.type_predicate,
+            target.type_predicate,
+            return_priority,
+        );
     }
 
     pub(super) fn constrain_function_to_call_signature(
@@ -323,14 +336,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.constrain_signature_bodies(
             ctx,
             var_map,
-            &source.params,
-            &target.params,
-            source.this_type,
-            target.this_type,
-            source.return_type,
-            target.return_type,
-            source.type_predicate.as_ref(),
-            target.type_predicate.as_ref(),
+            &SignatureSide {
+                params: &source.params,
+                this_type: source.this_type,
+                return_type: source.return_type,
+                type_predicate: source.type_predicate.as_ref(),
+            },
+            &SignatureSide {
+                params: &target.params,
+                this_type: target.this_type,
+                return_type: target.return_type,
+                type_predicate: target.type_predicate.as_ref(),
+            },
             priority,
             source.is_constructor,
         );
@@ -347,14 +364,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.constrain_signature_bodies(
             ctx,
             var_map,
-            &source.params,
-            &target.params,
-            source.this_type,
-            target.this_type,
-            source.return_type,
-            target.return_type,
-            source.type_predicate.as_ref(),
-            target.type_predicate.as_ref(),
+            &SignatureSide {
+                params: &source.params,
+                this_type: source.this_type,
+                return_type: source.return_type,
+                type_predicate: source.type_predicate.as_ref(),
+            },
+            &SignatureSide {
+                params: &target.params,
+                this_type: target.this_type,
+                return_type: target.return_type,
+                type_predicate: target.type_predicate.as_ref(),
+            },
             priority,
             target.is_constructor,
         );
@@ -372,14 +393,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.constrain_signature_bodies(
             ctx,
             var_map,
-            &source.params,
-            &target.params,
-            source.this_type,
-            target.this_type,
-            source.return_type,
-            target.return_type,
-            source.type_predicate.as_ref(),
-            target.type_predicate.as_ref(),
+            &SignatureSide {
+                params: &source.params,
+                this_type: source.this_type,
+                return_type: source.return_type,
+                type_predicate: source.type_predicate.as_ref(),
+            },
+            &SignatureSide {
+                params: &target.params,
+                this_type: target.this_type,
+                return_type: target.return_type,
+                type_predicate: target.type_predicate.as_ref(),
+            },
             priority,
             is_constructor,
         );

@@ -42,21 +42,6 @@ pub fn directives_to_check_options(directives: &HashMap<String, String>) -> Valu
         opts.insert(field_name.to_string(), json_value);
     }
 
-    // When `target` is set but `lib` is not, inject the default lib chain.
-    // The server's determine_libs returns a single lib name (e.g. "es6") that
-    // doesn't resolve properly in the source tree. The CLI works because tsconfig
-    // resolution follows /// <reference lib="..." /> chains. We replicate that
-    // here by mapping target to the canonical lib list.
-    if opts.contains_key("target") && !opts.contains_key("lib") && !opts.contains_key("noLib") {
-        if let Some(Value::String(target)) = opts.get("target") {
-            if let Some(libs) = default_libs_for_target(target) {
-                let lib_values: Vec<Value> =
-                    libs.iter().map(|s| Value::String(s.to_string())).collect();
-                opts.insert("lib".to_string(), Value::Array(lib_values));
-            }
-        }
-    }
-
     Value::Object(opts)
 }
 
@@ -101,508 +86,6 @@ pub fn has_unsupported_server_options(directives: &HashMap<String, String>) -> b
     directives
         .keys()
         .any(|k| UNSUPPORTED.contains(&k.to_lowercase().as_str()))
-}
-
-/// Map a target string to the default lib names the server should load.
-///
-/// The conformance test source tree uses files like `es2015.d.ts`, `es2015.core.d.ts`, etc.
-/// When only `target` is specified (no `lib`), the server needs the full set of lib names
-/// that the CLI would resolve via tsconfig.json reference-following.
-pub(crate) fn default_libs_for_target(target: &str) -> Option<Vec<&'static str>> {
-    let first = target
-        .split(',')
-        .next()
-        .unwrap_or(target)
-        .trim()
-        .to_lowercase();
-    Some(match first.as_str() {
-        "es3" | "es5" => vec!["es5"],
-        "es6" | "es2015" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-        ],
-        "es2016" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-            "es2016.array.include",
-            "es2016",
-        ],
-        "es2017" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-            "es2016.array.include",
-            "es2016",
-            "es2017.arraybuffer",
-            "es2017.date",
-            "es2017.object",
-            "es2017.sharedmemory",
-            "es2017.string",
-            "es2017.typedarrays",
-            "es2017",
-        ],
-        "es2018" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-            "es2016.array.include",
-            "es2016",
-            "es2017.arraybuffer",
-            "es2017.date",
-            "es2017.object",
-            "es2017.sharedmemory",
-            "es2017.string",
-            "es2017.typedarrays",
-            "es2017",
-            "es2018.asyncgenerator",
-            "es2018.asynciterable",
-            "es2018.promise",
-            "es2018.regexp",
-            "es2018",
-        ],
-        "es2019" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-            "es2016.array.include",
-            "es2016",
-            "es2017.arraybuffer",
-            "es2017.date",
-            "es2017.object",
-            "es2017.sharedmemory",
-            "es2017.string",
-            "es2017.typedarrays",
-            "es2017",
-            "es2018.asyncgenerator",
-            "es2018.asynciterable",
-            "es2018.promise",
-            "es2018.regexp",
-            "es2018",
-            "es2019.array",
-            "es2019.object",
-            "es2019.string",
-            "es2019.symbol",
-            "es2019",
-        ],
-        "es2020" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-            "es2016.array.include",
-            "es2016",
-            "es2017.arraybuffer",
-            "es2017.date",
-            "es2017.object",
-            "es2017.sharedmemory",
-            "es2017.string",
-            "es2017.typedarrays",
-            "es2017",
-            "es2018.asyncgenerator",
-            "es2018.asynciterable",
-            "es2018.promise",
-            "es2018.regexp",
-            "es2018",
-            "es2019.array",
-            "es2019.object",
-            "es2019.string",
-            "es2019.symbol",
-            "es2019",
-            "es2020.bigint",
-            "es2020.date",
-            "es2020.number",
-            "es2020.promise",
-            "es2020.sharedmemory",
-            "es2020.string",
-            "es2020.symbol.wellknown",
-            "es2020",
-        ],
-        "es2021" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-            "es2016.array.include",
-            "es2016",
-            "es2017.arraybuffer",
-            "es2017.date",
-            "es2017.object",
-            "es2017.sharedmemory",
-            "es2017.string",
-            "es2017.typedarrays",
-            "es2017",
-            "es2018.asyncgenerator",
-            "es2018.asynciterable",
-            "es2018.promise",
-            "es2018.regexp",
-            "es2018",
-            "es2019.array",
-            "es2019.object",
-            "es2019.string",
-            "es2019.symbol",
-            "es2019",
-            "es2020.bigint",
-            "es2020.date",
-            "es2020.number",
-            "es2020.promise",
-            "es2020.sharedmemory",
-            "es2020.string",
-            "es2020.symbol.wellknown",
-            "es2020",
-            "es2021.promise",
-            "es2021.string",
-            "es2021.weakref",
-            "es2021",
-        ],
-        "es2022" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-            "es2016.array.include",
-            "es2016",
-            "es2017.arraybuffer",
-            "es2017.date",
-            "es2017.object",
-            "es2017.sharedmemory",
-            "es2017.string",
-            "es2017.typedarrays",
-            "es2017",
-            "es2018.asyncgenerator",
-            "es2018.asynciterable",
-            "es2018.promise",
-            "es2018.regexp",
-            "es2018",
-            "es2019.array",
-            "es2019.object",
-            "es2019.string",
-            "es2019.symbol",
-            "es2019",
-            "es2020.bigint",
-            "es2020.date",
-            "es2020.number",
-            "es2020.promise",
-            "es2020.sharedmemory",
-            "es2020.string",
-            "es2020.symbol.wellknown",
-            "es2020",
-            "es2021.promise",
-            "es2021.string",
-            "es2021.weakref",
-            "es2021",
-            "es2022.array",
-            "es2022.error",
-            "es2022.object",
-            "es2022.regexp",
-            "es2022.string",
-            "es2022",
-        ],
-        "es2023" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-            "es2016.array.include",
-            "es2016",
-            "es2017.arraybuffer",
-            "es2017.date",
-            "es2017.object",
-            "es2017.sharedmemory",
-            "es2017.string",
-            "es2017.typedarrays",
-            "es2017",
-            "es2018.asyncgenerator",
-            "es2018.asynciterable",
-            "es2018.promise",
-            "es2018.regexp",
-            "es2018",
-            "es2019.array",
-            "es2019.object",
-            "es2019.string",
-            "es2019.symbol",
-            "es2019",
-            "es2020.bigint",
-            "es2020.date",
-            "es2020.number",
-            "es2020.promise",
-            "es2020.sharedmemory",
-            "es2020.string",
-            "es2020.symbol.wellknown",
-            "es2020",
-            "es2021.promise",
-            "es2021.string",
-            "es2021.weakref",
-            "es2021",
-            "es2022.array",
-            "es2022.error",
-            "es2022.object",
-            "es2022.regexp",
-            "es2022.string",
-            "es2022",
-            "es2023.array",
-            "es2023.collection",
-            "es2023",
-        ],
-        "es2024" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-            "es2016.array.include",
-            "es2016",
-            "es2017.arraybuffer",
-            "es2017.date",
-            "es2017.object",
-            "es2017.sharedmemory",
-            "es2017.string",
-            "es2017.typedarrays",
-            "es2017",
-            "es2018.asyncgenerator",
-            "es2018.asynciterable",
-            "es2018.promise",
-            "es2018.regexp",
-            "es2018",
-            "es2019.array",
-            "es2019.object",
-            "es2019.string",
-            "es2019.symbol",
-            "es2019",
-            "es2020.bigint",
-            "es2020.date",
-            "es2020.number",
-            "es2020.promise",
-            "es2020.sharedmemory",
-            "es2020.string",
-            "es2020.symbol.wellknown",
-            "es2020",
-            "es2021.promise",
-            "es2021.string",
-            "es2021.weakref",
-            "es2021",
-            "es2022.array",
-            "es2022.error",
-            "es2022.object",
-            "es2022.regexp",
-            "es2022.string",
-            "es2022",
-            "es2023.array",
-            "es2023.collection",
-            "es2023",
-            "es2024.arraybuffer",
-            "es2024.collection",
-            "es2024.object",
-            "es2024.promise",
-            "es2024.regexp",
-            "es2024.sharedmemory",
-            "es2024.string",
-            "es2024",
-        ],
-        "es2025" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-            "es2016.array.include",
-            "es2016",
-            "es2017.arraybuffer",
-            "es2017.date",
-            "es2017.object",
-            "es2017.sharedmemory",
-            "es2017.string",
-            "es2017.typedarrays",
-            "es2017",
-            "es2018.asyncgenerator",
-            "es2018.asynciterable",
-            "es2018.promise",
-            "es2018.regexp",
-            "es2018",
-            "es2019.array",
-            "es2019.object",
-            "es2019.string",
-            "es2019.symbol",
-            "es2019",
-            "es2020.bigint",
-            "es2020.date",
-            "es2020.number",
-            "es2020.promise",
-            "es2020.sharedmemory",
-            "es2020.string",
-            "es2020.symbol.wellknown",
-            "es2020",
-            "es2021.promise",
-            "es2021.string",
-            "es2021.weakref",
-            "es2021",
-            "es2022.array",
-            "es2022.error",
-            "es2022.object",
-            "es2022.regexp",
-            "es2022.string",
-            "es2022",
-            "es2023.array",
-            "es2023.collection",
-            "es2023",
-            "es2024.arraybuffer",
-            "es2024.collection",
-            "es2024.object",
-            "es2024.promise",
-            "es2024.regexp",
-            "es2024.sharedmemory",
-            "es2024.string",
-            "es2024",
-            "es2025.collection",
-            "es2025",
-        ],
-        "esnext" | "latest" => vec![
-            "es5",
-            "es2015.core",
-            "es2015.collection",
-            "es2015.generator",
-            "es2015.iterable",
-            "es2015.promise",
-            "es2015.proxy",
-            "es2015.reflect",
-            "es2015.symbol",
-            "es2015.symbol.wellknown",
-            "es2016.array.include",
-            "es2016",
-            "es2017.arraybuffer",
-            "es2017.date",
-            "es2017.object",
-            "es2017.sharedmemory",
-            "es2017.string",
-            "es2017.typedarrays",
-            "es2017",
-            "es2018.asyncgenerator",
-            "es2018.asynciterable",
-            "es2018.promise",
-            "es2018.regexp",
-            "es2018",
-            "es2019.array",
-            "es2019.object",
-            "es2019.string",
-            "es2019.symbol",
-            "es2019",
-            "es2020.bigint",
-            "es2020.date",
-            "es2020.number",
-            "es2020.promise",
-            "es2020.sharedmemory",
-            "es2020.string",
-            "es2020.symbol.wellknown",
-            "es2020",
-            "es2021.promise",
-            "es2021.string",
-            "es2021.weakref",
-            "es2021",
-            "es2022.array",
-            "es2022.error",
-            "es2022.object",
-            "es2022.regexp",
-            "es2022.string",
-            "es2022",
-            "es2023.array",
-            "es2023.collection",
-            "es2023",
-            "es2024.arraybuffer",
-            "es2024.collection",
-            "es2024.object",
-            "es2024.promise",
-            "es2024.regexp",
-            "es2024.sharedmemory",
-            "es2024.string",
-            "es2024",
-            "es2025.collection",
-            "es2025",
-            "esnext.array",
-            "esnext.collection",
-            "esnext.decorators",
-            "esnext.disposable",
-            "esnext.error",
-            "esnext.float16",
-            "esnext.intl",
-            "esnext.iterator",
-            "esnext.object",
-            "esnext.promise",
-            "esnext.regexp",
-            "esnext.string",
-            "esnext.symbol",
-        ],
-        _ => return None,
-    })
 }
 
 /// Map a lowercase directive key to the camelCase field name in CheckOptions.
@@ -708,20 +191,15 @@ mod tests {
     }
 
     #[test]
-    fn target_injects_default_libs() {
+    fn target_preserves_default_lib_resolution() {
         let mut directives = HashMap::new();
         directives.insert("target".to_string(), "es2015".to_string());
         let opts = directives_to_check_options(&directives);
-        assert!(
-            opts.get("lib").is_some(),
-            "lib should be injected when target is set"
-        );
-        let libs = opts["lib"].as_array().unwrap();
-        assert!(libs.iter().any(|v| v == "es5"));
-        assert!(
-            libs.iter()
-                .any(|v| v.as_str().is_some_and(|s| s.starts_with("es2015"))),
-            "expected at least one es2015.* sub-lib, got: {libs:?}"
+        assert_eq!(opts["target"], "es2015");
+        assert_eq!(
+            opts.get("lib"),
+            None,
+            "target-only check options must leave lib absent so the server resolves the full default lib set"
         );
     }
 
@@ -762,9 +240,9 @@ mod tests {
     // once when new directives are added.
 
     #[test]
-    fn nolib_directive_blocks_target_default_lib_injection() {
-        // `noLib: true` must prevent the target-driven default-lib chain
-        // from being injected, even when `target` is recognized.
+    fn nolib_directive_preserves_absent_lib() {
+        // `noLib: true` leaves `lib` absent and lets the server suppress
+        // default libs through the explicit noLib option.
         let mut directives = HashMap::new();
         directives.insert("target".to_string(), "es2015".to_string());
         directives.insert("nolib".to_string(), "true".to_string());
@@ -772,17 +250,15 @@ mod tests {
         assert_eq!(
             opts.get("lib"),
             None,
-            "noLib must block target-driven default-lib injection, got {opts:?}"
+            "noLib must not synthesize lib entries, got {opts:?}"
         );
         assert_eq!(opts["noLib"], true);
     }
 
     #[test]
-    fn nolib_false_also_blocks_lib_injection_via_key_presence_check() {
-        // The injection guard tests *presence* of the noLib key, not its
-        // truthiness: setting `noLib: false` via directives still blocks
-        // target-driven injection. Lock this behaviour explicitly so a
-        // future tightening to `is_truthy(noLib)` is a deliberate change.
+    fn nolib_false_preserves_absent_lib() {
+        // Boolean conversion still preserves explicit `noLib: false`, but
+        // target-only default libs remain the resolver's responsibility.
         let mut directives = HashMap::new();
         directives.insert("target".to_string(), "es2015".to_string());
         directives.insert("nolib".to_string(), "false".to_string());
@@ -791,45 +267,29 @@ mod tests {
         assert_eq!(
             opts.get("lib"),
             None,
-            "lib injection guard checks key presence — \
-             noLib: false still blocks injection, got {opts:?}"
+            "noLib false must not synthesize lib entries, got {opts:?}"
         );
     }
 
     #[test]
-    fn comma_separated_target_uses_first_token_for_lib_chain() {
-        // `default_libs_for_target` splits on `,` and uses the first
-        // (trimmed, lowercased) token. The `target` field itself keeps
-        // the original comma-separated string — only the lib chain is
-        // derived from the first token.
+    fn comma_separated_target_does_not_synthesize_lib() {
+        // The target field itself keeps the original comma-separated string;
+        // default library resolution happens downstream in the compiler.
         let mut directives = HashMap::new();
         directives.insert("target".to_string(), "es2015,es2020".to_string());
         let opts = directives_to_check_options(&directives);
         assert_eq!(opts["target"], "es2015,es2020");
-        let libs = opts["lib"].as_array().expect("lib should be injected");
-        // First-token (es2015) drives selection: must contain es2015.* but
-        // not es2020.* sub-libs.
-        assert!(
-            libs.iter().any(|v| v == "es5"),
-            "es2015 chain must include es5"
-        );
-        assert!(
-            libs.iter()
-                .any(|v| v.as_str().is_some_and(|s| s.starts_with("es2015"))),
-            "es2015 chain must include at least one es2015.* sub-lib, got: {libs:?}"
-        );
-        assert!(
-            !libs
-                .iter()
-                .any(|v| v.as_str().is_some_and(|s| s.starts_with("es2020"))),
-            "first-token-only selection must not pull in es2020.* sub-libs, got: {libs:?}"
+        assert_eq!(
+            opts.get("lib"),
+            None,
+            "target-only check options must not synthesize lib entries, got {opts:?}"
         );
     }
 
     #[test]
-    fn unrecognized_target_skips_lib_injection() {
-        // `default_libs_for_target` returns `None` for unknown targets,
-        // and the caller must not inject a `lib` field in that case.
+    fn unrecognized_target_preserves_absent_lib() {
+        // Unknown targets still pass through as target values, but default
+        // library selection remains downstream compiler behavior.
         let mut directives = HashMap::new();
         directives.insert("target".to_string(), "foobar".to_string());
         let opts = directives_to_check_options(&directives);
@@ -837,7 +297,7 @@ mod tests {
         assert_eq!(
             opts.get("lib"),
             None,
-            "unrecognized target must not trigger lib injection, got {opts:?}"
+            "unrecognized target must not synthesize lib entries, got {opts:?}"
         );
     }
 
@@ -886,8 +346,7 @@ mod tests {
 
     #[test]
     fn empty_directives_produce_empty_options_object() {
-        // No directives, no target, no lib => empty options object (the
-        // target-driven lib injection guard requires `target` to be set).
+        // No directives, no target, no lib => empty options object.
         let directives: HashMap<String, String> = HashMap::new();
         let opts = directives_to_check_options(&directives);
         let map = opts.as_object().expect("opts must be an object");
@@ -927,10 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn esnext_and_latest_targets_share_default_lib_chain() {
-        // `esnext` and `latest` both map to the same lib chain via the
-        // `"esnext" | "latest"` arm. Lock that they produce identical
-        // arrays so a future split is a deliberate change.
+    fn esnext_and_latest_targets_preserve_absent_lib() {
         let mut d1 = HashMap::new();
         d1.insert("target".to_string(), "esnext".to_string());
         let opts1 = directives_to_check_options(&d1);
@@ -939,11 +395,15 @@ mod tests {
         d2.insert("target".to_string(), "latest".to_string());
         let opts2 = directives_to_check_options(&d2);
 
-        let libs1 = opts1["lib"].as_array().expect("esnext should inject libs");
-        let libs2 = opts2["lib"].as_array().expect("latest should inject libs");
         assert_eq!(
-            libs1, libs2,
-            "esnext and latest must share the same lib chain"
+            opts1.get("lib"),
+            None,
+            "esnext target-only options must not synthesize lib entries"
+        );
+        assert_eq!(
+            opts2.get("lib"),
+            None,
+            "latest target-only options must not synthesize lib entries"
         );
     }
 }

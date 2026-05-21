@@ -430,7 +430,7 @@ impl<'a> CheckerState<'a> {
                 let content = get_jsdoc_content(comment, source_text);
                 if Self::jsdoc_template_type_params(&content)
                     .into_iter()
-                    .any(|(decl_name, _)| decl_name == name)
+                    .any(|(decl_name, _, _)| decl_name == name)
                 {
                     return true;
                 }
@@ -450,7 +450,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let content = get_jsdoc_content(comment, source_text);
-            for (decl_name, _is_const) in Self::jsdoc_template_type_params(&content) {
+            for (decl_name, _is_const, _default) in Self::jsdoc_template_type_params(&content) {
                 if decl_name == name {
                     return true;
                 }

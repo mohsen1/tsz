@@ -24,21 +24,26 @@ scripts/agents/list-owned-work.sh M4-A
 
 - Initial priority: land, close, or clearly hand off existing PRs in this lane
   before claiming issue backlog.
-- Issue context: `#9305`, `#8778`, `#8726`, `#8702`, `#8687`, `#8423`,
-  `#7648`.
-- Related PRs to inspect: `#9304`, `#9214`, `#9210`, `#9006`, `#8985`,
-  `#8939`, `#8904`.
+- Current ready PR to drain: `#9804`.
+- Current draft cluster to reconcile before new branches: `#9816`, `#9776`,
+  `#9656`, `#9647`, `#9644`, `#9640`, `#9624`, `#9515`, `#9205`, `#9820`,
+  and `#9586`.
+- Issue context: `#9784`, `#9777`, `#9772`, `#9767`, `#9759`, `#9749`,
+  `#9743`, `#9740`, `#9305`, `#8778`, `#8726`, `#8702`, `#8687`, `#8423`,
+  and `#7648`.
 - Track: roadmap Track 2.
-- Next concrete step: reconcile `#9305` with `#9304` and recent recursion
-  identity work, then choose one structural identity invariant that can land as
-  a small solver PR.
+- Next concrete step: get `#9804` through current CI if it is still ready, then
+  cluster the recursive conditional, tuple/rest, template-literal infer, and
+  mapped-key issues into one owner per structural rule.
 
 ## Existing Work To Inspect First
 
-- Recent merge `#9296` changed recursion identity for deeply nested conditional
-  mapped types.
-- `#9304` is ready and should be drained before starting overlapping work.
-- `#9214`, `#8985`, and `#9006` overlap mapped alias identity.
+- Recent ready work moved from the old `#9304` queue to `#9804`.
+- `#9515`, `#9820`, and `#9642` overlap template-literal/keyof/conformance
+  work; avoid reopening the same invariant under another generated lane.
+- Emit/DTS-looking M4-A drafts (`#9776`, `#9656`, `#9647`, `#9644`, `#9640`,
+  `#9624`, `#9205`) should be handed to Studio-C/Studio-D if they stop being
+  solver/evaluation blockers.
 
 ## Non-Overlap Rules
 
