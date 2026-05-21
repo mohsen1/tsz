@@ -24,6 +24,10 @@ pub(crate) fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_this_type(db, type_id)
 }
 
+pub(crate) fn is_recursive_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::recursive_index(db, type_id).is_some()
+}
+
 pub(crate) fn type_predicate_type_assignable_to_parameter_with<F>(
     db: &dyn TypeDatabase,
     predicate_type: TypeId,

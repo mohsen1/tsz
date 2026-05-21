@@ -1283,9 +1283,9 @@ impl<'a> CheckerState<'a> {
     /// or the resolved body of a Lazy member.
     fn is_recursive_self_reference(&mut self, candidate: TypeId, outer_members: &[TypeId]) -> bool {
         self.lazy_def_is_recursive_member(candidate, outer_members)
-            || matches!(
-                self.ctx.types.lookup(candidate),
-                Some(tsz_solver::TypeData::Recursive(_))
+            || crate::query_boundaries::type_predicates::is_recursive_type_reference(
+                self.ctx.types,
+                candidate,
             )
             || self.resolved_lazy_is_recursive_member(candidate, outer_members)
     }
