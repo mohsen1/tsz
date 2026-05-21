@@ -28,6 +28,14 @@ pub(crate) fn is_recursive_type_reference(db: &dyn TypeDatabase, type_id: TypeId
     tsz_solver::recursive_index(db, type_id).is_some()
 }
 
+pub(crate) fn contains_recursive_operation_application(
+    db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_recursive_operation_application_db(db, def_store, type_id)
+}
+
 pub(crate) fn type_predicate_type_assignable_to_parameter_with<F>(
     db: &dyn TypeDatabase,
     predicate_type: TypeId,

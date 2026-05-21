@@ -17,7 +17,9 @@
 //! - Negative controls: truly excess properties still error at every depth
 
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::{check_source, check_source_diagnostics};
+use tsz_checker::test_utils::{
+    check_source, check_source_diagnostics, check_source_strict_messages,
+};
 
 fn codes(source: &str) -> Vec<u32> {
     check_source_diagnostics(source)
@@ -112,6 +114,132 @@ const c: MarkedChain = { data: "a", marker: 1, rest: { data: "b", marker: 2 } };
         ts2353.is_empty(),
         "expected no TS2353 for renamed recursive type alias intersection, got: {:?}",
         ts2353.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn conditional_mapped_recursive_intersection_no_false_ts2353() {
+    let src = r#"
+type Request = { l1: { l2: boolean } };
+type Example<T> = { ex?: T | null };
+
+type Schema1<T> = (T extends boolean ? { type: 'boolean'; } : { props: { [P in keyof T]: Schema1<T[P]> }; }) & Example<T>;
+
+export const schemaObj1: Schema1<Request> = {
+  props: {
+    l1: {
+      props: {
+        l2: { type: 'boolean' },
+        invalid: false,
+      },
+    },
+  },
+}
+
+type Schema2<T> = (T extends boolean ? { type: 'boolean'; } & Example<T> : { props: { [P in keyof T]: Schema2<T[P]> }; } & Example<T>);
+
+export const schemaObj2: Schema2<Request> = {
+  props: {
+    l1: {
+      props: {
+        l2: { type: 'boolean' },
+        invalid: false,
+      },
+    },
+  },
+}
+
+type Schema3<T> = Example<T> & (T extends boolean ? { type: 'boolean'; } : { props: { [P in keyof T]: Schema3<T[P]> }; });
+
+export const schemaObj3: Schema3<Request> = {
+  props: {
+    l1: {
+      props: {
+        l2: { type: 'boolean' },
+        invalid: false,
+      },
+    },
+  },
+}
+
+type Schema4<T> = (T extends boolean ? { type: 'boolean'; } & Example<T> : { props: Example<T> & { [P in keyof T]: Schema4<T[P]> }; });
+
+export const schemaObj4: Schema4<Request> = {
+  props: {
+    l1: {
+      props: {
+        l2: { type: 'boolean' },
+        invalid: false,
+      },
+    },
+  },
+}
+"#;
+    let ts2353: Vec<_> = check_source_strict_messages(src)
+        .into_iter()
+        .filter(|(code, _)| *code == 2353)
+        .collect();
+    assert!(
+        ts2353.is_empty(),
+        "expected no TS2353 for conditional mapped recursive intersection, got: {ts2353:?}"
+    );
+}
+
+#[test]
+fn conditional_mapped_recursive_intersection_top_level_excess_still_errors() {
+    let src = r#"
+type Request = { l1: { l2: boolean } };
+type Example<T> = { ex?: T | null };
+type Schema<T> = (T extends boolean ? { type: 'boolean'; } : { props: { [K in keyof T]: Schema<T[K]> }; }) & Example<T>;
+
+const schemaObj: Schema<Request> = {
+  props: {
+    l1: {
+      props: {
+        l2: { type: 'boolean' },
+        invalid: false,
+      },
+    },
+  },
+  extra: false,
+}
+"#;
+    let ts2353: Vec<_> = check_source_strict_messages(src)
+        .into_iter()
+        .filter(|(code, _)| *code == 2353)
+        .collect();
+    assert!(
+        ts2353
+            .iter()
+            .any(|(_, message)| message.contains("'extra'")),
+        "expected top-level TS2353 for conditional mapped recursive intersection, got: {ts2353:?}"
+    );
+}
+
+#[test]
+fn explicit_nested_object_with_recursive_operation_property_still_checks_excess() {
+    let src = r#"
+type Request = { l1: { l2: boolean } };
+type Example<T> = { ex?: T | null };
+type Schema<T> = (T extends boolean ? { type: 'boolean'; } : { props: { [K in keyof T]: Schema<T[K]> }; }) & Example<T>;
+type Box = { l2: Schema<boolean> };
+
+const schemaObj: { outer: Box } = {
+  outer: {
+    l2: { type: 'boolean' },
+    extra: false,
+  },
+}
+"#;
+    let ts2353: Vec<_> = check_source_strict_messages(src)
+        .into_iter()
+        .filter(|(code, _)| *code == 2353)
+        .collect();
+    assert!(
+        ts2353
+            .iter()
+            .any(|(_, message)| message.contains("'extra'")),
+        "expected TS2353 for explicit object with recursive operation property, got: {ts2353:?}"
     );
 }
 
