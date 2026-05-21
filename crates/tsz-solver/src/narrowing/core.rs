@@ -1,3 +1,4 @@
+use crate::caches::db::TypeCompilerOptions;
 use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::def::DefId;
 use crate::narrowing::request::{NarrowTypeCacheKey, NarrowingOptions, NarrowingRequest};
@@ -608,8 +609,10 @@ impl<'a> NarrowingContext<'a> {
 
     fn narrowing_options(&self) -> NarrowingOptions {
         NarrowingOptions::new()
-            .with_no_unchecked_indexed_access(QueryDatabase::no_unchecked_indexed_access(self.db))
-            .with_exact_optional_property_types(QueryDatabase::exact_optional_property_types(
+            .with_no_unchecked_indexed_access(TypeCompilerOptions::no_unchecked_indexed_access(
+                self.db,
+            ))
+            .with_exact_optional_property_types(TypeCompilerOptions::exact_optional_property_types(
                 self.db,
             ))
     }
