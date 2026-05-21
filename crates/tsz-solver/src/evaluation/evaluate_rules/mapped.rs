@@ -12,7 +12,7 @@ use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::Visibility;
 use crate::types::{
     IndexSignature, IntrinsicKind, LiteralValue, MappedModifier, MappedType, ObjectFlags,
-    ObjectShape, PropertyInfo, TupleListId, TypeData, TypeId,
+    ObjectShape, PropertyInfo, TupleElement, TupleListId, TypeData, TypeId,
 };
 use crate::visitor::keyof_inner_type;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -438,7 +438,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                     // Tuple type: map each element
                     Some(TypeData::Tuple(tuple_id)) => {
-                        return self.evaluate_mapped_tuple(mapped, tuple_id);
+                        return self.evaluate_mapped_tuple(mapped, tuple_id, source);
                     }
 
                     // ReadonlyArray: map the element type and preserve readonly
@@ -1133,7 +1133,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 tracing::trace!(
                     "evaluate_mapped: tuple-constrained type parameter → producing tuple"
                 );
-                Some(self.evaluate_mapped_tuple(mapped, tuple_id))
+                // For the generic-constrained case, the template references
+                // the *type parameter* (e.g. `T[K]`), not `resolved`. The
+                // per-element source rewrite is therefore a no-op here, and
+                // the loop falls back to the K-only substitution path —
+                // preserving deferred `T[K]` element types. Passing
+                // `resolved` keeps the helper signature uniform.
+                Some(self.evaluate_mapped_tuple(mapped, tuple_id, resolved))
             }
             // `readonly [a, b]` or `ReadonlyArray<T>` — preserve readonly wrapper
             Some(TypeData::ReadonlyType(inner)) => match self.interner().lookup(inner) {
@@ -1141,7 +1147,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     tracing::trace!(
                         "evaluate_mapped: readonly-tuple-constrained type parameter → producing readonly tuple"
                     );
-                    let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id);
+                    let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id, resolved);
                     let final_readonly =
                         !matches!(mapped.readonly_modifier, Some(MappedModifier::Remove));
                     if final_readonly {
@@ -1977,88 +1983,179 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// For example: `type Partial<T> = { [P in keyof T]?: T[P] }`
     ///   `Partial<[number, string]>` should produce `[number?, string?]`
     ///
-    /// We instantiate the template with `K = 0, 1, 2...` for each tuple element.
-    /// This preserves tuple structure including optional and rest elements.
-    fn evaluate_mapped_tuple(&mut self, mapped: &MappedType, tuple_id: TupleListId) -> TypeId {
-        use crate::types::TupleElement;
-
+    /// Mirrors tsc's `instantiateMappedTupleType`. For every tuple element we
+    /// rebind the mapped's outer source `T` to a per-element "singleton" that
+    /// captures the element's kind (Required/Optional/Rest/Variadic) and then
+    /// substitute the iteration variable `K`. This preserves tuple structure
+    /// — including rest, variadic, and labeled elements — even when the
+    /// source tuple contains a rest element whose `T[number]` would otherwise
+    /// widen to the union of all element types.
+    ///
+    /// `source` is the outer `T` as it appears in `mapped.template` after the
+    /// mapped type was instantiated with the tuple. We replace occurrences of
+    /// `source` with the per-element singleton via `substitute_exact_type` so
+    /// `T[K]` evaluates per element.
+    fn evaluate_mapped_tuple(
+        &mut self,
+        mapped: &MappedType,
+        tuple_id: TupleListId,
+        source: TypeId,
+    ) -> TypeId {
         let tuple_elements = self.interner().tuple_list(tuple_id);
-        let mut mapped_elements = Vec::new();
+        let mut mapped_elements = Vec::with_capacity(tuple_elements.len());
 
-        for (i, elem) in tuple_elements.iter().enumerate() {
-            // CRITICAL: Handle rest elements specially
-            // For rest elements (...T[]), we cannot use index substitution.
-            // We must map the array type itself.
-            if elem.rest {
-                // Rest elements like ...number[] need to be mapped as arrays
-                // Check if the rest type is an Array
-                let rest_type = elem.type_id;
-                let mapped_rest_type = match self.interner().lookup(rest_type) {
-                    Some(TypeData::Array(inner_elem)) => {
-                        // Map the inner array element
-                        // Reuse the array mapping logic
-                        self.evaluate_mapped_array(mapped, inner_elem)
-                    }
-                    Some(TypeData::Tuple(inner_tuple_id)) => {
-                        // Nested tuple in rest - recurse
-                        self.evaluate_mapped_tuple(mapped, inner_tuple_id)
-                    }
-                    _ => {
-                        // Fallback: try index substitution (may not work correctly)
-                        let index_type = self.interner().literal_number(i as f64);
-                        let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
-                        self.evaluate(instantiate_type(self.interner(), mapped.template, &subst))
-                    }
-                };
-
-                // Handle optional modifier for rest elements
-                let final_rest_type =
-                    if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
-                        self.interner().union2(mapped_rest_type, TypeId::UNDEFINED)
-                    } else {
-                        mapped_rest_type
-                    };
-
-                mapped_elements.push(TupleElement {
-                    type_id: final_rest_type,
-                    name: elem.name,
-                    optional: elem.optional,
-                    rest: true,
-                });
-                continue;
-            }
-
-            // Non-rest elements: use index substitution
-            // Create a literal number type for this tuple position
-            let index_type = self.interner().literal_number(i as f64);
-
-            let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
-
-            // Substitute into the template to get the mapped element type
-            let mapped_type =
-                self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
-
-            // Get the modifiers for this element
-            // Note: readonly is currently unused for tuple elements, but we preserve the logic
-            // in case TypeScript adds readonly tuple element support in the future
-            // CRITICAL: Handle optional and readonly modifiers independently
-            let optional = match mapped.optional_modifier {
-                Some(MappedModifier::Add) => true,
-                Some(MappedModifier::Remove) => false,
-                None => elem.optional, // Preserve original optional
-            };
-            // Note: readonly modifier is intentionally ignored for tuple elements,
-            // as TypeScript doesn't support readonly on individual tuple elements.
-
-            mapped_elements.push(TupleElement {
-                type_id: mapped_type,
-                name: elem.name,
-                optional,
-                rest: elem.rest,
-            });
+        for elem in tuple_elements.iter().copied() {
+            mapped_elements.push(self.evaluate_mapped_tuple_element(mapped, source, elem));
         }
 
         self.interner().tuple(mapped_elements)
+    }
+
+    /// Map a single tuple element by rebinding the mapped's outer source to a
+    /// per-element singleton, then substituting the iteration variable.
+    ///
+    /// Mirrors the per-element switch in tsc's `instantiateMappedTupleType`:
+    /// - Required/Optional fixed element `T_i`: rebind T -> `[T_i]`, K -> 0.
+    /// - Rest of `Array<E>`: rebind T -> `Array<E>`, K -> number; wrap the
+    ///   result in `Array<>` to keep the rest's "array of element type" shape.
+    /// - Variadic spread of a tuple: rebind T -> the inner tuple and recurse
+    ///   into the inner tuple's elements, returning a tuple in the rest's
+    ///   `type_id` for downstream `expand_tuple_rest` to flatten.
+    /// - Other rest types (lazy refs, type parameters): rebind T -> the rest
+    ///   type as-is, K -> number; treat as an opaque variadic.
+    fn evaluate_mapped_tuple_element(
+        &mut self,
+        mapped: &MappedType,
+        source: TypeId,
+        elem: TupleElement,
+    ) -> TupleElement {
+        let rest_inner_kind = elem.rest.then(|| self.interner().lookup(elem.type_id));
+
+        // Variadic spread of a tuple: rebind T -> the inner tuple across
+        // template/constraint/name_type and recurse so the inner tuple's
+        // elements are mapped position-by-position. The result is a tuple
+        // in the rest's `type_id`; `expand_tuple_rest` flattens it
+        // downstream.
+        if let Some(Some(TypeData::Tuple(inner_tuple_id))) = rest_inner_kind {
+            let inner_mapped = self.rebind_mapped_source(mapped, source, elem.type_id);
+            let inner_result =
+                self.evaluate_mapped_tuple(&inner_mapped, inner_tuple_id, elem.type_id);
+            return TupleElement {
+                type_id: inner_result,
+                name: elem.name,
+                optional: elem.optional,
+                rest: true,
+            };
+        }
+
+        // Per-element source rebinding:
+        // - Rest: T -> the rest's type as-is (e.g. `Array<E>`, type parameter,
+        //   lazy ref); K -> number. For an `Array<E>` rest this makes `T[K]`
+        //   evaluate to E rather than the union of all tuple element types —
+        //   the bug we are fixing.
+        // - Fixed element `T_i`: T -> the singleton tuple `[T_i]`; K -> 0.
+        let (new_source, key) = if elem.rest {
+            (elem.type_id, TypeId::NUMBER)
+        } else {
+            let singleton = self.interner().tuple(vec![TupleElement {
+                type_id: elem.type_id,
+                name: None,
+                optional: false,
+                rest: false,
+            }]);
+            (singleton, self.interner().literal_number(0.0))
+        };
+        let mut inner = self.evaluate_mapped_template_with_source_rebind(
+            mapped.template,
+            source,
+            new_source,
+            mapped.type_param.name,
+            key,
+        );
+
+        // Optional modifier: rest elements absorb `Add` as `inner | undefined`
+        // (a rest cannot syntactically combine with `?`), while fixed
+        // elements toggle the per-element `optional` flag.
+        let optional = if elem.rest {
+            if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+                inner = self.interner().union2(inner, TypeId::UNDEFINED);
+            }
+            elem.optional
+        } else {
+            match mapped.optional_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => elem.optional,
+            }
+        };
+
+        // Rewrap the rest in `Array<>` when the input rest was array-shaped;
+        // opaque rests (type parameter, lazy ref) keep their evaluated form
+        // so deferred indexed-access types survive.
+        let type_id = if matches!(rest_inner_kind, Some(Some(TypeData::Array(_)))) {
+            self.interner().array(inner)
+        } else {
+            inner
+        };
+
+        TupleElement {
+            type_id,
+            name: elem.name,
+            optional,
+            rest: elem.rest,
+        }
+    }
+
+    /// Rewrite `template` so every occurrence of `old_source` becomes
+    /// `new_source`, then substitute the iteration variable `iter_var` with
+    /// `key` and evaluate.
+    fn evaluate_mapped_template_with_source_rebind(
+        &mut self,
+        template: TypeId,
+        old_source: TypeId,
+        new_source: TypeId,
+        iter_var: Atom,
+        key: TypeId,
+    ) -> TypeId {
+        let rewritten = if new_source == old_source {
+            template
+        } else {
+            let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+            self.substitute_exact_type(template, old_source, new_source, &mut memo)
+        };
+        let subst = TypeSubstitution::single(iter_var, key);
+        let instantiated = instantiate_type(self.interner(), rewritten, &subst);
+        self.evaluate(instantiated)
+    }
+
+    /// Build a new `MappedType` with `old_source` replaced by `new_source`
+    /// across `template`, `constraint`, and `name_type`. Used for the variadic
+    /// (tuple-rest) path so that the recursive `evaluate_mapped_tuple` call
+    /// iterates with the inner tuple bound as T.
+    fn rebind_mapped_source(
+        &mut self,
+        mapped: &MappedType,
+        old_source: TypeId,
+        new_source: TypeId,
+    ) -> MappedType {
+        if new_source == old_source {
+            return *mapped;
+        }
+        let rewrite = |this: &mut Self, ty: TypeId| -> TypeId {
+            let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+            this.substitute_exact_type(ty, old_source, new_source, &mut memo)
+        };
+        let template = rewrite(self, mapped.template);
+        let constraint = rewrite(self, mapped.constraint);
+        let name_type = mapped.name_type.map(|nt| rewrite(self, nt));
+        MappedType {
+            type_param: mapped.type_param,
+            constraint,
+            name_type,
+            template,
+            readonly_modifier: mapped.readonly_modifier,
+            optional_modifier: mapped.optional_modifier,
+        }
     }
 }
 
@@ -2297,6 +2394,293 @@ mod tests {
         assert_eq!(
             result_k, result_q,
             "constraint evaluation must be independent of iteration-variable name"
+        );
+    }
+
+    /// Build the post-instantiation form of the identity homomorphic mapped
+    /// `type M<T> = { [<iter_name> in keyof T]: T[<iter_name>] }` with `T`
+    /// substituted by `concrete_source`. Used by the variadic-tuple tests
+    /// below.
+    fn build_identity_homomorphic_mapped(
+        interner: &TypeInterner,
+        iter_name: &str,
+        concrete_source: TypeId,
+    ) -> MappedType {
+        let iter_atom = interner.intern_string(iter_name);
+        let outer_t = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+        let original_constraint = interner.keyof(outer_t);
+        let iter_param = interner.type_param(TypeParamInfo {
+            name: iter_atom,
+            constraint: Some(original_constraint),
+            default: None,
+            is_const: false,
+        });
+        let template = interner.index_access(concrete_source, iter_param);
+        MappedType {
+            type_param: TypeParamInfo {
+                name: iter_atom,
+                constraint: Some(original_constraint),
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.keyof(concrete_source),
+            name_type: None,
+            template,
+            readonly_modifier: None,
+            optional_modifier: None,
+        }
+    }
+
+    /// Issue #9694: `{ [K in keyof T]: T[K] }` over a variadic tuple
+    /// `[number, ...string[]]` must reproduce the same tuple structurally —
+    /// not a tuple whose rest element widened to `(number | string)[]`. The
+    /// pre-fix bug substituted `K = number` for the rest, evaluating
+    /// `tuple[number]` to the union of all element types.
+    #[test]
+    fn identity_homomorphic_mapped_over_trailing_rest_variadic_tuple_preserves_shape() {
+        let interner = TypeInterner::new();
+        let elements = vec![
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.array(TypeId::STRING),
+                name: None,
+                optional: false,
+                rest: true,
+            },
+        ];
+        let source = interner.tuple(elements.clone());
+        let mapped = build_identity_homomorphic_mapped(&interner, "K", source);
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+
+        let expected = interner.tuple(elements);
+        assert_eq!(
+            result, expected,
+            "identity homomorphic over `[number, ...string[]]` must reproduce the same tuple"
+        );
+    }
+
+    /// The same shape with a renamed iteration variable (`P` instead of `K`)
+    /// must produce the same structural result. The fix must be name-blind.
+    #[test]
+    fn identity_homomorphic_mapped_over_trailing_rest_renamed_iter_var() {
+        let interner = TypeInterner::new();
+        let elements = vec![
+            TupleElement {
+                type_id: TypeId::BOOLEAN,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.array(TypeId::NUMBER),
+                name: None,
+                optional: false,
+                rest: true,
+            },
+        ];
+        let source = interner.tuple(elements.clone());
+        let mapped = build_identity_homomorphic_mapped(&interner, "P", source);
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+
+        let expected = interner.tuple(elements);
+        assert_eq!(
+            result, expected,
+            "identity homomorphic with iter `P` must produce the same tuple as iter `K`"
+        );
+    }
+
+    /// Leading-rest variadic tuple `[...string[], number]` must round-trip
+    /// through the identity homomorphic mapped. Pre-fix this produced a
+    /// tuple whose tail and rest were both wrong because `tuple[1]` did not
+    /// uniquely resolve to a single element's type.
+    #[test]
+    fn identity_homomorphic_mapped_over_leading_rest_variadic_tuple_preserves_shape() {
+        let interner = TypeInterner::new();
+        let elements = vec![
+            TupleElement {
+                type_id: interner.array(TypeId::STRING),
+                name: None,
+                optional: false,
+                rest: true,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ];
+        let source = interner.tuple(elements.clone());
+        let mapped = build_identity_homomorphic_mapped(&interner, "K", source);
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+
+        let expected = interner.tuple(elements);
+        assert_eq!(
+            result, expected,
+            "identity homomorphic over `[...string[], number]` must reproduce the same tuple"
+        );
+    }
+
+    /// Fixed (non-variadic) tuples are the negative control: the pre-fix
+    /// code path worked for them and the new structural fix must not
+    /// regress this case.
+    #[test]
+    fn identity_homomorphic_mapped_over_fixed_tuple_preserves_shape() {
+        let interner = TypeInterner::new();
+        let elements = vec![
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ];
+        let source = interner.tuple(elements.clone());
+        let mapped = build_identity_homomorphic_mapped(&interner, "K", source);
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+
+        let expected = interner.tuple(elements);
+        assert_eq!(
+            result, expected,
+            "identity homomorphic over `[number, string]` must reproduce the same tuple"
+        );
+    }
+
+    /// Mixed optional and rest: `[number, string?, ...boolean[]]`. Optional
+    /// flags on fixed elements must be preserved, and the rest's inner type
+    /// must remain `boolean` (not widened to `number | string | boolean`).
+    #[test]
+    fn identity_homomorphic_mapped_over_optional_and_rest_tuple_preserves_shape() {
+        let interner = TypeInterner::new();
+        let elements = vec![
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: true,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.array(TypeId::BOOLEAN),
+                name: None,
+                optional: false,
+                rest: true,
+            },
+        ];
+        let source = interner.tuple(elements.clone());
+        let mapped = build_identity_homomorphic_mapped(&interner, "K", source);
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+
+        let expected = interner.tuple(elements);
+        assert_eq!(
+            result, expected,
+            "identity homomorphic must preserve optional flags and the rest's inner type"
+        );
+    }
+
+    /// Non-identity homomorphic mapped over a variadic tuple. For
+    /// `Boxified<T> = { [K in keyof T]: Box<T[K]> }` applied to
+    /// `[number, ...string[]]`, the result must be
+    /// `[Box<number>, ...Box<string>[]]` — the rest's inner is `Box<string>`,
+    /// not `Box<number | string>` (which would be the pre-fix output).
+    #[test]
+    fn non_identity_homomorphic_mapped_over_trailing_rest_tuple_applies_per_element() {
+        use crate::def::DefId;
+
+        let interner = TypeInterner::new();
+        // Build a Box<T_arg> wrapper around T_arg using an Application over a
+        // Lazy(DefId) base. `substitute_exact_type` substitutes the source in
+        // the template; evaluation of the substituted index access then yields
+        // the per-element inner type, which the wrapper carries through.
+        let box_base = interner.lazy(DefId(9001));
+
+        let iter_atom = interner.intern_string("K");
+        let outer_t = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+        let original_constraint = interner.keyof(outer_t);
+        let iter_param = interner.type_param(TypeParamInfo {
+            name: iter_atom,
+            constraint: Some(original_constraint),
+            default: None,
+            is_const: false,
+        });
+
+        let source_elements = vec![
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.array(TypeId::STRING),
+                name: None,
+                optional: false,
+                rest: true,
+            },
+        ];
+        let source = interner.tuple(source_elements);
+
+        // Template: `Box<source[K]>` — the source is baked in by the outer
+        // M<source> instantiation.
+        let index_access = interner.index_access(source, iter_param);
+        let template = interner.application(box_base, vec![index_access]);
+
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: iter_atom,
+                constraint: Some(original_constraint),
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.keyof(source),
+            name_type: None,
+            template,
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+
+        let expected = interner.tuple(vec![
+            TupleElement {
+                type_id: interner.application(box_base, vec![TypeId::NUMBER]),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.array(interner.application(box_base, vec![TypeId::STRING])),
+                name: None,
+                optional: false,
+                rest: true,
+            },
+        ]);
+        assert_eq!(
+            result, expected,
+            "non-identity homomorphic over `[number, ...string[]]` must produce \
+             `[Box<number>, ...Box<string>[]]`, not widen the rest's inner to a union"
         );
     }
 
