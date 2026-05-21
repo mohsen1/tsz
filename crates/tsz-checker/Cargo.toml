@@ -838,6 +838,10 @@ name = "import_type_utility_identity_tests"
 path = "tests/import_type_utility_identity_tests.rs"
 
 [[test]]
+name = "import_type_ambient_module_member_tests"
+path = "tests/import_type_ambient_module_member_tests.rs"
+
+[[test]]
 name = "json_namespace_import_tests"
 path = "tests/json_namespace_import_tests.rs"
 
