@@ -226,56 +226,31 @@ perf_counter_enum! {
     pub const CROSS_ARENA_SYMBOL_MISS_KIND_NAMES;
 }
 
-/// Outcome of the no-child named-alias shortcut attempted before constructing
-/// a `DelegateCrossArenaSymbol` child checker.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CrossArenaAliasShortcutOutcome {
-    Success = 0,
-    NotAlias = 1,
-    MissingSymbol = 2,
-    MissingModule = 3,
-    MissingImportName = 4,
-    NamespaceImport = 5,
-    DefaultImport = 6,
-    MissingAliasFile = 7,
-    MissingTarget = 8,
-    SelfTarget = 9,
-    MissingTargetSymbol = 10,
-    TargetAlias = 11,
-    AliasPartner = 12,
-    InterfaceValueMerge = 13,
-    UnknownResult = 14,
-    ErrorResult = 15,
-}
-
-pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT: usize = 16;
-
-pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES: [&str;
-    CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT] = [
-    "success",
-    "not_alias",
-    "missing_symbol",
-    "missing_module",
-    "missing_import_name",
-    "namespace_import",
-    "default_import",
-    "missing_alias_file",
-    "missing_target",
-    "self_target",
-    "missing_target_symbol",
-    "target_alias",
-    "alias_partner",
-    "interface_value_merge",
-    "unknown_result",
-    "error_result",
-];
-
-impl CrossArenaAliasShortcutOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Outcome of the no-child named-alias shortcut attempted before
+    /// constructing a `DelegateCrossArenaSymbol` child checker.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CrossArenaAliasShortcutOutcome {
+        Success = 0 => "success",
+        NotAlias = 1 => "not_alias",
+        MissingSymbol = 2 => "missing_symbol",
+        MissingModule = 3 => "missing_module",
+        MissingImportName = 4 => "missing_import_name",
+        NamespaceImport = 5 => "namespace_import",
+        DefaultImport = 6 => "default_import",
+        MissingAliasFile = 7 => "missing_alias_file",
+        MissingTarget = 8 => "missing_target",
+        SelfTarget = 9 => "self_target",
+        MissingTargetSymbol = 10 => "missing_target_symbol",
+        TargetAlias = 11 => "target_alias",
+        AliasPartner = 12 => "alias_partner",
+        InterfaceValueMerge = 13 => "interface_value_merge",
+        UnknownResult = 14 => "unknown_result",
+        ErrorResult = 15 => "error_result",
     }
+
+    pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT;
+    pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES;
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
