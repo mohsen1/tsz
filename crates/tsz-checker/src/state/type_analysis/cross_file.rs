@@ -378,24 +378,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if type_params.is_empty() {
-            self.ctx.cache_stable_source_file_symbol_arena_type(
-                sym_id,
-                file_idx,
-                source_cache_scope,
-                type_id,
-                type_params,
-            );
-        } else {
-            self.ctx.cache_source_file_symbol_arena_type(
-                sym_id,
-                file_idx,
-                source_cache_scope,
-                self.ctx.current_file_idx as u32,
-                type_id,
-                type_params,
-            );
-        }
+        self.ctx.cache_stable_source_file_symbol_arena_type(
+            sym_id,
+            file_idx,
+            source_cache_scope,
+            type_id,
+            type_params,
+        );
     }
 
     /// Delegate symbol resolution to a checker using the correct arena.
