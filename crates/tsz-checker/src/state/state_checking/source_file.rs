@@ -645,7 +645,6 @@ impl<'a> CheckerState<'a> {
         self.rewrite_type_argument_inference_with_constraints_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
         self.rewrite_audit_followup_conformance_fingerprints(&sf.text);
-        self.rewrite_variance_annotations_fingerprints(&sf.text);
     }
 
     fn is_index_signatures1_fixture(source_text: &str) -> bool {
