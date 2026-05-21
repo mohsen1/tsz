@@ -12,6 +12,7 @@
 //! will replace it. The current module inventory and quarantine list live in
 //! `docs/architecture/QUERY_BOUNDARY_INVENTORY.md`.
 //!
+pub(crate) mod application_keyof;
 pub(crate) mod assignability;
 pub(crate) mod capabilities;
 pub(crate) mod checkers;
