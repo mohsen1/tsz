@@ -895,8 +895,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // Conditional types need evaluation to their resolved form
-            TypeData::Conditional(_) => {
-                // Add recursion guard for consistency with other recursive type resolutions
+            TypeData::Conditional(cond_id) => {
                 let _guard = match self.enter_property_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
@@ -911,18 +910,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     .db
                     .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
                 if evaluated != obj_type {
-                    // Successfully evaluated - resolve property on the concrete type
                     self.resolve_property_access_inner(evaluated, prop_name, prop_atom)
                 } else {
-                    // Evaluation didn't change the type - try apparent members
-                    let prop_atom =
-                        prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
-                    if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
-                        result
-                    } else {
-                        // Conditional type is deferred - return ANY to avoid false TS2339
-                        PropertyAccessResult::simple(TypeId::ANY)
-                    }
+                    // Deferred: apparent type is the union of both branches.
+                    // `union2` normalizes `any|T→any` and `never|T→T`.
+                    let cond = self.interner().get_conditional(cond_id);
+                    let apparent = self.interner().union2(cond.true_type, cond.false_type);
+                    self.resolve_property_access_inner(apparent, prop_name, prop_atom)
                 }
             }
 
