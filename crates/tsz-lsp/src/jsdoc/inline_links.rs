@@ -217,10 +217,19 @@ where
 
         match span.variant {
             LinkVariant::Linkplain => {
-                out.push_str(&super::markdown_escape::escape_markdown_label(display));
+                if let Some(uri) = resolve(&span.target) {
+                    push_markdown_hyperlink(&mut out, display, &uri);
+                } else {
+                    out.push_str(&super::markdown_escape::escape_markdown_label(display));
+                }
             }
             LinkVariant::Linkcode => {
-                out.push_str(&super::markdown_escape::format_inline_code(display));
+                let label = super::markdown_escape::format_inline_code(display);
+                if let Some(uri) = resolve(&span.target) {
+                    push_markdown_hyperlink_raw_label(&mut out, &label, &uri);
+                } else {
+                    out.push_str(&label);
+                }
             }
             LinkVariant::Link => {
                 if span.is_url() {
@@ -336,6 +345,14 @@ const fn is_ident_continue(b: u8) -> bool {
 fn push_markdown_hyperlink(out: &mut String, display: &str, uri: &str) {
     out.push('[');
     out.push_str(&super::markdown_escape::escape_markdown_label(display));
+    out.push_str("](");
+    out.push_str(uri);
+    out.push(')');
+}
+
+fn push_markdown_hyperlink_raw_label(out: &mut String, label_markdown: &str, uri: &str) {
+    out.push('[');
+    out.push_str(label_markdown);
     out.push_str("](");
     out.push_str(uri);
     out.push(')');
@@ -556,6 +573,22 @@ mod tests {
             } else {
                 None
             }
+        });
+        assert_eq!(out, "[Foo](file:///test.ts#L1)");
+    }
+
+    #[test]
+    fn markdown_linkcode_with_resolver_preserves_code_voice() {
+        let out = expand_to_markdown_with_resolver("{@linkcode Foo}", |name| {
+            (name == "Foo").then(|| "file:///test.ts#L1".to_string())
+        });
+        assert_eq!(out, "[`Foo`](file:///test.ts#L1)");
+    }
+
+    #[test]
+    fn markdown_linkplain_with_resolver_links_plain_label() {
+        let out = expand_to_markdown_with_resolver("{@linkplain Foo}", |name| {
+            (name == "Foo").then(|| "file:///test.ts#L1".to_string())
         });
         assert_eq!(out, "[Foo](file:///test.ts#L1)");
     }
