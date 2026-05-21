@@ -26,6 +26,7 @@ mod node_children;
 mod node_modifiers;
 mod node_view;
 pub mod parse_rules;
+mod speculation;
 pub mod spelling;
 pub mod state;
 mod state_declarations;
