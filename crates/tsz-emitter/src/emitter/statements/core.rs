@@ -348,8 +348,12 @@ impl<'a> Printer<'a> {
         self.recovered_module_syntax_block_depth += 1;
         let prev_lexical_block_missing_initializer_function_depth =
             self.lexical_block_missing_initializer_function_depth;
+        let prev_lexical_block_missing_initializer_is_loop_body =
+            self.lexical_block_missing_initializer_is_loop_body;
         if self.ctx.target_es5 && !is_function_body_block {
             self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
+            self.lexical_block_missing_initializer_is_loop_body =
+                prev_lexical_block_missing_initializer_is_loop_body;
         }
         for (stmt_i, &stmt_idx) in stmts.iter().enumerate().skip(directive_prologue_count) {
             // Save state before leading comments so we can undo them if the
@@ -517,9 +521,11 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
         self.lexical_block_missing_initializer_function_depth =
             prev_lexical_block_missing_initializer_function_depth;
-        self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
+        self.lexical_block_missing_initializer_is_loop_body =
+            prev_lexical_block_missing_initializer_is_loop_body;
 
         if let Some(anchor) = hoisted_var_anchor {
             self.insert_function_body_hoisted_temps_at(anchor);

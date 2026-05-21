@@ -317,6 +317,9 @@ pub struct Printer<'a> {
     /// Function depth whose ES5 lexical block should reset initializerless bindings.
     pub(crate) lexical_block_missing_initializer_function_depth: Option<u32>,
 
+    /// Whether the current ES5 lexical reset context is a loop body.
+    pub(crate) lexical_block_missing_initializer_is_loop_body: bool,
+
     /// Current declaration list is being printed in a `for` header.
     pub(crate) in_for_initializer: bool,
 
@@ -1102,6 +1105,7 @@ impl<'a> Printer<'a> {
             emit_plan,
             emit_missing_initializer_as_void_0: false,
             lexical_block_missing_initializer_function_depth: None,
+            lexical_block_missing_initializer_is_loop_body: false,
             in_for_initializer: false,
             source_text: None,
             jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts::default(),
