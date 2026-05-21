@@ -32,11 +32,12 @@ scripts/agents/list-owned-work.sh Studio-B
   `#9866`, `#9813`, `#9794`, `#9789`, `#9626`, `#9587`, and
   `#9581`.
 - Track: roadmap Tracks 2 and 10.
-- Next concrete step: after `#9866`'s stable generic source-alias cache landed,
-  re-run a narrow `ts-toolbelt-project` attribution when disk/runner capacity
-  allows. Compare the new source-file type-alias delegation residues against
-  the closed `#8868` evidence before choosing the next slice for `#8356` /
-  `#7378`.
+- Next concrete step: use the post-`#9866` attribution comments on `#8356` and
+  `#7378` to choose a narrow source-file alias direct-lowering or solver
+  evaluation slice. The remaining dominant shape is source-file type-alias
+  `type_reference` bodies involving local type parameters and local alias
+  symbols; do not re-run the same attribution unless a newer compiler change
+  invalidates those comments.
 
 ## Existing Work To Inspect First
 
@@ -56,6 +57,11 @@ scripts/agents/list-owned-work.sh Studio-B
 - `#9866` landed the source-file type-alias delegation cache slice suggested by
   that attribution. Do not duplicate it; first refresh the benchmark/counter
   evidence and identify any remaining structural residue.
+- A post-`#9866` refresh is recorded on `#8356` and `#7378`: `ts-toolbelt`
+  stayed green-compatible but `tsgo` was still 9.65x faster. The cache slice
+  reduced `with_parent_cache` from 718 to 642 and `DelegateCrossArenaSymbol`
+  from 647 to 571, but the leading residues stayed `Exclude`, `Naked`,
+  `_Omit`, `KeySet`, and related source-file aliases.
 - If a benchmark row is red because of diagnostics, hand it to the owning
   semantic lane before measuring runtime.
 
