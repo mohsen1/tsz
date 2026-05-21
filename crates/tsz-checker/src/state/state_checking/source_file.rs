@@ -637,9 +637,6 @@ impl<'a> CheckerState<'a> {
         });
 
         self.rewrite_infer_generic_return_fingerprints(&sf.text);
-        if self.ctx.allow_source_file_test_pragmas {
-            self.rewrite_intersection_index_signature_fingerprints(&sf.text);
-        }
         if self.ctx.allow_source_file_test_pragmas || Self::is_index_signatures1_fixture(&sf.text) {
             self.rewrite_index_signatures1_fingerprints(&sf.text);
         }
@@ -712,36 +709,6 @@ impl<'a> CheckerState<'a> {
                     "type '{ state: State.A; }[]'",
                     1,
                 );
-        }
-    }
-
-    fn rewrite_intersection_index_signature_fingerprints(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::diagnostic_codes;
-
-        if !source_text.contains("type constr<Source, Tgt>")
-            || !source_text.contains("q[\"asd\"].b")
-        {
-            return;
-        }
-
-        for diag in &mut self.ctx.diagnostics {
-            if diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
-                || diag.message_text != "Property 'b' does not exist on type 'A'."
-            {
-                continue;
-            }
-
-            let start = diag.start as usize;
-            if start >= source_text.len() {
-                continue;
-            }
-            let nearby_start = start.saturating_sub(16);
-            let nearby_end = source_text.len().min(start + 16);
-            if !source_text[nearby_start..nearby_end].contains("q[\"asd\"].b") {
-                continue;
-            }
-
-            diag.message_text = "Property 'b' does not exist on type '{ a: string; }'.".into();
         }
     }
 
