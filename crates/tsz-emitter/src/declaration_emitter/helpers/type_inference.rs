@@ -35,6 +35,12 @@ pub(in crate::declaration_emitter) struct CallableDeclParts<'b> {
     pub(in crate::declaration_emitter) body: NodeIndex,
 }
 
+struct ImportedMethodRef<'a> {
+    imported_module: &'a str,
+    imported_name: &'a str,
+    method_name: &'a str,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn synthetic_class_extends_alias_source_type_text(
         &self,
@@ -1946,9 +1952,11 @@ impl<'a> DeclarationEmitter<'a> {
                 binder,
                 source_arena,
                 class_decl,
-                &imported_module,
-                &imported_name,
-                &method_name,
+                &ImportedMethodRef {
+                    imported_module: &imported_module,
+                    imported_name: &imported_name,
+                    method_name: &method_name,
+                },
                 call,
                 &explicit_type_args,
             )
@@ -1995,9 +2003,11 @@ impl<'a> DeclarationEmitter<'a> {
                     binder,
                     source_arena,
                     class_decl,
-                    imported_module,
-                    imported_name,
-                    method_name,
+                    &ImportedMethodRef {
+                        imported_module,
+                        imported_name,
+                        method_name,
+                    },
                     call,
                     explicit_type_args,
                 ) {
@@ -2009,18 +2019,20 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn imported_static_method_return_type_from_class_decl(
         &self,
         binder: &BinderState,
         source_arena: &NodeArena,
         class_decl: &tsz_parser::parser::node::ClassData,
-        imported_module: &str,
-        imported_name: &str,
-        method_name: &str,
+        method_ref: &ImportedMethodRef<'_>,
         call: &tsz_parser::parser::node::CallExprData,
         explicit_type_args: &[String],
     ) -> Option<String> {
+        let ImportedMethodRef {
+            imported_module,
+            imported_name,
+            method_name,
+        } = method_ref;
         for &member_idx in &class_decl.members.nodes {
             let Some(member_node) = source_arena.get(member_idx) else {
                 continue;
