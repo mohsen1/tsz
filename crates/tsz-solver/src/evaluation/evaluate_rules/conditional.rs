@@ -21,6 +21,25 @@ use tsz_common::interner::Atom;
 use super::super::evaluate::TypeEvaluator;
 use crate::type_queries::get_application_base;
 
+/// Outcome of one evaluation step within `evaluate_conditional`'s tail-recursion loop.
+///
+/// Each main evaluation phase ([`TypeEvaluator::infer_match_step`] and
+/// [`TypeEvaluator::subtype_check_step`]) returns this type so the outer loop
+/// handles shared tail-call bookkeeping uniformly.
+enum ConditionalStepOutcome {
+    /// Evaluation is complete; return this [`TypeId`] from `evaluate_conditional`.
+    Done(TypeId),
+    /// Perform a tail call: restart the loop with `next_cond`.
+    ///
+    /// `application_branch` is the `Application`-typed branch expression that triggered
+    /// the tail call, used to preserve display aliases across the call chain via
+    /// `get_or_insert` on the outer `tail_application_branch` accumulator.
+    TailCall {
+        next_cond: ConditionalType,
+        application_branch: Option<TypeId>,
+    },
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum depth for tail-recursive conditional evaluation.
     /// This allows patterns like `type Loop<T> = T extends [...infer R] ? Loop<R> : never`
@@ -683,437 +702,468 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 });
             }
 
-            // Step 3: Perform subtype check or infer pattern matching
-            // Reuse pre-allocated bindings/visited from outside the loop
+            // Step 3: Infer-pattern matching or subtype check.
+            // Reuse pre-allocated bindings/visited from outside the loop.
             loop_bindings.clear();
             loop_visited.clear();
 
-            if extends_has_infer {
-                // PERF: Only allocate SubtypeChecker when infer matching is needed.
-                let mut checker = self.conditional_subtype_checker();
-                checker.allow_bivariant_rest = true;
-                if cond.extends_type != extends_type
-                    && self.type_contains_infer(cond.extends_type)
-                    && self.match_infer_pattern(
-                        check_type,
-                        cond.extends_type,
-                        &mut loop_bindings,
-                        &mut loop_visited,
-                        &mut checker,
-                    )
-                    && !loop_bindings.is_empty()
-                {
-                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
-                    return self.evaluate(substituted_true);
-                }
-                loop_bindings.clear();
-                loop_visited.clear();
-                if cond.extends_type != extends_type
-                    && self.type_contains_infer(cond.extends_type)
-                    && let Some(alias) = self.interner().get_display_alias(check_type)
-                    && alias != check_type
-                    && self.match_infer_pattern(
-                        alias,
-                        cond.extends_type,
-                        &mut loop_bindings,
-                        &mut loop_visited,
-                        &mut checker,
-                    )
-                    && !loop_bindings.is_empty()
-                {
-                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
-                    return self.evaluate(substituted_true);
-                }
-                loop_bindings.clear();
-                loop_visited.clear();
-                if self.type_contains_infer(cond.extends_type)
-                    && let Some(alias) = self.interner().get_display_alias(check_type)
-                    && alias != check_type
-                    && self.match_infer_pattern(
-                        alias,
-                        cond.extends_type,
-                        &mut loop_bindings,
-                        &mut loop_visited,
-                        &mut checker,
-                    )
-                    && !loop_bindings.is_empty()
-                {
-                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
-                    return self.evaluate(substituted_true);
-                }
-                loop_bindings.clear();
-                loop_visited.clear();
-                if self.match_infer_pattern(
+            let step = if extends_has_infer {
+                self.infer_match_step(
+                    cond,
                     check_type,
                     extends_type,
+                    tail_recursion_count,
                     &mut loop_bindings,
                     &mut loop_visited,
-                    &mut checker,
-                ) && !loop_bindings.is_empty()
-                {
-                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
-                    // Check for tail-recursive true branch (e.g., Trim<T> recurses on match):
-                    // type Trim<S> = S extends ` ${infer T}` ? Trim<T> : S;
-                    // The substituted true branch Trim<T> is an Application that expands
-                    // to another Conditional — handle it as a tail call WITHOUT
-                    // incrementing the depth guard, controlled by MAX_TAIL_RECURSION_DEPTH.
-                    if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                        if let Some(TypeData::Conditional(next_cond_id)) =
-                            self.interner().lookup(substituted_true)
-                        {
-                            let next_cond = self.interner().get_conditional(next_cond_id);
-                            current_cond = next_cond;
-                            tail_recursion_count += 1;
-                            continue;
-                        }
-                        if let Some(instantiated) =
-                            self.try_instantiate_application_for_tail_call(substituted_true)
-                        {
-                            if let Some(TypeData::Conditional(next_cond_id)) =
-                                self.interner().lookup(instantiated)
-                            {
-                                tail_application_branch.get_or_insert(substituted_true);
-                                let next_cond = self.interner().get_conditional(next_cond_id);
-                                current_cond = next_cond;
-                                tail_recursion_count += 1;
-                                continue;
-                            }
-                            // Not a conditional — evaluate normally.
-                            // Signal the intermediate Application for forward display alias.
-                            self.apparent_conditional_branch = Some(substituted_true);
-                            return self.evaluate_preserving_tail_application_branch_alias(
-                                instantiated,
-                                Some(substituted_true),
-                            );
-                        }
-                    }
-                    // Direct Application branch.
-                    if matches!(
-                        self.interner().lookup(substituted_true),
-                        Some(TypeData::Application(_))
-                    ) {
-                        self.apparent_conditional_branch = Some(substituted_true);
-                        return self.evaluate_preserving_tail_application_branch_alias(
-                            substituted_true,
-                            Some(substituted_true),
-                        );
-                    }
-                    return self.evaluate(substituted_true);
-                }
+                )
+            } else {
+                self.subtype_check_step(
+                    cond,
+                    check_type,
+                    extends_type,
+                    extends_has_type_params,
+                    tail_recursion_count,
+                    tail_application_branch,
+                )
+            };
 
-                let re_evaluated_check = self.evaluate(check_type);
-                if re_evaluated_check != check_type {
-                    loop_bindings.clear();
-                    loop_visited.clear();
-                    let mut checker = self.conditional_subtype_checker();
-                    checker.allow_bivariant_rest = true;
-                    if self.match_infer_pattern(
-                        re_evaluated_check,
-                        extends_type,
-                        &mut loop_bindings,
-                        &mut loop_visited,
-                        &mut checker,
-                    ) && !loop_bindings.is_empty()
+            match step {
+                ConditionalStepOutcome::Done(id) => return id,
+                ConditionalStepOutcome::TailCall {
+                    next_cond,
+                    application_branch,
+                } => {
+                    if let Some(app) = application_branch {
+                        tail_application_branch.get_or_insert(app);
+                    }
+                    current_cond = next_cond;
+                    tail_recursion_count += 1;
+                    continue;
+                }
+            }
+        }
+    }
+
+    /// Infer-pattern-matching phase of `evaluate_conditional` (when `extends_has_infer`).
+    ///
+    /// Tries a cascade of `match_infer_pattern` attempts in priority order and returns the
+    /// first successful binding substitution applied to the true branch. When no pattern
+    /// matches, returns the false branch. Defers when the check or extends shape is still
+    /// generic or unresolved.
+    ///
+    /// The caller is responsible for clearing `bindings` and `visited` before this call.
+    fn infer_match_step(
+        &mut self,
+        cond: &ConditionalType,
+        check_type: TypeId,
+        extends_type: TypeId,
+        tail_recursion_count: usize,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+    ) -> ConditionalStepOutcome {
+        let mut checker = self.conditional_subtype_checker();
+        checker.allow_bivariant_rest = true;
+
+        // Attempt 1: raw (pre-evaluation) extends differs from evaluated; match raw form.
+        // Evaluated Applications may collapse into structural Objects losing infer positions.
+        if cond.extends_type != extends_type
+            && self.type_contains_infer(cond.extends_type)
+            && self.match_infer_pattern(
+                check_type,
+                cond.extends_type,
+                bindings,
+                visited,
+                &mut checker,
+            )
+            && !bindings.is_empty()
+        {
+            let sub = self.substitute_infer(cond.true_type, bindings);
+            return ConditionalStepOutcome::Done(self.evaluate(sub));
+        }
+
+        // Attempt 2: display alias of check_type against raw extends.
+        bindings.clear();
+        visited.clear();
+        if cond.extends_type != extends_type
+            && self.type_contains_infer(cond.extends_type)
+            && let Some(alias) = self.interner().get_display_alias(check_type)
+            && alias != check_type
+            && self.match_infer_pattern(alias, cond.extends_type, bindings, visited, &mut checker)
+            && !bindings.is_empty()
+        {
+            let sub = self.substitute_infer(cond.true_type, bindings);
+            return ConditionalStepOutcome::Done(self.evaluate(sub));
+        }
+
+        // Attempt 3: display alias of check_type against current (evaluated) extends.
+        bindings.clear();
+        visited.clear();
+        if self.type_contains_infer(cond.extends_type)
+            && let Some(alias) = self.interner().get_display_alias(check_type)
+            && alias != check_type
+            && self.match_infer_pattern(alias, cond.extends_type, bindings, visited, &mut checker)
+            && !bindings.is_empty()
+        {
+            let sub = self.substitute_infer(cond.true_type, bindings);
+            return ConditionalStepOutcome::Done(self.evaluate(sub));
+        }
+
+        // Attempt 4: main match — check_type against evaluated extends_type.
+        // This is the tail-call insertion point: when the substituted true branch
+        // is itself a conditional (or an Application that expands to one), signal
+        // a tail call so the outer loop absorbs the step without extra recursion.
+        bindings.clear();
+        visited.clear();
+        if self.match_infer_pattern(check_type, extends_type, bindings, visited, &mut checker)
+            && !bindings.is_empty()
+        {
+            let substituted_true = self.substitute_infer(cond.true_type, bindings);
+            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
+                if let Some(TypeData::Conditional(next_cond_id)) =
+                    self.interner().lookup(substituted_true)
+                {
+                    return ConditionalStepOutcome::TailCall {
+                        next_cond: self.interner().get_conditional(next_cond_id),
+                        application_branch: None,
+                    };
+                }
+                if let Some(instantiated) =
+                    self.try_instantiate_application_for_tail_call(substituted_true)
+                {
+                    if let Some(TypeData::Conditional(next_cond_id)) =
+                        self.interner().lookup(instantiated)
                     {
-                        let substituted_true =
-                            self.substitute_infer(cond.true_type, &loop_bindings);
-                        return self.evaluate(substituted_true);
+                        return ConditionalStepOutcome::TailCall {
+                            next_cond: self.interner().get_conditional(next_cond_id),
+                            application_branch: Some(substituted_true),
+                        };
                     }
+                    self.apparent_conditional_branch = Some(substituted_true);
+                    return ConditionalStepOutcome::Done(
+                        self.evaluate_preserving_tail_application_branch_alias(
+                            instantiated,
+                            Some(substituted_true),
+                        ),
+                    );
                 }
+            }
+            if matches!(
+                self.interner().lookup(substituted_true),
+                Some(TypeData::Application(_))
+            ) {
+                self.apparent_conditional_branch = Some(substituted_true);
+                return ConditionalStepOutcome::Done(
+                    self.evaluate_preserving_tail_application_branch_alias(
+                        substituted_true,
+                        Some(substituted_true),
+                    ),
+                );
+            }
+            return ConditionalStepOutcome::Done(self.evaluate(substituted_true));
+        }
 
-                if self.infer_pattern_has_unresolved_application(cond.extends_type)
-                    || (extends_type != cond.extends_type
-                        && self.infer_pattern_has_unresolved_application(extends_type))
-                {
-                    // Lib-backed patterns can be seen before their base is
-                    // resolved. Keep the conditional deferred rather than
-                    // caching the false branch for e.g. Array<infer U>.
-                    return self.interner().conditional(ConditionalType {
+        // Attempt 5: re-evaluated check_type against evaluated extends.
+        let re_evaluated_check = self.evaluate(check_type);
+        if re_evaluated_check != check_type {
+            bindings.clear();
+            visited.clear();
+            let mut checker2 = self.conditional_subtype_checker();
+            checker2.allow_bivariant_rest = true;
+            if self.match_infer_pattern(
+                re_evaluated_check,
+                extends_type,
+                bindings,
+                visited,
+                &mut checker2,
+            ) && !bindings.is_empty()
+            {
+                let sub = self.substitute_infer(cond.true_type, bindings);
+                return ConditionalStepOutcome::Done(self.evaluate(sub));
+            }
+        }
+
+        // Unresolved-application guard: lib-backed infer patterns (e.g., `Array<infer U>`)
+        // may appear before the base's generic body is available. Defer rather than
+        // caching the false branch prematurely.
+        if self.infer_pattern_has_unresolved_application(cond.extends_type)
+            || (extends_type != cond.extends_type
+                && self.infer_pattern_has_unresolved_application(extends_type))
+        {
+            return ConditionalStepOutcome::Done(self.interner().conditional(ConditionalType {
+                check_type,
+                extends_type,
+                true_type: cond.true_type,
+                false_type: cond.false_type,
+                is_distributive: cond.is_distributive,
+            }));
+        }
+
+        // Generic-constraint fallback: when the check side contains type parameters,
+        // try matching the check's upper-bound constraint against the infer pattern.
+        // A constraint match means the check *could* satisfy the pattern once
+        // instantiated → take the true branch. A miss is definitive → false branch.
+        if crate::visitor::contains_type_parameters(self.interner(), check_type) {
+            let mut checked_concrete_constraint = false;
+            let constraint = self.resolve_generic_constraint(check_type);
+            if let Some(constraint) = constraint
+                && constraint != check_type
+            {
+                checked_concrete_constraint = true;
+                let mut bindings2 = FxHashMap::default();
+                let mut visited2 = FxHashSet::default();
+                let mut checker2 = self.conditional_subtype_checker();
+                checker2.allow_bivariant_rest = true;
+                if self.match_infer_pattern(
+                    constraint,
+                    extends_type,
+                    &mut bindings2,
+                    &mut visited2,
+                    &mut checker2,
+                ) {
+                    let sub = self.substitute_infer(cond.true_type, &bindings2);
+                    return ConditionalStepOutcome::Done(self.evaluate(sub));
+                }
+            }
+
+            if !checked_concrete_constraint {
+                return ConditionalStepOutcome::Done(self.interner().conditional(
+                    ConditionalType {
                         check_type,
                         extends_type,
                         true_type: cond.true_type,
                         false_type: cond.false_type,
                         is_distributive: cond.is_distributive,
-                    });
-                }
-
-                // Infer pattern didn't match on check_type directly.
-                // If check_type is a generic type (IndexAccess, KeyOf, etc.) containing
-                // type parameters, try matching with the constraint/upper bound of the
-                // check_type. For example, ReturnType<T[M]> where T extends FunctionsObj<T>:
-                // T[M]'s constraint resolves to () => unknown, which matches (...args) => infer R.
-                //
-                // If the constraint ALSO fails to match, take the false branch (the check_type's
-                // constraint is the most permissive instantiation, so a match failure is definitive).
-                // If the constraint matches, defer — the actual type may match differently once
-                // instantiated.
-                if crate::visitor::contains_type_parameters(self.interner(), check_type) {
-                    let mut checked_concrete_constraint = false;
-                    let constraint = self.resolve_generic_constraint(check_type);
-                    if let Some(constraint) = constraint
-                        && constraint != check_type
-                    {
-                        checked_concrete_constraint = true;
-                        let mut bindings2 = FxHashMap::default();
-                        let mut visited2 = FxHashSet::default();
-                        let mut checker2 = self.conditional_subtype_checker();
-                        checker2.allow_bivariant_rest = true;
-                        if self.match_infer_pattern(
-                            constraint,
-                            extends_type,
-                            &mut bindings2,
-                            &mut visited2,
-                            &mut checker2,
-                        ) {
-                            // Constraint matched the infer pattern. Take the true branch
-                            // with the inferred type bindings from the constraint match.
-                            // Example: ReturnType<T[M]> where T[M]'s constraint is () => unknown
-                            // matches (...args) => infer R, giving R = unknown.
-                            // True branch is R, so result is unknown.
-                            let substituted_true =
-                                self.substitute_infer(cond.true_type, &bindings2);
-                            return self.evaluate(substituted_true);
-                        }
-                    }
-
-                    if !checked_concrete_constraint {
-                        return self.interner().conditional(ConditionalType {
-                            check_type,
-                            extends_type,
-                            true_type: cond.true_type,
-                            false_type: cond.false_type,
-                            is_distributive: cond.is_distributive,
-                        });
-                    }
-                }
-
-                // Infer match failed (and constraint doesn't match either).
-                // If check_type is an unresolved TypeQuery, defer rather than eagerly
-                // taking the false branch.
-                if matches!(
-                    self.interner().lookup(check_type),
-                    Some(TypeData::TypeQuery(_))
-                ) {
-                    let true_type = self.evaluate(cond.true_type);
-                    let false_type = self.evaluate(cond.false_type);
-                    return self.interner().conditional(ConditionalType {
-                        check_type,
-                        extends_type,
-                        true_type,
-                        false_type,
-                        is_distributive: cond.is_distributive,
-                    });
-                }
-
-                // Infer match failed — take the false branch.
-                // Check if the false branch is a tail-recursive conditional.
-                // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
-                if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                    if let Some(TypeData::Conditional(next_cond_id)) =
-                        self.interner().lookup(cond.false_type)
-                    {
-                        let next_cond = self.interner().get_conditional(next_cond_id);
-                        current_cond = next_cond;
-                        tail_recursion_count += 1;
-                        continue;
-                    }
-                    // Also detect Application that expands to Conditional (common pattern):
-                    // type TrimLeft<T> = T extends ` ${infer R}` ? TrimLeft<R> : T;
-                    // The false branch may be `TrimLeft<R>` (Application, not Conditional).
-                    if let Some(instantiated) =
-                        self.try_instantiate_application_for_tail_call(cond.false_type)
-                    {
-                        if let Some(TypeData::Conditional(next_cond_id)) =
-                            self.interner().lookup(instantiated)
-                        {
-                            tail_application_branch.get_or_insert(cond.false_type);
-                            let next_cond = self.interner().get_conditional(next_cond_id);
-                            current_cond = next_cond;
-                            tail_recursion_count += 1;
-                            continue;
-                        }
-                        self.apparent_conditional_branch = Some(cond.false_type);
-                        return self.evaluate_preserving_tail_application_branch_alias(
-                            instantiated,
-                            Some(cond.false_type),
-                        );
-                    }
-                    if matches!(
-                        self.interner().lookup(cond.false_type),
-                        Some(TypeData::Application(_))
-                    ) {
-                        self.apparent_conditional_branch = Some(cond.false_type);
-                    }
-                }
-
-                // Not a tail-recursive case - evaluate normally
-                return self.evaluate(cond.false_type);
+                    },
+                ));
             }
+        }
 
-            // tsc takes the false branch when the extends type is unresolvable
-            // (e.g. `Function` without lib types); this preserves structural
-            // modifiers (readonly) instead of collapsing the conditional to T.
-            if crate::visitor::is_error_type(self.interner(), extends_type) {
-                return self.evaluate(cond.false_type);
-            }
+        // Unresolved TypeQuery: defer rather than eagerly taking the false branch.
+        if matches!(
+            self.interner().lookup(check_type),
+            Some(TypeData::TypeQuery(_))
+        ) {
+            let true_type = self.evaluate(cond.true_type);
+            let false_type = self.evaluate(cond.false_type);
+            return ConditionalStepOutcome::Done(self.interner().conditional(ConditionalType {
+                check_type,
+                extends_type,
+                true_type,
+                false_type,
+                is_distributive: cond.is_distributive,
+            }));
+        }
 
-            // Subtype check path — use strict checking (no bivariant rest)
-            // to match tsc's `isTypeAssignableTo` which respects strictFunctionTypes.
-            //
-            // PERF: Check the evaluator's conditional_subtype_cache first. Deeply
-            // recursive conditional types (DeepReadonly, Compute, etc.) re-check
-            // the same (check, extends) pair many times across distributed branches
-            // and tail-recursion iterations. Caching avoids redundant structural
-            // comparison which dominates the time for these benchmarks.
-            let is_sub = if let Some(cached) =
-                self.cached_conditional_subtype(check_type, extends_type)
+        // All infer attempts failed — take the false branch. Check for tail-recursion.
+        if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
+            if let Some(TypeData::Conditional(next_cond_id)) =
+                self.interner().lookup(cond.false_type)
             {
-                cached
-            } else {
-                // Thread-local depth guard: evaluating conditional types can trigger
-                // subtype checks that evaluate MORE conditional types, creating an
-                // Evaluator → SubtypeChecker → Evaluator → ... chain where each
-                // instance has fresh cycle-detection state. Without this global
-                // depth limit, recursive generic types like `Vector<T> implements
-                // Seq<T>` with `Exclude<T, U>` in overloads cause stack overflow.
-                thread_local! {
-                    static CONDITIONAL_SUBTYPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-                }
-                let prev_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
-                    let c = d.get();
-                    d.set(c + 1);
-                    c
-                });
-                let result = if prev_depth >= 50 {
-                    // At excessive depth, conservatively assume not a subtype
-                    // (takes the false/else branch of the conditional).
-                    // This matches tsc's behavior of returning the deferred
-                    // conditional when instantiation depth is exceeded.
-                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                    false
-                } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type)
-                {
-                    // Fast-path: primitive types (string, number, boolean, bigint,
-                    // symbol) are never subtypes of Function. The structural subtype
-                    // checker may incorrectly autobox the primitive to its wrapper
-                    // type (String, Number, etc.) and find structural compatibility
-                    // with the evaluated Function interface. This fast-path prevents
-                    // `string extends Function` from incorrectly taking the true
-                    // branch, matching tsc's behavior where primitives never extend
-                    // Function.
-                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                    false
-                } else if Self::function_intrinsic_extends_callable_target(
-                    self.interner(),
-                    check_type,
-                    extends_type,
-                ) {
-                    // In conditional types, tsc treats the global `Function`
-                    // intrinsic as satisfying callable targets. Ordinary
-                    // assignment intentionally remains stricter.
-                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                    true
-                } else {
-                    let mut strict_checker = self.conditional_subtype_checker();
-                    let r = strict_checker.is_subtype_of(check_type, extends_type);
-                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                    r
+                return ConditionalStepOutcome::TailCall {
+                    next_cond: self.interner().get_conditional(next_cond_id),
+                    application_branch: None,
                 };
-                self.cache_conditional_subtype(check_type, extends_type, result);
-                result
-            };
-            trace!(
-                check = check_type.0,
-                extends = extends_type.0,
-                is_subtype = is_sub,
-                "conditional subtype check result"
-            );
-            let result_branch = if is_sub {
-                // T <: U -> true branch
-                cond.true_type
-            } else if extends_has_type_params
-                // Also check if the evaluated check_type is a direct Lazy reference
-                // (or a union/intersection of Lazy refs). Type parameters in generic
-                // function bodies are Lazy(DefId) and contains_type_parameters doesn't
-                // see through them. A direct Lazy check_type means the whole type is
-                // unresolved (e.g., `T & U` becomes Lazy(DefId)), so the conditional
-                // result is indeterminate. Don't defer for wrapped Lazy (like KeyOf(Lazy))
-                // where the wrapper type provides enough info for a determinate result.
-                || matches!(self.interner().lookup(check_type), Some(TypeData::Lazy(_)))
-                || matches!(self.interner().lookup(extends_type), Some(TypeData::Lazy(_)))
-                // An Application in the extends position that survived evaluation means
-                // the current resolver lacks the generic body (e.g., a lib type like
-                // Pick, Readonly, or Required not yet known to the TypeEnvironment
-                // resolver). Taking the false branch would be incorrect when the
-                // Application could expand to a type that `check_type` does satisfy.
-                // Defer so a later resolver pass (CheckerContext) can expand it.
-                || matches!(self.interner().lookup(extends_type), Some(TypeData::Application(_)))
+            }
+            if let Some(instantiated) =
+                self.try_instantiate_application_for_tail_call(cond.false_type)
             {
-                // Subtype check failed, but either side contains unresolved type
-                // parameters or lazy references. The result is indeterminate: once
-                // the type parameters are instantiated, the relationship might change.
-                // Examples:
-                //   `number extends T ? X : Y` — T could be `number`
-                //   `T & U extends string ? X : Y` — T & U could be `string`
-                // Defer the conditional instead of eagerly taking the false branch.
-                return self.interner().conditional(ConditionalType {
-                    check_type,
-                    extends_type,
-                    true_type: cond.true_type,
-                    false_type: cond.false_type,
-                    is_distributive: cond.is_distributive,
-                });
-            } else {
-                // Types are definitely not in a subtype relationship and extends_type
-                // has no type parameters — take the false branch.
-                cond.false_type
-            };
-
-            // Check if the result branch is directly a conditional for tail-recursion
-            // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
-            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
                 if let Some(TypeData::Conditional(next_cond_id)) =
-                    self.interner().lookup(result_branch)
+                    self.interner().lookup(instantiated)
                 {
-                    let next_cond = self.interner().get_conditional(next_cond_id);
-                    current_cond = next_cond;
-                    tail_recursion_count += 1;
-                    continue;
+                    return ConditionalStepOutcome::TailCall {
+                        next_cond: self.interner().get_conditional(next_cond_id),
+                        application_branch: Some(cond.false_type),
+                    };
                 }
-                // Also detect Application that expands to Conditional (tail-call through
-                // type alias like `TrimLeft<R>` which is Application, not Conditional)
-                if let Some(instantiated) =
-                    self.try_instantiate_application_for_tail_call(result_branch)
+                self.apparent_conditional_branch = Some(cond.false_type);
+                return ConditionalStepOutcome::Done(
+                    self.evaluate_preserving_tail_application_branch_alias(
+                        instantiated,
+                        Some(cond.false_type),
+                    ),
+                );
+            }
+            if matches!(
+                self.interner().lookup(cond.false_type),
+                Some(TypeData::Application(_))
+            ) {
+                self.apparent_conditional_branch = Some(cond.false_type);
+            }
+        }
+
+        ConditionalStepOutcome::Done(self.evaluate(cond.false_type))
+    }
+
+    /// Subtype-check phase of `evaluate_conditional` (when `!extends_has_infer`).
+    ///
+    /// Runs the cached structural subtype check and selects the true or false branch.
+    /// When either side still contains unresolved type parameters, the result is
+    /// indeterminate and the conditional is returned as a deferred form instead.
+    fn subtype_check_step(
+        &mut self,
+        cond: &ConditionalType,
+        check_type: TypeId,
+        extends_type: TypeId,
+        extends_has_type_params: bool,
+        tail_recursion_count: usize,
+        tail_application_branch: Option<TypeId>,
+    ) -> ConditionalStepOutcome {
+        // tsc takes the false branch when the extends type is unresolvable
+        // (e.g. `Function` without lib types); this preserves structural
+        // modifiers (readonly) instead of collapsing the conditional to T.
+        if crate::visitor::is_error_type(self.interner(), extends_type) {
+            return ConditionalStepOutcome::Done(self.evaluate(cond.false_type));
+        }
+
+        // Subtype check — use strict checking (no bivariant rest) to match tsc's
+        // `isTypeAssignableTo` which respects `strictFunctionTypes`.
+        //
+        // PERF: Check the evaluator's conditional_subtype_cache first. Deeply
+        // recursive conditional types (DeepReadonly, Compute, etc.) re-check
+        // the same (check, extends) pair many times across distributed branches
+        // and tail-recursion iterations. Caching avoids redundant structural
+        // comparison which dominates the time for these benchmarks.
+        let is_sub = if let Some(cached) = self.cached_conditional_subtype(check_type, extends_type)
+        {
+            cached
+        } else {
+            // Thread-local depth guard: evaluating conditional types can trigger
+            // subtype checks that evaluate MORE conditional types, creating an
+            // Evaluator → SubtypeChecker → Evaluator → ... chain where each
+            // instance has fresh cycle-detection state. Without this global
+            // depth limit, recursive generic types like `Vector<T> implements
+            // Seq<T>` with `Exclude<T, U>` in overloads cause stack overflow.
+            thread_local! {
+                static CONDITIONAL_SUBTYPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+            }
+            let prev_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
+                let c = d.get();
+                d.set(c + 1);
+                c
+            });
+            let result = if prev_depth >= 50 {
+                // At excessive depth, conservatively assume not a subtype
+                // (takes the false/else branch of the conditional).
+                // This matches tsc's behavior of returning the deferred
+                // conditional when instantiation depth is exceeded.
+                CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                false
+            } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type) {
+                // Fast-path: primitive types (string, number, boolean, bigint,
+                // symbol) are never subtypes of Function. The structural subtype
+                // checker may incorrectly autobox the primitive to its wrapper
+                // type (String, Number, etc.) and find structural compatibility
+                // with the evaluated Function interface. This fast-path prevents
+                // `string extends Function` from incorrectly taking the true
+                // branch, matching tsc's behavior where primitives never extend
+                // Function.
+                CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                false
+            } else if Self::function_intrinsic_extends_callable_target(
+                self.interner(),
+                check_type,
+                extends_type,
+            ) {
+                // In conditional types, tsc treats the global `Function`
+                // intrinsic as satisfying callable targets. Ordinary
+                // assignment intentionally remains stricter.
+                CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                true
+            } else {
+                let mut strict_checker = self.conditional_subtype_checker();
+                let r = strict_checker.is_subtype_of(check_type, extends_type);
+                CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+                r
+            };
+            self.cache_conditional_subtype(check_type, extends_type, result);
+            result
+        };
+        trace!(
+            check = check_type.0,
+            extends = extends_type.0,
+            is_subtype = is_sub,
+            "conditional subtype check result"
+        );
+        let result_branch = if is_sub {
+            // T <: U -> true branch
+            cond.true_type
+        } else if extends_has_type_params
+            // Also check if the evaluated check_type is a direct Lazy reference
+            // (or a union/intersection of Lazy refs). Type parameters in generic
+            // function bodies are Lazy(DefId) and contains_type_parameters doesn't
+            // see through them. A direct Lazy check_type means the whole type is
+            // unresolved (e.g., `T & U` becomes Lazy(DefId)), so the conditional
+            // result is indeterminate. Don't defer for wrapped Lazy (like KeyOf(Lazy))
+            // where the wrapper type provides enough info for a determinate result.
+            || matches!(self.interner().lookup(check_type), Some(TypeData::Lazy(_)))
+            || matches!(self.interner().lookup(extends_type), Some(TypeData::Lazy(_)))
+            // An Application in the extends position that survived evaluation means
+            // the current resolver lacks the generic body (e.g., a lib type like
+            // Pick, Readonly, or Required not yet known to the TypeEnvironment
+            // resolver). Taking the false branch would be incorrect when the
+            // Application could expand to a type that `check_type` does satisfy.
+            // Defer so a later resolver pass (CheckerContext) can expand it.
+            || matches!(self.interner().lookup(extends_type), Some(TypeData::Application(_)))
+        {
+            // Subtype check failed, but either side contains unresolved type
+            // parameters or lazy references. The result is indeterminate: once
+            // the type parameters are instantiated, the relationship might change.
+            return ConditionalStepOutcome::Done(self.interner().conditional(ConditionalType {
+                check_type,
+                extends_type,
+                true_type: cond.true_type,
+                false_type: cond.false_type,
+                is_distributive: cond.is_distributive,
+            }));
+        } else {
+            // Types are definitely not in a subtype relationship and extends_type
+            // has no type parameters — take the false branch.
+            cond.false_type
+        };
+
+        // Check if the result branch is directly a conditional for tail-recursion.
+        // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth.
+        if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
+            if let Some(TypeData::Conditional(next_cond_id)) = self.interner().lookup(result_branch)
+            {
+                return ConditionalStepOutcome::TailCall {
+                    next_cond: self.interner().get_conditional(next_cond_id),
+                    application_branch: None,
+                };
+            }
+            // Also detect Application that expands to Conditional (tail-call through
+            // type alias like `TrimLeft<R>` which is Application, not Conditional).
+            if let Some(instantiated) =
+                self.try_instantiate_application_for_tail_call(result_branch)
+            {
+                if let Some(TypeData::Conditional(next_cond_id)) =
+                    self.interner().lookup(instantiated)
                 {
-                    if let Some(TypeData::Conditional(next_cond_id)) =
-                        self.interner().lookup(instantiated)
-                    {
-                        tail_application_branch.get_or_insert(result_branch);
-                        let next_cond = self.interner().get_conditional(next_cond_id);
-                        current_cond = next_cond;
-                        tail_recursion_count += 1;
-                        continue;
-                    }
-                    self.apparent_conditional_branch = Some(result_branch);
-                    return self.evaluate_preserving_tail_application_branch_alias(
+                    return ConditionalStepOutcome::TailCall {
+                        next_cond: self.interner().get_conditional(next_cond_id),
+                        application_branch: Some(result_branch),
+                    };
+                }
+                self.apparent_conditional_branch = Some(result_branch);
+                return ConditionalStepOutcome::Done(
+                    self.evaluate_preserving_tail_application_branch_alias(
                         instantiated,
                         Some(result_branch),
-                    );
-                }
-                if matches!(
-                    self.interner().lookup(result_branch),
-                    Some(TypeData::Application(_))
-                ) {
-                    self.apparent_conditional_branch = Some(result_branch);
-                }
+                    ),
+                );
             }
-
-            // Not a tail-recursive case - evaluate normally
-            return self.evaluate_preserving_tail_application_branch_alias(
-                result_branch,
-                tail_application_branch,
-            );
+            if matches!(
+                self.interner().lookup(result_branch),
+                Some(TypeData::Application(_))
+            ) {
+                self.apparent_conditional_branch = Some(result_branch);
+            }
         }
+
+        ConditionalStepOutcome::Done(self.evaluate_preserving_tail_application_branch_alias(
+            result_branch,
+            tail_application_branch,
+        ))
     }
 
     fn evaluate_preserving_tail_application_branch_alias(
