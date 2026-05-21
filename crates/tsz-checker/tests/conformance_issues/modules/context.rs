@@ -60,6 +60,283 @@ adapter;
     );
 }
 
+// Adjacent-case coverage for issue #9619. Structural rule: a class instance
+// assigned to an interface whose property is a function/method is compared at
+// the call-signature level, not the containing-class level; cross-file
+// imported class identity (instance *and* constructor) must remain canonical
+// so a class type cannot fail to assign to itself across modules. The fixture
+// names vary per CLAUDE.md §25/§26 rename axis to prove the rule is
+// structural, not keyed on the kysely test fixture.
+
+#[test]
+fn cross_module_class_async_promise_method_satisfies_interface_function_property() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "host.ts",
+                r#"
+export declare class Connection<DB> {
+    readonly db: DB;
+}
+"#,
+            ),
+            (
+                "service-interface.ts",
+                r#"
+import { Connection } from "./host";
+
+export interface Service {
+    acquireLock(conn: Connection<any>, opts: LockOptions): Promise<void>;
+}
+
+export interface LockOptions {
+    readonly key: string;
+}
+"#,
+            ),
+            (
+                "service-impl.ts",
+                r#"
+import { Connection } from "./host";
+import { LockOptions } from "./service-interface";
+
+export class ServiceImpl {
+    async acquireLock(_conn: Connection<any>, _opts: LockOptions): Promise<void> {}
+}
+"#,
+            ),
+            (
+                "main.ts",
+                r#"
+import { Service } from "./service-interface";
+import { ServiceImpl } from "./service-impl";
+
+const svc: Service = new ServiceImpl();
+svc;
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("ServiceImpl") && message.contains("Service")
+        }),
+        "Async class method returning Promise must satisfy an interface function property of the same signature. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn cross_module_class_method_renamed_axis_still_satisfies_interface_property() {
+    // Rename axis for the existing `acquireMigrationLock` test: same rule,
+    // different type-parameter / class / interface / method spellings.
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "client.ts",
+                r#"
+export declare class Client<S> {
+    readonly schema: S;
+}
+"#,
+            ),
+            (
+                "broker-interface.ts",
+                r#"
+import { Client } from "./client";
+
+export interface Broker {
+    publish(c: Client<any>, payload: Payload): Promise<void>;
+}
+
+export interface Payload {
+    readonly topic: string;
+}
+"#,
+            ),
+            (
+                "broker-impl.ts",
+                r#"
+import { Client } from "./client";
+import { Payload } from "./broker-interface";
+
+export declare class KafkaBroker {
+    publish(c: Client<any>, payload: Payload): Promise<void>;
+}
+"#,
+            ),
+            (
+                "main.ts",
+                r#"
+import { Broker } from "./broker-interface";
+import { KafkaBroker } from "./broker-impl";
+
+const b: Broker = new KafkaBroker();
+b;
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("KafkaBroker") && message.contains("Broker")
+        }),
+        "Renamed class/interface/method/type-parameter names must produce the same diagnostic-set cardinality. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn cross_module_class_constructor_value_distinct_from_instance_under_typeof() {
+    // Constructor value (`typeof Class`) and instance type must stay distinct
+    // across imports: passing the class itself is ok, passing an instance is
+    // TS2345. Issue #9619 reported impossible-looking mixes of the two.
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "vendor.ts",
+                r#"
+export declare class VendorRequest {
+    readonly id: number;
+}
+"#,
+            ),
+            (
+                "factory.ts",
+                r#"
+import { VendorRequest } from "./vendor";
+
+export declare function makeRequest(ctor: typeof VendorRequest): VendorRequest;
+"#,
+            ),
+            (
+                "main.ts",
+                r#"
+import { VendorRequest } from "./vendor";
+import { makeRequest } from "./factory";
+
+// Constructor (class value) -- ok.
+const ok = makeRequest(VendorRequest);
+
+// Instance where `typeof Class` is expected -- TS2345.
+const inst = new VendorRequest();
+const bad = makeRequest(inst);
+
+ok; bad;
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions::default(),
+    );
+
+    let ts2345: Vec<&(u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected exactly one TS2345 (instance-where-constructor), not for the constructor-where-constructor case. Got: {diagnostics:#?}"
+    );
+    let (_, msg) = ts2345[0];
+    assert!(
+        msg.contains("VendorRequest") && msg.contains("typeof"),
+        "TS2345 must report the typeof-vs-instance mismatch on VendorRequest. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn cross_module_class_instance_through_generic_callback_keeps_canonical_identity() {
+    // Imported class instance flowing through a generic callback parameter
+    // must keep its canonical TypeId.
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "model.ts",
+                r#"
+export declare class Entity { readonly id: number; }
+"#,
+            ),
+            (
+                "callback.ts",
+                r#"
+import { Entity } from "./model";
+
+export declare function run<T>(value: T, cb: (received: T) => Entity): Entity;
+"#,
+            ),
+            (
+                "main.ts",
+                r#"
+import { Entity } from "./model";
+import { run } from "./callback";
+
+const r = new Entity();
+const out = run(r, received => received);
+out;
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == 2322 || *code == 2345),
+        "Imported class instance flowing through a generic callback must keep canonical identity. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn same_display_classes_from_different_files_do_not_self_mismatch() {
+    // A class assigned to itself, even when a same-named class exists in a
+    // sibling module, must always pass. Guards against the impossible
+    // `Type 'X' is not assignable to type 'X'` diagnostic reported in #9619.
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "a.ts",
+                r#"
+export class TaggedNode { readonly tag: "A" = "A"; }
+"#,
+            ),
+            (
+                "b.ts",
+                r#"
+export class TaggedNode { readonly tag: "B" = "B"; }
+"#,
+            ),
+            (
+                "main.ts",
+                r#"
+import { TaggedNode as ANode } from "./a";
+import { TaggedNode as BNode } from "./b";
+
+// Self assignment must always pass with no diagnostic at all.
+const aSelf: ANode = new ANode();
+const bSelf: BNode = new BNode();
+
+aSelf; bSelf;
+"#,
+            ),
+        ],
+        "main.ts",
+        CheckerOptions::default(),
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Self-assignment of imported class to itself must not produce any TS2322. Got: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn project_forward_generic_class_computed_name_no_false_ts2339() {
     let diagnostics = compile_named_project_get_diagnostics_with_options(
