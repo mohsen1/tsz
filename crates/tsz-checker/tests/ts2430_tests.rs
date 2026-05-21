@@ -872,3 +872,78 @@ interface Derived<T> extends Base<T> {
         "Got: {diags:?}"
     );
 }
+
+#[test]
+fn test_generic_construct_property_against_concrete_base_no_ts2430() {
+    // tsc accepts via erased signature (T → any) when I overrides a3 with a
+    // generic construct sig and the inherited target is non-generic.
+    let source = r#"
+class Base { foo: string = ""; }
+interface A { a3: new (x: number) => Base; }
+interface B extends A {}
+interface I extends B { a3: new <T extends Base>(x: T) => T; }
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430: Vec<_> = diags.iter().filter(|d| d.0 == 2430).collect();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430 when generic construct property is compatible \
+         with concrete non-generic base via erased signature (T→any). Got: {ts2430:?}"
+    );
+}
+
+#[test]
+fn test_generic_call_property_against_concrete_base_no_ts2430() {
+    // Call-signature variant of the same structural rule.
+    // `(x: T) => T` where `T extends Base` must satisfy `(x: number) => Base`.
+    let source = r#"
+class Base { foo: string = ""; }
+interface A { a3: (x: number) => Base; }
+interface B extends A {}
+interface I extends B { a3: <T extends Base>(x: T) => T; }
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430: Vec<_> = diags.iter().filter(|d| d.0 == 2430).collect();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430 when generic call property is compatible \
+         with concrete non-generic base via erased signature (T→any). Got: {ts2430:?}"
+    );
+}
+
+#[test]
+fn test_generic_construct_property_renamed_type_param_against_concrete_base_no_ts2430() {
+    // Same rule as above but with a renamed type parameter (U instead of T)
+    // to ensure the fix is not keyed on a specific identifier.
+    let source = r#"
+class Node { val: number = 0; }
+interface A { make: new (x: number) => Node; }
+interface B extends A {}
+interface I extends B { make: new <U extends Node>(x: U) => U; }
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430: Vec<_> = diags.iter().filter(|d| d.0 == 2430).collect();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430 when generic construct property with renamed type param (U) \
+         is compatible with concrete non-generic base via erased signature. Got: {ts2430:?}"
+    );
+}
+
+#[test]
+fn test_generic_construct_property_genuinely_incompatible_return_still_errors() {
+    // Negative: the declared return type `string` is not assignable to `number`,
+    // so TS2430 fires even after any-erasure clears the parameter mismatch.
+    let source = r#"
+class Base { foo: string = ""; }
+interface A { a3: new (x: number) => number; }
+interface B extends A {}
+interface I extends B { a3: new <T extends Base>(x: T) => string; }
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2430),
+        "Should still emit TS2430 when the generic construct property has an \
+         incompatible return type. Got: {diags:?}"
+    );
+}

@@ -13,7 +13,10 @@ use crate::types::{
 use crate::visitor::callable_shape_id;
 
 use super::super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
-use super::{erase_call_sig_to_any, erase_fn_shape_to_any, erase_type_params_to_constraints};
+use super::{
+    erase_call_sig_to_any, erase_fn_shape_to_any, erase_type_params_to_any,
+    erase_type_params_to_constraints,
+};
 
 mod params;
 
@@ -492,10 +495,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         sub
                     }
                     Err(_) => {
-                        // Inference failed (e.g., bounds violation). Fall back to tsc's
-                        // `getErasedSignature` behavior: replace type params with their
-                        // constraints (or `unknown` if unconstrained).
-                        erase_type_params_to_constraints(&source_instantiated.type_params)
+                        // Inference failed (e.g., bounds violation).
+                        //
+                        // `allow_erased_generic_signature_retry` is set for interface-extends
+                        // property checks (TS2430): use tsc's `getErasedSignature` path and
+                        // replace each type parameter with `any`. Without it (e.g.,
+                        // method-assignability paths with NO_ERASE_GENERICS), keep the
+                        // more conservative erase-to-constraints path.
+                        if self.allow_erased_generic_signature_retry {
+                            erase_type_params_to_any(&source_instantiated.type_params)
+                        } else {
+                            erase_type_params_to_constraints(&source_instantiated.type_params)
+                        }
                     }
                 };
                 source_instantiated =
@@ -1416,7 +1427,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // tsc N×M path: when a callable has multiple signatures and the direct
-        // comparison above fails, try erasing type parameters to `any`
         // comparison above fails, try erasing type parameters to `any`
         // (matching tsc's `getErasedSignature` / `createTypeEraser`). In tsc's
         // `signaturesRelatedTo`, the N×M case (source.length > 1 || target.length > 1)
