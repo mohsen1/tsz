@@ -210,17 +210,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let resolved = self.resolve_type_for_property_access(object_type);
-        // Use the solver's property access to find the method type and check
-        // if it has a never return type.
-        if let tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } =
-            self.ctx
-                .types
-                .resolve_property_access(resolved, property_name)
-        {
-            return query::function_return_type(self.ctx.types, type_id) == Some(TypeId::NEVER);
-        }
-
-        false
+        query::property_access_function_returns_never(self.ctx.types, resolved, property_name)
     }
 
     fn symbol_explicitly_returns_never(&mut self, sym_id: tsz_binder::SymbolId) -> bool {
@@ -334,15 +324,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let left_non_nullish =
-            crate::query_boundaries::flow::narrow_optional_chain(self.ctx.types, left_type);
-        if left_non_nullish == TypeId::ERROR {
-            return None;
-        }
-        if left_non_nullish == TypeId::NEVER {
-            return Some(right_type);
-        }
-        Some(self.ctx.types.union2(left_non_nullish, right_type))
+        query::nullish_coalescing_switch_domain(self.ctx.types, left_type, right_type)
     }
 
     fn normalize_enum_union_members(&self, type_id: TypeId) -> TypeId {
@@ -371,40 +353,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn typeof_switch_domain_from_operand_type(&self, operand_type: TypeId) -> Option<TypeId> {
-        if operand_type == TypeId::ERROR {
-            return None;
-        }
-
-        const TYPEOF_RESULTS: [&str; 8] = [
-            "string",
-            "number",
-            "bigint",
-            "boolean",
-            "symbol",
-            "undefined",
-            "object",
-            "function",
-        ];
-
         let env = self.ctx.type_environment.borrow();
-
-        let mut possible = Vec::with_capacity(TYPEOF_RESULTS.len());
-        for typeof_result in TYPEOF_RESULTS {
-            if query::type_has_typeof_result(
-                self.ctx.types,
-                Some(&env),
-                operand_type,
-                typeof_result,
-            ) {
-                possible.push(self.ctx.types.literal_string(typeof_result));
-            }
-        }
-
-        match possible.len() {
-            0 => None,
-            1 => possible.first().copied(),
-            _ => Some(self.ctx.types.union(possible)),
-        }
+        query::typeof_switch_domain(self.ctx.types, Some(&env), operand_type)
     }
 
     fn switch_exhaustive_with_types(&self, switch_type: TypeId, case_types: &[TypeId]) -> bool {

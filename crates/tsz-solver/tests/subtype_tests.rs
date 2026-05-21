@@ -27278,3 +27278,209 @@ fn global_function_intrinsic_assignability_is_one_way() {
         "the global Function type does not assign to a specific call signature"
     );
 }
+
+// =============================================================================
+// Mapped Type Key Constraint Contravariance Tests
+// =============================================================================
+//
+// Structural rule: when `type M<K, V> = { [P in K]: V }` is used,
+// K is CONTRAVARIANT — a source with wider keys (K1 ⊇ K2) is assignable to
+// a target with narrower keys (K2) because the source provides every property
+// the target requires.  `M<"a"|"b"|"c", number> <: M<"a"|"b", number>` = TRUE.
+
+fn unconstrained_type_param(interner: &TypeInterner, name: &str) -> TypeParamInfo {
+    TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }
+}
+
+fn mapped_type_alias_env(
+    def_id: DefId,
+    body: TypeId,
+    params: Vec<TypeParamInfo>,
+) -> TypeEnvironment {
+    let mut env = TypeEnvironment::new();
+    env.insert_def_with_params(def_id, body, params);
+    env.insert_def_kind(def_id, crate::def::DefKind::TypeAlias);
+    env
+}
+
+/// Core case: `type M<K, V> = { [P in K]: V }` — Application with wider key
+/// constraint should be assignable to one with narrower key constraint.
+#[test]
+fn test_mapped_key_constraint_application_wider_source_subtype_of_narrower_target() {
+    // M<"a"|"b"|"c", number> <: M<"a"|"b", number>   ← TRUE  (wider ⊇ narrower)
+    // M<"a"|"b", number>      <: M<"a"|"b"|"c", number> ← FALSE (narrower ⊄ wider)
+    let interner = TypeInterner::new();
+
+    let def_id = DefId(9200);
+    let k_param = unconstrained_type_param(&interner, "K");
+    let v_param = unconstrained_type_param(&interner, "V");
+    let k_type = interner.type_param(k_param);
+    let v_type = interner.type_param(v_param);
+
+    let body = interner.mapped(MappedType {
+        type_param: unconstrained_type_param(&interner, "P"),
+        constraint: k_type,
+        name_type: None,
+        template: v_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let env = mapped_type_alias_env(def_id, body, vec![k_param, v_param]);
+    let base = interner.lazy(def_id);
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let lit_c = interner.literal_string("c");
+    let keys_ab = interner.union(vec![lit_a, lit_b]);
+    let keys_abc = interner.union(vec![lit_a, lit_b, lit_c]);
+
+    let app_abc = interner.application(base, vec![keys_abc, TypeId::NUMBER]);
+    let app_ab = interner.application(base, vec![keys_ab, TypeId::NUMBER]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    assert!(
+        checker.is_subtype_of(app_abc, app_ab),
+        "M<'a'|'b'|'c', number> must be assignable to M<'a'|'b', number> — \
+         key constraint is contravariant (wider source covers narrower target)"
+    );
+    assert!(
+        !checker.is_subtype_of(app_ab, app_abc),
+        "M<'a'|'b', number> must NOT be assignable to M<'a'|'b'|'c', number> — \
+         narrower source does not cover wider target"
+    );
+}
+
+/// Renamed params (X, Y instead of K, V) prove the fix is structural, not name-dependent.
+#[test]
+fn test_mapped_key_constraint_application_wider_source_renamed_params() {
+    let interner = TypeInterner::new();
+
+    let def_id = DefId(9201);
+    let x_param = unconstrained_type_param(&interner, "X");
+    let y_param = unconstrained_type_param(&interner, "Y");
+    let x_type = interner.type_param(x_param);
+    let y_type = interner.type_param(y_param);
+
+    let body = interner.mapped(MappedType {
+        type_param: unconstrained_type_param(&interner, "Q"),
+        constraint: x_type,
+        name_type: None,
+        template: y_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let env = mapped_type_alias_env(def_id, body, vec![x_param, y_param]);
+    let base = interner.lazy(def_id);
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let lit_c = interner.literal_string("c");
+    let lit_d = interner.literal_string("d");
+    let keys_ab = interner.union(vec![lit_a, lit_b]);
+    let keys_abcd = interner.union(vec![lit_a, lit_b, lit_c, lit_d]);
+
+    let app_abcd = interner.application(base, vec![keys_abcd, TypeId::STRING]);
+    let app_ab = interner.application(base, vec![keys_ab, TypeId::STRING]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    assert!(
+        checker.is_subtype_of(app_abcd, app_ab),
+        "M<4 keys, string> must be assignable to M<2 keys, string>"
+    );
+    assert!(
+        !checker.is_subtype_of(app_ab, app_abcd),
+        "M<2 keys, string> must NOT be assignable to M<4 keys, string>"
+    );
+}
+
+/// Raw mapped types (not wrapped in Application): wider constraint ⊇ narrower.
+#[test]
+fn test_mapped_key_constraint_raw_wider_subtype_of_narrower() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let iter_var = unconstrained_type_param(&interner, "K");
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let lit_c = interner.literal_string("c");
+    let keys_ab = interner.union(vec![lit_a, lit_b]);
+    let keys_abc = interner.union(vec![lit_a, lit_b, lit_c]);
+
+    let mapped_abc = interner.mapped(MappedType {
+        type_param: iter_var,
+        constraint: keys_abc,
+        name_type: None,
+        template: TypeId::NUMBER,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let mapped_ab = interner.mapped(MappedType {
+        type_param: iter_var,
+        constraint: keys_ab,
+        name_type: None,
+        template: TypeId::NUMBER,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    assert!(
+        checker.is_subtype_of(mapped_abc, mapped_ab),
+        "{{[K in 'a'|'b'|'c']: number}} must be assignable to {{[K in 'a'|'b']: number}}"
+    );
+    assert!(
+        !checker.is_subtype_of(mapped_ab, mapped_abc),
+        "{{[K in 'a'|'b']: number}} must NOT be assignable to {{[K in 'a'|'b'|'c']: number}}"
+    );
+}
+
+/// Value type (template) mismatch must still be rejected even when key sets match.
+#[test]
+fn test_mapped_key_constraint_value_mismatch_rejected() {
+    let interner = TypeInterner::new();
+
+    let def_id = DefId(9202);
+    let k_param = unconstrained_type_param(&interner, "K");
+    let v_param = unconstrained_type_param(&interner, "V");
+    let k_type = interner.type_param(k_param);
+    let v_type = interner.type_param(v_param);
+
+    let body = interner.mapped(MappedType {
+        type_param: unconstrained_type_param(&interner, "P"),
+        constraint: k_type,
+        name_type: None,
+        template: v_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let env = mapped_type_alias_env(def_id, body, vec![k_param, v_param]);
+    let base = interner.lazy(def_id);
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let keys_ab = interner.union(vec![lit_a, lit_b]);
+
+    let app_num = interner.application(base, vec![keys_ab, TypeId::NUMBER]);
+    let app_str = interner.application(base, vec![keys_ab, TypeId::STRING]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    assert!(
+        !checker.is_subtype_of(app_num, app_str),
+        "M<keys, number> must NOT be assignable to M<keys, string> — V is covariant"
+    );
+    assert!(
+        !checker.is_subtype_of(app_str, app_num),
+        "M<keys, string> must NOT be assignable to M<keys, number> — V is covariant"
+    );
+}

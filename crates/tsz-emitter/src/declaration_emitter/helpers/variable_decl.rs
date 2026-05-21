@@ -398,7 +398,7 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = jsdoc_type_text.as_deref()
             {
                 self.write(": ");
-                self.write(&Self::format_jsdoc_type_text_for_declaration(type_text));
+                self.write(&self.jsdoc_type_text_for_declaration_emit(type_text));
             } else if self.source_is_js_file
                 && has_initializer
                 && let Some(type_text) = self.js_special_initializer_type_text(initializer)

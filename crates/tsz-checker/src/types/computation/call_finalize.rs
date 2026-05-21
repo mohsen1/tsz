@@ -16,6 +16,16 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+pub(crate) struct GenericCallFinalizeCtx<'a> {
+    pub(crate) callee_type_for_call: TypeId,
+    pub(crate) generic_instantiated_params: Option<&'a Vec<tsz_solver::ParamInfo>>,
+    pub(crate) args: &'a [NodeIndex],
+    pub(crate) arg_types: &'a [TypeId],
+    pub(crate) result: CallResult,
+    pub(crate) sanitized_generic_inference: bool,
+    pub(crate) needs_real_type_recheck: bool,
+}
+
 use super::call_inference::should_preserve_contextual_application_shape;
 
 impl<'a> CheckerState<'a> {
@@ -190,18 +200,19 @@ impl<'a> CheckerState<'a> {
         self.evaluate_type_with_env(param_type)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn finalize_generic_call_result(
         &mut self,
-        callee_type_for_call: TypeId,
-        generic_instantiated_params: Option<&Vec<tsz_solver::ParamInfo>>,
-        args: &[NodeIndex],
-        arg_types: &[TypeId],
-        result: CallResult,
-        sanitized_generic_inference: bool,
-        needs_real_type_recheck: bool,
-        _shape_this_type: Option<TypeId>,
+        ctx: GenericCallFinalizeCtx<'_>,
     ) -> (CallResult, bool) {
+        let GenericCallFinalizeCtx {
+            callee_type_for_call,
+            generic_instantiated_params,
+            args,
+            arg_types,
+            result,
+            sanitized_generic_inference,
+            needs_real_type_recheck,
+        } = ctx;
         if let Some(instantiated_params) = generic_instantiated_params {
             self.propagate_generic_constructor_display_defs(
                 callee_type_for_call,

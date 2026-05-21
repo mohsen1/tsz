@@ -41,7 +41,7 @@ pub enum RelationKind {
 /// the cache config and documented as such here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RelationPolicy {
-    /// Packed behavior-affecting boolean options (bits 0..=8).
+    /// Packed behavior-affecting boolean options.
     ///
     /// This mirrors the legacy `RelationCacheKey.flags` layout so that older
     /// callers that still pass `u16` bitmasks interoperate without change.
@@ -160,6 +160,56 @@ impl RelationPolicy {
     pub const fn with_skip_weak_type_checks(mut self, skip: bool) -> Self {
         self.skip_weak_type_checks = skip;
         self
+    }
+
+    /// Whether `null` and `undefined` are distinct types.
+    pub const fn strict_null_checks(self) -> bool {
+        self.flags & RelationCacheKey::FLAG_STRICT_NULL_CHECKS != 0
+    }
+
+    /// Whether function parameter checks are contravariant.
+    pub const fn strict_function_types(self) -> bool {
+        self.flags & RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES != 0
+    }
+
+    /// Whether optional properties exclude implicit `undefined`.
+    pub const fn exact_optional_property_types(self) -> bool {
+        self.flags & RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES != 0
+    }
+
+    /// Whether indexed access includes `undefined`.
+    pub const fn no_unchecked_indexed_access(self) -> bool {
+        self.flags & RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS != 0
+    }
+
+    /// Whether method bivariance is disabled for this relation.
+    pub const fn disable_method_bivariance(self) -> bool {
+        self.flags & RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE != 0
+    }
+
+    /// Whether any source return type can satisfy a `void` target return.
+    pub const fn allow_void_return(self) -> bool {
+        self.flags & RelationCacheKey::FLAG_ALLOW_VOID_RETURN != 0
+    }
+
+    /// Whether rest parameters of any/unknown should be bivariant.
+    pub const fn allow_bivariant_rest(self) -> bool {
+        self.flags & RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST != 0
+    }
+
+    /// Whether required parameter-count mismatches are allowed in bivariant mode.
+    pub const fn allow_bivariant_param_count(self) -> bool {
+        self.flags & RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT != 0
+    }
+
+    /// Whether failed generic-signature inference may retry with erased signatures.
+    pub const fn allow_erased_generic_signature_retry(self) -> bool {
+        self.flags & RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY != 0
+    }
+
+    /// Whether readonly must be treated as identity-significant.
+    pub const fn strict_readonly_identity(self) -> bool {
+        self.flags & RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16 != 0
     }
 
     /// Project this policy to the canonical cache-partitioning configuration.
@@ -450,7 +500,7 @@ pub(crate) fn configured_compat_checker<'a, R: TypeResolver>(
     context: RelationContext<'a>,
 ) -> CompatChecker<'a, R> {
     let mut checker = CompatChecker::with_resolver(interner, resolver);
-    checker.apply_flags(policy.flags);
+    configure_compat_checker_policy_bits(&mut checker, policy);
     checker.set_inheritance_graph(context.inheritance_graph);
     checker.set_strict_subtype_checking(policy.strict_subtype_checking);
     checker.set_strict_any_propagation(policy.strict_any_propagation);
@@ -469,10 +519,12 @@ pub(crate) fn configured_subtype_checker<'a, R: TypeResolver>(
     policy: RelationPolicy,
     context: RelationContext<'a>,
 ) -> SubtypeChecker<'a, R> {
-    let mut checker = SubtypeChecker::with_resolver(interner, resolver)
-        .apply_flags(policy.flags)
-        .with_any_propagation_mode(policy.any_propagation_mode)
-        .with_assume_related_on_cycle(policy.assume_related_on_cycle);
+    let mut checker = configure_subtype_checker_policy_bits(
+        SubtypeChecker::with_resolver(interner, resolver),
+        policy,
+    )
+    .with_any_propagation_mode(policy.any_propagation_mode)
+    .with_assume_related_on_cycle(policy.assume_related_on_cycle);
     if let Some(query_db) = context.query_db {
         checker = checker.with_query_db(query_db);
     }
@@ -482,6 +534,45 @@ pub(crate) fn configured_subtype_checker<'a, R: TypeResolver>(
     if let Some(class_check) = context.class_check {
         checker = checker.with_class_check(class_check);
     }
+    checker
+}
+
+fn configure_compat_checker_policy_bits<R: TypeResolver>(
+    checker: &mut CompatChecker<'_, R>,
+    policy: RelationPolicy,
+) {
+    checker.set_strict_null_checks(policy.strict_null_checks());
+    checker.set_strict_function_types(policy.strict_function_types());
+    checker.set_exact_optional_property_types(policy.exact_optional_property_types());
+    checker.set_no_unchecked_indexed_access(policy.no_unchecked_indexed_access());
+
+    checker.subtype.strict_null_checks = policy.strict_null_checks();
+    checker.subtype.strict_function_types = policy.strict_function_types();
+    checker.subtype.exact_optional_property_types = policy.exact_optional_property_types();
+    checker.subtype.no_unchecked_indexed_access = policy.no_unchecked_indexed_access();
+    checker.subtype.disable_method_bivariance = policy.disable_method_bivariance();
+    checker.subtype.allow_void_return = policy.allow_void_return();
+    checker.subtype.allow_bivariant_rest = policy.allow_bivariant_rest();
+    checker.subtype.allow_bivariant_param_count = policy.allow_bivariant_param_count();
+    checker.subtype.allow_erased_generic_signature_retry =
+        policy.allow_erased_generic_signature_retry();
+}
+
+const fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(
+    mut checker: SubtypeChecker<'a, R>,
+    policy: RelationPolicy,
+) -> SubtypeChecker<'a, R> {
+    checker.strict_null_checks = policy.strict_null_checks();
+    checker.strict_function_types = policy.strict_function_types();
+    checker.exact_optional_property_types = policy.exact_optional_property_types();
+    checker.no_unchecked_indexed_access = policy.no_unchecked_indexed_access();
+    checker.disable_method_bivariance = policy.disable_method_bivariance();
+    checker.allow_void_return = policy.allow_void_return();
+    checker.allow_bivariant_rest = policy.allow_bivariant_rest();
+    checker.allow_bivariant_param_count = policy.allow_bivariant_param_count();
+    checker.strict_readonly_identity = policy.strict_readonly_identity();
+    checker.erase_generics = policy.erase_generics;
+    checker.allow_erased_generic_signature_retry = policy.allow_erased_generic_signature_retry();
     checker
 }
 

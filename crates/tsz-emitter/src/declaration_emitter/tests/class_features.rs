@@ -118,13 +118,14 @@ fn test_optional_parenthesized_parameter_property_preserves_explicit_undefined()
     "#,
     );
 
+    // tsc 6.0.2 preserves user-written parens verbatim in .d.ts output.
     assert!(
         output.contains("x?: (string | undefined);"),
-        "Expected optional parameter property to preserve parenthesized undefined union: {output}"
+        "Expected optional parameter property to preserve source parens: {output}"
     );
     assert!(
         output.contains("constructor(x?: (string | undefined));"),
-        "Expected constructor parameter to preserve parenthesized undefined union: {output}"
+        "Expected constructor parameter to preserve source parens: {output}"
     );
     assert!(
         !output.contains("(string | undefined) | undefined"),

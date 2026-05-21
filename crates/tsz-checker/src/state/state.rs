@@ -23,6 +23,7 @@
 //!
 use crate::CheckerContext;
 use crate::context::{CheckerOptions, TypingRequest};
+use crate::control_flow::type_guards::reference_uses_outer_class_property_initializer_binding;
 use crate::query_boundaries::common::QueryDatabase;
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
@@ -288,6 +289,28 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Copy resolution-cycle guard sets from `parent` into this child checker and
+    /// wire up the shared `DefinitionStore`. Call immediately after constructing a
+    /// class-delegation child checker via `with_parent_cache_attributed`.
+    pub(super) fn propagate_class_delegation_setup(
+        &mut self,
+        parent: &CheckerState,
+        skip_sym: tsz_binder::SymbolId,
+    ) {
+        for &id in &parent.ctx.class_instance_resolution_set {
+            self.ctx.class_instance_resolution_set.insert(id);
+        }
+        for &id in &parent.ctx.symbol_resolution_set {
+            if id != skip_sym {
+                self.ctx.symbol_resolution_set.insert(id);
+            }
+        }
+        for &id in &parent.ctx.class_constructor_resolution_set {
+            self.ctx.class_constructor_resolution_set.insert(id);
+        }
+        self.ctx.ensure_both_envs_have_definition_store();
+    }
+
     /// Thread-local guard for cross-arena delegation depth.
     /// All cross-arena delegation points (`delegate_cross_arena_symbol_resolution`,
     /// `get_type_params_for_symbol`, `type_of_value_declaration`) MUST call this
@@ -409,11 +432,35 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if self.reference_uses_outer_class_property_initializer_binding(idx) {
+            return false;
+        }
+
         if self.is_require_call_bound_identifier(idx) {
             return false;
         }
 
         self.is_narrowable_identifier(idx)
+    }
+
+    fn reference_uses_outer_class_property_initializer_binding(&self, idx: NodeIndex) -> bool {
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.value_declaration.is_some()
+            && reference_uses_outer_class_property_initializer_binding(
+                self.ctx.arena,
+                idx,
+                symbol.value_declaration,
+            )
     }
 
     /// Check if a node is a narrowable identifier (variable with flow analysis).
@@ -1185,6 +1232,7 @@ impl<'a> CheckerState<'a> {
                 && (is_identifier || is_this_keyword)
                 && !self.ctx.daa_error_nodes.contains(&idx.0)
                 && !self.is_require_call_bound_identifier(idx)
+                && !self.reference_uses_outer_class_property_initializer_binding(idx)
                 && let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
                 && let Some(sym_id) = self
                     .ctx

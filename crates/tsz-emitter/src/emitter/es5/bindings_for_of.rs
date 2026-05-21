@@ -154,12 +154,26 @@ impl<'a> Printer<'a> {
             name
         };
 
+        // Check if the for-of initializer is a `using` declaration that needs dispose lowering.
+        let using_info = if !self.ctx.options.target.supports_es2025() {
+            crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
+        } else {
+            None
+        };
+
         // For assignment-pattern for-of with object/array literals, tsc allocates
         // destructuring temps before choosing the array temp in the loop header.
         // Reserve those temps now so later lowering reuses them in order.
         let reserve_count = self.estimate_for_of_assignment_temp_reserve(for_in_of.initializer);
         if reserve_count > 0 {
             self.preallocate_temp_names(reserve_count);
+        }
+        if using_info.is_some() {
+            let resource_temp_count =
+                self.count_es5_resource_expression_hoisted_temps(for_in_of.expression);
+            if resource_temp_count > 0 {
+                self.preallocate_hoisted_temp_names(resource_temp_count);
+            }
         }
 
         // Derive array name from expression:
@@ -204,13 +218,6 @@ impl<'a> Printer<'a> {
             let name = self.make_unique_name_fresh();
             self.ctx.block_scope_state.reserve_name(name.clone());
             name
-        };
-
-        // Check if the for-of initializer is a `using` declaration that needs dispose lowering.
-        let using_info = if !self.ctx.options.target.supports_es2025() {
-            crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
-        } else {
-            None
         };
 
         let capture_context = if using_info.is_none() {
@@ -271,7 +278,11 @@ impl<'a> Printer<'a> {
         self.write(" = 0, ");
         self.write(&array_name);
         self.write(" = ");
-        self.emit_expression(for_in_of.expression);
+        if using_info.is_none()
+            || !self.try_emit_array_literal_es5_inline_computed_elements(for_in_of.expression)
+        {
+            self.emit_expression(for_in_of.expression);
+        }
         self.write("; ");
         self.write(&index_name);
         self.write(" < ");
@@ -404,6 +415,74 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+    }
+
+    fn try_emit_array_literal_es5_inline_computed_elements(
+        &mut self,
+        expression: NodeIndex,
+    ) -> bool {
+        if !self.ctx.target_es5 {
+            return false;
+        }
+
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let Some(array) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        if self.has_trailing_comma_in_source(node, &array.elements.nodes) {
+            return false;
+        }
+
+        let elements = array.elements.nodes.to_vec();
+        let mut has_inline_computed_object = false;
+        for &element_idx in &elements {
+            if element_idx.is_none() {
+                return false;
+            }
+            let Some(element_node) = self.arena.get(element_idx) else {
+                return false;
+            };
+            if element_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            let Some(literal) = self.arena.get_literal_expr(element_node) else {
+                return false;
+            };
+            if literal
+                .elements
+                .nodes
+                .iter()
+                .any(|&idx| crate::transforms::emit_utils::is_spread_element(self.arena, idx))
+            {
+                return false;
+            }
+            if literal.elements.nodes.iter().any(|&idx| {
+                crate::transforms::emit_utils::is_computed_property_member(self.arena, idx)
+            }) {
+                has_inline_computed_object = true;
+            }
+        }
+        if !has_inline_computed_object {
+            return false;
+        }
+
+        self.write("[");
+        for (i, &element_idx) in elements.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            if !self.try_emit_object_literal_es5_inline_computed_expression(element_idx) {
+                self.emit(element_idx);
+            }
+        }
+        self.write("]");
+        true
     }
 
     fn count_downlevel_expression_hoisted_temps(&self, idx: NodeIndex) -> usize {

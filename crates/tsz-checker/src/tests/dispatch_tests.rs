@@ -441,6 +441,16 @@ type Cache<QR> = {
         ts2344, 1,
         "Expected one TS2344 against the callable type-parameter constraint, got diags: {diags:?}"
     );
+    let ts2344 = diagnostics_with_code(&diags, 2344);
+    let message = &ts2344[0].message_text;
+    assert!(
+        message.contains("Type 'typeof createCacheReducer<QR>' does not satisfy the constraint"),
+        "Expected TS2344 to preserve the failed typeof-instantiation surface, got: {message:?}"
+    );
+    assert!(
+        !message.contains("typeof <N extends string"),
+        "TS2344 display must not expand the failed typeof-instantiation expression, got: {message:?}"
+    );
 }
 
 #[test]

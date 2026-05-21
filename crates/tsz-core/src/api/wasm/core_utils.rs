@@ -161,11 +161,17 @@ pub const DIRECTORY_SEPARATOR: char = '/';
 /// Alternative directory separator (backslash, used on Windows).
 pub const ALT_DIRECTORY_SEPARATOR: char = '\\';
 
+/// Whether a char code is `/` or `\`.
+pub(crate) const fn char_code_is_any_directory_separator(char_code: u32) -> bool {
+    char_code == DIRECTORY_SEPARATOR as u32 || char_code == ALT_DIRECTORY_SEPARATOR as u32
+}
+
 /// Determines whether a charCode corresponds to `/` or `\`.
-#[allow(clippy::missing_const_for_fn)] // wasm_bindgen does not support const fn
+// wasm_bindgen cannot bind const fn.
+#[allow(clippy::missing_const_for_fn)]
 #[wasm_bindgen(js_name = isAnyDirectorySeparator)]
 pub fn is_any_directory_separator(char_code: u32) -> bool {
-    char_code == DIRECTORY_SEPARATOR as u32 || char_code == ALT_DIRECTORY_SEPARATOR as u32
+    char_code_is_any_directory_separator(char_code)
 }
 
 /// Normalize path separators, converting `\` into `/`.
@@ -300,14 +306,20 @@ pub fn to_file_name_lower_case(x: &str) -> String {
 // Character Classification (Phase 1.3 - Scanner Prep)
 // =============================================================================
 
-/// Check if character is a line break (LF, CR, LS, PS).
-#[allow(clippy::missing_const_for_fn)] // wasm_bindgen does not support const fn
-#[wasm_bindgen(js_name = isLineBreak)]
-pub fn is_line_break(ch: u32) -> bool {
+/// Whether a char code is a line-break character (LF, CR, LS, PS).
+pub(crate) const fn char_code_is_line_break(ch: u32) -> bool {
     ch == CharacterCodes::LINE_FEED
         || ch == CharacterCodes::CARRIAGE_RETURN
         || ch == CharacterCodes::LINE_SEPARATOR
         || ch == CharacterCodes::PARAGRAPH_SEPARATOR
+}
+
+/// Check if character is a line break (LF, CR, LS, PS).
+// wasm_bindgen cannot bind const fn.
+#[allow(clippy::missing_const_for_fn)]
+#[wasm_bindgen(js_name = isLineBreak)]
+pub fn is_line_break(ch: u32) -> bool {
+    char_code_is_line_break(ch)
 }
 
 /// Check if character is a single-line whitespace (not including line breaks).

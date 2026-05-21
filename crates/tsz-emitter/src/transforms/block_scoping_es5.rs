@@ -182,7 +182,12 @@ impl BlockScopeState {
     /// declaration currently has the same name; otherwise the lowered `var`
     /// would leak out of the block.
     pub fn register_block_scoped_class(&mut self, original_name: &str) -> String {
-        if self.function_scope_marks.last().copied().unwrap_or(false) {
+        // An empty scope stack means there is no enclosing block at all — the
+        // class sits at module/script top level (e.g. inside a System/AMD/UMD
+        // wrapper that never opened a block scope). At top level the lowered
+        // `var` *is* the binding, so it must reuse the name rather than getting
+        // a synthetic `Name_1` that would diverge from the hoisted declaration.
+        if self.function_scope_marks.last().copied().unwrap_or(true) {
             return self.register_variable(original_name);
         }
 
@@ -328,6 +333,22 @@ impl BlockScopeState {
         self.reserved_names.insert(name);
     }
 
+    /// Reserve several generated names in the current file-level block-scope
+    /// naming state.
+    pub fn reserve_names<I>(&mut self, names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.reserved_names.extend(names);
+    }
+
+    /// Return generated names that have been reserved for block-scope lowering.
+    pub fn visible_reserved_names(&self) -> Vec<String> {
+        let mut names: Vec<_> = self.reserved_names.iter().cloned().collect();
+        names.sort();
+        names
+    }
+
     /// Return whether a generated helper/temp name has already been reserved.
     pub fn is_reserved_name(&self, name: &str) -> bool {
         self.reserved_names.contains(name)
@@ -342,6 +363,20 @@ impl BlockScopeState {
             }
         }
         None
+    }
+
+    /// Return source names currently visible to nested ES5 class emitters.
+    pub fn visible_original_names(&self) -> Vec<String> {
+        let mut names = FxHashSet::default();
+        for scope in &self.scope_stack {
+            for name in scope.keys() {
+                names.insert(name.clone());
+            }
+        }
+
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort();
+        names
     }
 
     /// Get the next loop function name

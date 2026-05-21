@@ -2077,9 +2077,11 @@ fn wrap_amd_declaration_output(
         let Some(rewritten) = rewrite_ambient_module_member_line(&line, &amd_module_name) else {
             continue;
         };
-        wrapped.push_str("    ");
-        wrapped.push_str(&rewritten);
-        wrapped.push('\n');
+        for rewritten_line in rewritten.lines() {
+            wrapped.push_str("    ");
+            wrapped.push_str(rewritten_line);
+            wrapped.push('\n');
+        }
     }
 
     wrapped.push('}');
@@ -2119,6 +2121,35 @@ fn rewrite_ambient_module_member_line(line: &str, module_name: &str) -> Option<S
     if trimmed == "export {};" {
         return None;
     }
+
+    if let Some((comment, declaration)) = split_leading_single_line_jsdoc_declaration(trimmed) {
+        let rewritten_declaration = rewrite_ambient_module_member_declaration_line(
+            &format!("{indent}{declaration}"),
+            module_name,
+        )?;
+        return Some(format!("{indent}{comment}\n{rewritten_declaration}"));
+    }
+
+    rewrite_ambient_module_member_declaration_line(line, module_name)
+}
+
+fn split_leading_single_line_jsdoc_declaration(trimmed: &str) -> Option<(&str, &str)> {
+    if !trimmed.starts_with("/**") {
+        return None;
+    }
+
+    let comment_end = trimmed.find("*/")? + "*/".len();
+    let declaration = trimmed[comment_end..].trim_start();
+    if declaration.starts_with("declare ") || declaration.starts_with("export declare ") {
+        Some((&trimmed[..comment_end], declaration))
+    } else {
+        None
+    }
+}
+
+fn rewrite_ambient_module_member_declaration_line(line: &str, module_name: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let indent = &line[..line.len() - trimmed.len()];
 
     if let Some(rest) = trimmed.strip_prefix("export declare ") {
         return Some(rewrite_amd_relative_module_specifier_line(

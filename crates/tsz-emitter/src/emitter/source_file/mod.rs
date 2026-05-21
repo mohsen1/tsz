@@ -2002,6 +2002,154 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn es5_block_scoped_object_literal_keys_keep_source_names() {
+        let source = "var x0: any;\nif (true) {\n    let x0;\n    var obj1 = { x0: x0 };\n    var obj2 = { x0 };\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var x0_1;"),
+            "Renamed block-scoped declaration should emit without a synthetic initializer.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var obj1 = { x0: x0_1 };"),
+            "Explicit object-literal keys should keep source names while values use renamed bindings.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var obj2 = { x0: x0_1 };"),
+            "Shorthand object-literal keys should expand with the source key and renamed value.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("x0_1: x0_1"),
+            "Object-literal keys must not be block-scope renamed.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_block_scoped_object_destructuring_keys_keep_source_names() {
+        let source = "var x: any, y: any, z: any;\nif (true) {\n    let { x: x } = { x: 0 };\n    let { y } = { y: 0 };\n    let z;\n    ({ z: z } = { z: 0 });\n    ({ z } = { z: 0 });\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var x_1 = { x: 0 }.x;"),
+            "Explicit object binding should read the source key and write the renamed target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var y_1 = { y: 0 }.y;"),
+            "Shorthand object binding should read the source key and write the renamed target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var z_1;"),
+            "Renamed block-scoped declaration should emit without a synthetic initializer.\nOutput:\n{output}"
+        );
+        assert!(
+            output.matches("(z_1 = { z: 0 }.z);").count() == 2,
+            "Both explicit and shorthand destructuring assignments should write the renamed target.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("{ z_1: 0 }"),
+            "Destructuring source object-literal keys must not be block-scope renamed.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_class_method_nested_block_keeps_outer_names_nameable() {
+        let source = "declare function use(a: any): void;\nvar shadowed: any;\nclass C {\n    m() {\n        {\n            let shadowed = 1;\n            use(shadowed);\n        }\n        use(shadowed);\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var shadowed_1 = 1;"),
+            "Nested method block declaration should not capture the outer name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("use(shadowed_1);"),
+            "Nested method block references should follow the renamed binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("        use(shadowed);\n"),
+            "Method-scope reference after the nested block should still name the outer binding.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_namespace_blocks_share_block_scope_rename_state() {
+        let source = "declare function use(value: any): void;\nvar x: any;\nvar y: any;\nvar z: any;\nfunction first() {\n    {\n        let x = 1;\n        let [y] = [1];\n        let { a: z } = { a: 1 };\n    }\n}\nnamespace N {\n    {\n        let x = 2;\n        use(x);\n        let [y] = [2];\n        use(y);\n        let { a: z } = { a: 2 };\n        use(z);\n    }\n    use(x);\n    use(y);\n    use(z);\n}\nnamespace Local {\n    let [y] = [1];\n    use(y);\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var x_1 = 1;"),
+            "The first nested block should reserve the first suffix for `x`.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var x_2 = 2;") && output.contains("use(x_2);"),
+            "Namespace nested blocks should inherit prior suffix reservations and rewrite references.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var y_2 = [2][0];") && output.contains("use(y_2);"),
+            "Namespace array binding declarations should use the inherited suffix sequence.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var z_2 = { a: 2 }.a;") && output.contains("use(z_2);"),
+            "Namespace object binding declarations should use the inherited suffix sequence.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var y = [1][0];\n    use(y);") && !output.contains("use(Local.y);"),
+            "Function-level namespace destructuring locals should shadow namespace exports without qualification.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_single_leaf_nested_destructuring_inlines_access_path() {
         let source = "var z1: any, z3: any;\n{\n    const [{ a: z1 }] = [{ a: 1 }];\n    use(z1);\n    const { a: { b: z3 } } = { a: { b: 1 } };\n    use(z3);\n}\n";
 

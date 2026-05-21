@@ -147,6 +147,7 @@ withTempDir((dir) => {
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.equal(report.source.quick_mode, true);
   assert.equal(report.totals.rows, 6);
+  assert.equal(report.totals.duplicate_project_rows, 0);
   assert.equal(report.totals.green_tsgo_winners, 3);
   assert.equal(report.totals.project_green_tsgo_winners, 2);
   assert.equal(report.totals.green_tsgo_winners_with_closure, 2);
@@ -159,6 +160,7 @@ withTempDir((dir) => {
     mode: "release-pgo",
     warning: null,
   });
+  assert.deepEqual(report.duplicate_rows, []);
   assert.equal(report.worst.name, "ts-toolbelt-project");
   assert.equal(report.worst.exit_class, "exit success");
   assert.equal(report.worst.files_reached, 242);
@@ -212,6 +214,92 @@ withTempDir((dir) => {
   const importedReport = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
   assert.equal(importedReport.totals.green_tsgo_winners, 3);
   assert.equal(importedReport.worst.name, "ts-toolbelt-project");
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  writeJson(input, {
+    results: [
+      {
+        name: "BCT candidates=200",
+        lines: 428,
+        kb: 36,
+        tsz_ms: 169.77,
+        tsgo_ms: 156.16,
+        winner: "tsgo",
+        factor: 1.09,
+      },
+      {
+        name: "200 classes",
+        lines: 9203,
+        kb: 162,
+        tsz_ms: 145.09,
+        tsgo_ms: 137.01,
+        winner: "tsgo",
+        factor: 1.06,
+      },
+    ],
+  });
+
+  const report = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+  const byName = new Map(report.rows.map((row) => [row.name, row]));
+  assert.match(
+    byName.get("BCT candidates=200").loss_closure.attribution_command,
+    /TSZ_PERF_COUNTERS=1 .*<generated-bct-candidates-200>\.ts/,
+  );
+  assert.match(
+    byName.get("200 classes").loss_closure.attribution_command,
+    /TSZ_PERF_COUNTERS=1 .*<generated-200-classes>\.ts/,
+  );
+  assert.deepEqual(report.totals.missing_attribution_rows, [
+    "200 classes",
+    "BCT candidates=200",
+  ]);
+});
+
+// Duplicate known project rows make the green-tsgo-winner summary non-authoritative.
+// Single-file duplicate names are not project rows and remain eligible.
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  const output = path.join(dir, "report.json");
+  const greenProjectCompat = {
+    state: "green",
+    exit_class: "exit success",
+    phase: "check",
+    last_successful_phase: "check",
+    diagnostic_status: "none",
+    semantic_owner_family: "project family",
+  };
+  writeJson(input, {
+    results: [
+      { name: "ts-toolbelt-project", winner: "tsgo", factor: 8, tsz_ms: 80, tsgo_ms: 10, compatibility: greenProjectCompat },
+      { name: "ts-toolbelt-project", winner: "tsz", factor: 2, tsz_ms: 10, tsgo_ms: 20, compatibility: greenProjectCompat },
+      { name: "ts-essentials-project", winner: "tsgo", factor: 4, tsz_ms: 40, tsgo_ms: 10, compatibility: greenProjectCompat },
+      { name: "single-file-loss", winner: "tsgo", factor: 3, tsz_ms: 30, tsgo_ms: 10 },
+      { name: "single-file-loss", winner: "tsgo", factor: 2, tsz_ms: 20, tsgo_ms: 10 },
+    ],
+  });
+
+  const report = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+  assert.equal(report.totals.rows, 5);
+  assert.equal(report.totals.duplicate_project_rows, 1);
+  assert.deepEqual(report.duplicate_rows, [{ name: "ts-toolbelt-project", label: "ts-toolbelt", count: 2 }]);
+  assert.equal(report.totals.green_tsgo_winners, 3);
+  assert.equal(report.totals.project_green_tsgo_winners, 1);
+  assert.deepEqual(
+    report.rows.map((row) => row.name),
+    ["ts-essentials-project", "single-file-loss", "single-file-loss"],
+  );
+  assert.equal(report.worst.name, "ts-essentials-project");
+
+  const result = spawnSync(process.execPath, [SCRIPT, input, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1, "duplicate project rows should fail the winner audit");
+  assert.match(result.stderr, /duplicate project rows: ts-toolbelt-project \(2\)/);
+  const cliReport = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(cliReport.totals.duplicate_project_rows, 1);
 });
 
 // Rows with missing required phase/exit metadata must not appear as speed wins.

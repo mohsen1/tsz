@@ -132,41 +132,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn get_class_component_props_from_construct_return(
-        &mut self,
-        component_type: TypeId,
-    ) -> Option<TypeId> {
-        use crate::query_boundaries::common::PropertyAccessResult;
-
-        let sigs = crate::query_boundaries::common::construct_signatures_for_type(
-            self.ctx.types,
-            component_type,
-        )
-        .or_else(|| {
-            let evaluated = self.evaluate_type_with_env(component_type);
-            crate::query_boundaries::common::construct_signatures_for_type(
-                self.ctx.types,
-                evaluated,
-            )
-        })?;
-
-        for sig in sigs.iter().filter(|sig| !sig.params.is_empty()) {
-            let instance_type = sig.return_type;
-            let evaluated_instance = self.evaluate_type_with_env(instance_type);
-            let props_access = match self.resolve_property_access_with_env(instance_type, "props") {
-                success @ PropertyAccessResult::Success { .. } => success,
-                _ => self.resolve_property_access_with_env(evaluated_instance, "props"),
-            };
-            if let PropertyAccessResult::Success { type_id, .. } = props_access
-                && !matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
-            {
-                return Some(type_id);
-            }
-        }
-
-        None
-    }
-
     fn compact_jsx_readonly_display(display: String) -> String {
         let mut out = String::with_capacity(display.len());
         let mut rest = display.as_str();
@@ -388,16 +353,18 @@ impl<'a> CheckerState<'a> {
                 // (tsc doesn't wrap intrinsic element props in IntrinsicAttributes).
                 let display_target = self.build_jsx_display_target(evaluated_props, None);
                 self.check_jsx_attributes_against_props(
-                    jsx_opening.attributes,
-                    evaluated_props,
-                    jsx_opening.tag_name,
-                    None,
-                    None,
-                    false, // intrinsic elements never have raw type params
-                    display_target,
-                    None,
-                    request,
-                    children_ctx,
+                    super::super::props::resolution::JsxPropsCheckOpts {
+                        attributes_idx: jsx_opening.attributes,
+                        props_type: evaluated_props,
+                        tag_name_idx: jsx_opening.tag_name,
+                        component_type: None,
+                        special_attr_component_type: None,
+                        raw_props_has_type_params: false,
+                        display_target,
+                        preferred_target_display: None,
+                        request,
+                        children_ctx,
+                    },
                 );
 
                 // tsc types ALL JSX expressions (both intrinsic and component) as
@@ -557,16 +524,18 @@ impl<'a> CheckerState<'a> {
             {
                 let display_target = self.build_jsx_display_target(props_type, None);
                 self.check_jsx_attributes_against_props(
-                    jsx_opening.attributes,
-                    props_type,
-                    jsx_opening.tag_name,
-                    None,
-                    None,
-                    false,
-                    display_target,
-                    None,
-                    request,
-                    children_ctx,
+                    super::super::props::resolution::JsxPropsCheckOpts {
+                        attributes_idx: jsx_opening.attributes,
+                        props_type,
+                        tag_name_idx: jsx_opening.tag_name,
+                        component_type: None,
+                        special_attr_component_type: None,
+                        raw_props_has_type_params: false,
+                        display_target,
+                        preferred_target_display: None,
+                        request,
+                        children_ctx,
+                    },
                 );
                 if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
                     let lib_binders = self.get_lib_binders();
@@ -622,16 +591,18 @@ impl<'a> CheckerState<'a> {
                         )
                 {
                     self.check_jsx_attributes_against_props(
-                        jsx_opening.attributes,
-                        props_type,
-                        jsx_opening.tag_name,
-                        None,
-                        None,
-                        raw_has_type_params,
-                        display_target,
-                        None,
-                        request,
-                        children_ctx,
+                        super::super::props::resolution::JsxPropsCheckOpts {
+                            attributes_idx: jsx_opening.attributes,
+                            props_type,
+                            tag_name_idx: jsx_opening.tag_name,
+                            component_type: None,
+                            special_attr_component_type: None,
+                            raw_props_has_type_params: raw_has_type_params,
+                            display_target,
+                            preferred_target_display: None,
+                            request,
+                            children_ctx,
+                        },
                     );
                 } else {
                     self.check_grammar_jsx_element(jsx_opening.attributes);
@@ -769,8 +740,9 @@ impl<'a> CheckerState<'a> {
                     );
                 } else {
                     // TS2786: component return type must be valid JSX element
-                    let class_props_from_construct =
-                        self.get_class_component_props_from_construct_return(component_type);
+                    let construct_facts =
+                        self.jsx_class_component_construct_return_facts(component_type);
+                    let class_props_from_construct = construct_facts.props_field;
                     let has_readonly_construct_props = self
                         .jsx_component_type_has_readonly_construct_props(resolved_component_type);
                     // Also skip for React class components whose constructor return exposes
@@ -801,30 +773,69 @@ impl<'a> CheckerState<'a> {
                         .narrow_jsx_props_union_from_attributes(jsx_opening.attributes, props_type);
                     let preferred_props_display =
                         self.get_jsx_component_props_display_text(tag_name_idx);
-                    let display_target = self.build_jsx_display_target_with_preferred_props(
-                        props_type,
-                        Some(resolved_component_type),
-                        preferred_props_display.as_deref(),
-                    );
+                    // `props_type` (re-instantiated at the JSX recovery site) and
+                    // `construct_facts.first_param` (interned at class declaration time) can
+                    // be different `TypeId` slots for the same alias — compare through
+                    // `evaluate_type_with_env` so true aliasing isn't missed. When
+                    // `JSX.LibraryManagedAttributes` projects props into `Defaultize<...>`,
+                    // the two diverge structurally; keep the LMA display in that case.
+                    //
+                    // The takeover is narrowed to the exact `react16.d.ts` shape — a class
+                    // whose `.props` field is structurally a `Readonly<P> & Readonly<{
+                    // children?: ... }>` intersection. That is the shape `tsc`'s printer
+                    // abbreviates to `Readonly<...> & Readonly<...>`, and which `tsz`'s
+                    // pre-fix path rendered as the bare constructor parameter alias.
+                    // For non-`Readonly`-wrapped class.props (plain `P & { children?:
+                    // ... }` etc.) tsz already matches tsc through the legacy display
+                    // path; broadening the takeover beyond `Readonly`-wrapped class.props
+                    // surfaces edge-case fingerprint drift in adjacent JSX class tests,
+                    // so the gate restricts to the structural shape this PR is fixing.
+                    let class_props_display_target = class_props_from_construct
+                        .filter(|&class_props| {
+                            class_props != props_type
+                                && construct_facts.first_param.is_some_and(|ctor_param| {
+                                    ctor_param == props_type
+                                        || self.evaluate_type_with_env(ctor_param)
+                                            == self.evaluate_type_with_env(props_type)
+                                })
+                                && self.jsx_class_props_is_readonly_wrapper(class_props)
+                        })
+                        .map(|class_props| {
+                            Self::compact_jsx_readonly_display(self.build_jsx_display_target(
+                                class_props,
+                                Some(resolved_component_type),
+                            ))
+                        });
+                    let display_target = class_props_display_target.clone().unwrap_or_else(|| {
+                        self.build_jsx_display_target_with_preferred_props(
+                            props_type,
+                            Some(resolved_component_type),
+                            preferred_props_display.as_deref(),
+                        )
+                    });
                     self.check_jsx_attributes_against_props(
-                        jsx_opening.attributes,
-                        props_type,
-                        jsx_opening.tag_name,
-                        Some(component_metadata_type),
-                        Some(component_type),
-                        raw_has_type_params,
-                        display_target,
-                        preferred_props_display.as_deref(),
-                        request,
-                        children_ctx,
+                        super::super::props::resolution::JsxPropsCheckOpts {
+                            attributes_idx: jsx_opening.attributes,
+                            props_type,
+                            tag_name_idx: jsx_opening.tag_name,
+                            component_type: Some(component_metadata_type),
+                            special_attr_component_type: Some(component_type),
+                            raw_props_has_type_params: raw_has_type_params,
+                            display_target,
+                            preferred_target_display: preferred_props_display.as_deref(),
+                            request,
+                            children_ctx,
+                        },
                     );
                     let generic_spread_props_type =
                         class_props_from_construct.unwrap_or(props_type);
                     let generic_spread_display_target =
-                        Self::compact_jsx_readonly_display(self.build_jsx_display_target(
-                            generic_spread_props_type,
-                            Some(resolved_component_type),
-                        ));
+                        class_props_display_target.unwrap_or_else(|| {
+                            Self::compact_jsx_readonly_display(self.build_jsx_display_target(
+                                generic_spread_props_type,
+                                Some(resolved_component_type),
+                            ))
+                        });
                     self.check_jsx_generic_spread_attrs_assignability(
                         jsx_opening.attributes,
                         generic_spread_props_type,

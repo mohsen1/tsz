@@ -63,6 +63,7 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, info, trace};
+use tsz_common::limits;
 
 use tsz::lsp::{
     CompletionItemData, CompletionItemKind, FormattingOptions, Position, Project, Range,
@@ -2859,13 +2860,24 @@ impl LspServer {
 // Main
 // =============================================================================
 
-#[allow(clippy::items_after_test_module)]
 fn main() -> Result<()> {
     // Initialize tracing (always stderr — stdout carries LSP JSON-RPC).
     tsz_cli::tracing_config::init_tracing();
 
     let args = Args::parse();
 
+    // Run on a large stack to prevent overflows in recursive AST traversals
+    // (document highlights, find-references, narrowing) on deeply-nested code.
+    // Matches the 128 MiB stack used by the tsz CLI for project-sized workloads.
+    std::thread::Builder::new()
+        .stack_size(limits::THREAD_STACK_SIZE_BYTES)
+        .spawn(move || lsp_main(args))
+        .expect("failed to spawn LSP thread")
+        .join()
+        .expect("LSP thread panicked")
+}
+
+fn lsp_main(args: Args) -> Result<()> {
     info!("tsz-lsp: Starting Language Server Protocol server");
     info!("tsz-lsp: Mode: {}", args.mode);
 

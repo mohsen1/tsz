@@ -1182,24 +1182,36 @@ impl<'a> Printer<'a> {
         // in a comma expression: `(_a = class C {}, _a.a = 1, _a)`.
         // Allocate the class-expression temp after computed-name temps so the
         // generated `_a`, `_b`, `_c` ordering matches tsc.
-        // Positive-form predicate reads more clearly than clippy's inverted De Morgan form.
-        #[allow(clippy::nonminimal_bool)]
         let has_static_field_comma_expr = target_needs_field_lowering
             && class.members.nodes.iter().any(|&member_idx| {
-                self.arena.get(member_idx).is_some_and(|m| {
-                    m.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                        && self.arena.get_property_decl(m).is_some_and(|p| {
-                            self.arena.is_static(&p.modifiers)
-                                && !self
-                                    .arena
-                                    .has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword)
-                                && !self
-                                    .arena
-                                    .has_modifier(&p.modifiers, SyntaxKind::DeclareKeyword)
-                                && !(needs_private_field_lowering
-                                    && is_private_identifier(self.arena, p.name))
-                        })
-                })
+                let Some(member) = self.arena.get(member_idx) else {
+                    return false;
+                };
+                if member.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                    return false;
+                }
+                let Some(prop) = self.arena.get_property_decl(member) else {
+                    return false;
+                };
+                if !self.arena.is_static(&prop.modifiers) {
+                    return false;
+                }
+                if self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                {
+                    return false;
+                }
+                if self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    return false;
+                }
+                if needs_private_field_lowering && is_private_identifier(self.arena, prop.name) {
+                    return false;
+                }
+                true
             });
         let has_static_block_comma_expr = target_needs_static_block_lowering
             && class.members.nodes.iter().any(|&member_idx| {
@@ -1629,12 +1641,12 @@ impl<'a> Printer<'a> {
                     let is_auto_accessor = self
                         .arena
                         .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                    if !needs_private_field_lowering && is_private_name {
-                        if !hoist_native_instance_order_inits
-                            || self.has_effective_static_modifier_js(&prop.modifiers)
-                        {
-                            continue;
-                        }
+                    if !needs_private_field_lowering
+                        && is_private_name
+                        && (!hoist_native_instance_order_inits
+                            || self.has_effective_static_modifier_js(&prop.modifiers))
+                    {
+                        continue;
                     }
                     if is_auto_accessor
                         && (!hoist_native_instance_order_inits
@@ -1659,11 +1671,12 @@ impl<'a> Printer<'a> {
                             name_emit = Some(PropertyNameEmit::Dot(format!("#{storage_name}")));
                             hoisted_native_auto_accessor_members.insert(member_idx);
                         }
-                    } else if hoist_native_instance_order_inits && is_private_name {
-                        if let Some(private_name) = get_private_field_name(self.arena, prop.name) {
-                            name_emit = Some(PropertyNameEmit::Dot(private_name));
-                            hoisted_native_private_members.insert(member_idx);
-                        }
+                    } else if hoist_native_instance_order_inits
+                        && is_private_name
+                        && let Some(private_name) = get_private_field_name(self.arena, prop.name)
+                    {
+                        name_emit = Some(PropertyNameEmit::Dot(private_name));
+                        hoisted_native_private_members.insert(member_idx);
                     }
                     let Some(name_emit) = name_emit else {
                         continue;
@@ -1786,10 +1799,20 @@ impl<'a> Printer<'a> {
                 self.es5_super_home_is_static = false;
             }
             if has_extends && !extends_null {
-                self.write("constructor() {");
-                self.write_line();
-                self.increase_indent();
-                self.write("super(...arguments);");
+                // ES2015+ keeps class syntax: synthesize `constructor(...args) { super(...args); }`.
+                // ES5 fully desugars to `__extends` + `_super.apply(this, arguments)`, which is the
+                // only context where forwarding via `arguments` is valid.
+                if self.ctx.target_es5 {
+                    self.write("constructor() {");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write("super(...arguments);");
+                } else {
+                    self.write("constructor(...args) {");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write("super(...args);");
+                }
                 self.write_line();
             } else {
                 self.write("constructor() {");

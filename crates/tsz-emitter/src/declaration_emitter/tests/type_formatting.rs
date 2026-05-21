@@ -1,4 +1,5 @@
 use super::*;
+// Formatting helpers for test source parsing.
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -117,6 +118,23 @@ fn public_named_import_rewrite_preserves_foreign_default_type_arguments() {
     assert_eq!(module, "@public/client");
     assert_eq!(imported, "Client");
     assert_eq!(alias, None);
+}
+
+#[test]
+fn jsdoc_type_text_rewrites_relative_imports_inside_ambient_bundle_module() {
+    let (parser, _) = parse_test_source("");
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.current_ambient_module_specifier = Some("pkg/index".to_string());
+
+    assert_eq!(
+        emitter.jsdoc_type_text_for_declaration_emit(r#"(typeof import("./folder/mod1"))[]"#),
+        r#"(typeof import("pkg/folder/mod1"))[]"#
+    );
+    assert_eq!(
+        emitter
+            .jsdoc_type_text_for_declaration_emit(r#"Promise<typeof import("../shared/model")>"#),
+        r#"Promise<typeof import("shared/model")>"#
+    );
 }
 
 #[test]
@@ -1684,5 +1702,116 @@ fn test_typeof_type() {
     assert!(
         output.contains("typeof x"),
         "Expected typeof type: {output}"
+    );
+}
+
+// =============================================================================
+// Parenthesized type preservation
+// =============================================================================
+
+/// tsc preserves user-written parentheses on type annotations verbatim in
+/// the generated `.d.ts`.  Check the most common positions.
+
+#[test]
+fn parenthesized_simple_type_annotation_preserved() {
+    // Simple parenthesized primitive — e.g. `var x: (string)`
+    let output = emit_dts("export declare var x: (string);");
+    assert!(
+        output.contains("(string)"),
+        "Expected source parens preserved: {output}"
+    );
+    // Renamed variable — prove the fix is not spelling-dependent
+    let output2 = emit_dts("export declare var value: (number);");
+    assert!(
+        output2.contains("(number)"),
+        "Expected source parens preserved for number: {output2}"
+    );
+}
+
+#[test]
+fn parenthesized_union_type_annotation_preserved() {
+    // `(string | number)` as a variable annotation
+    let out = emit_dts("export declare var x: (string | number);");
+    assert!(
+        out.contains("(string | number)"),
+        "Expected parenthesized union preserved: {out}"
+    );
+    // Same shape with different type names
+    let out2 = emit_dts("export declare var y: (boolean | null);");
+    assert!(
+        out2.contains("(boolean | null)"),
+        "Expected parenthesized union preserved for boolean|null: {out2}"
+    );
+}
+
+#[test]
+fn parenthesized_array_element_no_double_parens() {
+    // `(string | number)[]` — the parens already wrap the union, structural
+    // needs_parens must not add a second layer.
+    let out = emit_dts("export declare var x: (string | number)[];");
+    assert!(
+        out.contains("(string | number)[]"),
+        "Expected exactly one paren layer in array element: {out}"
+    );
+    assert!(
+        !out.contains("((string | number))"),
+        "Expected no double parens in array element: {out}"
+    );
+    // Conditional type element
+    let out2 = emit_dts("export declare var y: (string extends number ? true : false)[];");
+    assert!(
+        out2.contains("(string extends number ? true : false)[]"),
+        "Expected parenthesized conditional in array preserved: {out2}"
+    );
+    assert!(
+        !out2.contains("(("),
+        "Expected no double parens in conditional array element: {out2}"
+    );
+}
+
+#[test]
+fn parenthesized_union_member_no_double_parens() {
+    // `((...) => void) | string` — function type inside union
+    let out = emit_dts("export declare var f: ((x: number) => void) | string;");
+    assert!(
+        out.contains("((x: number) => void) | string"),
+        "Expected parenthesized function member in union: {out}"
+    );
+    assert!(
+        !out.contains("((("),
+        "Expected no triple parens in union function member: {out}"
+    );
+}
+
+#[test]
+fn parenthesized_intersection_arm_no_double_parens() {
+    // `(string | number) & object` — union inside intersection
+    let out = emit_dts("export declare var x: (string | number) & object;");
+    assert!(
+        out.contains("(string | number) & object"),
+        "Expected parenthesized union arm in intersection: {out}"
+    );
+    assert!(
+        !out.contains("((string | number))"),
+        "Expected no double parens in intersection arm: {out}"
+    );
+    // Conditional type arm
+    let out2 = emit_dts("export declare var y: (string extends number ? A : B) & object;");
+    assert!(
+        out2.contains("(string extends number ? A : B) & object"),
+        "Expected parenthesized conditional arm in intersection preserved: {out2}"
+    );
+}
+
+#[test]
+fn parenthesized_function_param_and_return_type_preserved() {
+    let out = emit_dts("export declare function f(x: (string | number)): (boolean | null);");
+    assert!(
+        out.contains("(string | number)"),
+        "Expected parens on param type: {out}"
+    );
+    assert!(
+        out.contains("(boolean | null)"),
+        "Expected parens on return type: {out}"
     );
 }

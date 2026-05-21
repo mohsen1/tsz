@@ -2151,6 +2151,65 @@ declare const j: {
 }
 
 #[test]
+fn test_js_require_json_array_object_union_completes_sibling_properties() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "tsz-json-require-array-union-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp json fixture dir");
+    std::fs::write(
+        dir.join("data.json"),
+        r#"{
+  "items": [
+    { "x": 12 },
+    { "x": 12, "y": 12 },
+    { "x": -1, "err": true }
+  ]
+}"#,
+    )
+    .expect("write json fixture");
+
+    let source = r#"
+const data = require("./data.json");
+module.exports = data;
+"#;
+    let index_path = dir.join("index.js");
+    let mut parser = ParserState::new(
+        index_path.to_string_lossy().into_owned(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.set_current_arena(current_arena, index_path.to_string_lossy().into_owned());
+
+    let output = emitter.emit(root);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let expected = r#"items: ({
+        x: number;
+        y?: undefined;
+        err?: undefined;
+    } | {
+        x: number;
+        y: number;
+        err?: undefined;
+    } | {
+        x: number;
+        err: boolean;
+        y?: undefined;
+    })[];"#;
+    assert!(
+        output.contains(expected),
+        "Expected JSON object-array union arms to include optional undefined siblings: {output}"
+    );
+}
+
+#[test]
 fn test_js_typedef_before_export_equals_function_declaration_stays_local() {
     let output = emit_js_dts(
         r#"
@@ -4862,6 +4921,38 @@ var x = foo(5);
     assert!(
         !output.contains("declare var x: 5;"),
         "Did not expect mutable generic call literal result to stay narrow: {output}"
+    );
+}
+
+#[test]
+fn test_js_var_with_attached_jsdoc_preserves_mutable_declaration_kind() {
+    let output = emit_js_dts(
+        r#"
+/** {@link https://example.test} */
+var linked = true;
+
+/** Plain docs */
+var count = 1, label = "x";
+
+var narrow = false;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var linked: boolean;"),
+        "Expected documented JS var boolean literal to widen as mutable: {output}"
+    );
+    assert!(
+        output.contains("declare var count: number, label: string;"),
+        "Expected documented JS var group to keep var and widen literals: {output}"
+    );
+    assert!(
+        output.contains("declare const narrow: false;"),
+        "Undocumented JS var promotion should stay unchanged: {output}"
+    );
+    assert!(
+        !output.contains("declare const linked: true;"),
+        "Did not expect attached JSDoc JS var to be promoted to const: {output}"
     );
 }
 

@@ -37,40 +37,17 @@ struct DirectActualLibAliasBodyProof {
     def_id: DefId,
     outcome: DirectActualLibAliasBodyOutcome,
 }
-// Track 7 transitional allowlist; prefer stable lib identity over additions.
-const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
-    "Capitalize",
-    "DecoratorMetadata",
-    "DecoratorMetadataObject",
-    "Exclude",
-    "Extract",
-    "FlatArray",
-    "IteratorResult",
-    "LocalesArgument",
-    "Lowercase",
-    "NonNullable",
-    "NumberFormatOptionsCurrencyDisplay",
-    "NumberFormatOptionsSignDisplay",
-    "NumberFormatOptionsStyle",
-    "NumberFormatOptionsUseGrouping",
-    "NumberFormatPartTypes",
-    "NumberFormatRangePartTypes",
-    "Omit",
-    "Partial",
-    "Pick",
-    "PropertyKey",
-    "Readonly",
-    "Record",
-    "Required",
-    "ReturnType",
-    "Uncapitalize",
-    "UnicodeBCP47LocaleIdentifier",
-    "Uppercase",
-    "WeakKey",
-];
 
-fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
-    DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS.contains(&name)
+fn generic_actual_lib_alias_body_has_direct_shape(
+    types: &dyn common::TypeDatabase,
+    body: TypeId,
+) -> bool {
+    common::mapped_type_id(types, body).is_some()
+        || common::contains_conditional_type(types, body)
+        || common::union_members(types, body).is_some()
+        || common::intersection_members(types, body).is_some()
+        || common::application_info(types, body).is_some()
+        || common::is_string_intrinsic_type(types, body)
 }
 
 fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
@@ -490,10 +467,12 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
             );
         let generic_alias_has_admitted_body = !params.is_empty()
-            && (is_direct_actual_lib_alias_body_admitted(name)
-                || common::mapped_type_id(self.ctx.types, body).is_some()
-                || common::contains_conditional_type(self.ctx.types, body)
-                || common::union_members(self.ctx.types, body).is_some());
+            && (generic_actual_lib_alias_body_has_direct_shape(self.ctx.types, body)
+                // Lib string intrinsic aliases lower from the `intrinsic`
+                // marker and get their structural representation at use sites.
+                // This helper is restricted to compiler-managed built-ins and
+                // still runs after actual-lib declaration proof above.
+                || common::is_compiler_managed_type(name));
         let outcome = if non_generic_alias_has_resolved_body || generic_alias_has_admitted_body {
             DirectActualLibAliasBodyOutcome::Success
         } else if !params.is_empty() {
@@ -1094,7 +1073,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_node_is_generic_scope_independent(
+    pub(super) fn source_file_type_node_is_generic_scope_independent(
         arena: &NodeArena,
         node_idx: NodeIndex,
         type_param_names: &[String],
@@ -1243,7 +1222,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn type_alias_type_param_names(arena: &NodeArena, type_alias: &TypeAliasData) -> Vec<String> {
+    pub(super) fn type_alias_type_param_names(
+        arena: &NodeArena,
+        type_alias: &TypeAliasData,
+    ) -> Vec<String> {
         type_alias
             .type_parameters
             .as_ref()
@@ -1259,7 +1241,11 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
-    fn collect_infer_type_param_names(arena: &NodeArena, root: NodeIndex, names: &mut Vec<String>) {
+    pub(super) fn collect_infer_type_param_names(
+        arena: &NodeArena,
+        root: NodeIndex,
+        names: &mut Vec<String>,
+    ) {
         let mut stack = vec![root];
         while let Some(idx) = stack.pop() {
             let Some(node) = arena.get(idx) else {
@@ -1561,6 +1547,13 @@ impl<'a> CheckerState<'a> {
                         delegate_binder,
                         type_alias.type_node,
                     ))
+        } else if direct_source_file_arena {
+            Self::source_file_type_node_is_generic_local_alias_application_lowerable(
+                symbol_arena,
+                delegate_binder,
+                type_alias.type_node,
+                &type_param_names,
+            )
         } else {
             Self::source_file_type_node_is_generic_scope_independent(
                 symbol_arena,
@@ -1588,6 +1581,13 @@ impl<'a> CheckerState<'a> {
         ) {
             return None;
         }
+
+        self.prime_source_file_alias_application_targets(
+            symbol_arena,
+            delegate_binder,
+            type_alias.type_node,
+            &mut Vec::new(),
+        );
 
         let (alias_type, params) = self.lower_cross_arena_type_alias_declaration(
             sym_id,
@@ -1618,6 +1618,74 @@ impl<'a> CheckerState<'a> {
             .register_type_to_def(alias_type, def_id);
 
         Some((alias_type, params))
+    }
+
+    fn prime_source_file_alias_application_targets(
+        &mut self,
+        symbol_arena: &NodeArena,
+        delegate_binder: &BinderState,
+        root: NodeIndex,
+        seen: &mut Vec<SymbolId>,
+    ) {
+        let Some(node) = symbol_arena.get(root) else {
+            return;
+        };
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = symbol_arena.get_type_ref(node)
+            && let Some(args) = type_ref.type_arguments.as_ref()
+            && !args.nodes.is_empty()
+            && let Some(name) = symbol_arena
+                .get(type_ref.type_name)
+                .and_then(|name_node| symbol_arena.get_identifier(name_node))
+                .map(|ident| ident.escaped_text.as_str())
+            && let Some(sym_id) = delegate_binder.file_locals.get(name)
+            && !seen.contains(&sym_id)
+            && let Some(symbol) = delegate_binder.get_symbol(sym_id)
+            && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+            && symbol.flags
+                & (symbol_flags::VALUE
+                    | symbol_flags::CLASS
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::NAMESPACE_MODULE)
+                == 0
+            && symbol.declarations.len() == 1
+            && let Some(decl_idx) = symbol.declarations.first().copied()
+            && Self::lib_type_alias_declaration_name_matches(symbol_arena, decl_idx, name)
+            && let Some(decl_node) = symbol_arena.get(decl_idx)
+            && let Some(type_alias) = symbol_arena.get_type_alias(decl_node)
+        {
+            seen.push(sym_id);
+            self.prime_source_file_alias_application_targets(
+                symbol_arena,
+                delegate_binder,
+                type_alias.type_node,
+                seen,
+            );
+            let (alias_type, params) = self.lower_cross_arena_type_alias_declaration(
+                sym_id,
+                decl_idx,
+                symbol_arena,
+                type_alias,
+            );
+            if alias_type != TypeId::UNKNOWN && alias_type != TypeId::ERROR {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx
+                    .register_def_auto_params_in_envs(def_id, alias_type, params);
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(alias_type, def_id);
+            }
+            seen.pop();
+        }
+
+        for child in symbol_arena.get_children(root) {
+            self.prime_source_file_alias_application_targets(
+                symbol_arena,
+                delegate_binder,
+                child,
+                seen,
+            );
+        }
     }
 
     pub(super) fn direct_cross_file_interface_lowering(
