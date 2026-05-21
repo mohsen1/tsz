@@ -198,58 +198,32 @@ perf_counter_enum! {
     pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES;
 }
 
-/// Coarse symbol-kind bucket for `DelegateCrossArenaSymbol` misses.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CrossArenaSymbolMissKind {
-    TypeAlias = 0,
-    Interface = 1,
-    Class = 2,
-    Function = 3,
-    Variable = 4,
-    Property = 5,
-    Method = 6,
-    Accessor = 7,
-    Enum = 8,
-    Module = 9,
-    Alias = 10,
-    TypeParameter = 11,
-    TypeLiteral = 12,
-    Signature = 13,
-    Constructor = 14,
-    ObjectLiteral = 15,
-    Unresolved = 16,
-    Other = 17,
-}
-
-pub const CROSS_ARENA_SYMBOL_MISS_KIND_COUNT: usize = 18;
-
-pub const CROSS_ARENA_SYMBOL_MISS_KIND_NAMES: [&str; CROSS_ARENA_SYMBOL_MISS_KIND_COUNT] = [
-    "type_alias",
-    "interface",
-    "class",
-    "function",
-    "variable",
-    "property",
-    "method",
-    "accessor",
-    "enum",
-    "module",
-    "alias",
-    "type_parameter",
-    "type_literal",
-    "signature",
-    "constructor",
-    "object_literal",
-    "unresolved",
-    "other",
-];
-
-impl CrossArenaSymbolMissKind {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Coarse symbol-kind bucket for `DelegateCrossArenaSymbol` misses.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CrossArenaSymbolMissKind {
+        TypeAlias = 0 => "type_alias",
+        Interface = 1 => "interface",
+        Class = 2 => "class",
+        Function = 3 => "function",
+        Variable = 4 => "variable",
+        Property = 5 => "property",
+        Method = 6 => "method",
+        Accessor = 7 => "accessor",
+        Enum = 8 => "enum",
+        Module = 9 => "module",
+        Alias = 10 => "alias",
+        TypeParameter = 11 => "type_parameter",
+        TypeLiteral = 12 => "type_literal",
+        Signature = 13 => "signature",
+        Constructor = 14 => "constructor",
+        ObjectLiteral = 15 => "object_literal",
+        Unresolved = 16 => "unresolved",
+        Other = 17 => "other",
     }
+
+    pub const CROSS_ARENA_SYMBOL_MISS_KIND_COUNT;
+    pub const CROSS_ARENA_SYMBOL_MISS_KIND_NAMES;
 }
 
 /// Outcome of the no-child named-alias shortcut attempted before constructing
