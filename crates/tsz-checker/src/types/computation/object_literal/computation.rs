@@ -539,11 +539,7 @@ impl<'a> CheckerState<'a> {
         let mut display_type_overrides: FxHashMap<Atom, TypeId> = FxHashMap::default();
         let mut string_index_types: Vec<TypeId> = Vec::new();
         let mut number_index_types: Vec<TypeId> = Vec::new();
-        // Value types contributed by computed property names whose key type is
-        // the wide `symbol` intrinsic. These become a single `[s: symbol]: V`
-        // index signature on the resulting object literal type — matching tsc's
-        // late-bound symbol-key inference (`{ [sym]: 1 }` with `sym: symbol`
-        // yields `{ [s: symbol]: number }`).
+        // Wide-`symbol`-typed computed keys: see `finalize_object_literal_type`.
         let mut symbol_index_types: Vec<TypeId> = Vec::new();
         // Index signatures inherited from spread sources (kept separate because
         // they should only be included when the literal has no explicit properties —
@@ -692,12 +688,9 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|computed| {
                         self.get_type_of_node(computed.expression) == TypeId::ERROR
                     });
-                // A computed key whose expression has the wide `symbol` intrinsic
-                // contributes to a `[s: symbol]: V` index signature on the
-                // object literal type, not a named member. Detect this *before*
-                // dispatching to `get_property_name_resolved` (which would
-                // otherwise pin it under a `__symbol_<file>_<sym>` synthetic
-                // named key, breaking `(typeof o)[symbol]` and `keyof typeof o`).
+                // Wide-`symbol` computed keys feed the index-sig path; skip
+                // `get_property_name_resolved` so the named-member branch
+                // doesn't pin them under a synthetic `__symbol_<file>_<sym>`.
                 let is_wide_symbol_index_key = !computed_key_is_error
                     && self.object_literal_computed_key_is_wide_symbol_index(prop.name);
                 let name_opt = if computed_key_is_error || is_wide_symbol_index_key {
@@ -1744,11 +1737,9 @@ impl<'a> CheckerState<'a> {
                 }
                 let method_is_wide_symbol_index_key =
                     self.object_literal_computed_key_is_wide_symbol_index(method.name);
-                let name_opt = if method_is_wide_symbol_index_key {
-                    None
-                } else {
-                    self.get_property_name_resolved(method.name)
-                };
+                let name_opt = (!method_is_wide_symbol_index_key)
+                    .then(|| self.get_property_name_resolved(method.name))
+                    .flatten();
                 if let Some(name) = name_opt.clone() {
                     // Set contextual type for method
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
@@ -2262,11 +2253,9 @@ impl<'a> CheckerState<'a> {
 
                 let accessor_is_wide_symbol_index_key =
                     self.object_literal_computed_key_is_wide_symbol_index(accessor.name);
-                let name_opt = if accessor_is_wide_symbol_index_key {
-                    None
-                } else {
-                    self.get_property_name_resolved(accessor.name)
-                };
+                let name_opt = (!accessor_is_wide_symbol_index_key)
+                    .then(|| self.get_property_name_resolved(accessor.name))
+                    .flatten();
                 if let Some(name) = name_opt.clone() {
                     // For non-contextual object literals, TypeScript treats `this` inside
                     // accessors as the object literal under construction. Provide a
