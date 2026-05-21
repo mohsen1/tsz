@@ -51,6 +51,7 @@ withTempDir((dir) => {
     COMPAT_TSCONFIG_PATH: tsconfig,
     COMPAT_SOURCE_ROOT: sourceRoot,
     COMPAT_FIXTURE_ROOT: path.join(dir, "fixture"),
+    COMPAT_TSZ_COMMAND_ENV_PREFIX: "TSZ_USE_EMBEDDED_LIBS=1",
     COMPAT_GENERATED_AT: "2026-05-19T01:02:03.000Z",
     COMPAT_SOURCE_COMMIT: "abcdef1234567890",
     COMPAT_WORKFLOW_NAME: "CI",
@@ -92,6 +93,7 @@ withTempDir((dir) => {
   assert.equal(row.repro.source_root, "src");
   assert.equal(row.repro.first_failure_path, "src/index.ts");
   assert.equal(row.repro.first_failure_code, "TS2344");
+  assert.equal(row.repro.command, "TSZ_USE_EMBEDDED_LIBS=1 $TSZ_BIN --noEmit -p tsconfig.json");
   assert.deepEqual(row.fixture_sources, [
     {
       name: "type-fest",
@@ -1100,6 +1102,35 @@ withTempDir((dir) => {
   assert.match(result.stdout, /\| Project \| Oracle \| Subsystem \| Code \| Delta \|/);
   assert.match(result.stdout, /\| gamma \| tsc-fails-only \| module-symbol-resolution \| TS2304 \|/);
   assert.match(result.stdout, /See artifact for the remaining diagnostic deltas\./);
+});
+
+// format-step-summary surfaces malformed JSONL rows so the rendered summary
+// cannot look clean while silently dropping malformed compatibility records.
+withTempDir((dir) => {
+  const summary = path.join(dir, "summary.json");
+  fs.writeFileSync(
+    summary,
+    `${JSON.stringify({
+      by_state: { green: 1 },
+      by_oracle_classification: { "both-pass": 1 },
+      malformed_jsonl_lines: 2,
+      malformed_jsonl_examples: [
+        { line: 2, error: "Unexpected token n in JSON at position 0", text: "not-json" },
+        { line: 4, error: "Unexpected end of JSON input", text: "{" },
+      ],
+      first_diagnostic_deltas: [],
+    }, null, 2)}\n`,
+    "utf8",
+  );
+
+  const result = runProjectCompatibility(["format-step-summary"], {
+    SUMMARY_INPUT_FILE: summary,
+    SUMMARY_TITLE: "Project compatibility artifact",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Malformed JSONL lines: 2/);
+  assert.match(result.stdout, /line 2: Unexpected token n in JSON at position 0/);
+  assert.match(result.stdout, /line 4: Unexpected end of JSON input/);
 });
 
 // Header-only block when no diagnostic deltas were captured.

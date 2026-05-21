@@ -749,10 +749,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                 {
                                     // Compute existing-declaration info first (immutable
                                     // borrow), then drop it before emitting diagnostics.
-                                    #[allow(clippy::type_complexity)]
-                                    let existing_info: Option<
-                                        (bool, Option<(String, u32, u32)>),
-                                    > = {
+                                    type DeclLocation = (String, u32, u32);
+                                    type ExistingInfo = Option<(bool, Option<DeclLocation>)>;
+                                    let existing_info: ExistingInfo = {
                                         if let Some(specifier) = module_specifier.as_deref()
                                             && let Some((existing_sym_id, owner_idx)) = self
                                                 .resolve_export_in_module_target(

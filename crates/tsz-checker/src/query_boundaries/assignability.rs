@@ -16,6 +16,26 @@ pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
     tsz_solver::relations::subtype::are_types_structurally_identical(db, resolver, left, right)
 }
 
+/// Check structural identity with an outer type-parameter scope visible to
+/// both sides. Used by declaration-merge compatibility to compare type-param
+/// constraints across declarations whose own `T`s resolve to distinct
+/// `TypeId`s.
+pub(crate) fn are_types_structurally_identical_in_param_scope<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    left: TypeId,
+    right: TypeId,
+    param_names: &[Atom],
+) -> bool {
+    tsz_solver::computation::are_types_structurally_identical_in_param_scope(
+        db,
+        resolver,
+        left,
+        right,
+        param_names,
+    )
+}
+
 /// Return the element type when `type_id` is a mutable `Array<T>` form used for
 /// redeclaration identity.
 pub(crate) fn mutable_array_element_for_redeclaration(
@@ -477,7 +497,7 @@ pub(crate) struct RelationRequest {
 }
 
 impl RelationRequest {
-    fn new(source: TypeId, target: TypeId, kind: RelationKind) -> Self {
+    const fn new(source: TypeId, target: TypeId, kind: RelationKind) -> Self {
         Self {
             source,
             target,
@@ -489,57 +509,57 @@ impl RelationRequest {
         }
     }
 
-    pub(crate) fn assign(source: TypeId, target: TypeId) -> Self {
+    pub(crate) const fn assign(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::Assign)
     }
 
-    pub(crate) fn call_arg(source: TypeId, target: TypeId) -> Self {
+    pub(crate) const fn call_arg(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::CallArg)
     }
 
-    pub(crate) fn return_stmt(source: TypeId, target: TypeId) -> Self {
+    pub(crate) const fn return_stmt(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::Return)
     }
 
-    pub(crate) fn satisfies(source: TypeId, target: TypeId) -> Self {
+    pub(crate) const fn satisfies(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::Satisfies)
     }
 
-    pub(crate) fn destructuring(source: TypeId, target: TypeId) -> Self {
+    pub(crate) const fn destructuring(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::Destructuring)
     }
 
-    pub(crate) fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
+    pub(crate) const fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
         Self::new(source, target, RelationKind::BivariantCallbacks)
     }
 
     /// Mark the source as a fresh object literal, enabling EPC.
-    pub(crate) fn with_fresh_source(mut self) -> Self {
+    pub(crate) const fn with_fresh_source(mut self) -> Self {
         self.source_is_fresh = true;
         self.excess_property_mode = ExcessPropertyMode::Check;
         self
     }
 
     /// Mark the source as a spread expression, enabling explicit-only EPC.
-    pub(crate) fn with_spread_source(mut self) -> Self {
+    pub(crate) const fn with_spread_source(mut self) -> Self {
         self.excess_property_mode = ExcessPropertyMode::CheckExplicitOnly;
         self
     }
 
     /// Override excess property mode.
-    pub(crate) fn with_excess_property_mode(mut self, mode: ExcessPropertyMode) -> Self {
+    pub(crate) const fn with_excess_property_mode(mut self, mode: ExcessPropertyMode) -> Self {
         self.excess_property_mode = mode;
         self
     }
 
     /// Override missing property mode.
-    pub(crate) fn with_missing_property_mode(mut self, mode: MissingPropertyMode) -> Self {
+    pub(crate) const fn with_missing_property_mode(mut self, mode: MissingPropertyMode) -> Self {
         self.missing_property_mode = mode;
         self
     }
 
     /// Allow a failed generic-signature inference to retry with erased signatures.
-    pub(crate) fn with_erased_generic_signature_retry(mut self) -> Self {
+    pub(crate) const fn with_erased_generic_signature_retry(mut self) -> Self {
         self.allow_erased_generic_signature_retry = true;
         self
     }
@@ -586,7 +606,7 @@ pub(crate) use tsz_solver::RelationCacheKey;
 /// The resulting config is produced by the solver's typed `RelationPolicy`
 /// bridge, so this write path lands in the same cache slot as the solver's
 /// internal write path.
-pub(crate) fn assignability_cache_key(
+pub(crate) const fn assignability_cache_key(
     source: TypeId,
     target: TypeId,
     flags: u16,
@@ -599,7 +619,11 @@ pub(crate) fn assignability_cache_key(
 }
 
 /// Build a cache key for a subtype lookup. See [`assignability_cache_key`].
-pub(crate) fn subtype_cache_key(source: TypeId, target: TypeId, flags: u16) -> RelationCacheKey {
+pub(crate) const fn subtype_cache_key(
+    source: TypeId,
+    target: TypeId,
+    flags: u16,
+) -> RelationCacheKey {
     RelationCacheKey::for_subtype(
         source,
         target,

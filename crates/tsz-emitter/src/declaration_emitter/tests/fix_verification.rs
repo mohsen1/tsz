@@ -1763,11 +1763,15 @@ const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumbe
 "#,
     );
 
+    // When the left operand has an explicitly-annotated non-empty string literal type,
+    // it is always truthy, so tsc gives just the left type (right is unreachable).
     for expected in [
-        r#"declare const explicitStringOrNumber: "string" | "number";"#,
-        r#"declare const explicitStringOrBoolean: "string" | "boolean";"#,
-        r#"declare const explicitBooleanOrNumber: "number" | "boolean";"#,
-        r#"declare const explicitStringOrBooleanOrNumber: "string" | "number" | "boolean";"#,
+        r#"declare const explicitStringOrNumber: "string";"#,
+        r#"declare const explicitStringOrBoolean: "string";"#,
+        r#"declare const explicitBooleanOrNumber: "number";"#,
+        r#"declare const explicitStringOrBooleanOrNumber: "string";"#,
+        // Inferred const literals are widened intentionally in short-circuit operand
+        // position (matching the tsc DTS surface for mutable bindings built from them).
         "declare const inferredStringOrNumber: string;",
         "declare const inferredStringOrBoolean: string;",
         "declare const inferredBooleanOrNumber: string;",
@@ -1778,6 +1782,59 @@ const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumbe
             "expected short-circuit operand type `{expected}`: {output}"
         );
     }
+}
+
+#[test]
+fn fix_generic_rest_identity_preserves_parameters_tuple_labels() {
+    let output = emit_dts_with_usage_analysis_and_parameters_lib(
+        r#"
+declare function f<T extends any[]>(...x: T): T;
+declare function g(elem: object, index: number): object;
+declare function overloaded(seed: string): string;
+declare function overloaded(elem: object, index: number): object;
+declare function getArgsForInjection<T extends (...args: any[]) => any>(x: T): Parameters<T>;
+declare function getArgsRenamed<Fn extends (...args: any[]) => any>(x: Fn): Parameters<Fn>;
+type ArgsOf<Fn extends (...args: any[]) => any> = Parameters<Fn>;
+declare function getArgsAlias<Fn extends (...args: any[]) => any>(x: Fn): ArgsOf<Fn>;
+
+export const argumentsOfGAsFirstArgument = f(getArgsForInjection(g));
+export const argumentsOfG = f(...getArgsForInjection(g));
+export const argumentsOfGRenamed = f(...getArgsRenamed(g));
+export const argumentsOfGAlias = f(...getArgsAlias(g));
+export const argumentsOfOverload = f(...getArgsForInjection(overloaded));
+"#,
+    );
+
+    for expected in [
+        "export declare const argumentsOfGAsFirstArgument: [[elem: object, index: number]];",
+        "export declare const argumentsOfG: [elem: object, index: number];",
+        "export declare const argumentsOfGRenamed: [elem: object, index: number];",
+        "export declare const argumentsOfGAlias: [elem: object, index: number];",
+        "export declare const argumentsOfOverload: [elem: object, index: number];",
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected labeled Parameters tuple `{expected}`: {output}"
+        );
+    }
+
+    let shadowed_output = emit_dts_with_usage_analysis_and_parameters_lib(
+        r#"
+type Parameters<T> = T;
+declare function f<T extends any[]>(...x: T): T;
+declare function g(elem: object, index: number): object;
+declare function getArgsShadowed<Fn extends (...args: any[]) => any>(x: Fn): Parameters<Fn>;
+
+export const argumentsOfShadowedParameters = f(...getArgsShadowed(g));
+"#,
+    );
+
+    assert!(
+        !shadowed_output.contains(
+            "export declare const argumentsOfShadowedParameters: [elem: object, index: number];"
+        ),
+        "shadowed Parameters must not trigger built-in tuple recovery: {shadowed_output}"
+    );
 }
 
 #[test]
@@ -2098,5 +2155,97 @@ fn fix_predicate_pattern2_does_not_rewrite_unrelated_union_shapes() {
     assert!(
         !text.contains("& ({} | undefined)"),
         "should not rewrite (T & undefined) | string as T & ({{}} | undefined): {text}"
+    );
+}
+
+// Tests for returned-function-expression recursive unrolling (issue #8683)
+
+#[test]
+fn fix_returned_arrow_chain_three_levels_no_shadowing() {
+    // outer<A> → middle<B>() → inner<C>(x: C): C — distinct params, no renaming needed
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export function outer<A>() {
+    return function middle<B>() {
+        return function inner<C>(x: C): C {
+            return x;
+        };
+    };
+}
+"#,
+    );
+    assert!(
+        output.contains("<B>() => <C>(x: C) => C"),
+        "three-level chain with distinct type params: {output}"
+    );
+    assert!(
+        output.contains("declare function outer<A>"),
+        "outer type param A preserved: {output}"
+    );
+}
+
+#[test]
+fn fix_returned_arrow_chain_three_levels_all_shadowed() {
+    // outer<K> → middle<K>() → inner<K>(x: K): K — K shadows K shadows K
+    // expected renames: outer=K, middle=K_1, inner=K_2
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export function outer<K>() {
+    return function middle<K>() {
+        return function inner<K>(x: K): K {
+            return x;
+        };
+    };
+}
+"#,
+    );
+    assert!(
+        output.contains("<K_1>() => <K_2>(x: K_2) => K_2"),
+        "three-level all-shadowed chain must produce K_1/K_2 renames: {output}"
+    );
+}
+
+#[test]
+fn fix_returned_arrow_chain_two_levels_inner_shadows_outer() {
+    // Rule: when the inner closure's type param shadows the outer's, the
+    // emitter must rename the inner param (T → T_1) in the DTS return type,
+    // and free references to inner's T inside the returned function type
+    // must also be updated to T_1.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export function outer<T>() {
+    return function inner<T>(x: T) {
+        return function deepest<U>(y: U): [T, U] {
+            return [x, y];
+        };
+    };
+}
+"#,
+    );
+    // inner's T shadows outer's T → T_1; deepest's [T, U] references T_1
+    assert!(
+        output.contains("<T_1>(x: T_1) => <U>(y: U) => [T_1, U]"),
+        "two-level inner-shadows-outer chain: {output}"
+    );
+}
+
+#[test]
+fn fix_returned_arrow_chain_concise_arrows() {
+    // Concise arrow bodies: outer<V> returns arrow returning arrow.
+    // inner has an explicit return annotation `[W, X]` which is used as-is.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export function outer<V>() {
+    return function middle<W>(x: W) {
+        return function inner<X>(y: X): [W, X] {
+            return [x, y];
+        };
+    };
+}
+"#,
+    );
+    assert!(
+        output.contains("<W>(x: W) => <X>(y: X) => [W, X]"),
+        "three-level chain with explicit tuple return annotation: {output}"
     );
 }

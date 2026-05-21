@@ -1200,12 +1200,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let mut formatter = self.ctx.create_type_formatter();
-        let type_str = formatter.format(type_id);
+        let type_str = self.format_type_for_assignability_message(type_id);
 
         let message =
             diagnostic_messages::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW
-                .replace("{0}", &type_str);
+                .replace("{0}", type_str.as_str());
 
         self.error_at_node(
             idx,

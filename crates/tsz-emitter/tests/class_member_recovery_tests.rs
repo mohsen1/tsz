@@ -74,6 +74,66 @@ fn computed_string_field_preserves_source_quotes_with_constructor() {
 }
 
 #[test]
+fn computed_field_initializer_continues_with_next_bracketed_line() {
+    let output = print_with_printer_options(
+        "class C {\n    [e] = 0\n    [e2] = 1\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("this[_a] = 0[e2] = 1;"),
+        "A following bracketed line should be parsed as the field initializer's element-access continuation.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_b = e2"),
+        "The bracketed continuation must not become a second computed class field.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn computed_field_typed_initializer_continues_with_next_bracketed_line() {
+    let output = print_with_printer_options(
+        "class C {\n    [key]: number = 0\n    [next]: number\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("this[_a] = 0[next];"),
+        "Typed computed fields should keep the following bracketed line as an initializer continuation.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_b = next"),
+        "The continuation should not allocate a second computed-field temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn computed_field_initializer_continues_into_recovered_method_call() {
+    let output = print_with_printer_options(
+        "class C {\n    [e] = 0\n    [e2]() { }\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("this[_a] = 0[e2]();"),
+        "A following computed method-like line should recover as a call continuation on the initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.ends_with("{ }\n"),
+        "The recovered method body should remain as a trailing block statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn cli_style_computed_string_field_preserves_source_quotes_with_crlf() {
     let source = "class C {\r\n    data = { foo: '' };\r\n    ['this'] = '';\r\n    constructor() {\r\n        var copy: typeof this.data = { foo: '' };\r\n    }\r\n}\r\n";
     let output = print_with_cli_style_pipeline(
@@ -196,6 +256,38 @@ fn downlevel_define_typed_only_field_emits_void0_define_property() {
     );
 }
 
+#[test]
+fn es5_define_computed_field_temp_hoists_before_user_vars() {
+    let output = print_with_printer_options(
+        "var x = \"p\";\nclass A {\n    [x] = 14;\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    let temp_decl = output
+        .find("var _a;")
+        .unwrap_or_else(|| panic!("Missing computed field temp declaration.\nOutput:\n{output}"));
+    let user_var = output
+        .find("var x = \"p\";")
+        .unwrap_or_else(|| panic!("Missing user variable declaration.\nOutput:\n{output}"));
+    let class_decl = output
+        .find("var A =")
+        .unwrap_or_else(|| panic!("Missing lowered class declaration.\nOutput:\n{output}"));
+
+    assert!(
+        temp_decl < user_var && user_var < class_decl,
+        "Computed field temp should be hoisted before top-level user vars.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("var _a;").count(),
+        1,
+        "Computed field temp should be declared once.\nOutput:\n{output}"
+    );
+}
+
 /// Without `useDefineForClassFields`, a typed-only field has no runtime
 /// effect and must not produce any assignment. This guards against the
 /// fix above accidentally widening to all targets.
@@ -220,10 +312,14 @@ fn downlevel_assign_typed_only_field_emits_nothing() {
     );
 }
 
+/// In native class-field mode (ES2022+ with `useDefineForClassFields`), TypeScript erases
+/// type annotations but keeps the field declaration itself. Only fields marked with `declare`
+/// are truly ambient and get erased entirely. This matches tsc behavior where
+/// `prop: number;` → `prop;` and `declare baz: boolean;` → nothing.
 #[test]
-fn native_define_typed_only_public_field_emits_nothing() {
+fn native_define_typed_public_field_emits_bare_field_declaration() {
     let output = print_with_printer_options(
-        "class Test {\n    prop: number;\n    bare;\n    #privateProp: number;\n}\n",
+        "class Test {\n    prop: number;\n    bare;\n    #privateProp: number;\n    declare ambient: string;\n}\n",
         PrinterOptions {
             target: ScriptTarget::ES2022,
             use_define_for_class_fields: true,
@@ -232,8 +328,8 @@ fn native_define_typed_only_public_field_emits_nothing() {
     );
 
     assert!(
-        !output.contains("prop;"),
-        "Typed-only public field should be erased in native class-field emit.\nOutput:\n{output}"
+        output.contains("prop;"),
+        "Typed public field should emit as a bare native field declaration (type erased).\nOutput:\n{output}"
     );
     assert!(
         output.contains("bare;"),
@@ -241,7 +337,11 @@ fn native_define_typed_only_public_field_emits_nothing() {
     );
     assert!(
         output.contains("#privateProp;"),
-        "Private fields remain runtime declarations even when annotated.\nOutput:\n{output}"
+        "Private typed field should remain a runtime class field declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("ambient"),
+        "`declare` fields are ambient-only and must be erased entirely.\nOutput:\n{output}"
     );
 }
 

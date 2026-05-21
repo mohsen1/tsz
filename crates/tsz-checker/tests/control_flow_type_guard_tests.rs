@@ -53,6 +53,14 @@ fn strict_diagnostics_with_libs(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn ts18048_messages(diagnostics: &[(u32, String)]) -> Vec<&str> {
+    diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 18048)
+        .map(|(_, message)| message.as_str())
+        .collect()
+}
+
 #[test]
 fn nested_or_right_operand_preserves_false_path_narrowing() {
     let diagnostics = strict_diagnostics(
@@ -74,6 +82,202 @@ function f(x: number | string | boolean) {
             *code == 2339 && message == "Property 'toString' does not exist on type 'never'."
         }),
         "expected the conformance TS2339 for `x.toString()` narrowed to never, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn class_property_initializers_do_not_inherit_outer_parameter_narrowing() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function instanceField(value: string | undefined) {
+    if (value) {
+        class C {
+            field = value.length;
+        }
+    }
+}
+
+function staticField(input: string | undefined) {
+    if (input) {
+        class C {
+            static field = input.length;
+        }
+    }
+}
+
+function classExpression(subject: string | undefined) {
+    if (subject) {
+        const C = class {
+            field = subject.length;
+        };
+    }
+}
+"#,
+    );
+
+    let ts18048 = ts18048_messages(&diagnostics);
+    assert_eq!(
+        ts18048.len(),
+        3,
+        "class property initializers should see the declared nullable parameter type: {diagnostics:#?}"
+    );
+    assert!(
+        ts18048.iter().any(|message| message.contains("'value'")),
+        "instance field should report the renamed parameter, got: {ts18048:?}"
+    );
+    assert!(
+        ts18048.iter().any(|message| message.contains("'input'")),
+        "static field should report the renamed parameter, got: {ts18048:?}"
+    );
+    assert!(
+        ts18048.iter().any(|message| message.contains("'subject'")),
+        "class expression field should report the renamed parameter, got: {ts18048:?}"
+    );
+}
+
+#[test]
+fn nested_closures_inside_class_property_initializers_do_not_inherit_outer_narrowing() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function arrowField(value: string | undefined) {
+    if (value) {
+        class C {
+            field = () => value.length;
+        }
+    }
+}
+
+function functionField(input: string | undefined) {
+    if (input) {
+        class C {
+            field = function () {
+                return input.length;
+            };
+        }
+    }
+}
+"#,
+    );
+
+    let ts18048 = ts18048_messages(&diagnostics);
+    assert_eq!(
+        ts18048.len(),
+        2,
+        "closures nested in class property initializers should also lose outer narrowing: {diagnostics:#?}"
+    );
+    assert!(
+        ts18048.iter().any(|message| message.contains("'value'")),
+        "arrow initializer should report the renamed parameter, got: {ts18048:?}"
+    );
+    assert!(
+        ts18048.iter().any(|message| message.contains("'input'")),
+        "function initializer should report the renamed parameter, got: {ts18048:?}"
+    );
+}
+
+#[test]
+fn nested_class_property_initializer_scopes_keep_local_and_this_context() {
+    let diagnostics = strict_diagnostics_with_libs(
+        r#"
+declare class Component<P, S = {}> {
+    readonly props: Readonly<{ children?: unknown }> & Readonly<P>;
+    state: Readonly<S>;
+}
+interface CoachMarkAnchorProps<C> {
+    anchorRef?: (anchor: C) => void;
+}
+type AnchorType<P> = Component<P>;
+
+class CoachMarkAnchorDecorator {
+    decorateComponent<P>(anchor: P) {
+        return class CoachMarkAnchor extends Component<CoachMarkAnchorProps<AnchorType<P>> & P, {}> {
+            private _onAnchorRef = (anchor: AnchorType<P>) => {
+                const anchorRef = this.props.anchorRef;
+                if (anchorRef) {
+                    anchorRef(anchor);
+                }
+            }
+        };
+    }
+}
+
+class C<T> {
+    data!: T;
+
+    x = <U>(a: U) => {
+        var y: T;
+        return y;
+    }
+}
+"#,
+    );
+
+    assert!(
+        !diagnostics.iter().any(|(code, _)| *code == 2349),
+        "arrow fields should keep the class `this` context: {diagnostics:#?}"
+    );
+    let ts2454 = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2454 && message.contains("'y'"))
+        .count();
+    assert_eq!(
+        ts2454, 1,
+        "local variables inside nested field arrows should still get TS2454: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn class_static_blocks_keep_same_point_outer_parameter_narrowing() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function staticBlock(value: string | undefined) {
+    if (value) {
+        class C {
+            static {
+                value.length;
+            }
+        }
+        value = undefined;
+    }
+}
+"#,
+    );
+
+    let ts18048 = ts18048_messages(&diagnostics);
+    assert!(
+        ts18048.is_empty(),
+        "class static blocks execute at the class-definition flow point: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ordinary_arrow_closure_capture_rules_are_unchanged() {
+    let diagnostics = strict_diagnostics(
+        r#"
+function arrowNoLater(value: string | undefined) {
+    if (value) {
+        const g = () => value.length;
+    }
+}
+
+function arrowAfterAssignment(input: string | undefined) {
+    if (input) {
+        const g = () => input.length;
+        input = undefined;
+    }
+}
+"#,
+    );
+
+    let ts18048 = ts18048_messages(&diagnostics);
+    assert_eq!(
+        ts18048.len(),
+        1,
+        "only the closure followed by reassignment should lose narrowing: {diagnostics:#?}"
+    );
+    assert!(
+        ts18048[0].contains("'input'"),
+        "ordinary closure diagnostic should stay on the reassigned parameter, got: {ts18048:?}"
     );
 }
 
@@ -2828,5 +3032,186 @@ if (y instanceof Foo) {
     assert!(
         ts2339.is_empty(),
         "regular instanceof (no hasInstance) true branch should see Foo.x: {diags:#?}"
+    );
+}
+
+// ── Destructured discriminant narrows source binding (issue #8780) ───────────
+
+/// When `const { kind } = s` is destructured and then `kind === "a"` is checked,
+/// the source binding `s` should be narrowed to the matching discriminated-union
+/// variant.  tsc narrows `s` so `s.a` is reachable without TS2339.
+#[test]
+fn destructured_discriminant_equality_narrows_source_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(s: S) {
+    const { kind } = s;
+    if (kind === "a") {
+        const _x: number = s.a;
+    } else {
+        const _y: string = s.b;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2339.is_empty() && ts2322.is_empty(),
+        "Destructured discriminant `kind === \"a\"` must narrow source binding `s`; \
+         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}
+
+/// Renamed destructuring: `const { kind: k } = s; if (k === "a") { s.a; }` must
+/// narrow `s` just like the shorthand form.
+#[test]
+fn renamed_destructured_discriminant_equality_narrows_source_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(s: S) {
+    const { kind: k } = s;
+    if (k === "a") {
+        const _x: number = s.a;
+    } else {
+        const _y: string = s.b;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2339.is_empty() && ts2322.is_empty(),
+        "Renamed destructured discriminant `k === \"a\"` must narrow source binding `s`; \
+         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}
+
+/// Rest binding on the same top-level destructure must not hide the discriminant
+/// alias relationship between the extracted property and the source binding.
+#[test]
+fn destructured_discriminant_with_rest_narrows_source_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(s: S) {
+    const { kind, ...rest } = s;
+    rest;
+    if (kind === "a") {
+        const _x: number = s.a;
+    } else {
+        const _y: string = s.b;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2339.is_empty() && ts2322.is_empty(),
+        "Rest binding must not prevent destructured discriminant narrowing of source binding; \
+         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}
+
+/// Non-const destructured discriminant must NOT narrow the source binding.
+/// `let { kind } = s; if (kind === "a") { s.a; }` — `s` remains `S`, TS2339 expected.
+#[test]
+fn non_const_destructured_discriminant_equality_does_not_narrow_source_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(s: S) {
+    let { kind } = s;
+    if (kind === "a") {
+        s.a;
+    }
+}
+"#,
+    );
+    let ts2339_count = diagnostics.iter().filter(|(c, _)| *c == 2339).count();
+    assert_eq!(
+        ts2339_count, 1,
+        "Non-const destructured discriminant must not narrow source binding; \
+         got: {diagnostics:#?}"
+    );
+}
+
+/// Nested destructuring: `const { s: { kind } } = outer; if (kind === "a") { outer.s.a; }`
+/// must not narrow `outer.s`; current `tsc` still reports TS2339 for both branches.
+#[test]
+fn nested_destructured_discriminant_does_not_narrow_root_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(outer: { s: S }) {
+    const { s: { kind } } = outer;
+    if (kind === "a") {
+        const _x: number = outer.s.a;
+    } else {
+        const _y: string = outer.s.b;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        2,
+        "Nested destructured discriminant must not narrow `outer.s`; got {diagnostics:#?}"
+    );
+}
+
+/// Nested destructuring with a renamed leaf: `const { s: { kind: k } } = outer`
+/// must not narrow `outer.s`.
+#[test]
+fn nested_destructured_renamed_discriminant_does_not_narrow_root_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(outer: { s: S }) {
+    const { s: { kind: k } } = outer;
+    if (k === "a") {
+        const _x: number = outer.s.a;
+    } else {
+        const _y: string = outer.s.b;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        2,
+        "Renamed nested destructured discriminant must not narrow `outer.s`; got {diagnostics:#?}"
+    );
+}
+
+/// Three-level nesting: `const { a: { b: { kind } } } = d; if (kind === "x") { d.a.b.x; }`
+/// must not narrow `d.a.b`.
+#[test]
+fn triple_nested_destructured_discriminant_does_not_narrow_root_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type Leaf = { kind: "x"; x: number } | { kind: "y"; y: string };
+type Deep = { a: { b: Leaf } };
+function f(d: Deep) {
+    const { a: { b: { kind } } } = d;
+    if (kind === "x") {
+        const _x: number = d.a.b.x;
+    } else {
+        const _y: string = d.a.b.y;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        2,
+        "Triple-nested destructured discriminant must not narrow root binding; got {diagnostics:#?}"
     );
 }

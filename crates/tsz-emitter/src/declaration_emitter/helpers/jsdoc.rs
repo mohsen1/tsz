@@ -330,6 +330,24 @@ impl<'a> DeclarationEmitter<'a> {
         self.jsdoc_name_like_type_expr_for_pos(node.pos)
     }
 
+    pub(in crate::declaration_emitter) fn jsdoc_preserves_js_var_keyword<I>(
+        &self,
+        stmt_pos: u32,
+        decls: I,
+    ) -> bool
+    where
+        I: IntoIterator<Item = (NodeIndex, NodeIndex)>,
+    {
+        !self
+            .leading_jsdoc_comment_chain_for_pos(stmt_pos)
+            .is_empty()
+            || self.jsdoc_name_like_type_expr_for_pos(stmt_pos).is_some()
+            || decls.into_iter().any(|(decl_idx, decl_name)| {
+                self.jsdoc_name_like_type_expr_for_node(decl_idx).is_some()
+                    || self.jsdoc_name_like_type_expr_for_node(decl_name).is_some()
+            })
+    }
+
     pub(in crate::declaration_emitter) fn leading_jsdoc_comment_chain_for_pos(
         &self,
         pos: u32,
@@ -499,15 +517,66 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_text: &str,
     ) -> String {
-        let portable = self.rewrite_jsdoc_bare_module_import_type_text(
-            &self.qualify_jsdoc_typeof_self_exports(type_text),
-        );
-        Self::format_jsdoc_object_type_text(&portable).unwrap_or(portable)
+        let portable = self.qualify_jsdoc_typeof_self_exports(type_text);
+        let portable = self.rewrite_ambient_module_relative_import_type_text(&portable);
+        let portable = self.rewrite_jsdoc_bare_module_import_type_text(&portable);
+        Self::format_jsdoc_declaration_type_text(&portable)
     }
 
     fn jsdoc_type_alias_text_for_declaration_emit(&self, type_text: &str) -> String {
-        let portable = self.rewrite_jsdoc_bare_module_import_type_text(type_text);
-        Self::format_jsdoc_object_type_text(&portable).unwrap_or(portable)
+        let portable = self.rewrite_ambient_module_relative_import_type_text(type_text);
+        let portable = self.rewrite_jsdoc_bare_module_import_type_text(&portable);
+        Self::format_jsdoc_declaration_type_text(&portable)
+    }
+
+    fn rewrite_ambient_module_relative_import_type_text(&self, type_text: &str) -> String {
+        let Some(current_module) = self.current_ambient_module_specifier.as_deref() else {
+            return type_text.to_string();
+        };
+        if !type_text.contains("import(") {
+            return type_text.to_string();
+        }
+
+        let mut output = String::new();
+        let mut remaining = type_text;
+        while let Some((start, module_specifier, tail)) = Self::next_import_type_text(remaining) {
+            output.push_str(&remaining[..start]);
+            let import_len = remaining.len() - tail.len() - start;
+            if module_specifier.starts_with('.') {
+                let rewritten = Self::resolve_ambient_module_relative_specifier(
+                    current_module,
+                    &module_specifier,
+                );
+                output.push_str("import(\"");
+                output.push_str(&rewritten);
+                output.push_str("\")");
+            } else {
+                output.push_str(&remaining[start..start + import_len]);
+            }
+            remaining = tail;
+        }
+        output.push_str(remaining);
+        output
+    }
+
+    fn resolve_ambient_module_relative_specifier(
+        current_module: &str,
+        module_specifier: &str,
+    ) -> String {
+        let mut parts: Vec<&str> = current_module.split('/').collect();
+        parts.pop();
+
+        for part in module_specifier.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                _ => parts.push(part),
+            }
+        }
+
+        parts.join("/")
     }
 
     fn rewrite_jsdoc_bare_module_import_type_text(&self, type_text: &str) -> String {
@@ -1047,6 +1116,41 @@ impl<'a> DeclarationEmitter<'a> {
         }
         formatted.push('}');
         Some(formatted)
+    }
+
+    fn format_jsdoc_declaration_type_text(type_text: &str) -> String {
+        if Self::jsdoc_module_reference_type_falls_back_to_any(type_text) {
+            return "any".to_string();
+        }
+        if let Some(formatted) = Self::format_jsdoc_generic_object_type_text(type_text) {
+            return formatted;
+        }
+        Self::format_jsdoc_object_type_text(type_text).unwrap_or_else(|| type_text.to_string())
+    }
+
+    fn format_jsdoc_generic_object_type_text(type_text: &str) -> Option<String> {
+        let open = type_text.find("<{")?;
+        if !type_text.ends_with("}>") {
+            return None;
+        }
+        let prefix = &type_text[..open + 1];
+        let inner = &type_text[open + 2..type_text.len() - 2];
+        if inner.contains('{') || inner.contains('}') || inner.contains('\n') {
+            return None;
+        }
+
+        let mut fields = Vec::new();
+        for field in inner.split(',') {
+            let (name, ty) = field.split_once(':')?;
+            let name = name.trim();
+            let ty = ty.trim();
+            if name.is_empty() || ty.is_empty() {
+                return None;
+            }
+            fields.push(format!("    {name}: {ty};"));
+        }
+
+        Some(format!("{prefix}{{\n{}\n}}>", fields.join("\n")))
     }
 
     pub(in crate::declaration_emitter) fn normalize_jsdoc_type_expr(type_expr: &str) -> String {
@@ -3515,38 +3619,6 @@ impl<'a> DeclarationEmitter<'a> {
             i += 1;
         }
         output
-    }
-
-    pub(crate) fn format_jsdoc_type_text_for_declaration(type_text: &str) -> String {
-        if Self::jsdoc_module_reference_type_falls_back_to_any(type_text) {
-            return "any".to_string();
-        }
-        let Some(open) = type_text.find("<{") else {
-            return type_text.to_string();
-        };
-        if !type_text.ends_with("}>") {
-            return type_text.to_string();
-        }
-        let prefix = &type_text[..open + 1];
-        let inner = &type_text[open + 2..type_text.len() - 2];
-        if inner.contains('{') || inner.contains('}') || inner.contains('\n') {
-            return type_text.to_string();
-        }
-
-        let mut fields = Vec::new();
-        for field in inner.split(',') {
-            let Some((name, ty)) = field.split_once(':') else {
-                return type_text.to_string();
-            };
-            let name = name.trim();
-            let ty = ty.trim();
-            if name.is_empty() || ty.is_empty() {
-                return type_text.to_string();
-            }
-            fields.push(format!("    {name}: {ty};"));
-        }
-
-        format!("{prefix}{{\n{}\n}}>", fields.join("\n"))
     }
 
     fn jsdoc_type_alias_parser_type_text(type_text: &str) -> String {

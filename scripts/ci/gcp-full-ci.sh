@@ -385,6 +385,7 @@ run_lint() {
   node scripts/ci/test-pr-ownership-report.mjs || return $?
   node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
   node scripts/ci/test-pr-ready-state.mjs || return $?
+  node scripts/ci/test-check-stale-ci-runs.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
@@ -699,16 +700,21 @@ build_test_binaries() {
   ) &
   heartbeat_pid="$!"
 
+  ci_report_memory "pre-dist-build"
+
+  # Wrap with safe-run.sh so cargo is killed gracefully before the kernel
+  # OOM-killer fires and silently kills the GitHub Actions runner process.
   set +e
-  cargo build --profile dist-fast \
-    --jobs "$CARGO_BUILD_JOBS" \
-    -p tsz-cli \
-    -p tsz-conformance \
-    --bin tsz \
-    --bin tsz-lsp \
-    --bin tsz-server \
-    --bin tsz-conformance \
-    --bin generate-tsc-cache
+  "$ROOT_DIR/scripts/safe-run.sh" --limit "${TSZ_CI_DIST_BUILD_MEMORY_LIMIT_PCT:-88}%" -- \
+    cargo build --profile dist-fast \
+      --jobs "$CARGO_BUILD_JOBS" \
+      -p tsz-cli \
+      -p tsz-conformance \
+      --bin tsz \
+      --bin tsz-lsp \
+      --bin tsz-server \
+      --bin tsz-conformance \
+      --bin generate-tsc-cache
   cargo_rc="$?"
   set -e
   kill "$heartbeat_pid" >/dev/null 2>&1 || true
@@ -762,7 +768,7 @@ prep_node_artifacts() {
   (
     cd scripts
     if [[ ! -x node_modules/.bin/tsc ]]; then
-      npm install --silent
+      npm install --silent --include=dev
     else
       echo "Using cached scripts/node_modules"
     fi
@@ -827,10 +833,12 @@ run_with_heartbeat() {
   "$@" &
   pid="$!"
 
+  local heartbeat_interval="${TSZ_CI_HEARTBEAT_SECONDS:-60}" mem_avail
   while kill -0 "$pid" 2>/dev/null; do
-    sleep 120
+    sleep "$heartbeat_interval"
     if kill -0 "$pid" 2>/dev/null; then
-      echo "still running: ${label} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      mem_avail="$(ci_available_memory_mb)"
+      echo "still running: ${label} $(date -u +%Y-%m-%dT%H:%M:%SZ)${mem_avail:+ [mem_avail=${mem_avail}MB]}"
     fi
   done
 
@@ -997,6 +1005,7 @@ PY
 run_conformance() {
   ci_section "Conformance"
   mkdir -p "$LOG_DIR/conformance"
+  ci_report_memory "conformance-${CONFORMANCE_SHARD_INDEX:-0}"
   local log_file="$LOG_DIR/conformance/full.log"
   local last_run="scripts/conformance/conformance-last-run.txt"
   rm -f "$last_run"
@@ -1081,8 +1090,9 @@ run_conformance() {
   echo "Conformance skipped: ${skipped_tests}"
 
   local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
-  grep -a '^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
-    | sed 's/^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
+  # XFAIL is known failing debt in conformance math, so keep it in the shard
+  # failure list used by aggregate accepted-regression checks.
+  awk '/^(FAIL|XFAIL|CRASH|TIMEOUT) / { print $2 }' "$log_file" \
     | sort -u > "$failures_file" 2>/dev/null || true
 
   if [[ "$rc" -ne 0 ]]; then
@@ -1594,6 +1604,7 @@ run_fourslash_shard() {
   shard_count="$(num_or_zero "${_TSZ_CI_FOURSLASH_SHARD_COUNT:-8}")"
 
   mkdir -p "$LOG_DIR/fourslash"
+  ci_report_memory "fourslash-${shard_index}"
   echo "Fourslash shard ${shard_index}/${shard_count}: workers=${FOURSLASH_WORKERS}"
 
   local detail_json="$METRICS_DIR/fourslash-shard-${shard_index}.json"
@@ -1914,6 +1925,7 @@ aggregate_fourslash() {
 
 run_dist_binaries() {
   ci_section "Build dist-fast binaries"
+  ci_report_memory "dist-binaries"
   timed build_test_binaries build_test_binaries
   show_sccache_stats
 }
@@ -1955,7 +1967,7 @@ run_build() {
   ci_section "Seed scripts node_modules for parallel job cache"
   if [[ ! -x scripts/node_modules/.bin/tsc ]]; then
     if command -v npm >/dev/null 2>&1; then
-      (cd scripts && npm install --silent)
+      (cd scripts && npm install --silent --include=dev)
     else
       echo "warn: npm not found in build image; skipping scripts/node_modules seed (shards will reinstall on cache-miss)" >&2
     fi

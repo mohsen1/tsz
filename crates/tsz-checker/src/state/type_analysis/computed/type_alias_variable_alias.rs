@@ -1,30 +1,33 @@
 //! Continuation of `compute_type_of_symbol`: type alias, class property, variable,
 //! and alias symbol resolution.
 
+use super::SymbolAliasCtx;
 use crate::query_boundaries::common::{array_element_type, is_generic_type};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use tsz_binder::{SymbolId, symbol_flags};
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn compute_type_of_symbol_type_alias_variable_alias(
         &mut self,
-        sym_id: SymbolId,
-        flags: u32,
-        value_decl: NodeIndex,
-        declarations: &[NodeIndex],
-        import_module: &Option<String>,
-        import_name: &Option<String>,
-        escaped_name: &str,
-        factory: &tsz_solver::construction::TypeFactory<'_>,
+        ctx: SymbolAliasCtx<'_>,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
+        let SymbolAliasCtx {
+            sym_id,
+            flags,
+            value_decl,
+            declarations,
+            import_module,
+            import_name,
+            escaped_name,
+            factory,
+        } = ctx;
         if flags & symbol_flags::TYPE_ALIAS != 0 {
             if escaped_name == "BuiltinIteratorReturn"
                 && self.is_compiler_builtin_iterator_return_alias(sym_id, declarations)
@@ -1008,7 +1011,7 @@ impl<'a> CheckerState<'a> {
                 let suppress_ts2694 =
                     self.check_import_qualified_shadows_namespace(import.module_specifier);
                 if !suppress_ts2694
-                    && self.report_type_query_missing_member(import.module_specifier)
+                    && self.report_qualified_alias_missing_member(import.module_specifier)
                 {
                     return (TypeId::ERROR, Vec::new());
                 }

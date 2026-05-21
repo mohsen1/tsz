@@ -160,7 +160,8 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         // Direct node-to-symbol lookup
-        if let Some(&sym_id) = binder.node_symbols.get(&decl_idx.0)
+        let mut direct_sym = binder.node_symbols.get(&decl_idx.0).copied();
+        if let Some(sym_id) = direct_sym
             && used.contains_key(&sym_id)
         {
             return true;
@@ -177,6 +178,13 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return true;
         }
+        if direct_sym.is_none()
+            && let Some(name_ni) = self.get_declaration_name_idx(decl_node)
+        {
+            direct_sym = binder.node_symbols.get(&name_ni.0).copied();
+        }
+        let direct_parent =
+            direct_sym.and_then(|sym_id| binder.symbols.get(sym_id).map(|symbol| symbol.parent));
         // For import-equals declarations extract the name from the
         // import clause since the declaration node is not an identifier.
         let import_clause_idx = if let Some(import_eq) = self.arena.get_import_decl(decl_node) {
@@ -213,14 +221,28 @@ impl<'a> DeclarationEmitter<'a> {
         for scope in binder.scopes.iter() {
             if let Some(sym_id) = scope.table.get(&name)
                 && used.contains_key(&sym_id)
+                && self.symbol_parent_matches(sym_id, direct_parent)
             {
                 return true;
             }
         }
         if let Some(sym_id) = binder.file_locals.get(&name) {
-            return used.contains_key(&sym_id);
+            return used.contains_key(&sym_id) && self.symbol_parent_matches(sym_id, direct_parent);
         }
         self.namespace_member_referenced_by_exported_object_literal(decl_idx, &name)
+    }
+
+    fn symbol_parent_matches(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        expected_parent: Option<tsz_binder::SymbolId>,
+    ) -> bool {
+        let Some(expected_parent) = expected_parent else {
+            return true;
+        };
+        self.binder
+            .and_then(|binder| binder.symbols.get(sym_id))
+            .is_some_and(|symbol| symbol.parent == expected_parent)
     }
 
     pub(crate) fn namespace_member_referenced_by_exported_object_literal(
@@ -383,6 +405,8 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return true;
         }
+        let direct_parent =
+            direct_sym.and_then(|sym_id| binder.symbols.get(sym_id).map(|symbol| symbol.parent));
         // The declaration's name may resolve to a different SymbolId than the
         // reference site that marked the symbol used (e.g., heritage clauses
         // inside a namespace can resolve through scope tables that don't share
@@ -397,12 +421,14 @@ impl<'a> DeclarationEmitter<'a> {
         };
         if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text)
             && used.contains_key(&sym_id)
+            && self.symbol_parent_matches(sym_id, direct_parent)
         {
             return true;
         }
         for scope in binder.scopes.iter() {
             if let Some(sym_id) = scope.table.get(&name_ident.escaped_text)
                 && used.contains_key(&sym_id)
+                && self.symbol_parent_matches(sym_id, direct_parent)
             {
                 return true;
             }
@@ -445,6 +471,9 @@ impl<'a> DeclarationEmitter<'a> {
                 .arena
                 .get_module(node)
                 .is_some_and(|module| self.has_export_modifier(&module.modifiers)),
+            // EXPORT_DECLARATION is the export statement itself — it always introduces
+            // exported bindings, so it counts as having an effective export.
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => true,
             _ => false,
         }
     }

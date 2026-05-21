@@ -20,6 +20,14 @@ use crate::visitor::{
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 
+fn args_contain_type_parameters(
+    interner: &dyn crate::construction::TypeDatabase,
+    args: &[TypeId],
+) -> bool {
+    args.iter()
+        .any(|arg| crate::visitor::contains_type_parameters(interner, *arg))
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn iterator_protocol_mismatch_for_same_application_family(
         &mut self,
@@ -538,11 +546,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             // mapped types like `{ [K in keyof T]: T[K] }`) that make
                             // the structural check succeed even though the variance
                             // check on the raw type parameter fails.
-                            let source_has_type_param = s_app
-                                .args
-                                .iter()
-                                .any(|arg| crate::contains_type_parameters(self.interner, *arg));
-                            if !source_has_type_param {
+                            if !args_contain_type_parameters(self.interner, &s_app.args) {
                                 return SubtypeResult::False;
                             }
                         }
@@ -571,7 +575,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             let s_eval = self.evaluate_type(source_type);
                             let t_eval = self.evaluate_type(target_type);
                             if s_eval != source_type || t_eval != target_type {
-                                return self.check_subtype(s_eval, t_eval);
+                                let eval_result = self.check_subtype(s_eval, t_eval);
+                                // Structural collapse (s_eval == t_eval) erases the distinction
+                                // that REJECTION_UNRELIABLE variance correctly detected. For
+                                // concrete args, trust variance over the collapsed result; for
+                                // type-param args, fall through — expanded forms may introduce
+                                // index signatures that make structural True valid.
+                                if rejection_unreliable
+                                    && s_eval == t_eval
+                                    && eval_result.is_true()
+                                    && !args_contain_type_parameters(self.interner, &s_app.args)
+                                {
+                                    return SubtypeResult::False;
+                                }
+                                return eval_result;
                             }
                         }
                     }
@@ -815,13 +832,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // For non-mapped types with all-concrete args, variance failures are
         // definitive: incompatible type args means incompatible generic types.
         let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
-        if any_checked && !all_ok && !needs_structural_fallback && !rejection_unreliable {
-            let source_has_type_param = s_args
-                .iter()
-                .any(|arg| crate::contains_type_parameters(self.interner, *arg));
-            if !source_has_type_param {
-                return Some(SubtypeResult::False);
-            }
+        if any_checked
+            && !all_ok
+            && !needs_structural_fallback
+            && !rejection_unreliable
+            && !args_contain_type_parameters(self.interner, &s_args)
+        {
+            return Some(SubtypeResult::False);
         }
 
         // NOTE: A previous heuristic tried to trust invariant variance rejection
@@ -1758,6 +1775,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let mapped = self.interner.get_mapped(mapped_id);
 
+        // Do not expand when the constraint is an intersection that contains
+        // `keyof TypeParam` AND the template is an indexed access into that same
+        // type parameter (i.e. `{ [K in keyof T & keyof C]: T[K] }`).
+        // The key-set derived from T's upper-bound constraint is not definitive:
+        // a concrete T could have fewer keys (if it is a proper subtype of its
+        // constraint). Expanding here would prematurely collapse the mapped type
+        // to the constraint shape (e.g. `Stuff`) and produce wrong error messages.
+        // The homomorphic-mapped-to-target path handles the correct assignability
+        // check without full expansion.
+        if self.mapped_intersection_constraint_has_generic_keyof(mapped_id) {
+            return None;
+        }
+
         // Get concrete keys from the constraint
         let keys = self.try_evaluate_mapped_constraint(mapped.constraint)?;
         if keys.is_empty() {
@@ -2004,6 +2034,53 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         None
+    }
+
+    /// Guard for `try_expand_mapped`: true only for the homomorphic pattern
+    /// `{ [K in keyof T & keyof C]: T[K] }` with T still a type parameter.
+    ///
+    /// Three conditions must all hold:
+    /// 1. Constraint is an intersection with at least one `keyof T` member where T
+    ///    is a TypeParameter/Infer.
+    /// 2. Template is an indexed access whose object is the **same TypeId** as the
+    ///    T identified in (1) — guards against `{ [K in keyof T & …]: U[K] }` where
+    ///    the template indexes a *different* generic.
+    /// 3. The index in the template is a `TypeParameter` whose name matches the
+    ///    mapped type's iteration variable — guards against `{ [K in keyof T & …]: T[string] }`.
+    ///
+    /// Expansion is blocked because T's concrete key-set is unknown; expanding
+    /// would collapse the type to the limit shape and produce wrong errors.
+    fn mapped_intersection_constraint_has_generic_keyof(&self, mapped_id: MappedTypeId) -> bool {
+        let mapped = self.interner.get_mapped(mapped_id);
+        let Some(TypeData::Intersection(members)) = self.interner.lookup(mapped.constraint) else {
+            return false;
+        };
+        // (1) Find the TypeId of T from the first `keyof T` member in the intersection.
+        let Some(keyof_param) = self.interner.type_list(members).iter().find_map(|&m| {
+            if let Some(TypeData::KeyOf(s)) = self.interner.lookup(m)
+                && matches!(
+                    self.interner.lookup(s),
+                    Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+                )
+            {
+                return Some(s);
+            }
+            None
+        }) else {
+            return false;
+        };
+        let Some((obj, idx)) = index_access_parts(self.interner, mapped.template) else {
+            return false;
+        };
+        // (2) Template object must be the exact same TypeId as the keyof source.
+        if obj != keyof_param {
+            return false;
+        }
+        // (3) Template index must be the mapped iteration variable K (matched by name).
+        matches!(
+            self.interner.lookup(idx),
+            Some(TypeData::TypeParameter(p)) if p.name == mapped.type_param.name
+        )
     }
 }
 

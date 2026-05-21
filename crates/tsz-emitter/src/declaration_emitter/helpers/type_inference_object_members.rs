@@ -325,6 +325,9 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(enum_type_text) = self.enum_member_widened_type_text(initializer) {
             return Some(enum_type_text);
         }
+        if let Some(type_text) = self.widened_inferred_expression_type_text(initializer) {
+            return Some(type_text);
+        }
         if self
             .arena
             .get(initializer)

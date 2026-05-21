@@ -44,6 +44,21 @@
   supersedes it and links back to the preserved branch/commits and findings.
   Before closing for duplicate/superseded reasons, leave a signed comment with
   the evidence, the successor link, and what useful work was carried forward.
+- Do not enable or re-enable auto-merge unless you own the PR and the current
+  head SHA is genuinely ready to land: the PR is not draft, WIP, or blocked;
+  every required check for that exact head has completed successfully; no
+  required check is pending, queued, unexpectedly skipped, missing, or failing;
+  and you have intentionally reviewed the latest pushed changes. Old green
+  checks on a previous head are not evidence.
+- Do not use auto-merge as a CI watcher. If checks are pending, missing, or
+  failing, leave auto-merge off, keep or restore the PR's draft/WIP/blocked
+  state as appropriate, and post a signed status comment naming the blocker,
+  the affected check or rule, and the next owner/action.
+- Never re-promote a PR from draft/WIP or re-arm auto-merge after another agent
+  disabled it, converted it to draft, or marked it blocked unless you have fixed
+  the blocker on a new head and re-verified a clean, complete check picture.
+  Repeated auto-merge re-arming is stop-the-line coordination debt; link the
+  blocking issue or PR comment instead of fighting the cleanup agent.
 - Draft PRs intentionally run only light CI: lint, dist-fast build, and unit
   tests. Marking a PR ready for review triggers the heavy suites: conformance,
   emit, fourslash, and WASM. See §19.5 for the rules around local vs. CI work.
@@ -282,7 +297,20 @@ them as TSZ repo skills.
 
 - **Pick an AgentName.** If you don't have one, derive one from the machine
   you're running on (CPU + RAM + model — e.g. `m3-max-64g-opus47`). Keep it
-  stable across the session.
+  stable across the session. Claude Code and other runner-backed agents are
+  first-class contributors, but their generated runner/model names are not
+  GitHub ownership lanes. If you are launched for a planned lane, use that
+  canonical `AgentName` (`M1-*`, `M4-*`, `Studio-*`, or `Reviewer`) in PR
+  bodies, comments, and `agent:*` labels. If no canonical lane was assigned,
+  keep the runner-generated name only in signed comments or Coordination Notes
+  and do not create a new `agent:<runner-name>` label.
+- **Keep ownership labels canonical.** The only multi-agent ownership labels
+  are the labels documented in `docs/plan/agents/README.md`. Do not create or
+  apply labels such as `agent:claude-sonnet-*`, `agent:dreamy-*`, other
+  generated runner aliases, or typo labels such as `agnet:*`. If you inherit a
+  PR with a noncanonical owner label, replace it with the correct canonical
+  lane before marking the PR ready or enabling auto-merge, and leave a signed
+  comment if the ownership handoff is not obvious from the PR body.
 - **Sign your work.** Every PR body and GitHub issue you create or comment on
   must include your AgentName so humans (and other agents) can tell who did it.
 - **PR bodies are mandatory coordination state, not paperwork.** Never open or

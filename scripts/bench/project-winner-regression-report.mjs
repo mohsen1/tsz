@@ -26,8 +26,30 @@ function sourceInfo(artifact, file) {
   };
 }
 
-function rowsByName(artifact) {
-  return new Map((artifact?.results ?? []).map((row) => [row?.name, row]));
+function indexedProjectRows(artifact) {
+  const rows = new Map();
+  const duplicateCounts = new Map();
+
+  for (const row of Array.isArray(artifact?.results) ? artifact.results : []) {
+    const name = row?.name;
+    if (typeof name !== "string") continue;
+    if (rows.has(name)) {
+      duplicateCounts.set(name, (duplicateCounts.get(name) ?? 1) + 1);
+    } else {
+      rows.set(name, row);
+    }
+  }
+
+  const duplicates = [...duplicateCounts]
+    .filter(([name]) => Object.hasOwn(PROJECT_ROWS_BY_NAME, name))
+    .map(([name, count]) => ({
+      name,
+      label: PROJECT_ROWS_BY_NAME[name]?.label ?? name,
+      count,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return { rows, duplicates };
 }
 
 function rowTiming(row) {
@@ -39,17 +61,29 @@ function rowTiming(row) {
   };
 }
 
+function isGreenProjectRow(row) {
+  return Boolean(row?.compatibility) && isGreen(row);
+}
+
 function compareRegressions(previous, current, previousPath, currentPath) {
-  const previousRows = rowsByName(previous);
-  const currentRows = rowsByName(current);
+  const previousIndex = indexedProjectRows(previous);
+  const currentIndex = indexedProjectRows(current);
+  const previousRows = previousIndex.rows;
+  const currentRows = currentIndex.rows;
+  const duplicateRows = [
+    ...previousIndex.duplicates.map((row) => ({ ...row, artifact: "previous" })),
+    ...currentIndex.duplicates.map((row) => ({ ...row, artifact: "current" })),
+  ];
+  const duplicatedKeys = new Set(duplicateRows.map((row) => `${row.artifact}:${row.name}`));
   const regressions = [];
   let compared = 0;
 
   for (const [name, def] of Object.entries(PROJECT_ROWS_BY_NAME)) {
+    if (duplicatedKeys.has(`previous:${name}`) || duplicatedKeys.has(`current:${name}`)) continue;
     const before = previousRows.get(name);
     const after = currentRows.get(name);
     if (!before || !after) continue;
-    if (!isGreen(before) || !isGreen(after)) continue;
+    if (!isGreenProjectRow(before) || !isGreenProjectRow(after)) continue;
     compared += 1;
     if (before.winner !== "tsz" || after.winner !== "tsgo") continue;
     regressions.push({
@@ -77,7 +111,9 @@ function compareRegressions(previous, current, previousPath, currentPath) {
       known_project_rows: Object.keys(PROJECT_ROWS_BY_NAME).length,
       green_project_rows_compared: compared,
       tsz_to_tsgo_regressions: regressions.length,
+      duplicate_project_rows: duplicateRows.length,
     },
+    duplicate_rows: duplicateRows,
     rows: regressions,
   };
 }
@@ -101,8 +137,19 @@ function markdownReport(report) {
     "| --- | ---: |",
     `| Green project rows compared | ${report.totals.green_project_rows_compared} |`,
     `| tsz-to-tsgo regressions | ${report.totals.tsz_to_tsgo_regressions} |`,
+    `| Duplicate project rows | ${report.totals.duplicate_project_rows} |`,
     "",
   ];
+
+  if (report.duplicate_rows.length > 0) {
+    lines.push("## Duplicate Project Rows", "");
+    lines.push("| Artifact | Row | Count |");
+    lines.push("| --- | --- | ---: |");
+    for (const row of report.duplicate_rows) {
+      lines.push(`| ${row.artifact} | \`${row.label}\` | ${row.count} |`);
+    }
+    lines.push("");
+  }
 
   if (report.rows.length === 0) {
     lines.push("No green project rows moved from `tsz` winner to `tsgo` winner.");
@@ -160,7 +207,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
   try {
     const report = writeProjectWinnerRegressionReport(previousPath, currentPath, outputPath, { jsonOnly });
-    process.exit(report.totals.tsz_to_tsgo_regressions > 0 ? 1 : 0);
+    process.exit(report.totals.tsz_to_tsgo_regressions > 0 || report.totals.duplicate_project_rows > 0 ? 1 : 0);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(2);

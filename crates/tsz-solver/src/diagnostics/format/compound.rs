@@ -10,6 +10,15 @@ use crate::types::{
 use std::borrow::Cow;
 use tsz_binder::SymbolId;
 
+/// Named options for `format_signature_with_predicate`.
+pub(super) struct SignatureFormatOpts<'a> {
+    pub this_type: Option<TypeId>,
+    pub type_predicate: Option<&'a crate::types::TypePredicate>,
+    pub is_construct: bool,
+    pub is_abstract: bool,
+    pub separator: &'a str,
+}
+
 impl<'a> TypeFormatter<'a> {
     fn collapse_truncated_tail_part(part: &str) -> String {
         let Some((prefix, ty)) = part.split_once(": ") else {
@@ -415,12 +424,14 @@ impl<'a> TypeFormatter<'a> {
         self.format_signature_with_predicate(
             type_params,
             params,
-            this_type,
             return_type,
-            None,
-            is_construct,
-            is_abstract,
-            separator,
+            &SignatureFormatOpts {
+                this_type,
+                type_predicate: None,
+                is_construct,
+                is_abstract,
+                separator,
+            },
         )
     }
 
@@ -429,28 +440,23 @@ impl<'a> TypeFormatter<'a> {
     /// When `type_predicate` is `Some`, the return type is formatted as
     /// `asserts v is T` or `v is T` instead of the raw return type.
     /// This matches tsc's display for assertion/type guard functions.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn format_signature_with_predicate(
         &mut self,
         type_params: &[TypeParamInfo],
         params: &[ParamInfo],
-        this_type: Option<TypeId>,
         return_type: TypeId,
-        type_predicate: Option<&crate::types::TypePredicate>,
-        is_construct: bool,
-        is_abstract: bool,
-        separator: &str,
+        opts: &SignatureFormatOpts<'_>,
     ) -> String {
-        let prefix = if is_construct && is_abstract {
+        let prefix = if opts.is_construct && opts.is_abstract {
             "abstract new "
-        } else if is_construct {
+        } else if opts.is_construct {
             "new "
         } else {
             ""
         };
         let type_params = self.format_type_params(type_params);
-        let params = self.format_params(params, this_type);
-        let return_str: Cow<'static, str> = if let Some(pred) = type_predicate {
+        let params = self.format_params(params, opts.this_type);
+        let return_str: Cow<'static, str> = if let Some(pred) = opts.type_predicate {
             let target_name = match pred.target {
                 crate::types::TypePredicateTarget::This => "this".to_string(),
                 crate::types::TypePredicateTarget::Identifier(atom) => self.atom(atom).to_string(),
@@ -469,7 +475,7 @@ impl<'a> TypeFormatter<'a> {
             && self.should_elide_recursive_typeof_function_return(return_type)
         {
             Cow::Borrowed("...")
-        } else if is_construct && return_type == TypeId::UNKNOWN {
+        } else if opts.is_construct && return_type == TypeId::UNKNOWN {
             Cow::Borrowed("any")
         } else {
             self.format(return_type)
@@ -479,7 +485,7 @@ impl<'a> TypeFormatter<'a> {
             prefix,
             type_params,
             params.join(", "),
-            separator,
+            opts.separator,
             return_str
         )
     }
@@ -1844,12 +1850,14 @@ impl<'a> TypeFormatter<'a> {
         self.format_signature_with_predicate(
             &shape.type_params,
             &shape.params,
-            shape.this_type,
             shape.return_type,
-            shape.type_predicate.as_ref(),
-            shape.is_constructor,
-            false,
-            " =>",
+            &SignatureFormatOpts {
+                this_type: shape.this_type,
+                type_predicate: shape.type_predicate.as_ref(),
+                is_construct: shape.is_constructor,
+                is_abstract: false,
+                separator: " =>",
+            },
         )
     }
 
@@ -1884,12 +1892,14 @@ impl<'a> TypeFormatter<'a> {
                 return self.format_signature_with_predicate(
                     &sig.type_params,
                     &sig.params,
-                    sig.this_type,
                     sig.return_type,
-                    sig.type_predicate.as_ref(),
-                    false,
-                    false,
-                    " =>",
+                    &SignatureFormatOpts {
+                        this_type: sig.this_type,
+                        type_predicate: sig.type_predicate.as_ref(),
+                        is_construct: false,
+                        is_abstract: false,
+                        separator: " =>",
+                    },
                 );
             }
             if shape.construct_signatures.len() == 1 && shape.call_signatures.is_empty() {
@@ -1980,12 +1990,14 @@ impl<'a> TypeFormatter<'a> {
         self.format_signature_with_predicate(
             &sig.type_params,
             &sig.params,
-            sig.this_type,
             sig.return_type,
-            sig.type_predicate.as_ref(),
-            is_construct,
-            is_abstract,
-            ":",
+            &SignatureFormatOpts {
+                this_type: sig.this_type,
+                type_predicate: sig.type_predicate.as_ref(),
+                is_construct,
+                is_abstract,
+                separator: ":",
+            },
         )
     }
 
@@ -2442,7 +2454,7 @@ impl<'a> TypeFormatter<'a> {
             }
         }
 
-        Some(self.qualify_namespace_name_if_needed(sym_id, &sym.escaped_name, qualified_name))
+        Some(qualified_name)
     }
 
     /// Resolve a `SymbolRef` (from `TypeQuery` / `ModuleNamespace`) to a display name.
@@ -2520,29 +2532,11 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
 
-            return self.qualify_namespace_name_if_needed(
-                SymbolId(sym_raw),
-                &symbol.escaped_name,
-                qualified_name,
-            );
+            return qualified_name;
         }
 
         // Fallback: use the short (unqualified) definition name.
         def_name
-    }
-
-    #[allow(clippy::missing_const_for_fn)] // Can't be const with &self in stable Rust
-    fn qualify_namespace_name_if_needed(
-        &self,
-        _sym_id: SymbolId,
-        _original_name: &str,
-        current_name: String,
-    ) -> String {
-        // tsc uses SHORT names in general type display, even when multiple types
-        // share the same name across different namespaces. Namespace qualification
-        // is only added in specific contexts (union display with same-name members,
-        // explicit disambiguation messages). Those paths are handled separately.
-        current_name
     }
 
     /// Namespace-qualify a symbol name for contexts where disambiguation is needed

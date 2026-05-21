@@ -17,6 +17,18 @@ use super::assignability::{
 };
 mod nested_application_property_mismatch;
 mod type_mismatch;
+
+/// Parameters shared across all `render_*` dispatch helpers.
+pub(in crate::error_reporter) struct RenderContext {
+    pub source: TypeId,
+    pub target: TypeId,
+    pub idx: NodeIndex,
+    pub depth: u32,
+    pub start: u32,
+    pub length: u32,
+    pub file_name: String,
+}
+
 impl<'a> CheckerState<'a> {
     /// Resolve the parameter name at `param_index` in the first call
     /// signature of `callable_ty` (if any). Used to render TS2328
@@ -407,41 +419,26 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        let rctx = RenderContext {
+            source,
+            target,
+            idx,
+            depth,
+            start,
+            length,
+            file_name: file_name.clone(),
+        };
         match reason {
             SubtypeFailureReason::MissingProperty {
                 property_name,
                 source_type,
                 target_type,
-            } => self.render_missing_property(
-                reason,
-                source,
-                target,
-                idx,
-                depth,
-                start,
-                length,
-                file_name,
-                *property_name,
-                *source_type,
-                *target_type,
-            ),
+            } => self.render_missing_property(&rctx, *property_name, *source_type, *target_type),
             SubtypeFailureReason::MissingProperties {
                 property_names,
                 source_type,
                 target_type,
-            } => self.render_missing_properties(
-                reason,
-                source,
-                target,
-                idx,
-                depth,
-                start,
-                length,
-                file_name,
-                property_names,
-                *source_type,
-                *target_type,
-            ),
+            } => self.render_missing_properties(&rctx, property_names, *source_type, *target_type),
             SubtypeFailureReason::PropertyTypeMismatch {
                 property_name,
                 source_property_type,
@@ -449,30 +446,15 @@ impl<'a> CheckerState<'a> {
                 nested_reason,
             } => self.render_property_type_mismatch(
                 reason,
-                source,
-                target,
-                idx,
-                depth,
-                start,
-                length,
-                file_name,
+                &rctx,
                 *property_name,
                 *source_property_type,
                 *target_property_type,
                 nested_reason.as_deref(),
             ),
-            SubtypeFailureReason::OptionalPropertyRequired { property_name } => self
-                .render_optional_property_required(
-                    reason,
-                    source,
-                    target,
-                    idx,
-                    depth,
-                    start,
-                    length,
-                    file_name,
-                    *property_name,
-                ),
+            SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
+                self.render_optional_property_required(&rctx, *property_name)
+            }
             SubtypeFailureReason::ReadonlyPropertyMismatch { property_name } => {
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 let message = format_message(
@@ -504,18 +486,9 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 )
             }
-            SubtypeFailureReason::PropertyNominalMismatch { property_name } => self
-                .render_property_nominal_mismatch(
-                    reason,
-                    source,
-                    target,
-                    idx,
-                    depth,
-                    start,
-                    length,
-                    file_name,
-                    *property_name,
-                ),
+            SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
+                self.render_property_nominal_mismatch(reason, &rctx, *property_name)
+            }
             SubtypeFailureReason::ExcessProperty {
                 property_name,
                 target_type: _,
@@ -534,13 +507,7 @@ impl<'a> CheckerState<'a> {
                 nested_reason,
             } => self.render_return_type_mismatch(
                 reason,
-                source,
-                target,
-                idx,
-                depth,
-                start,
-                length,
-                file_name,
+                &rctx,
                 *source_return,
                 *target_return,
                 nested_reason.as_deref(),
@@ -877,8 +844,7 @@ impl<'a> CheckerState<'a> {
             SubtypeFailureReason::TypeMismatch {
                 source_type: _,
                 target_type: _,
-            } => self
-                .render_type_mismatch(reason, source, target, idx, depth, start, length, file_name),
+            } => self.render_type_mismatch(&rctx),
 
             SubtypeFailureReason::ReadonlyToMutableAssignment {
                 source_type,
@@ -978,29 +944,47 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
                     )
                 } else {
+                    // At depth > 0 we are rendering a nested property/element
+                    // failure. The outer anchor index no longer points at the
+                    // sub-expression whose type is `source`; using the
+                    // `AssignmentSource` role would look up the outer RHS
+                    // expression and render its type (e.g. the enclosing class
+                    // instance) instead of the mismatched parameter's actual
+                    // type. Use the structural formatter at depth > 0 so the
+                    // rendered source matches the solver's `source` TypeId.
                     let (source_str, target_str) = if strict_callback_case {
                         self.strict_callback_assignment_display_pair(source, target, *param_index)
                             .unwrap_or_else(|| {
-                                (
+                                let source_str = if depth > 0 {
+                                    self.format_type_for_assignability_message(source)
+                                } else {
                                     self.format_type_for_diagnostic_role(
                                         source,
                                         DiagnosticTypeDisplayRole::AssignmentSource {
                                             target,
                                             anchor_idx: idx,
                                         },
-                                    ),
+                                    )
+                                };
+                                (
+                                    source_str,
                                     self.format_assignability_type_for_message(target, source),
                                 )
                             })
                     } else {
-                        (
+                        let source_str = if depth > 0 {
+                            self.format_type_for_assignability_message(source)
+                        } else {
                             self.format_type_for_diagnostic_role(
                                 source,
                                 DiagnosticTypeDisplayRole::AssignmentSource {
                                     target,
                                     anchor_idx: idx,
                                 },
-                            ),
+                            )
+                        };
+                        (
+                            source_str,
                             self.format_assignability_type_for_message(target, source),
                         )
                     };
@@ -1023,12 +1007,7 @@ impl<'a> CheckerState<'a> {
                 target_param,
                 target_constraint,
             } => self.render_index_access_type_parameter_mismatch(
-                source,
-                target,
-                idx,
-                start,
-                length,
-                file_name,
+                &rctx,
                 *source_param,
                 *target_param,
                 *target_constraint,
@@ -1096,19 +1075,19 @@ impl<'a> CheckerState<'a> {
     /// uses whichever surface type parameters the user wrote, and falls
     /// back to a single-line message when the target parameter is
     /// unconstrained (no useful TS5075 anchor).
-    #[allow(clippy::too_many_arguments)]
     fn render_index_access_type_parameter_mismatch(
         &mut self,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-        start: u32,
-        length: u32,
-        file_name: String,
+        ctx: &RenderContext,
         source_param: TypeId,
         target_param: TypeId,
         target_constraint: Option<TypeId>,
     ) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
         let (source_str, target_str) =
             self.format_top_level_assignability_message_types_at(source, target, idx);
         let message = format_message(
@@ -1250,21 +1229,20 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_missing_property(
         &mut self,
-        _reason: &tsz_solver::SubtypeFailureReason,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-        depth: u32,
-        start: u32,
-        length: u32,
-        file_name: String,
+        ctx: &RenderContext,
         property_name: tsz_common::interner::Atom,
         source_type: TypeId,
         target_type: TypeId,
     ) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
         let source_type_is_object = self.is_object_intrinsic_for_missing_properties(source_type);
         // Primitive sources use TS2322 rather than missing-property wording.
         let display_src_str = if depth == 0 && !source_type_is_object {
@@ -1897,7 +1875,6 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     /// For TS2739 source display, unfold wrapper aliases like
     /// `type B = A<X>` to the body application `A<X>`. Other shapes keep
     /// normal formatting.
@@ -2012,21 +1989,20 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_missing_properties(
         &mut self,
-        _reason: &tsz_solver::SubtypeFailureReason,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-        depth: u32,
-        start: u32,
-        length: u32,
-        file_name: String,
+        ctx: &RenderContext,
         property_names: &[tsz_common::interner::Atom],
         source_type: TypeId,
         target_type: TypeId,
     ) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
         let source_type_is_object = self.is_object_intrinsic_for_missing_properties(source_type);
         // TSC emits TS2322 instead of TS2739/TS2740 when the source is a primitive type.
         if !source_type_is_object
@@ -2686,19 +2662,18 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_optional_property_required(
         &mut self,
-        _reason: &tsz_solver::SubtypeFailureReason,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-        depth: u32,
-        start: u32,
-        length: u32,
-        file_name: String,
+        ctx: &RenderContext,
         property_name: tsz_common::interner::Atom,
     ) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
         if depth == 0 {
             let (source_str, target_str) =
                 self.format_top_level_assignability_message_types_at(source, target, idx);
@@ -2838,19 +2813,18 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_property_nominal_mismatch(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-        _depth: u32,
-        start: u32,
-        length: u32,
-        file_name: String,
+        ctx: &RenderContext,
         property_name: tsz_common::interner::Atom,
     ) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
         if let Some((prop_name, owner_name, visibility)) =
             self.private_or_protected_member_missing_display(source, target, Some(property_name))
         {
@@ -2904,21 +2878,21 @@ impl<'a> CheckerState<'a> {
         diag
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_return_type_mismatch(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-        depth: u32,
-        start: u32,
-        length: u32,
-        file_name: String,
+        ctx: &RenderContext,
         source_return: TypeId,
         target_return: TypeId,
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
         if depth == 0 {
             let (source_str, target_str) =
                 self.format_top_level_assignability_message_types_at(source, target, idx);

@@ -40,6 +40,7 @@ mod function_scopes;
 mod functions;
 mod functions_arrow;
 mod helpers;
+mod hoist_anchor;
 mod jsx;
 mod literals;
 mod module_emission;

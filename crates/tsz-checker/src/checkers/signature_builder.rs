@@ -198,8 +198,7 @@ impl<'a> CheckerState<'a> {
             }
             let promise_base = self
                 .ctx
-                .lib_promise_sym_id()
-                .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
+                .lib_promise_type_ref()
                 .unwrap_or(TypeId::PROMISE_BASE);
             return_type = self
                 .ctx

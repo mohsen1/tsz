@@ -10,8 +10,7 @@ impl<'a> Printer<'a> {
         self.open_brace();
         self.write_line();
         self.increase_indent();
-        let hoist_offset = self.writer.len();
-        let hoist_line = self.writer.current_line();
+        let hoist_anchor = self.capture_hoist_anchor();
 
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
@@ -25,14 +24,14 @@ impl<'a> Printer<'a> {
         self.emitting_function_body_block = prev_emitting_function_body_block;
 
         if !self.hoisted_assignment_temps.is_empty() {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let indent = self.writer.indent_string_at(hoist_anchor.indent_level);
             let var_decl = format!(
                 "{}var {};",
                 indent,
                 self.hoisted_assignment_temps.join(", ")
             );
             self.writer
-                .insert_line_at(hoist_offset, hoist_line, &var_decl);
+                .insert_line_at(hoist_anchor.byte_offset, hoist_anchor.line_no, &var_decl);
             self.hoisted_assignment_temps.clear();
         }
 

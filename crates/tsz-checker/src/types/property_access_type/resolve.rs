@@ -2750,16 +2750,18 @@ impl<'a> CheckerState<'a> {
                     property_type,
                     cause,
                 } => self.handle_possibly_null_or_undefined_access(
-                    idx,
-                    access.expression,
-                    access.name_or_argument,
-                    access.question_dot_token,
-                    property_type,
-                    cause,
-                    object_type_for_access,
-                    property_name,
-                    skip_flow_narrowing,
-                    receiver_has_daa_error,
+                    super::nullish_access::NullishAccessSite {
+                        idx,
+                        expression: access.expression,
+                        name_or_argument: access.name_or_argument,
+                        question_dot_token: access.question_dot_token,
+                        property_type,
+                        cause,
+                        object_type_for_access,
+                        property_name,
+                        skip_flow_narrowing,
+                        receiver_has_daa_error,
+                    },
                 ),
 
                 PropertyAccessResult::IsUnknown => {

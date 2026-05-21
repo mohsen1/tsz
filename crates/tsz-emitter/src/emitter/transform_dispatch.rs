@@ -340,6 +340,7 @@ impl<'a> Printer<'a> {
                 }
                 let system_export_fold = self.pending_system_namespace_export_fold.take();
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                 ns_emitter.set_const_enum_facts(
                     self.const_enum_values.clone(),
                     self.const_enum_import_aliases.clone(),
@@ -436,6 +437,7 @@ impl<'a> Printer<'a> {
                                 self.arena,
                                 !merges_with_default_func,
                             );
+                            ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                             ns_emitter.set_const_enum_facts(
                                 self.const_enum_values.clone(),
                                 self.const_enum_import_aliases.clone(),
@@ -859,6 +861,8 @@ impl<'a> Printer<'a> {
         &mut self,
         es5_emitter: &mut ClassES5Emitter<'a>,
     ) {
+        es5_emitter
+            .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         es5_emitter
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
@@ -918,7 +922,7 @@ impl<'a> Printer<'a> {
         {
             let class_name = self.get_identifier_text_idx(class_data.name);
             let externally_hoisted_decls =
-                self.es5_computed_auto_accessor_hoisted_decls(class_node, &class_name);
+                self.es5_class_externally_hoisted_decls(class_node, &class_name);
             if !externally_hoisted_decls.is_empty() {
                 for decl in &externally_hoisted_decls {
                     if !self.hoisted_assignment_temps.contains(decl) {
@@ -1321,6 +1325,7 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                 ns_emitter.set_const_enum_facts(
                     self.const_enum_values.clone(),
                     self.const_enum_import_aliases.clone(),
@@ -1539,6 +1544,7 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                 ns_emitter.set_const_enum_facts(
                     self.const_enum_values.clone(),
                     self.const_enum_import_aliases.clone(),
@@ -1589,6 +1595,7 @@ impl<'a> Printer<'a> {
                             .map(|ident| ident.escaped_text.clone())
                     });
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                    ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                     ns_emitter.set_const_enum_facts(
                         self.const_enum_values.clone(),
                         self.const_enum_import_aliases.clone(),

@@ -600,9 +600,19 @@ impl<'a> DeclarationEmitter<'a> {
             Value::Number(_) => "number".to_string(),
             Value::String(_) => "string".to_string(),
             Value::Array(items) => {
+                let object_property_order = Self::json_array_object_property_order(items);
                 let mut element_types = Vec::new();
                 for item in items {
-                    let item_type = Self::json_value_declaration_type_text(item, depth);
+                    let item_type = match item {
+                        Value::Object(map) if !object_property_order.is_empty() => {
+                            Self::json_object_declaration_type_text(
+                                map,
+                                depth,
+                                Some(&object_property_order),
+                            )
+                        }
+                        _ => Self::json_value_declaration_type_text(item, depth),
+                    };
                     if !element_types.iter().any(|existing| existing == &item_type) {
                         element_types.push(item_type);
                     }
@@ -615,26 +625,57 @@ impl<'a> DeclarationEmitter<'a> {
                     format!("({})[]", element_types.join(" | "))
                 }
             }
-            Value::Object(map) => {
-                if map.is_empty() {
-                    return "{}".to_string();
-                }
+            Value::Object(map) => Self::json_object_declaration_type_text(map, depth, None),
+        }
+    }
 
-                let member_indent = "    ".repeat((depth + 1) as usize);
-                let closing_indent = "    ".repeat(depth as usize);
-                let mut text = String::from("{\n");
-                for (key, value) in map {
-                    text.push_str(&member_indent);
-                    text.push_str(&Self::json_property_name_text(key));
-                    text.push_str(": ");
-                    text.push_str(&Self::json_value_declaration_type_text(value, depth + 1));
-                    text.push_str(";\n");
+    fn json_array_object_property_order(items: &[Value]) -> Vec<String> {
+        let mut names = Vec::new();
+        for item in items {
+            let Value::Object(map) = item else {
+                continue;
+            };
+            for key in map.keys() {
+                if !names.iter().any(|existing| existing == key) {
+                    names.push(key.clone());
                 }
-                text.push_str(&closing_indent);
-                text.push('}');
-                text
             }
         }
+        names
+    }
+
+    fn json_object_declaration_type_text(
+        map: &serde_json::Map<String, Value>,
+        depth: u32,
+        complete_property_order: Option<&[String]>,
+    ) -> String {
+        if map.is_empty() && complete_property_order.is_none_or(|names| names.is_empty()) {
+            return "{}".to_string();
+        }
+
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
+        let mut text = String::from("{\n");
+        for (key, value) in map {
+            text.push_str(&member_indent);
+            text.push_str(&Self::json_property_name_text(key));
+            text.push_str(": ");
+            text.push_str(&Self::json_value_declaration_type_text(value, depth + 1));
+            text.push_str(";\n");
+        }
+        if let Some(all_names) = complete_property_order {
+            for key in all_names {
+                if map.contains_key(key) {
+                    continue;
+                }
+                text.push_str(&member_indent);
+                text.push_str(&Self::json_property_name_text(key));
+                text.push_str("?: undefined;\n");
+            }
+        }
+        text.push_str(&closing_indent);
+        text.push('}');
+        text
     }
 
     fn json_property_name_text(key: &str) -> String {
@@ -777,7 +818,10 @@ impl<'a> DeclarationEmitter<'a> {
         Some(format!("typeof {name}"))
     }
 
-    fn symbol_has_unique_symbol_type(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    pub(in crate::declaration_emitter) fn symbol_has_unique_symbol_type(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
         let Some(binder) = self.binder else {
             return false;
         };

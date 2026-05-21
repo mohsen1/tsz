@@ -147,7 +147,6 @@ impl ParserState {
         let mut seen_in = false;
         let mut seen_out = false;
 
-        #[allow(clippy::while_let_loop)] // Inner conditional break makes while-let impractical
         loop {
             match self.token() {
                 SyntaxKind::ConstKeyword | SyntaxKind::InKeyword | SyntaxKind::OutKeyword => {

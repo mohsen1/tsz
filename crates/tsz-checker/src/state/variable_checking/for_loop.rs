@@ -28,6 +28,13 @@ impl ForOfProtocolRole {
     }
 }
 
+struct ForOfProtocolCollector<'c> {
+    sites: &'c mut Vec<NodeIndex>,
+    /// Role tag included to avoid revisiting the same symbol in a different protocol role.
+    visited_symbols: &'c mut FxHashSet<(SymbolId, u8)>,
+    visited_holders: &'c mut FxHashSet<(NodeIndex, u8)>,
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_for_of_header_expression_symbol(
         &self,
@@ -875,20 +882,22 @@ impl<'a> CheckerState<'a> {
         let mut sites = Vec::new();
         let mut visited_symbols = FxHashSet::default();
         let mut visited_holders = FxHashSet::default();
+        let mut collector = ForOfProtocolCollector {
+            sites: &mut sites,
+            visited_symbols: &mut visited_symbols,
+            visited_holders: &mut visited_holders,
+        };
         self.collect_for_of_protocol_sites_from_expression(
             expr_idx,
             target_sym,
             ForOfProtocolRole::Iterable,
             None,
             false,
-            &mut sites,
-            &mut visited_symbols,
-            &mut visited_holders,
+            &mut collector,
         );
         sites
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn collect_for_of_protocol_sites_from_expression(
         &mut self,
         expr_idx: NodeIndex,
@@ -896,9 +905,7 @@ impl<'a> CheckerState<'a> {
         role: ForOfProtocolRole,
         owner_idx: Option<NodeIndex>,
         allow_function_returns: bool,
-        sites: &mut Vec<NodeIndex>,
-        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
-        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+        collector: &mut ForOfProtocolCollector<'_>,
     ) {
         let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
         let Some(node) = self.ctx.arena.get(expr_idx) else {
@@ -909,14 +916,7 @@ impl<'a> CheckerState<'a> {
             && role == ForOfProtocolRole::Iterator
             && let Some(owner_idx) = owner_idx
         {
-            self.inspect_for_of_protocol_holder(
-                owner_idx,
-                target_sym,
-                role,
-                sites,
-                visited_symbols,
-                visited_holders,
-            );
+            self.inspect_for_of_protocol_holder(owner_idx, target_sym, role, collector);
             return;
         }
 
@@ -930,9 +930,7 @@ impl<'a> CheckerState<'a> {
                     target_sym,
                     role,
                     allow_function_returns,
-                    sites,
-                    visited_symbols,
-                    visited_holders,
+                    collector,
                 );
                 return;
             }
@@ -944,14 +942,7 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::CLASS_EXPRESSION
                 | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         ) {
-            self.inspect_for_of_protocol_holder(
-                expr_idx,
-                target_sym,
-                role,
-                sites,
-                visited_symbols,
-                visited_holders,
-            );
+            self.inspect_for_of_protocol_holder(expr_idx, target_sym, role, collector);
             return;
         }
 
@@ -966,23 +957,14 @@ impl<'a> CheckerState<'a> {
                 role,
                 owner_idx,
                 node.kind == syntax_kind_ext::CALL_EXPRESSION,
-                sites,
-                visited_symbols,
-                visited_holders,
+                collector,
             );
             return;
         }
 
         for child_idx in self.ctx.arena.get_children(expr_idx) {
             self.collect_for_of_protocol_sites_from_expression(
-                child_idx,
-                target_sym,
-                role,
-                owner_idx,
-                false,
-                sites,
-                visited_symbols,
-                visited_holders,
+                child_idx, target_sym, role, owner_idx, false, collector,
             );
         }
     }
@@ -993,11 +975,9 @@ impl<'a> CheckerState<'a> {
         target_sym: SymbolId,
         role: ForOfProtocolRole,
         allow_function_returns: bool,
-        sites: &mut Vec<NodeIndex>,
-        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
-        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+        collector: &mut ForOfProtocolCollector<'_>,
     ) {
-        if !visited_symbols.insert((sym_id, role.tag())) {
+        if !collector.visited_symbols.insert((sym_id, role.tag())) {
             return;
         }
 
@@ -1021,14 +1001,7 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::CLASS_EXPRESSION
                     | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             ) {
-                self.inspect_for_of_protocol_holder(
-                    decl_idx,
-                    target_sym,
-                    role,
-                    sites,
-                    visited_symbols,
-                    visited_holders,
-                );
+                self.inspect_for_of_protocol_holder(decl_idx, target_sym, role, collector);
                 continue;
             }
 
@@ -1041,9 +1014,7 @@ impl<'a> CheckerState<'a> {
                     role,
                     None,
                     false,
-                    sites,
-                    visited_symbols,
-                    visited_holders,
+                    collector,
                 );
                 continue;
             }
@@ -1058,9 +1029,7 @@ impl<'a> CheckerState<'a> {
                     None,
                     Some(role),
                     target_sym,
-                    sites,
-                    visited_symbols,
-                    visited_holders,
+                    collector,
                 );
             }
         }
@@ -1071,11 +1040,9 @@ impl<'a> CheckerState<'a> {
         holder_idx: NodeIndex,
         target_sym: SymbolId,
         role: ForOfProtocolRole,
-        sites: &mut Vec<NodeIndex>,
-        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
-        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+        collector: &mut ForOfProtocolCollector<'_>,
     ) {
-        if !visited_holders.insert((holder_idx, role.tag())) {
+        if !collector.visited_holders.insert((holder_idx, role.tag())) {
             return;
         }
 
@@ -1086,13 +1053,7 @@ impl<'a> CheckerState<'a> {
         if let Some(class) = self.ctx.arena.get_class(holder_node) {
             for &member_idx in &class.members.nodes {
                 self.inspect_for_of_protocol_member(
-                    member_idx,
-                    holder_idx,
-                    target_sym,
-                    role,
-                    sites,
-                    visited_symbols,
-                    visited_holders,
+                    member_idx, holder_idx, target_sym, role, collector,
                 );
             }
             return;
@@ -1103,13 +1064,7 @@ impl<'a> CheckerState<'a> {
         {
             for &member_idx in &object_literal.elements.nodes {
                 self.inspect_for_of_protocol_member(
-                    member_idx,
-                    holder_idx,
-                    target_sym,
-                    role,
-                    sites,
-                    visited_symbols,
-                    visited_holders,
+                    member_idx, holder_idx, target_sym, role, collector,
                 );
             }
         }
@@ -1121,9 +1076,7 @@ impl<'a> CheckerState<'a> {
         owner_idx: NodeIndex,
         target_sym: SymbolId,
         role: ForOfProtocolRole,
-        sites: &mut Vec<NodeIndex>,
-        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
-        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+        collector: &mut ForOfProtocolCollector<'_>,
     ) {
         let Some(member_node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -1146,9 +1099,7 @@ impl<'a> CheckerState<'a> {
                     Some(owner_idx),
                     self.next_protocol_role(name.as_str(), role),
                     target_sym,
-                    sites,
-                    visited_symbols,
-                    visited_holders,
+                    collector,
                 );
             }
             syntax_kind_ext::GET_ACCESSOR => {
@@ -1167,9 +1118,7 @@ impl<'a> CheckerState<'a> {
                     Some(owner_idx),
                     self.next_protocol_role(name.as_str(), role),
                     target_sym,
-                    sites,
-                    visited_symbols,
-                    visited_holders,
+                    collector,
                 );
             }
             syntax_kind_ext::PROPERTY_DECLARATION => {
@@ -1188,9 +1137,7 @@ impl<'a> CheckerState<'a> {
                     name.as_str(),
                     role,
                     target_sym,
-                    sites,
-                    visited_symbols,
-                    visited_holders,
+                    collector,
                 );
             }
             syntax_kind_ext::PROPERTY_ASSIGNMENT => {
@@ -1209,16 +1156,13 @@ impl<'a> CheckerState<'a> {
                     name.as_str(),
                     role,
                     target_sym,
-                    sites,
-                    visited_symbols,
-                    visited_holders,
+                    collector,
                 );
             }
             _ => {}
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn inspect_function_like_protocol_initializer(
         &mut self,
         initializer_idx: NodeIndex,
@@ -1226,9 +1170,7 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         role: ForOfProtocolRole,
         target_sym: SymbolId,
-        sites: &mut Vec<NodeIndex>,
-        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
-        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+        collector: &mut ForOfProtocolCollector<'_>,
     ) {
         let initializer_idx = self
             .ctx
@@ -1246,14 +1188,11 @@ impl<'a> CheckerState<'a> {
                 Some(owner_idx),
                 self.next_protocol_role(member_name, role),
                 target_sym,
-                sites,
-                visited_symbols,
-                visited_holders,
+                collector,
             );
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn inspect_function_like_protocol_returns(
         &mut self,
         body_idx: NodeIndex,
@@ -1261,9 +1200,7 @@ impl<'a> CheckerState<'a> {
         owner_idx: Option<NodeIndex>,
         next_role: Option<ForOfProtocolRole>,
         target_sym: SymbolId,
-        sites: &mut Vec<NodeIndex>,
-        visited_symbols: &mut FxHashSet<(SymbolId, u8)>,
-        visited_holders: &mut FxHashSet<(NodeIndex, u8)>,
+        collector: &mut ForOfProtocolCollector<'_>,
     ) {
         if body_idx.is_none() {
             return;
@@ -1279,20 +1216,13 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(next_role) = next_role {
                 self.collect_for_of_protocol_sites_from_expression(
-                    expr_idx,
-                    target_sym,
-                    next_role,
-                    owner_idx,
-                    false,
-                    sites,
-                    visited_symbols,
-                    visited_holders,
+                    expr_idx, target_sym, next_role, owner_idx, false, collector,
                 );
             }
         }
 
-        if has_circular_return && !sites.contains(&diagnostic_site_idx) {
-            sites.push(diagnostic_site_idx);
+        if has_circular_return && !collector.sites.contains(&diagnostic_site_idx) {
+            collector.sites.push(diagnostic_site_idx);
         }
     }
 

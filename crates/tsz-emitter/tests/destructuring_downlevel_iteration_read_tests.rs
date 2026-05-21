@@ -49,6 +49,25 @@ fn array_assignment_pattern_reads_simple_identifier_sources_when_downlevel_itera
 }
 
 #[test]
+fn empty_array_assignment_patterns_do_not_schedule_read_helpers() {
+    let output = emit_es5_downlevel_iteration(
+        "var a: any;\n\
+         ({} = a);\n\
+         ([] = a);\n",
+    );
+
+    assert!(
+        !output.contains("var __read") && !output.contains("__read("),
+        "Empty assignment patterns should evaluate the source without scheduling `__read`.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("(a);").count(),
+        2,
+        "Both empty assignment patterns should emit as source evaluations.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn empty_array_binding_patterns_without_initializers_still_schedule_read_helpers() {
     let output = emit_es5_downlevel_iteration(
         "(function () {\n\

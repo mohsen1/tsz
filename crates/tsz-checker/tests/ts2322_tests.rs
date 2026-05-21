@@ -7124,6 +7124,40 @@ fn test_reverse_mapped_contextual_target_display_uses_inferred_application_args(
     );
 }
 
+#[test]
+fn test_reverse_mapped_contextual_target_display_is_structural_for_renamed_params() {
+    let source = r#"
+        type PickResult<Store, Result> = (store: Store) => Result;
+
+        declare function buildSelectors<Store, Shape>(
+            selectors: {[Key in keyof Shape]: PickResult<Store, Shape[Key]>},
+        ): PickResult<Store, Shape>;
+
+        const getTitle = () => "title";
+
+        const selectors = buildSelectors({
+            title: (store: any, extra: any) => getTitle(),
+        });
+    "#;
+
+    let diags = diagnostics_for_source(source);
+    let mismatch = diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diags:#?}"));
+
+    assert!(
+        mismatch
+            .message_text
+            .contains("PickResult<unknown, string>"),
+        "expected contextual target display to use inferred application args; got: {mismatch:#?}"
+    );
+    assert!(
+        !mismatch.message_text.contains("Shape[\"title\"]"),
+        "target display should not expose unresolved reverse-mapped indexed access; got: {mismatch:#?}"
+    );
+}
+
 // =============================================================================
 // @ts-nocheck / @ts-check pragma: must only honour directives in comments
 // (issue #2821)

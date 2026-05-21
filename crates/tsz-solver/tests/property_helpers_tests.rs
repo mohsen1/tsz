@@ -1958,3 +1958,240 @@ fn test_readonly_array_no_lib_push_not_found() {
     let readonly_num = interner.readonly_array(TypeId::NUMBER);
     assert_property_not_found(&evaluator.resolve_property_access(readonly_num, "push"));
 }
+
+// =============================================================================
+// TypeParameter property access — constraint evaluation
+// =============================================================================
+
+/// `T extends { x: number; y: string }` — property access on a type parameter
+/// with a direct concrete object constraint resolves via the constraint.
+#[test]
+fn test_type_param_with_object_constraint_property_found() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let x_atom = interner.intern_string("x");
+    let y_atom = interner.intern_string("y");
+    let constraint_obj = interner.object(vec![
+        PropertyInfo::new(x_atom, TypeId::NUMBER),
+        PropertyInfo::new(y_atom, TypeId::STRING),
+    ]);
+    // Verify the rule is name-independent (T, K, U all behave the same).
+    for name in ["T", "K", "U"] {
+        let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: Some(constraint_obj),
+            default: None,
+            is_const: false,
+        }));
+        assert_property_success(
+            &evaluator.resolve_property_access(type_param, "x"),
+            TypeId::NUMBER,
+        );
+        assert_property_success(
+            &evaluator.resolve_property_access(type_param, "y"),
+            TypeId::STRING,
+        );
+        assert_property_not_found(&evaluator.resolve_property_access(type_param, "z"));
+    }
+}
+
+/// `T` with no constraint — any property access must return `PropertyNotFound`.
+#[test]
+fn test_type_param_no_constraint_property_not_found() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    for name in ["T", "P", "X"] {
+        let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }));
+        assert_property_not_found(&evaluator.resolve_property_access(type_param, "x"));
+        assert_property_not_found(&evaluator.resolve_property_access(type_param, "toString"));
+    }
+}
+
+/// `T extends A | B` where both union members have the same property — the
+/// solver evaluates the union constraint and finds the property on all members.
+#[test]
+fn test_type_param_with_union_constraint_shared_property_found() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let x_atom = interner.intern_string("x");
+    let a = interner.object(vec![PropertyInfo::new(x_atom, TypeId::NUMBER)]);
+    let b = interner.object(vec![PropertyInfo::new(x_atom, TypeId::STRING)]);
+    let union_constraint = interner.union(vec![a, b]);
+
+    for name in ["T", "K"] {
+        let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: Some(union_constraint),
+            default: None,
+            is_const: false,
+        }));
+        // Property `x` exists on both union members — must resolve.
+        let result = evaluator.resolve_property_access(type_param, "x");
+        assert!(
+            matches!(result, PropertyAccessResult::Success { .. }),
+            "Expected Success for shared union property, got {result:?}"
+        );
+        // Property `z` exists on neither — must be PropertyNotFound.
+        assert_property_not_found(&evaluator.resolve_property_access(type_param, "z"));
+    }
+}
+
+/// `T extends { x: number } & { y: string }` — intersection constraint must
+/// expose properties from both sides.
+#[test]
+fn test_type_param_with_intersection_constraint_finds_both_properties() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let x_atom = interner.intern_string("x");
+    let y_atom = interner.intern_string("y");
+    let a = interner.object(vec![PropertyInfo::new(x_atom, TypeId::NUMBER)]);
+    let b = interner.object(vec![PropertyInfo::new(y_atom, TypeId::STRING)]);
+    let intersection_constraint = interner.intersection(vec![a, b]);
+
+    for name in ["T", "V"] {
+        let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: Some(intersection_constraint),
+            default: None,
+            is_const: false,
+        }));
+        assert_property_success(
+            &evaluator.resolve_property_access(type_param, "x"),
+            TypeId::NUMBER,
+        );
+        assert_property_success(
+            &evaluator.resolve_property_access(type_param, "y"),
+            TypeId::STRING,
+        );
+        assert_property_not_found(&evaluator.resolve_property_access(type_param, "z"));
+    }
+}
+
+/// `T extends NoInfer<{ n: number }>` — the `NoInfer` wrapper is transparent
+/// for property access; the solver evaluates through it to the inner type.
+#[test]
+fn test_type_param_noinfer_constraint_resolves_inner_property() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let n_atom = interner.intern_string("n");
+    let obj = interner.object(vec![PropertyInfo::new(n_atom, TypeId::NUMBER)]);
+    let no_infer = interner.intern(TypeData::NoInfer(obj));
+
+    for name in ["T", "E", "Item"] {
+        let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: Some(no_infer),
+            default: None,
+            is_const: false,
+        }));
+        assert_property_success(
+            &evaluator.resolve_property_access(type_param, "n"),
+            TypeId::NUMBER,
+        );
+        assert_property_not_found(&evaluator.resolve_property_access(type_param, "z"));
+    }
+}
+
+/// `T extends Readonly<{ value: number }>` — the solver evaluates the readonly
+/// wrapper and finds the property on the inner object type.
+#[test]
+fn test_type_param_readonly_constraint_resolves_inner_property() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let value_atom = interner.intern_string("value");
+    let obj = interner.object(vec![PropertyInfo::new(value_atom, TypeId::NUMBER)]);
+    let readonly_obj = interner.readonly_type(obj);
+
+    for name in ["T", "R"] {
+        let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: Some(readonly_obj),
+            default: None,
+            is_const: false,
+        }));
+        assert_property_success(
+            &evaluator.resolve_property_access(type_param, "value"),
+            TypeId::NUMBER,
+        );
+    }
+}
+
+/// When a synthetic Application constraint cannot be evaluated (noop resolver,
+/// unregistered base DefId), the evaluator must NOT fabricate a false Success.
+/// `PropertyNotFound` or `Success{ANY}` are the only acceptable results.
+#[test]
+fn test_type_param_unresolvable_application_constraint_no_false_success() {
+    use crate::def::DefId;
+
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let synthetic_base = interner.lazy(DefId(99_001));
+    let synthetic_app = interner.application(synthetic_base, vec![TypeId::NUMBER]);
+
+    for name in ["T", "A"] {
+        let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint: Some(synthetic_app),
+            default: None,
+            is_const: false,
+        }));
+        let result = evaluator.resolve_property_access(type_param, "value");
+        let is_acceptable = matches!(
+            result,
+            PropertyAccessResult::PropertyNotFound { .. }
+                | PropertyAccessResult::Success {
+                    type_id: TypeId::ANY,
+                    ..
+                }
+        );
+        assert!(
+            is_acceptable,
+            "Unresolvable Application constraint must not produce a wrong concrete type, got {result:?}"
+        );
+    }
+}
+
+/// Nested type parameters: `T extends U` where `U extends { x: number }`.
+/// Property access on `T` must walk through both constraints.
+#[test]
+fn test_nested_type_param_constraint_property_found() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let x_atom = interner.intern_string("x");
+    let obj = interner.object(vec![PropertyInfo::new(x_atom, TypeId::NUMBER)]);
+
+    // U extends { x: number }
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(obj),
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends U
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(u_param),
+        default: None,
+        is_const: false,
+    }));
+
+    assert_property_success(
+        &evaluator.resolve_property_access(t_param, "x"),
+        TypeId::NUMBER,
+    );
+    assert_property_not_found(&evaluator.resolve_property_access(t_param, "y"));
+}

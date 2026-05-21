@@ -98,6 +98,105 @@ class C {
     assert!(has_error(source, 2386));
 }
 
+// TS2383: only 2+ bodyless overload signatures must agree on export status.
+// The implementation is not an overload signature; tsc does not check it.
+// Single-overload + implementation export mismatches are silently accepted.
+
+#[test]
+fn ts2383_single_overload_exported_implementation_not_exported_no_error() {
+    let source = r#"
+export function compute(x: number): number;
+function compute(x: any): number { return x; }
+"#;
+    assert!(!has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_single_overload_not_exported_implementation_exported_no_error() {
+    let source = r#"
+function transform(x: number): number;
+export function transform(x: any): number { return x; }
+"#;
+    assert!(!has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_single_overload_both_exported_no_error() {
+    let source = r#"
+export function process(x: number): number;
+export function process(x: any): number { return x; }
+"#;
+    assert!(!has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_single_overload_both_non_exported_no_error() {
+    let source = r#"
+function process(x: number): number;
+function process(x: any): number { return x; }
+"#;
+    assert!(!has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_single_overload_impl_export_mismatch_different_name_no_error() {
+    let source = r#"
+export function handle(x: string): string;
+function handle(x: any): string { return x; }
+"#;
+    assert!(!has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_single_overload_reversed_impl_export_mismatch_no_error() {
+    let source = r#"
+function serialize(x: number): string;
+export function serialize(x: any): string { return String(x); }
+"#;
+    assert!(!has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_three_overloads_all_exported_no_error() {
+    let source = r#"
+export function dispatch(x: number): void;
+export function dispatch(x: string): void;
+export function dispatch(x: any): void {}
+"#;
+    assert!(!has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_two_overloads_one_not_exported_error() {
+    let source = r#"
+export function route(x: number): void;
+function route(x: string): void;
+export function route(x: any): void {}
+"#;
+    assert!(has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_two_exported_overloads_non_exported_impl_no_error() {
+    // Implementation export status is not checked — only bodyless signatures matter.
+    let source = r#"
+export function compute(x: number): number;
+export function compute(x: string): number;
+function compute(x: any): number { return 0; }
+"#;
+    assert!(!has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_two_non_exported_overloads_exported_impl_no_error() {
+    let source = r#"
+function transform(x: number): string;
+function transform(x: string): string;
+export function transform(x: any): string { return ""; }
+"#;
+    assert!(!has_error(source, 2383));
+}
+
 // TS2394: overload signature must be compatible with implementation signature
 
 #[test]

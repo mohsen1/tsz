@@ -3,6 +3,7 @@
 //! Extracted from `type_inference.rs` for file-size reasons; behavior is unchanged.
 
 use super::super::DeclarationEmitter;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -44,13 +45,13 @@ impl<'a> DeclarationEmitter<'a> {
                         self.nameable_constructor_expression_text(base_arg)
                             .map(|name| format!("typeof {name}"))
                     })?;
-            let base_instance_name =
-                self.function_base_parameter_constraint_instance_name(func, base_param_index);
+            let base_constraint_idx =
+                self.function_base_parameter_constraint_node_idx(func, base_param_index);
             return self.local_class_constructor_type_text_from_ast(
                 class_idx,
                 Some(&base_type_text),
                 arrow_form,
-                base_instance_name.as_deref(),
+                base_constraint_idx,
             );
         }
 
@@ -190,7 +191,7 @@ impl<'a> DeclarationEmitter<'a> {
         class_idx: NodeIndex,
         base_type_text: Option<&str>,
         arrow_form: bool,
-        base_instance_name: Option<&str>,
+        base_constraint_idx: Option<NodeIndex>,
     ) -> Option<String> {
         let class_node = self.arena.get(class_idx)?;
         let class = self.arena.get_class(class_node)?;
@@ -233,6 +234,12 @@ impl<'a> DeclarationEmitter<'a> {
         };
         let mut instance_scratch = self.scratch_object_type_body_emitter(instance_indent);
         let mut static_scratch = self.scratch_object_type_body_emitter(self.indent_level + 1);
+        if let Some(constraint_idx) = base_constraint_idx
+            && let Some(base_members) = self
+                .constructor_constraint_base_instance_members_text(constraint_idx, instance_indent)
+        {
+            instance_scratch.write(&base_members);
+        }
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -245,12 +252,6 @@ impl<'a> DeclarationEmitter<'a> {
             } else {
                 instance_scratch.emit_class_member_for_constructor_instance_type(member_idx);
             }
-        }
-        if let Some(base_name) = base_instance_name
-            && let Some(base_members) =
-                self.class_or_interface_instance_members_text(base_name, instance_indent)
-        {
-            instance_scratch.write(&base_members);
         }
         let members = instance_scratch.writer.take_output();
         let members = Self::strip_abstract_member_modifiers(members.trim_end());
@@ -399,25 +400,36 @@ impl<'a> DeclarationEmitter<'a> {
             .join("\n")
     }
 
-    fn typeof_constructor_type_instance_name(type_text: &str) -> Option<&str> {
-        let name = type_text.trim().strip_prefix("typeof ")?;
-        (!name.contains([' ', '<', '&', '|', '('])).then_some(name)
-    }
-
-    fn function_base_parameter_constraint_instance_name(
+    /// Constraint node of the type parameter named by the function parameter
+    /// at `base_param_index`, or `None` if the parameter is not annotated as
+    /// a bare reference to one of the enclosing function's type parameters.
+    fn function_base_parameter_constraint_node_idx(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
         base_param_index: usize,
-    ) -> Option<String> {
+    ) -> Option<NodeIndex> {
         let param_idx = func.parameters.nodes.get(base_param_index).copied()?;
         let param = self.arena.get_parameter_at(param_idx)?;
         let type_node = self.arena.get(param.type_annotation)?;
         let type_ref = self.arena.get_type_ref(type_node)?;
         let type_param_name = self.get_identifier_text(type_ref.type_name)?;
-        self.constructor_constraint_instance_type_name(func, &type_param_name)
-            .filter(|name| {
-                Self::typeof_constructor_type_instance_name(&format!("typeof {name}")).is_some()
-            })
+        self.type_param_constraint_idx(func, &type_param_name)
+    }
+
+    fn type_param_constraint_idx(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        type_param_name: &str,
+    ) -> Option<NodeIndex> {
+        let type_params = func.type_parameters.as_ref()?;
+        for type_param_idx in type_params.nodes.iter().copied() {
+            let type_param = self.arena.get_type_parameter_at(type_param_idx)?;
+            if self.get_identifier_text(type_param.name).as_deref() != Some(type_param_name) {
+                continue;
+            }
+            return type_param.constraint.into_option();
+        }
+        None
     }
 
     pub(in crate::declaration_emitter) fn class_expression_constructor_type_text_from_ast(
@@ -565,12 +577,58 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 out.push_str(replacement);
                 i += needle.len();
+                if bytes.get(i).copied() == Some(b'<') {
+                    if let Some(end) = Self::scan_type_argument_list(bytes, i) {
+                        i = end;
+                    }
+                }
             } else {
                 out.push(bytes[i] as char);
                 i += 1;
             }
         }
         out
+    }
+
+    fn scan_type_argument_list(bytes: &[u8], start: usize) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut i = start;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'<' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b'>' => {
+                    if depth == 0 {
+                        return None;
+                    }
+                    depth -= 1;
+                    i += 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                b'"' | b'\'' => {
+                    let quote = bytes[i];
+                    i += 1;
+                    while i < bytes.len() {
+                        if bytes[i] == b'\\' {
+                            i = (i + 2).min(bytes.len());
+                        } else if bytes[i] == quote {
+                            i += 1;
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        None
     }
 
     fn class_expression_self_name_boundary(bytes: &[u8], start: usize, end: usize) -> bool {
@@ -586,75 +644,243 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let enclosing_func = self.enclosing_function_for_node(expr_idx)?;
         let base_type_text = self.class_expression_extends_parameter_type_text(expr_idx, class)?;
-        let base_instance_name =
-            self.constructor_constraint_instance_type_name(enclosing_func, &base_type_text)?;
-        self.class_or_interface_instance_members_text(&base_instance_name, self.indent_level + 2)
+        let constraint_idx = self.type_param_constraint_idx(enclosing_func, &base_type_text)?;
+        self.constructor_constraint_base_instance_members_text(
+            constraint_idx,
+            self.indent_level + 2,
+        )
     }
 
-    fn constructor_constraint_instance_type_name(
+    /// Instance members text inherited from a generic constructor constraint,
+    /// indented at `indent_level` and ready to inline into the constructor's
+    /// instance type body. Extracts the instance type from either a named
+    /// `Ctor<X>` reference's first type argument or an inline `(abstract)
+    /// new (...) => X` constructor type, then renders members of that type.
+    pub(in crate::declaration_emitter) fn constructor_constraint_base_instance_members_text(
         &self,
-        func: &tsz_parser::parser::node::FunctionData,
-        type_param_name: &str,
+        constraint_idx: NodeIndex,
+        indent_level: u32,
     ) -> Option<String> {
-        let type_params = func.type_parameters.as_ref()?;
-        for type_param_idx in type_params.nodes.iter().copied() {
-            let type_param = self.arena.get_type_parameter_at(type_param_idx)?;
-            if self.get_identifier_text(type_param.name).as_deref() != Some(type_param_name) {
+        let constraint_node = self.arena.get(constraint_idx)?;
+
+        if let Some(type_ref) = self.arena.get_type_ref(constraint_node)
+            && let Some(type_arguments) = type_ref.type_arguments.as_ref()
+            && let Some(instance_arg_index) =
+                self.constructor_type_reference_instance_arg_index(type_ref)
+            && let Some(instance_arg_idx) = type_arguments.nodes.get(instance_arg_index).copied()
+        {
+            return self.instance_type_node_members_text_at(instance_arg_idx, indent_level);
+        }
+
+        if constraint_node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+            && let Some(func_type) = self.arena.get_function_type(constraint_node)
+        {
+            return self
+                .instance_type_node_members_text_at(func_type.type_annotation, indent_level);
+        }
+
+        None
+    }
+
+    fn constructor_type_reference_instance_arg_index(
+        &self,
+        type_ref: &tsz_parser::parser::node::TypeRefData,
+    ) -> Option<usize> {
+        let name = self.get_identifier_text(type_ref.type_name)?;
+        let sym_id = self.resolve_identifier_symbol(type_ref.type_name, &name)?;
+        self.symbol_constructor_instance_type_arg_index(sym_id)
+    }
+
+    fn symbol_constructor_instance_type_arg_index(&self, sym_id: SymbolId) -> Option<usize> {
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
                 continue;
+            };
+            if let Some(alias) = self.arena.get_type_alias(decl_node)
+                && let Some(index) = self.constructor_type_node_instance_type_arg_index(
+                    alias.type_node,
+                    alias.type_parameters.as_ref(),
+                )
+            {
+                return Some(index);
             }
-            let constraint_node = self.arena.get(type_param.constraint)?;
-            let type_ref = self.arena.get_type_ref(constraint_node)?;
-            let type_name = self.get_identifier_text(type_ref.type_name)?;
-            if type_name != "Constructor" {
-                continue;
+            if let Some(interface) = self.arena.get_interface(decl_node) {
+                for member_idx in interface.members.nodes.iter().copied() {
+                    let Some(member_node) = self.arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind != syntax_kind_ext::CONSTRUCT_SIGNATURE {
+                        continue;
+                    }
+                    let Some(signature) = self.arena.get_signature(member_node) else {
+                        continue;
+                    };
+                    if let Some(index) = self.constructor_return_type_parameter_index(
+                        signature.type_annotation,
+                        interface.type_parameters.as_ref(),
+                    ) {
+                        return Some(index);
+                    }
+                }
             }
-            let first_arg = type_ref.type_arguments.as_ref()?.nodes.first().copied()?;
-            return self.emit_type_node_text(first_arg);
         }
         None
     }
 
-    fn class_or_interface_instance_members_text(
+    fn constructor_type_node_instance_type_arg_index(
         &self,
-        type_name: &str,
-        indent_level: u32,
-    ) -> Option<String> {
-        let binder = self.binder?;
-        for sym_id in binder.symbols.find_all_by_name(type_name) {
-            let Some(symbol) = binder.symbols.get(*sym_id) else {
-                continue;
-            };
-            for decl_idx in symbol.declarations.iter().copied() {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
+        type_idx: NodeIndex,
+        type_parameters: Option<&tsz_parser::NodeList>,
+    ) -> Option<usize> {
+        let node = self.arena.get(type_idx)?;
+        if node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+            && let Some(func_type) = self.arena.get_function_type(node)
+        {
+            return self.constructor_return_type_parameter_index(
+                func_type.type_annotation,
+                type_parameters,
+            );
+        }
+        if node.kind == syntax_kind_ext::TYPE_LITERAL
+            && let Some(type_literal) = self.arena.get_type_literal(node)
+        {
+            for member_idx in type_literal.members.nodes.iter().copied() {
+                let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
-                if let Some(class) = self.arena.get_class(decl_node) {
-                    let mut scratch = self.scratch_object_type_body_emitter(indent_level);
-                    for member_idx in class.members.nodes.iter().copied() {
-                        let Some(member_node) = self.arena.get(member_idx) else {
-                            continue;
-                        };
-                        if member_node.kind == syntax_kind_ext::CONSTRUCTOR
-                            || self.class_member_is_static(member_idx)
-                        {
-                            continue;
-                        }
-                        scratch.emit_class_member(member_idx);
-                    }
-                    let output = scratch.writer.take_output();
-                    if !output.trim().is_empty() {
-                        return Some(output);
-                    }
+                if member_node.kind != syntax_kind_ext::CONSTRUCT_SIGNATURE {
+                    continue;
                 }
-                if let Some(interface) = self.arena.get_interface(decl_node) {
-                    let mut scratch = self.scratch_object_type_body_emitter(indent_level);
-                    for member_idx in interface.members.nodes.iter().copied() {
-                        scratch.emit_class_member(member_idx);
+                let Some(signature) = self.arena.get_signature(member_node) else {
+                    continue;
+                };
+                if let Some(index) = self.constructor_return_type_parameter_index(
+                    signature.type_annotation,
+                    type_parameters,
+                ) {
+                    return Some(index);
+                }
+            }
+        }
+        None
+    }
+
+    fn constructor_return_type_parameter_index(
+        &self,
+        return_type_idx: NodeIndex,
+        type_parameters: Option<&tsz_parser::NodeList>,
+    ) -> Option<usize> {
+        let return_node = self.arena.get(return_type_idx)?;
+        let return_ref = self.arena.get_type_ref(return_node)?;
+        if return_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        let return_name = self.get_identifier_text(return_ref.type_name)?;
+        let type_parameters = type_parameters?;
+        for (index, type_param_idx) in type_parameters.nodes.iter().copied().enumerate() {
+            let type_param = self.arena.get_type_parameter_at(type_param_idx)?;
+            if self.get_identifier_text(type_param.name).as_deref() == Some(return_name.as_str()) {
+                return Some(index);
+            }
+        }
+        None
+    }
+
+    /// True if `node` syntactically denotes `any`. The parser produces either
+    /// an `AnyKeyword` node or a `TypeReference` to the `any` keyword
+    /// depending on context, so both shapes are recognised.
+    fn type_node_is_any(&self, node: &tsz_parser::parser::node::Node) -> bool {
+        if node.kind == SyntaxKind::AnyKeyword as u16 {
+            return true;
+        }
+        if let Some(type_ref) = self.arena.get_type_ref(node)
+            && type_ref
+                .type_arguments
+                .as_ref()
+                .is_none_or(|args| args.nodes.is_empty())
+            && self.get_identifier_text(type_ref.type_name).as_deref() == Some("any")
+        {
+            return true;
+        }
+        false
+    }
+
+    /// Render the members of a constructor's return-type node at
+    /// `indent_level`, returning `None` for shapes whose members are not
+    /// statically representable in DTS.
+    fn instance_type_node_members_text_at(
+        &self,
+        type_idx: NodeIndex,
+        indent_level: u32,
+    ) -> Option<String> {
+        let node = self.arena.get(type_idx)?;
+
+        if self.type_node_is_any(node) {
+            let indent_str = "    ".repeat(indent_level as usize);
+            return Some(format!("{indent_str}[x: string]: any;\n"));
+        }
+
+        if let Some(type_ref) = self.arena.get_type_ref(node) {
+            let name = self.get_identifier_text(type_ref.type_name)?;
+            let sym_id = self.resolve_identifier_symbol(type_ref.type_name, &name)?;
+            return self.symbol_instance_members_text(sym_id, indent_level);
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_LITERAL
+            && let Some(type_literal) = self.arena.get_type_literal(node)
+        {
+            let mut scratch = self.scratch_object_type_body_emitter(indent_level);
+            for member_idx in type_literal.members.nodes.iter().copied() {
+                scratch.emit_interface_member(member_idx);
+            }
+            let output = scratch.writer.take_output();
+            if !output.trim().is_empty() {
+                return Some(output);
+            }
+        }
+
+        None
+    }
+
+    fn symbol_instance_members_text(&self, sym_id: SymbolId, indent_level: u32) -> Option<String> {
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            if let Some(class) = self.arena.get_class(decl_node) {
+                let mut scratch = self.scratch_object_type_body_emitter(indent_level);
+                for member_idx in class.members.nodes.iter().copied() {
+                    let Some(member_node) = self.arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind == syntax_kind_ext::CONSTRUCTOR
+                        || self.class_member_is_static(member_idx)
+                    {
+                        continue;
                     }
-                    let output = scratch.writer.take_output();
-                    if !output.trim().is_empty() {
-                        return Some(output);
-                    }
+                    scratch.emit_class_member(member_idx);
+                }
+                let output = scratch.writer.take_output();
+                if !output.trim().is_empty() {
+                    return Some(output);
+                }
+            }
+            if let Some(interface) = self.arena.get_interface(decl_node) {
+                let mut scratch = self.scratch_object_type_body_emitter(indent_level);
+                for member_idx in interface.members.nodes.iter().copied() {
+                    scratch.emit_interface_member(member_idx);
+                }
+                let output = scratch.writer.take_output();
+                if !output.trim().is_empty() {
+                    return Some(output);
                 }
             }
         }
