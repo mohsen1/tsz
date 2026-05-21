@@ -2967,6 +2967,27 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
         self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
 
+    def test_relation_engine_packed_apply_flags_guard(self):
+        pattern, _max_lines = self._check_by_name("packed apply_flags")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/relations/compat.rs": (
+                    "pub fn apply_flags(&mut self, flags: u16) {}\n"
+                    "checker.apply_flags(policy.flags);\n"
+                    "fn apply_policy(policy: RelationPolicy) {}\n"
+                ),
+                "crates/tsz-solver/src/relations/subtype/core.rs": (
+                    "pub(crate) const fn apply_flags(mut self, flags: u16) -> Self { self }\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("compat.rs:1", hits[0])
+        self.assertIn("compat.rs:2", hits[1])
+        self.assertIn("core.rs:1", hits[2])
+        self.assertIn("total matching lines: 3", hits[3])
+
     def test_query_cache_relation_facade_guard(self):
         pattern, _max_lines = self._check_by_name("query cache uses relation facade")
         root = self._make_tree(

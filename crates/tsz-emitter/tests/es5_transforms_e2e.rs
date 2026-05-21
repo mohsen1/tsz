@@ -190,13 +190,13 @@ fn new_target_es5_object_literal_methods_and_accessors_get_invalid_capture() {
     );
     assert!(
         output.contains(
-            "get: function () {\n        var _newTarget = void 0;\n        return _newTarget;\n    }"
+            "get: function () {\n            var _newTarget = void 0;\n            return _newTarget;\n        }"
         ),
         "Object-literal getters own invalid `new.target` through the accessor descriptor function.\nOutput:\n{output}"
     );
     assert!(
         output.contains(
-            "set: function (_) {\n        var _newTarget = void 0;\n        _ = _newTarget;\n    }"
+            "set: function (_) {\n            var _newTarget = void 0;\n            _ = _newTarget;\n        }"
         ),
         "Object-literal setters own invalid `new.target` through the accessor descriptor function.\nOutput:\n{output}"
     );
