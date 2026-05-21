@@ -182,6 +182,53 @@ withTempDir((dir) => {
 console.log("✅ missing measurement profile is reported without failing readiness");
 
 // ---------------------------------------------------------------------------
+// Test: merged artifact validation warnings are surfaced in readiness output so
+// runner and measurement metadata problems are visible to dashboards.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+  writeJson(file, makeArtifact(rows, {
+    measurement_profile: SAMPLE_MEASUREMENT_PROFILE,
+    validation: {
+      runner_environment_warnings: [
+        {
+          file: "bench-results-b.json",
+          mismatched_fields: ["cpu_count", "cloud_build_machine_type"],
+          expected: { cpu_count: 32 },
+          actual: { cpu_count: 16 },
+        },
+      ],
+      measurement_profile_warnings: [
+        {
+          file: "bench-results-pgo-b.json",
+          mismatched_fields: ["profile_guided_optimization.profile_fingerprint"],
+          expected: { profile_guided_optimization: { profile_fingerprint: "aaa" } },
+          actual: { profile_guided_optimization: { profile_fingerprint: "bbb" } },
+        },
+      ],
+    },
+  }));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 0, `validation warnings should not fail readiness:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.validation_warnings.total, 2, "JSON should count validation warnings");
+  assert.deepEqual(
+    parsed.validation_warnings.runner_environment[0].mismatched_fields,
+    ["cpu_count", "cloud_build_machine_type"],
+    "JSON should preserve runner metadata warning fields",
+  );
+  assert.deepEqual(
+    parsed.validation_warnings.measurement_profile[0].mismatched_fields,
+    ["profile_guided_optimization.profile_fingerprint"],
+    "JSON should preserve measurement profile warning fields",
+  );
+  assert.match(result.stderr, /Runner metadata warnings \(1\)/);
+  assert.match(result.stderr, /Measurement profile warnings \(1\)/);
+});
+console.log("✅ validation warnings are surfaced in readiness output");
+
+// ---------------------------------------------------------------------------
 // Test: artifact missing one required row → exit 1
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {
@@ -278,6 +325,36 @@ withTempDir((dir) => {
   assert.equal(parsed.rows[0].state, "gray", "partial yellow row should render as gray");
 });
 console.log("✅ partial yellow compatibility is gray");
+
+// ---------------------------------------------------------------------------
+// Test: duplicate required rows are ambiguous, not authoritative green rows.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const duplicatedName = REQUIRED_PROJECT_ROWS[0];
+  const duplicateRed = makeRow(duplicatedName, "red");
+  const duplicateGreen = makeRow(duplicatedName, "green");
+  const rows = [
+    duplicateRed,
+    duplicateGreen,
+    ...REQUIRED_PROJECT_ROWS.slice(1).map((name) => makeRow(name, "green")),
+  ];
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 1, `duplicate required row should fail readiness:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.green, REQUIRED_PROJECT_ROWS.length - 1, "duplicate row must not count as green");
+  assert.equal(parsed.gray, 1, "duplicate row should count as gray/incomplete");
+  assert.deepEqual(
+    parsed.duplicate_rows,
+    [{ name: duplicatedName, count: 2 }],
+    "duplicate required row should be named with its count",
+  );
+  assert.equal(parsed.rows[0].state, "gray", "duplicate row should render as gray");
+  assert.equal(parsed.rows[0].exit_class, "duplicate row", "duplicate row should name the metadata ambiguity");
+  assert.match(result.stderr, new RegExp(`${duplicatedName} \\(2\\)`));
+});
+console.log("✅ duplicate required rows fail readiness");
 
 // ---------------------------------------------------------------------------
 // Test: complete red compatibility still reports as red.
