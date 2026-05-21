@@ -88,6 +88,8 @@ pub struct IRPrinter<'a> {
     generator_state_name: &'static str,
     namespace_ast_name: Option<String>,
     namespace_ast_exported_names: rustc_hash::FxHashSet<String>,
+    block_scope_shadowed_names: Vec<String>,
+    block_scope_reserved_names: Vec<String>,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -344,6 +346,8 @@ impl<'a> IRPrinter<'a> {
             generator_state_name: "_a",
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
+            block_scope_shadowed_names: Vec::new(),
+            block_scope_reserved_names: Vec::new(),
         }
     }
 
@@ -372,6 +376,8 @@ impl<'a> IRPrinter<'a> {
             generator_state_name: "_a",
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
+            block_scope_shadowed_names: Vec::new(),
+            block_scope_reserved_names: Vec::new(),
         }
     }
 
@@ -400,6 +406,8 @@ impl<'a> IRPrinter<'a> {
             generator_state_name: "_a",
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
+            block_scope_shadowed_names: Vec::new(),
+            block_scope_reserved_names: Vec::new(),
         }
     }
 
@@ -437,6 +445,28 @@ impl<'a> IRPrinter<'a> {
         self.namespace_ast_exported_names = names.into_iter().collect();
     }
 
+    pub fn set_block_scope_shadowed_names(&mut self, names: Vec<String>) {
+        self.block_scope_shadowed_names = names;
+    }
+
+    pub fn set_block_scope_reserved_names(&mut self, names: Vec<String>) {
+        self.block_scope_reserved_names = names;
+    }
+
+    pub fn block_scope_reserved_names(&self) -> Vec<String> {
+        let mut names = self.block_scope_reserved_names.clone();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    fn merge_ast_printer_block_scope_reserved_names(&mut self, printer: &AstPrinter<'a>) {
+        self.block_scope_reserved_names
+            .extend(printer.block_scope_reserved_names());
+        self.block_scope_reserved_names.sort();
+        self.block_scope_reserved_names.dedup();
+    }
+
     fn configure_ast_printer_namespace(&self, printer: &mut AstPrinter<'a>) {
         if let Some(namespace) = self.namespace_ast_name.clone() {
             printer.in_namespace_iife = true;
@@ -461,6 +491,8 @@ impl<'a> IRPrinter<'a> {
         if let Some(source_text) = self.source_text {
             printer.set_source_text(source_text);
         }
+        printer.seed_function_scope_shadowed_names(&self.block_scope_shadowed_names);
+        printer.seed_block_scope_reserved_names(&self.block_scope_reserved_names);
         printer
     }
 
@@ -2064,7 +2096,13 @@ impl<'a> IRPrinter<'a> {
                             if let Some(source_text) = self.source_text {
                                 printer.set_source_text(source_text);
                             }
+                            printer.seed_function_scope_shadowed_names(
+                                &self.block_scope_shadowed_names,
+                            );
+                            printer
+                                .seed_block_scope_reserved_names(&self.block_scope_reserved_names);
                             printer.emit(*idx);
+                            self.merge_ast_printer_block_scope_reserved_names(&printer);
                             self.write(printer.get_output());
                             return;
                         }
@@ -2108,7 +2146,13 @@ impl<'a> IRPrinter<'a> {
                             if let Some(source_text) = self.source_text {
                                 printer.set_source_text(source_text);
                             }
+                            printer.seed_function_scope_shadowed_names(
+                                &self.block_scope_shadowed_names,
+                            );
+                            printer
+                                .seed_block_scope_reserved_names(&self.block_scope_reserved_names);
                             printer.emit(*idx);
+                            self.merge_ast_printer_block_scope_reserved_names(&printer);
                             self.write(printer.get_output());
                             return;
                         }
@@ -2141,7 +2185,14 @@ impl<'a> IRPrinter<'a> {
                                 if let Some(source_text) = self.source_text {
                                     printer.set_source_text(source_text);
                                 }
+                                printer.seed_function_scope_shadowed_names(
+                                    &self.block_scope_shadowed_names,
+                                );
+                                printer.seed_block_scope_reserved_names(
+                                    &self.block_scope_reserved_names,
+                                );
                                 printer.emit_expression(*idx);
+                                self.merge_ast_printer_block_scope_reserved_names(&printer);
                                 self.write_embedded_output(printer.get_output());
                                 return;
                             }
@@ -2184,7 +2235,13 @@ impl<'a> IRPrinter<'a> {
                             if let Some(source_text) = self.source_text {
                                 printer.set_source_text(source_text);
                             }
+                            printer.seed_function_scope_shadowed_names(
+                                &self.block_scope_shadowed_names,
+                            );
+                            printer
+                                .seed_block_scope_reserved_names(&self.block_scope_reserved_names);
                             printer.emit(*idx);
+                            self.merge_ast_printer_block_scope_reserved_names(&printer);
                             self.write(printer.get_output());
                             return;
                         }
@@ -2201,7 +2258,13 @@ impl<'a> IRPrinter<'a> {
                                 self.make_ast_printer_options(),
                             );
                             self.configure_ast_printer_namespace(&mut printer);
+                            printer.seed_function_scope_shadowed_names(
+                                &self.block_scope_shadowed_names,
+                            );
+                            printer
+                                .seed_block_scope_reserved_names(&self.block_scope_reserved_names);
                             printer.emit(*idx);
+                            self.merge_ast_printer_block_scope_reserved_names(&printer);
                             let output = printer.get_output().trim_end();
                             self.write_embedded_output(output);
                             return;
@@ -2240,6 +2303,7 @@ impl<'a> IRPrinter<'a> {
                     } else {
                         printer.emit(*idx);
                     }
+                    self.merge_ast_printer_block_scope_reserved_names(&printer);
                     let trimmed = printer.get_output().trim();
                     if !trimmed.is_empty() {
                         self.write_embedded_output(trimmed);
@@ -2275,6 +2339,7 @@ impl<'a> IRPrinter<'a> {
                 if let Some(arena) = self.arena {
                     let mut printer = self.build_nested_ast_printer(arena);
                     printer.emit_expression(*node);
+                    self.merge_ast_printer_block_scope_reserved_names(&printer);
                     let output = printer.get_output();
                     let rewritten = output.replacen(
                         "__generator(this,",
@@ -2293,6 +2358,18 @@ impl<'a> IRPrinter<'a> {
             IRNode::ASTRefRange(idx, max_end) => {
                 // Like ASTRef but with a constrained end position.
                 // Used when a statement's node.end extends into a parent block's closing brace.
+                if let Some(arena) = self.arena {
+                    let mut printer = self.build_nested_ast_printer(arena);
+                    self.configure_ast_printer_namespace(&mut printer);
+                    printer.emit(*idx);
+                    self.merge_ast_printer_block_scope_reserved_names(&printer);
+                    let trimmed = printer.get_output().trim();
+                    if !trimmed.is_empty() {
+                        self.write_embedded_output(trimmed);
+                        return;
+                    }
+                }
+
                 if let Some(arena) = self.arena
                     && let Some(text) = self.source_text
                     && let Some(node) = arena.get(*idx)

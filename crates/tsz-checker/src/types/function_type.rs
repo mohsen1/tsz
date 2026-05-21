@@ -1872,16 +1872,18 @@ impl<'a> CheckerState<'a> {
 
             // TS2366/TS2355/TS7030: Check return completeness
             self.check_function_return_completeness(
-                is_function_declaration,
-                body,
-                idx,
-                annotated_return_type,
-                return_type,
-                has_type_annotation,
-                type_annotation,
-                function_is_generator,
-                name_node,
-                idx,
+                super::function_type_helpers::FunctionReturnCheckCtx {
+                    is_function_declaration,
+                    body,
+                    func_idx: idx,
+                    annotated_return_type,
+                    return_type,
+                    has_type_annotation,
+                    type_annotation,
+                    function_is_generator,
+                    name_node,
+                    idx,
+                },
             );
 
             // Determine if this is an async function for context tracking
@@ -2731,8 +2733,7 @@ impl<'a> CheckerState<'a> {
             // Fall back to synthetic PROMISE_BASE only without lib files.
             let promise_base = self
                 .ctx
-                .lib_promise_sym_id()
-                .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
+                .lib_promise_type_ref()
                 .unwrap_or(TypeId::PROMISE_BASE);
             final_return_type = self
                 .ctx
@@ -2813,8 +2814,43 @@ impl<'a> CheckerState<'a> {
         let prop = self.ctx.arena.get_property_decl(property_node)?;
         let class_node = self.ctx.arena.get(class_idx)?;
         let class_data = self.ctx.arena.get_class(class_node)?;
+        let is_static = self.has_static_modifier(&prop.modifiers);
 
-        Some(if self.has_static_modifier(&prop.modifiers) {
+        // When the arrow function is itself currently being typed, the arrow
+        // node is on `node_resolution_stack`. Triggering a fresh class instance
+        // (or constructor) type build here would recursively re-enter
+        // `get_class_instance_type_inner`, which in turn calls
+        // `get_type_of_node(prop.initializer)` for this same arrow — that
+        // re-entry hits the circular-reference guard in
+        // `get_type_of_node_with_request` and returns `TypeId::ERROR`, which
+        // is then stored on the rebuilt class shape as the property's type.
+        // The broken shape gets cached in `class_instance_type_cache` and
+        // poisons every subsequent property access on the class.
+        //
+        // Use the already-cached class type (built earlier during environment
+        // setup), or — if member checking has invalidated that cache — fall
+        // back to the snapshot saved on `EnclosingClassInfo`. Returning `None`
+        // lets `get_type_of_function_impl` fall back to `current_this_type`,
+        // which is safe for arrows that don't reference `this`.
+        if self.ctx.node_resolution_stack.contains(&arrow_idx) {
+            let cache = if is_static {
+                &self.ctx.class_constructor_type_cache
+            } else {
+                &self.ctx.class_instance_type_cache
+            };
+            return cache.get(&class_idx).copied().or_else(|| {
+                if is_static {
+                    return None;
+                }
+                self.ctx
+                    .enclosing_class
+                    .as_ref()
+                    .filter(|info| info.class_idx == class_idx)
+                    .and_then(|info| info.cached_instance_this_type)
+            });
+        }
+
+        Some(if is_static {
             self.get_class_constructor_type(class_idx, class_data)
         } else {
             self.get_class_instance_type(class_idx, class_data)

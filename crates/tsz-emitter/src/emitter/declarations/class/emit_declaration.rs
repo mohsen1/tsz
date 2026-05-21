@@ -134,6 +134,12 @@ impl<'a> Printer<'a> {
                     );
                 let alias_name = needs_alias.then(|| self.make_unique_name_from_base(&class_name));
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
+                es5_emitter.set_block_scope_shadowed_names(
+                    self.ctx.block_scope_state.visible_original_names(),
+                );
+                es5_emitter.set_block_scope_reserved_names(
+                    self.ctx.block_scope_state.visible_reserved_names(),
+                );
                 es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
                 es5_emitter.set_async_generator_inner_name_counts(
                     self.async_generator_inner_name_counts.clone(),
@@ -144,7 +150,7 @@ impl<'a> Printer<'a> {
                     blocked_disposable_names,
                 );
                 let externally_hoisted_decls =
-                    self.es5_computed_auto_accessor_hoisted_decls(idx, &class_name);
+                    self.es5_class_externally_hoisted_decls(idx, &class_name);
                 if !externally_hoisted_decls.is_empty() {
                     for decl in &externally_hoisted_decls {
                         if !self.hoisted_assignment_temps.contains(decl) {
@@ -346,6 +352,12 @@ impl<'a> Printer<'a> {
 
         if self.ctx.target_es5 {
             let mut es5_emitter = ClassES5Emitter::new(self.arena);
+            es5_emitter.set_block_scope_shadowed_names(
+                self.ctx.block_scope_state.visible_original_names(),
+            );
+            es5_emitter.set_block_scope_reserved_names(
+                self.ctx.block_scope_state.visible_reserved_names(),
+            );
             es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
             es5_emitter.set_async_generator_inner_name_counts(
                 self.async_generator_inner_name_counts.clone(),
@@ -353,6 +365,18 @@ impl<'a> Printer<'a> {
             let blocked_disposable_names = self.blocked_disposable_names_for_transform();
             es5_emitter
                 .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
+            if let Some(class_name) = self.get_identifier_text_opt(class.name) {
+                let externally_hoisted_decls =
+                    self.es5_class_externally_hoisted_decls(idx, &class_name);
+                if !externally_hoisted_decls.is_empty() {
+                    for decl in &externally_hoisted_decls {
+                        if !self.hoisted_assignment_temps.contains(decl) {
+                            self.hoisted_assignment_temps.push(decl.clone());
+                        }
+                    }
+                    es5_emitter.set_externally_hoisted_decls(externally_hoisted_decls);
+                }
+            }
             es5_emitter.set_indent_level(self.writer.indent_level());
             // Pass transform directives to the ClassES5Emitter
             es5_emitter.set_transforms(self.transforms.clone());
@@ -470,6 +494,10 @@ impl<'a> Printer<'a> {
         };
 
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
+        es5_emitter
+            .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
+        es5_emitter
+            .set_block_scope_reserved_names(self.ctx.block_scope_state.visible_reserved_names());
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         es5_emitter
             .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
@@ -608,7 +636,7 @@ impl<'a> Printer<'a> {
         unreachable!("unbounded class temp suffix search should always find a name")
     }
 
-    pub(in crate::emitter) fn es5_computed_auto_accessor_hoisted_decls(
+    pub(in crate::emitter) fn es5_class_externally_hoisted_decls(
         &self,
         class_idx: NodeIndex,
         class_name: &str,
@@ -622,7 +650,7 @@ impl<'a> Printer<'a> {
         let Some(class_data) = self.arena.get_class(class_node) else {
             return Vec::new();
         };
-        let has_static_auto_accessor = class_data.members.nodes.iter().any(|&member_idx| {
+        let has_static_runtime_computed_key = class_data.members.nodes.iter().any(|&member_idx| {
             let Some(member_node) = self.arena.get(member_idx) else {
                 return false;
             };
@@ -632,25 +660,23 @@ impl<'a> Printer<'a> {
             let Some(prop) = self.arena.get_property_decl(member_node) else {
                 return false;
             };
-            self.arena
-                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                && self.arena.is_static(&prop.modifiers)
-                && !self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                && !self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                && self
-                    .arena
-                    .get(prop.name)
-                    .is_none_or(|name| name.kind != SyntaxKind::PrivateIdentifier as u16)
+            if !self.arena.is_static(&prop.modifiers)
+                || !self.es5_class_property_has_runtime_effect(member_node, prop)
+            {
+                return false;
+            }
+            let Some(name_node) = self.arena.get(prop.name) else {
+                return false;
+            };
+            self.es5_computed_name_needs_temp(name_node)
         });
-        if has_static_auto_accessor {
+        if has_static_runtime_computed_key {
             return Vec::new();
         }
 
-        let generated_name_index = 0u32;
+        let mut decls = Vec::new();
+        let mut temp_name_index = self.ctx.destructuring_state.temp_var_counter;
+        let mut auto_accessor_storage_reserved = false;
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -661,16 +687,8 @@ impl<'a> Printer<'a> {
             let Some(prop) = self.arena.get_property_decl(member_node) else {
                 continue;
             };
-            if !self
-                .arena
-                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                || self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                || self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                || self.arena.is_static(&prop.modifiers)
+            if self.arena.is_static(&prop.modifiers)
+                || !self.es5_class_property_has_runtime_effect(member_node, prop)
             {
                 continue;
             }
@@ -680,29 +698,94 @@ impl<'a> Printer<'a> {
             if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
                 continue;
             }
-            if name_node.kind == SyntaxKind::Identifier as u16 {
-                continue;
+            if self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                && !auto_accessor_storage_reserved
+            {
+                decls.push(format!(
+                    "_{class_name}_{}_accessor_storage",
+                    es5_generated_auto_accessor_name(0)
+                ));
+                auto_accessor_storage_reserved = true;
             }
 
-            let storage_name = format!(
-                "_{class_name}_{}_accessor_storage",
-                es5_generated_auto_accessor_name(generated_name_index)
-            );
-            let mut decls = vec![storage_name];
-            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                && let Some(computed) = self.arena.get_computed_property(name_node)
-                && self.arena.get(computed.expression).is_some_and(|expr| {
-                    expr.kind != SyntaxKind::StringLiteral as u16
-                        && expr.kind != SyntaxKind::NumericLiteral as u16
-                        && expr.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                })
-            {
-                decls.push(es5_temp_name(self.ctx.destructuring_state.temp_var_counter));
+            if self.es5_computed_name_needs_temp(name_node) {
+                decls.push(es5_temp_name(temp_name_index));
+                temp_name_index += 1;
             }
-            return decls;
         }
 
-        Vec::new()
+        decls
+    }
+
+    fn es5_class_property_has_runtime_effect(
+        &self,
+        member_node: &Node,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> bool {
+        if self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+            || self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            return false;
+        }
+        let is_private = self
+            .arena
+            .get(prop.name)
+            .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+        let has_accessor = self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+        self.ctx.options.use_define_for_class_fields
+            || is_private
+            || has_accessor
+            || self.es5_property_initializer_has_equals(member_node, prop)
+    }
+
+    fn es5_computed_name_needs_temp(&self, name_node: &Node) -> bool {
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        self.arena.get(computed.expression).is_some_and(|expr| {
+            expr.kind != SyntaxKind::StringLiteral as u16
+                && expr.kind != SyntaxKind::NumericLiteral as u16
+                && expr.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        })
+    }
+
+    fn es5_property_initializer_has_equals(
+        &self,
+        member_node: &Node,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> bool {
+        let Some(text) = self.source_text_for_map() else {
+            return prop.initializer.is_some();
+        };
+        let Some(init_node) = self.arena.get(prop.initializer) else {
+            return false;
+        };
+        if prop.type_annotation.is_none() {
+            return true;
+        }
+
+        let start = member_node.pos as usize;
+        let end = (init_node.pos as usize).min(text.len());
+        if start >= end {
+            return false;
+        }
+        let segment = &text.as_bytes()[start..end];
+        let search_from = segment
+            .iter()
+            .rposition(|&byte| byte == b':')
+            .map_or(0, |idx| idx + 1);
+        segment[search_from..].contains(&b'=')
     }
 }
 

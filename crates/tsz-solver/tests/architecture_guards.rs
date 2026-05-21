@@ -237,3 +237,30 @@ fn evaluation_engine_keeps_request_stage_boundary() {
         "query cache evaluation entries must derive option-sensitive keys from EvaluationRequest and unwrap EvaluationResult only at the cache compatibility edge"
     );
 }
+
+#[test]
+fn narrowing_engine_keeps_request_stage_boundary() {
+    let mod_rs = read_solver_source("narrowing/mod.rs");
+    let request_rs = read_solver_source("narrowing/request.rs");
+    let core_rs = read_solver_source("narrowing/core.rs");
+
+    assert!(
+        mod_rs.contains("pub mod request;"),
+        "narrowing module must expose the named request stage"
+    );
+    assert!(
+        request_rs.contains("pub struct NarrowingOptions")
+            && request_rs.contains("pub struct NarrowingRequest")
+            && request_rs.contains("pub(crate) struct NarrowTypeCacheKey"),
+        "narrowing/request.rs must own the typed options, request, and cache-key stage"
+    );
+    assert!(
+        core_rs.contains("use crate::narrowing::request::")
+            && core_rs.contains("pub fn narrow_type_with_request"),
+        "narrowing/core.rs must import from the request stage and expose the typed entry point"
+    );
+    assert!(
+        !core_rs.contains("compiler_flags: u8"),
+        "narrowing/core.rs must not own the anonymous packed compiler-flags byte — use NarrowingOptions"
+    );
+}

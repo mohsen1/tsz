@@ -31,7 +31,7 @@ use super::capabilities::{EnvironmentCapabilities, FeatureGate, MissingGlobalKin
 /// Each variant maps to a specific diagnostic code family and contains
 /// enough context for the caller to produce the full diagnostic.
 /// The caller (checker error reporter) decides *where* (position/node)
-/// and *how* (error_at_node vs error_at_position) to emit.
+/// and *how* (`error_at_node` vs `error_at_position`) to emit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CapabilityDiagnostic {
     /// TS2304: Cannot find name '{name}'.
@@ -97,10 +97,10 @@ pub(crate) enum CapabilityDiagnostic {
 
 impl CapabilityDiagnostic {
     /// The diagnostic code associated with this capability diagnostic.
-    pub fn code(&self) -> u32 {
+    pub const fn code(&self) -> u32 {
         match self {
             Self::MissingPlainGlobalValue { .. } => 2304,
-            Self::MissingGlobalType { .. } => 2318,
+            Self::MissingGlobalType { .. } | Self::FeatureRequiresGlobalType { .. } => 2318,
             Self::MissingEs2015Type { .. } => 2583,
             Self::MissingDomGlobal { .. } => 2584,
             Self::MissingNodeGlobal { .. } => 2591,
@@ -112,7 +112,6 @@ impl CapabilityDiagnostic {
             Self::TopLevelAwaitUnsupported => 1378,
             Self::ImportAssertDeprecated => 2880,
             Self::ResolveJsonModuleIncompatible => 5071,
-            Self::FeatureRequiresGlobalType { .. } => 2318,
             Self::DeprecatedOption { .. } => 5101,
             Self::DeprecatedOptionValue { .. } => 5107,
         }
@@ -165,15 +164,12 @@ impl EnvironmentCapabilities {
             | FeatureGate::AsyncFunction
             | FeatureGate::AsyncFunctionEs5 => {
                 if !self.has_lib {
-                    if let Some(required_type) = EnvironmentCapabilities::required_global_type(gate)
-                    {
-                        Some(CapabilityDiagnostic::FeatureRequiresGlobalType {
+                    EnvironmentCapabilities::required_global_type(gate).map(|required_type| {
+                        CapabilityDiagnostic::FeatureRequiresGlobalType {
                             gate,
                             required_type,
-                        })
-                    } else {
-                        None
-                    }
+                        }
+                    })
                 } else {
                     None
                 }
@@ -195,12 +191,11 @@ impl EnvironmentCapabilities {
                     name: name.to_string(),
                 })
             }
-            MissingGlobalKind::CoreGlobalType => Some(CapabilityDiagnostic::MissingGlobalType {
-                name: name.to_string(),
-            }),
-            MissingGlobalKind::FeatureGlobalType => Some(CapabilityDiagnostic::MissingGlobalType {
-                name: name.to_string(),
-            }),
+            MissingGlobalKind::CoreGlobalType | MissingGlobalKind::FeatureGlobalType => {
+                Some(CapabilityDiagnostic::MissingGlobalType {
+                    name: name.to_string(),
+                })
+            }
             MissingGlobalKind::Es2015PlusType => {
                 let suggested_lib =
                     tsz_binder::lib_loader::get_suggested_lib_for_type(name).to_string();
@@ -234,7 +229,7 @@ impl EnvironmentCapabilities {
     /// When TS5107/TS5101 deprecation diagnostics are present, tsc stops compilation
     /// early and never resolves lib types. This centralizes the decision that was
     /// previously passed as `skip_lib_type_resolution` from the driver.
-    pub fn should_skip_lib_type_resolution(&self) -> bool {
+    pub const fn should_skip_lib_type_resolution(&self) -> bool {
         self.has_deprecation_diagnostics
     }
 
@@ -243,7 +238,7 @@ impl EnvironmentCapabilities {
     ///
     /// Returns `Some(ImportAssertDeprecated)` when `ignore_deprecations` is false
     /// (meaning the deprecation is not suppressed by the user's config).
-    pub(crate) fn check_import_assert_deprecated(&self) -> Option<CapabilityDiagnostic> {
+    pub(crate) const fn check_import_assert_deprecated(&self) -> Option<CapabilityDiagnostic> {
         if !self.ignore_deprecations {
             Some(CapabilityDiagnostic::ImportAssertDeprecated)
         } else {

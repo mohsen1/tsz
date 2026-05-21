@@ -510,7 +510,7 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        3395,
+        3363,
     ),
 ]
 
@@ -522,7 +522,7 @@ QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS = [
     (
         "Checker query boundary: module-level lint allowances must not grow (#8225)",
         ROOT / "crates" / "tsz-checker" / "src" / "query_boundaries" / "mod.rs",
-        104,
+        0,
     ),
 ]
 
@@ -670,7 +670,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\b(?:self|self\.ctx\.types|self\.interner)"
             r"\.is_assignable_to(?:_[A-Za-z0-9_]+)?\s*\("
         ),
-        94,
+        0,
     ),
     (
         "Checker residency boundary: with_parent_cache_attributed migration callsites (Track 10)",

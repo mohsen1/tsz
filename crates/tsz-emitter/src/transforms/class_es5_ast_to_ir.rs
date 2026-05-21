@@ -633,6 +633,15 @@ impl<'a> AstToIr<'a> {
             .get(idx)
             .expect("NodeIndex must be valid in arena");
         if let Some(block) = self.arena.get_block(node) {
+            if block
+                .statements
+                .nodes
+                .iter()
+                .any(|&stmt_idx| self.is_block_scoped_variable_statement(stmt_idx))
+            {
+                return IRNode::ASTRef(idx);
+            }
+
             let stmts: Vec<IRNode> = block
                 .statements
                 .nodes
@@ -643,6 +652,29 @@ impl<'a> AstToIr<'a> {
         } else {
             IRNode::ASTRef(idx)
         }
+    }
+
+    fn is_block_scoped_variable_statement(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+
+        let Some(var_data) = self.arena.get_variable(node) else {
+            return false;
+        };
+
+        var_data.declarations.nodes.iter().any(|&decl_idx| {
+            self.arena.get(decl_idx).is_some_and(|decl_node| {
+                decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    && (decl_node.flags as u32
+                        & (tsz_parser::parser::node_flags::LET
+                            | tsz_parser::parser::node_flags::CONST))
+                        != 0
+            })
+        })
     }
 
     fn convert_expression_statement(&self, idx: NodeIndex) -> IRNode {
@@ -806,6 +838,7 @@ impl<'a> AstToIr<'a> {
         if func.is_async {
             let mut transformer = AsyncES5Transformer::new(self.arena);
             transformer.set_temp_var_counter(self.temp_var_counter.get());
+            transformer.set_module_kind(self.module_kind);
             if let Some(source_text) = self.source_text {
                 transformer.set_source_text(source_text);
             }
@@ -1287,8 +1320,9 @@ impl<'a> AstToIr<'a> {
 
     fn convert_wrapped_dynamic_import(&self, args: Option<&NodeList>) -> IRNode {
         let first_arg = self.first_dynamic_import_argument(args);
-        let first_arg_is_string_like =
-            first_arg.is_none_or(|arg| self.dynamic_import_arg_is_string_like(arg));
+        let first_arg_is_string_like = first_arg.is_none_or(|arg| {
+            crate::transforms::emit_utils::dynamic_import_arg_is_string_like(self.arena, arg)
+        });
 
         let mut specifier = first_arg
             .map(|arg| self.emit_ir_fragment_to_string(&self.convert_expression(arg)))
@@ -1320,35 +1354,11 @@ impl<'a> AstToIr<'a> {
     }
 
     fn first_dynamic_import_argument(&self, args: Option<&NodeList>) -> Option<NodeIndex> {
-        args.and_then(|args| {
-            args.nodes
-                .iter()
-                .copied()
-                .find(|&idx| self.call_argument_should_emit(idx))
-        })
-    }
-
-    fn call_argument_should_emit(&self, idx: NodeIndex) -> bool {
-        if idx.is_none() {
-            return false;
-        }
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-        if node.end <= node.pos || node.kind == SyntaxKind::Unknown as u16 {
-            return false;
-        }
-        self.arena
-            .get_identifier(node)
-            .is_none_or(|ident| !ident.escaped_text.is_empty())
-    }
-
-    fn dynamic_import_arg_is_string_like(&self, arg: NodeIndex) -> bool {
-        self.arena.get(arg).is_some_and(|node| {
-            node.kind == SyntaxKind::StringLiteral as u16
-                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                || node.end <= node.pos
-        })
+        args?
+            .nodes
+            .iter()
+            .copied()
+            .find(|&idx| crate::transforms::emit_utils::call_argument_should_emit(self.arena, idx))
     }
 
     fn emit_ir_fragment_to_string(&self, ir: &IRNode) -> String {
@@ -1364,9 +1374,7 @@ impl<'a> AstToIr<'a> {
     }
 
     fn dynamic_import_commonjs_branch(&self, specifier: &str) -> String {
-        format!(
-            "Promise.resolve().then(function () {{ return __importStar(require({specifier})); }})"
-        )
+        crate::transforms::emit_utils::dynamic_import_cjs_form(specifier)
     }
 
     fn dynamic_import_amd_branch(&self, specifier: &str) -> String {
@@ -1730,16 +1738,21 @@ impl<'a> AstToIr<'a> {
             .expect("NodeIndex must be valid in arena");
         // Array and Object literals use LiteralExprData (elements = properties)
         if let Some(obj) = self.arena.get_literal_expr(node) {
-            // Check if ES5 computed property lowering is needed
-            let needs_es5_lowering = obj.elements.nodes.iter().any(|&elem_idx| {
+            let has_spread = obj.elements.nodes.iter().any(|&elem_idx| {
+                crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
+            });
+            if has_spread {
+                return IRNode::ASTRef(idx);
+            }
+
+            let needs_computed_es5_lowering = obj.elements.nodes.iter().any(|&elem_idx| {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
-                    || crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
                     || self.arena.get(elem_idx).is_some_and(|n| {
                         n.kind == syntax_kind_ext::GET_ACCESSOR
                             || n.kind == syntax_kind_ext::SET_ACCESSOR
                     })
             });
-            if needs_es5_lowering {
+            if needs_computed_es5_lowering {
                 return self.lower_object_literal_es5(&obj.elements.nodes);
             }
 
@@ -1784,7 +1797,6 @@ impl<'a> AstToIr<'a> {
             .iter()
             .position(|&elem_idx| {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
-                    || crate::transforms::emit_utils::is_spread_element(self.arena, elem_idx)
                     || self.arena.get(elem_idx).is_some_and(|n| {
                         n.kind == syntax_kind_ext::GET_ACCESSOR
                             || n.kind == syntax_kind_ext::SET_ACCESSOR
@@ -2168,15 +2180,14 @@ impl<'a> AstToIr<'a> {
             let lexical_this_capture_alias = self.lexical_this_capture_alias.take();
             self.lexical_this_capture_alias
                 .set(lexical_this_capture_alias.clone());
-            let this_substitution = class_alias.map(ThisSubstitution::Identifier).or_else(|| {
-                if captures_this {
-                    prev_substitution
-                        .clone()
-                        .or_else(|| lexical_this_capture_alias.clone())
-                } else {
-                    None
-                }
-            });
+            let class_alias = class_alias.map(ThisSubstitution::Identifier);
+            let this_substitution = if captures_this {
+                lexical_this_capture_alias
+                    .or_else(|| prev_substitution.clone())
+                    .or(class_alias)
+            } else {
+                None
+            };
 
             if captures_this && this_substitution.is_none() {
                 self.this_captured.set(true);

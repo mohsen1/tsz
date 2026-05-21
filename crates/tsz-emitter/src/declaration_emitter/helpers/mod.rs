@@ -226,6 +226,8 @@ mod late_bound_function_analysis;
 mod literal_initializers;
 mod local_asserted_type_alias;
 mod portability_check;
+#[cfg(test)]
+pub(in crate::declaration_emitter) use portability_check::PortabilityVisitState;
 mod portability_export_paths;
 mod portability_resolve;
 mod returned_function_initializer;

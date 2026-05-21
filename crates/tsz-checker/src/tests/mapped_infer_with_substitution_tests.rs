@@ -124,3 +124,29 @@ item = null;
         "Renamed variant: must NOT fall through to 'never' branch. Got: {msg}"
     );
 }
+
+/// Generic remapped mapped type alias: `IndexAccess(Mapped2<K>, get${K})` must
+/// format as `Mapped2<K>[get${K}]` in the TS2322 message, matching tsc.
+#[test]
+fn generic_remapped_mapped_alias_index_access_shows_alias_name_in_ts2322() {
+    let diags = check_source_diagnostics(
+        r#"
+type Mapped2<K extends string> = { [P in K as `get${P}`]: { a: P; } };
+function test1<K extends string>(x: Mapped2<K>): void {
+    let y: { a: K; } = x[`get${K}`];
+}
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected 1 TS2322, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    let msg = &ts2322[0].message_text;
+    assert!(
+        msg.contains("Mapped2<K>"),
+        "Expected alias name 'Mapped2<K>' in TS2322 message, got: {msg}"
+    );
+}

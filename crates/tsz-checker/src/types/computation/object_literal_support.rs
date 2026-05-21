@@ -6,6 +6,38 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::{PropertyInfo, TypeId};
 
+/// Parameters for finalizing an object literal type after all properties have been processed.
+pub(crate) struct ObjectLiteralFinalizeCtx {
+    /// Named properties collected from the literal.
+    pub(crate) properties: FxHashMap<Atom, PropertyInfo>,
+    /// Per-property display-type overrides (used for freshness diagnostics).
+    pub(crate) display_type_overrides: FxHashMap<Atom, TypeId>,
+    /// Value types for string index signatures collected from spreads.
+    pub(crate) string_index_types: Vec<TypeId>,
+    /// Value types for number index signatures collected from spreads.
+    pub(crate) number_index_types: Vec<TypeId>,
+    /// Value types contributed by computed property names whose key type is
+    /// the wide `symbol` (non-`unique`). Per tsc, such keys synthesize a
+    /// `[k: symbol]: V` index signature rather than a named member.
+    pub(crate) symbol_index_types: Vec<TypeId>,
+    /// Parameter name atom for the string index signature, if present.
+    pub(crate) string_index_param_name: Option<Atom>,
+    /// Parameter name atom for the number index signature, if present.
+    pub(crate) number_index_param_name: Option<Atom>,
+    /// Whether any spread element is present.
+    pub(crate) has_spread: bool,
+    /// Whether any spread element resolved to `any`.
+    pub(crate) has_any_spread: bool,
+    /// Whether any spread element resolved to a union type.
+    pub(crate) has_union_spread: bool,
+    /// Per-branch property maps for union-spread expansion.
+    pub(crate) union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>>,
+    /// Generic (unevaluated) spread types that could not be unioned.
+    pub(crate) generic_spread_types: Vec<TypeId>,
+    /// Whether all properties are context-sensitive (deferred freshness).
+    pub(crate) all_properties_context_sensitive: bool,
+}
+
 fn order_preserving_union(
     factory: tsz_solver::construction::TypeFactory<'_>,
     mut members: Vec<TypeId>,
@@ -287,22 +319,22 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn finalize_object_literal_type(
-        &mut self,
-        properties: FxHashMap<Atom, PropertyInfo>,
-        display_type_overrides: FxHashMap<Atom, TypeId>,
-        mut string_index_types: Vec<TypeId>,
-        number_index_types: Vec<TypeId>,
-        string_index_param_name: Option<Atom>,
-        number_index_param_name: Option<Atom>,
-        has_spread: bool,
-        has_any_spread: bool,
-        has_union_spread: bool,
-        union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>>,
-        generic_spread_types: Vec<TypeId>,
-        all_properties_context_sensitive: bool,
-    ) -> TypeId {
+    pub(crate) fn finalize_object_literal_type(&mut self, ctx: ObjectLiteralFinalizeCtx) -> TypeId {
+        let ObjectLiteralFinalizeCtx {
+            properties,
+            display_type_overrides,
+            mut string_index_types,
+            number_index_types,
+            symbol_index_types,
+            string_index_param_name,
+            number_index_param_name,
+            has_spread,
+            has_any_spread,
+            has_union_spread,
+            union_spread_branches,
+            generic_spread_types,
+            all_properties_context_sensitive,
+        } = ctx;
         if has_any_spread {
             return TypeId::ANY;
         }
@@ -335,7 +367,10 @@ impl<'a> CheckerState<'a> {
             let mut properties: Vec<PropertyInfo> = properties.into_values().collect();
             properties.sort_by_key(|p| p.declaration_order);
 
-            if string_index_types.is_empty() && number_index_types.is_empty() {
+            if string_index_types.is_empty()
+                && number_index_types.is_empty()
+                && symbol_index_types.is_empty()
+            {
                 if has_spread {
                     let mut display_props = properties.clone();
                     crate::query_boundaries::common::normalize_display_property_order(
@@ -409,6 +444,42 @@ impl<'a> CheckerState<'a> {
                     })
                 } else {
                     None
+                };
+
+                let symbol_index = if !symbol_index_types.is_empty() {
+                    let value_type = if self.ctx.in_const_assertion {
+                        order_preserving_union(self.ctx.types.factory(), symbol_index_types)
+                    } else {
+                        self.ctx.types.factory().union(symbol_index_types)
+                    };
+                    Some(IndexSignature {
+                        key_type: TypeId::SYMBOL,
+                        value_type,
+                        readonly: false,
+                        param_name: None,
+                    })
+                } else {
+                    None
+                };
+
+                // `ObjectShape` only has one "string_index" slot, used for both
+                // string-keyed and symbol-keyed index signatures (discriminated
+                // by `key_type`). When both a string and a symbol index were
+                // synthesized, merge them by unioning the key and value types,
+                // matching what type-literal lowering does for
+                // `{ [k: string]: V1; [s: symbol]: V2 }`.
+                let string_index = match (string_index, symbol_index) {
+                    (Some(mut s), Some(sym)) => {
+                        crate::interface_type::merge_string_index_by_union(
+                            &mut s,
+                            sym,
+                            self.ctx.types.factory(),
+                        );
+                        Some(s)
+                    }
+                    (Some(s), None) => Some(s),
+                    (None, Some(sym)) => Some(sym),
+                    (None, None) => None,
                 };
 
                 let number_index = if !number_index_types.is_empty() {

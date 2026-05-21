@@ -496,7 +496,7 @@ impl<'a> Printer<'a> {
         match node.kind {
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                 if let Some(shorthand) = self.arena.get_shorthand_property(node) {
-                    self.emit(shorthand.name);
+                    self.emit_property_key_name(shorthand.name);
                     self.write(": ");
                     self.emit(shorthand.name);
                 }
@@ -587,10 +587,16 @@ impl<'a> Printer<'a> {
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
         self.prepare_logical_assignment_value_temps(method.body);
+        let previous_new_target_capture = self
+            .function_like_contains_new_target(method.body, &method.parameters.nodes)
+            .then(|| self.push_new_target_capture_for_initializer("void 0".into()));
         if param_transforms.has_transforms() {
             self.emit_block_with_param_prologue(method.body, &param_transforms);
         } else {
             self.emit(method.body);
+        }
+        if let Some(previous) = previous_new_target_capture {
+            self.restore_new_target_capture(previous);
         }
         self.emitting_function_body_block = prev_emitting_function_body_block;
         self.pop_temp_scope();
@@ -1098,7 +1104,7 @@ impl<'a> Printer<'a> {
                     self.write(".");
                     self.write_identifier_text(shorthand.name);
                     self.write(" = ");
-                    self.write_identifier_text(shorthand.name);
+                    self.emit(shorthand.name);
                 }
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -1121,7 +1127,16 @@ impl<'a> Printer<'a> {
                     let prev_fb = self.emitting_function_body_block;
                     self.emitting_function_body_block = true;
                     let saved_temps = std::mem::take(&mut self.hoisted_assignment_temps);
+                    let previous_new_target_capture = self
+                        .function_like_contains_new_target(
+                            accessor.body,
+                            &accessor.parameters.nodes,
+                        )
+                        .then(|| self.push_new_target_capture_for_initializer("void 0".into()));
                     self.emit(accessor.body);
+                    if let Some(previous) = previous_new_target_capture {
+                        self.restore_new_target_capture(previous);
+                    }
                     self.hoisted_assignment_temps = saved_temps;
                     self.emitting_function_body_block = prev_fb;
                     if let Some(body_node) = self.arena.get(accessor.body) {
@@ -1162,6 +1177,12 @@ impl<'a> Printer<'a> {
                     let prev_fb = self.emitting_function_body_block;
                     self.emitting_function_body_block = true;
                     let saved_temps = std::mem::take(&mut self.hoisted_assignment_temps);
+                    let previous_new_target_capture = self
+                        .function_like_contains_new_target(
+                            accessor.body,
+                            &accessor.parameters.nodes,
+                        )
+                        .then(|| self.push_new_target_capture_for_initializer("void 0".into()));
                     if let Some(transforms) = &param_transforms {
                         if transforms.has_transforms() {
                             self.emit_block_with_param_prologue(accessor.body, transforms);
@@ -1170,6 +1191,9 @@ impl<'a> Printer<'a> {
                         }
                     } else {
                         self.emit(accessor.body);
+                    }
+                    if let Some(previous) = previous_new_target_capture {
+                        self.restore_new_target_capture(previous);
                     }
                     self.hoisted_assignment_temps = saved_temps;
                     self.emitting_function_body_block = prev_fb;

@@ -96,7 +96,9 @@ function makeReport(pulls) {
     head: pr.headRefName,
     labels: pr.labels.sort(),
     agentName: agentNameFrom(pr.body),
-    issueRefs: [...new Set(issueRefsFrom(`${pr.title}\n${pr.body}`))].sort((a, b) => a - b),
+    issueRefs: [...new Set(issueRefsFrom(`${pr.title}\n${pr.body}`).filter((issue) => issue !== pr.number))].sort(
+      (a, b) => a - b,
+    ),
     titleScope: titleScope(pr.title),
   }));
 

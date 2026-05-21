@@ -1,6 +1,7 @@
 //! Literal inference helpers for generic call expression declaration emit.
 
 use super::super::DeclarationEmitter;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::node::{FunctionData, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -19,6 +20,8 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.call_expression_function_variable_return_type_text(expr_idx))
                     .or_else(|| self.generic_call_returned_identity_callback_type_text(expr_idx))
                     .or_else(|| self.call_expression_local_overload_return_type_text(expr_idx))
+                    .or_else(|| self.generic_rest_identity_parameters_tuple_type_text(expr_idx))
+                    .or_else(|| self.call_expression_parameters_return_tuple_type_text(expr_idx))
                     .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                     .or_else(|| self.bind_call_remaining_function_type_text(expr_idx))
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
@@ -52,6 +55,367 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(inner.to_string());
         }
         None
+    }
+
+    fn generic_rest_identity_parameters_tuple_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        self.generic_rest_identity_returns_rest_type_param(call.expression)?;
+
+        let args = call.arguments.as_ref()?;
+        let [arg_idx] = args.nodes.as_slice() else {
+            return None;
+        };
+
+        let arg_node = self.arena.get(*arg_idx)?;
+        if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+            let spread = self.arena.get_spread(arg_node)?;
+            return self.call_expression_parameters_return_tuple_type_text(spread.expression);
+        }
+
+        let tuple_text = self.call_expression_parameters_return_tuple_type_text(*arg_idx)?;
+        Some(format!("[{tuple_text}]"))
+    }
+
+    fn generic_rest_identity_returns_rest_type_param(&self, callee_idx: NodeIndex) -> Option<()> {
+        let binder = self.binder?;
+        let raw_sym_id = self.value_reference_symbol(callee_idx)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(callable) = Self::callable_decl_parts_from_node(self.arena, decl_node) else {
+                continue;
+            };
+            let [param_idx] = callable.parameters.nodes.as_slice() else {
+                continue;
+            };
+            let Some(param_node) = self.arena.get(*param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if !param.dot_dot_dot_token || callable.type_annotation.is_none() {
+                continue;
+            }
+            let Some(rest_type_param) = self.type_node_type_parameter_name(
+                self.arena,
+                param.type_annotation,
+                callable.type_parameters,
+            ) else {
+                continue;
+            };
+            if self.type_node_refs_type_parameter_name(
+                self.arena,
+                callable.type_annotation,
+                callable.type_parameters,
+                &rest_type_param,
+            ) {
+                return Some(());
+            }
+        }
+
+        None
+    }
+
+    fn call_expression_parameters_return_tuple_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let args = call.arguments.as_ref()?;
+        let [arg_idx] = args.nodes.as_slice() else {
+            return None;
+        };
+        if self.callable_returns_parameters_of_parameter(call.expression) {
+            return self.callable_parameter_tuple_type_text_for_value(*arg_idx);
+        }
+        None
+    }
+
+    fn callable_returns_parameters_of_parameter(&self, callee_idx: NodeIndex) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(raw_sym_id) = self.value_reference_symbol(callee_idx) else {
+            return false;
+        };
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(callable) = Self::callable_decl_parts_from_node(self.arena, decl_node) else {
+                continue;
+            };
+            let [param_idx] = callable.parameters.nodes.as_slice() else {
+                continue;
+            };
+            let Some(param_node) = self.arena.get(*param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_type_name) = self.type_node_type_parameter_name(
+                self.arena,
+                param.type_annotation,
+                callable.type_parameters,
+            ) else {
+                continue;
+            };
+            if self
+                .return_type_parameters_utility_arg_name(
+                    callable.type_annotation,
+                    callable.type_parameters,
+                )
+                .as_deref()
+                == Some(param_type_name.as_str())
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn return_type_parameters_utility_arg_name(
+        &self,
+        return_type_idx: NodeIndex,
+        callable_type_params: Option<&NodeList>,
+    ) -> Option<String> {
+        if let Some(arg_idx) =
+            self.type_reference_single_arg_builtin_parameters(self.arena, return_type_idx)
+        {
+            return self.type_node_type_parameter_name(self.arena, arg_idx, callable_type_params);
+        }
+
+        let return_node = self.arena.get(return_type_idx)?;
+        if return_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let return_ref = self.arena.get_type_ref(return_node)?;
+        let return_args = return_ref.type_arguments.as_ref()?;
+        let [return_arg] = return_args.nodes.as_slice() else {
+            return None;
+        };
+        let return_arg_name =
+            self.type_node_type_parameter_name(self.arena, *return_arg, callable_type_params)?;
+
+        let alias_sym_id = self.type_reference_symbol(return_ref.type_name)?;
+        let alias_symbol = self.binder?.symbols.get(alias_sym_id)?;
+        if alias_symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
+            return None;
+        }
+
+        for alias_decl_idx in alias_symbol.declarations.iter().copied() {
+            let alias_node = self.arena.get(alias_decl_idx)?;
+            let alias = self.arena.get_type_alias(alias_node)?;
+            let alias_type_params = alias.type_parameters.as_ref()?;
+            let [alias_type_param_idx] = alias_type_params.nodes.as_slice() else {
+                continue;
+            };
+            let alias_type_param_name = self
+                .arena
+                .get(*alias_type_param_idx)
+                .and_then(|node| self.arena.get_type_parameter(node))
+                .and_then(|type_param| self.get_identifier_text(type_param.name))?;
+            let alias_parameters_arg =
+                self.type_reference_single_arg_builtin_parameters(self.arena, alias.type_node)?;
+            if self.type_node_refs_type_parameter_name(
+                self.arena,
+                alias_parameters_arg,
+                alias.type_parameters.as_ref(),
+                &alias_type_param_name,
+            ) {
+                return Some(return_arg_name);
+            }
+        }
+
+        None
+    }
+
+    fn type_node_type_parameter_name(
+        &self,
+        arena: &NodeArena,
+        type_idx: NodeIndex,
+        type_params: Option<&NodeList>,
+    ) -> Option<String> {
+        let name = self.simple_type_node_name_from_arena(arena, type_idx)?;
+        type_params?
+            .nodes
+            .iter()
+            .copied()
+            .find_map(|type_param_idx| {
+                let type_param_node = arena.get(type_param_idx)?;
+                let type_param = arena.get_type_parameter(type_param_node)?;
+                (self
+                    .identifier_text_from_arena(arena, type_param.name)
+                    .as_deref()
+                    == Some(name.as_str()))
+                .then_some(name.clone())
+            })
+    }
+
+    fn type_node_refs_type_parameter_name(
+        &self,
+        arena: &NodeArena,
+        type_idx: NodeIndex,
+        type_params: Option<&NodeList>,
+        target_name: &str,
+    ) -> bool {
+        self.type_node_type_parameter_name(arena, type_idx, type_params)
+            .as_deref()
+            == Some(target_name)
+    }
+
+    fn simple_type_node_name_from_arena(
+        &self,
+        arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        let type_node = arena.get(type_idx)?;
+        if type_node.kind == SyntaxKind::Identifier as u16 {
+            return self.identifier_text_from_arena(arena, type_idx);
+        }
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let type_ref = arena.get_type_ref(type_node)?;
+            return self.structural_type_reference_name_text_from_arena(arena, type_ref.type_name);
+        }
+        None
+    }
+
+    fn structural_type_reference_name_text_from_arena(
+        &self,
+        arena: &NodeArena,
+        name_idx: NodeIndex,
+    ) -> Option<String> {
+        let name_node = arena.get(name_idx)?;
+        if name_node.kind == SyntaxKind::Identifier as u16 {
+            return self.identifier_text_from_arena(arena, name_idx);
+        }
+        if name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qualified = arena.get_qualified_name(name_node)?;
+            return self.identifier_text_from_arena(arena, qualified.right);
+        }
+        None
+    }
+
+    fn type_reference_single_arg_builtin_parameters(
+        &self,
+        arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let type_node = arena.get(type_idx)?;
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = arena.get_type_ref(type_node)?;
+        let type_name_node = arena.get(type_ref.type_name)?;
+        if type_name_node.kind != SyntaxKind::Identifier as u16
+            || self
+                .identifier_text_from_arena(arena, type_ref.type_name)
+                .as_deref()
+                != Some("Parameters")
+        {
+            return None;
+        }
+        let binder = self.binder?;
+        let sym_id = self.type_reference_symbol(type_ref.type_name)?;
+        let symbol = binder.get_symbol(sym_id)?;
+        let builtin_parameters_sym = binder
+            .lib_type_namespace
+            .get("Parameters")
+            .copied()
+            .or_else(|| {
+                binder
+                    .file_locals
+                    .get("Parameters")
+                    .filter(|id| binder.lib_symbol_ids.contains(id))
+            })?;
+        if sym_id != builtin_parameters_sym
+            || !binder.lib_symbol_ids.contains(&sym_id)
+            || symbol.escaped_name != "Parameters"
+            || symbol.flags & symbol_flags::TYPE_ALIAS == 0
+        {
+            return None;
+        }
+        let type_args = type_ref.type_arguments.as_ref()?;
+        let [arg_idx] = type_args.nodes.as_slice() else {
+            return None;
+        };
+        Some(*arg_idx)
+    }
+
+    fn type_reference_symbol(&self, type_name_idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
+        let binder = self.binder?;
+        binder.get_node_symbol(type_name_idx).or_else(|| {
+            let name = self.type_reference_name_text(type_name_idx)?;
+            self.resolve_identifier_symbol(type_name_idx, &name)
+        })
+    }
+
+    fn callable_parameter_tuple_type_text_for_value(&self, expr_idx: NodeIndex) -> Option<String> {
+        let binder = self.binder?;
+        let raw_sym_id = self.value_reference_symbol(expr_idx)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        let symbol = binder.symbols.get(sym_id)?;
+
+        let mut tuple_text = None;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(callable) = Self::callable_decl_parts_from_node(self.arena, decl_node) else {
+                continue;
+            };
+            if callable.body.is_some() {
+                continue;
+            }
+            let mut elements = Vec::new();
+            for &param_idx in &callable.parameters.nodes {
+                let param_node = self.arena.get(param_idx)?;
+                let param = self.arena.get_parameter(param_node)?;
+                let name = self.get_identifier_text(param.name)?;
+                let type_text = self
+                    .emit_type_node_text_from_arena(self.arena, param.type_annotation)
+                    .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))
+                    .unwrap_or_else(|| "any".to_string());
+                let optional = if param.question_token { "?" } else { "" };
+                if param.dot_dot_dot_token {
+                    elements.push(format!("...{name}{optional}: {}", type_text.trim()));
+                } else {
+                    elements.push(format!("{name}{optional}: {}", type_text.trim()));
+                }
+            }
+            tuple_text = Some(format!("[{}]", elements.join(", ")));
+        }
+
+        tuple_text
     }
 
     fn call_expression_local_overload_return_type_text(

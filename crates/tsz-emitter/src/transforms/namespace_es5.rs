@@ -40,6 +40,7 @@ use crate::emitter::ScopedConstEnum;
 use crate::transforms::ir_printer::IRPrinter;
 use crate::transforms::namespace_es5_ir::NamespaceES5Transformer;
 use rustc_hash::FxHashMap;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
@@ -89,6 +90,8 @@ pub struct NamespaceES5Emitter<'a> {
     transforms: Option<TransformContext>,
     system_export_folds: Vec<String>,
     transformer: NamespaceES5Transformer<'a>,
+    block_scope_shadowed_names: Vec<String>,
+    block_scope_reserved_names: Vec<String>,
 }
 
 impl<'a> NamespaceES5Emitter<'a> {
@@ -103,6 +106,8 @@ impl<'a> NamespaceES5Emitter<'a> {
             transforms: None,
             system_export_folds: Vec::new(),
             transformer: NamespaceES5Transformer::new(arena),
+            block_scope_shadowed_names: Vec::new(),
+            block_scope_reserved_names: Vec::new(),
         }
     }
 
@@ -118,6 +123,8 @@ impl<'a> NamespaceES5Emitter<'a> {
             transforms: None,
             system_export_folds: Vec::new(),
             transformer: NamespaceES5Transformer::with_commonjs(arena, is_commonjs),
+            block_scope_shadowed_names: Vec::new(),
+            block_scope_reserved_names: Vec::new(),
         }
     }
 
@@ -162,6 +169,40 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.transforms = Some(transforms);
     }
 
+    pub fn set_block_scope_shadowed_names(&mut self, names: Vec<String>) {
+        self.block_scope_shadowed_names = names;
+    }
+
+    pub fn set_block_scope_reserved_names(&mut self, names: Vec<String>) {
+        self.block_scope_reserved_names = names;
+    }
+
+    pub fn block_scope_reserved_names(&self) -> Vec<String> {
+        let mut names = self.block_scope_reserved_names.clone();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    fn configure_ir_printer_scope(&self, printer: &mut IRPrinter<'a>, ns_idx: NodeIndex) {
+        let mut shadowed_names = self.block_scope_shadowed_names.clone();
+        shadowed_names.extend(
+            self.transformer
+                .collect_namespace_block_scope_shadowed_names(ns_idx),
+        );
+        shadowed_names.sort();
+        shadowed_names.dedup();
+        printer.set_block_scope_shadowed_names(shadowed_names);
+        printer.set_block_scope_reserved_names(self.block_scope_reserved_names.clone());
+    }
+
+    fn merge_ir_printer_block_scope_reserved_names(&mut self, printer: &IRPrinter<'a>) {
+        self.block_scope_reserved_names
+            .extend(printer.block_scope_reserved_names());
+        self.block_scope_reserved_names.sort();
+        self.block_scope_reserved_names.dedup();
+    }
+
     /// Set whether legacy decorators are enabled (experimentalDecorators)
     pub const fn set_legacy_decorators(&mut self, enabled: bool) {
         self.transformer.set_legacy_decorators(enabled);
@@ -184,6 +225,10 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     pub fn set_commonjs_export_name(&mut self, name: Option<String>) {
         self.transformer.set_commonjs_export_name(name);
+    }
+
+    pub const fn set_module_kind(&mut self, kind: ModuleKind) {
+        self.transformer.set_module_kind(kind);
     }
 
     pub(crate) fn set_const_enum_facts(
@@ -226,10 +271,13 @@ impl<'a> NamespaceES5Emitter<'a> {
         if let Some((namespace, names)) = ast_qualification {
             printer.set_namespace_ast_qualification(namespace, names);
         }
+        self.configure_ir_printer_scope(&mut printer, ns_idx);
         if let Some(ref transforms) = self.transforms {
             printer.set_transforms(transforms.clone());
         }
-        strip_stray_export_lines(printer.emit(&ir))
+        let output = printer.emit(&ir).to_string();
+        self.merge_ir_printer_block_scope_reserved_names(&printer);
+        strip_stray_export_lines(&output)
     }
 
     /// Emit an exported namespace declaration (`CommonJS` attach-to-exports form).
@@ -255,10 +303,13 @@ impl<'a> NamespaceES5Emitter<'a> {
         if let Some((namespace, names)) = ast_qualification {
             printer.set_namespace_ast_qualification(namespace, names);
         }
+        self.configure_ir_printer_scope(&mut printer, ns_idx);
         if let Some(ref transforms) = self.transforms {
             printer.set_transforms(transforms.clone());
         }
-        strip_stray_export_lines(printer.emit(&ir))
+        let output = printer.emit(&ir).to_string();
+        self.merge_ir_printer_block_scope_reserved_names(&printer);
+        strip_stray_export_lines(&output)
     }
 
     /// Set the indent level for output

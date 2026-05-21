@@ -484,6 +484,8 @@ function reproFrom(diagnosticDeltas) {
   const tsconfigPath = relativeToFixture(process.env.COMPAT_TSCONFIG_PATH || "");
   const sourceRoot = relativeToFixture(process.env.COMPAT_SOURCE_ROOT || "");
   const reducedReproPath = location?.path || sourceRoot || tsconfigPath || null;
+  const tszCommandEnvPrefix = String(process.env.COMPAT_TSZ_COMMAND_ENV_PREFIX || "").trim();
+  const commandPrefix = tszCommandEnvPrefix ? `${tszCommandEnvPrefix} ` : "";
 
   return {
     tsconfig_path: tsconfigPath,
@@ -493,7 +495,7 @@ function reproFrom(diagnosticDeltas) {
     first_failure_column: location?.column ?? null,
     first_failure_code: location?.code || null,
     reduced_repro_path: reducedReproPath,
-    command: tsconfigPath ? `$TSZ_BIN --noEmit -p ${tsconfigPath}` : null,
+    command: tsconfigPath ? `${commandPrefix}$TSZ_BIN --noEmit -p ${tsconfigPath}` : null,
   };
 }
 
@@ -837,6 +839,17 @@ function renderStepSummaryMarkdown(summary, options) {
     .map((key) => `${key}=${byOracle[key]}`);
   if (oracleCounts.length) {
     lines.push(`- Oracle classification: ${oracleCounts.join(", ")}`);
+  }
+  if (Number(summary.malformed_jsonl_lines || 0) > 0) {
+    lines.push(`- Malformed JSONL lines: ${summary.malformed_jsonl_lines}`);
+    const examples = Array.isArray(summary.malformed_jsonl_examples)
+      ? summary.malformed_jsonl_examples
+      : [];
+    for (const example of examples.slice(0, 3)) {
+      const line = example?.line ?? "unknown";
+      const error = truncateForCell(example?.error || "unknown parse error", 120);
+      lines.push(`  - line ${line}: ${error}`);
+    }
   }
 
   // Residency for red/yellow rows is surfaced before any speedup/timing

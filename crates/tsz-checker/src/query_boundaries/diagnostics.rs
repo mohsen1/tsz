@@ -1,7 +1,10 @@
 use super::state::checking as state_checking;
 use tsz_solver::TypeId;
 
-pub(crate) use super::common::{callable_shape_for_type, intersection_members, union_members};
+pub(crate) use super::common::{
+    application_info, array_element_type, callable_shape_for_type, intersection_members,
+    lazy_def_id, union_members,
+};
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 
 pub(crate) fn assignment_numeric_display_children(
@@ -87,6 +90,20 @@ pub(crate) fn type_application(
     type_id: TypeId,
 ) -> Option<std::sync::Arc<tsz_solver::TypeApplication>> {
     tsz_solver::type_queries::get_type_application(db, type_id)
+}
+
+pub(crate) fn is_index_access_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::is_index_access_type(db, type_id)
+}
+
+pub(crate) fn contains_index_access_type(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_index_access_type(db, type_id)
 }
 
 pub(crate) fn application_base_has_conditional_alias_body(

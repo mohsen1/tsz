@@ -316,6 +316,9 @@ mod ts2498_tests;
 #[path = "../tests/ts2540_readonly_tests.rs"]
 mod ts2540_readonly_tests;
 #[cfg(test)]
+#[path = "../tests/ts2542_readonly_index_coemission_tests.rs"]
+mod ts2542_readonly_index_coemission_tests;
+#[cfg(test)]
 #[path = "../tests/ts2558_new_type_args_tests.rs"]
 mod ts2558_new_type_args_tests;
 #[cfg(test)]
@@ -636,6 +639,9 @@ mod repro_parserreal;
 #[cfg(test)]
 #[path = "../tests/reverse_mapped_inference_tests.rs"]
 mod reverse_mapped_inference_tests;
+#[cfg(test)]
+#[path = "tests/satisfies_callback_return_widening_tests.rs"]
+mod satisfies_callback_return_widening_tests;
 #[cfg(test)]
 #[path = "tests/split_accessor_variance_tests.rs"]
 mod split_accessor_variance_tests;

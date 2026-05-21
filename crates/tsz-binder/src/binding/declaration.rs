@@ -16,6 +16,20 @@ use tsz_scanner::SyntaxKind;
 
 use crate::state::BinderState;
 
+/// Named parameters for `record_semantic_def_ext` and `record_semantic_def_with_declare`.
+#[derive(Default)]
+pub(crate) struct SemanticDefDetails {
+    pub type_param_count: u16,
+    pub type_param_names: Vec<String>,
+    pub is_exported: bool,
+    pub enum_member_names: Vec<String>,
+    pub is_const: bool,
+    pub is_abstract: bool,
+    pub is_declare: bool,
+    pub extends_names: Vec<String>,
+    pub implements_names: Vec<String>,
+}
+
 impl BinderState {
     /// Append a `(name, declaration)` entry to the `module_augmentations`
     /// table for the given target module specifier.
@@ -703,15 +717,16 @@ impl BinderState {
                     crate::state::SemanticDefKind::Class,
                     name,
                     idx,
-                    tp_count,
-                    tp_names,
-                    is_exported,
-                    Vec::new(),
-                    false, // is_const
-                    is_abstract,
-                    is_declare,
-                    extends_names,
-                    implements_names,
+                    SemanticDefDetails {
+                        type_param_count: tp_count,
+                        type_param_names: tp_names,
+                        is_exported,
+                        is_abstract,
+                        is_declare,
+                        extends_names,
+                        implements_names,
+                        ..Default::default()
+                    },
                 );
             }
 
@@ -972,15 +987,15 @@ impl BinderState {
                     crate::state::SemanticDefKind::Interface,
                     name,
                     idx,
-                    tp_count,
-                    tp_names,
-                    is_exported,
-                    Vec::new(),
-                    false,
-                    false,
-                    is_declare,
-                    extends_names,
-                    implements_names,
+                    SemanticDefDetails {
+                        type_param_count: tp_count,
+                        type_param_names: tp_names,
+                        is_exported,
+                        is_declare,
+                        extends_names,
+                        implements_names,
+                        ..Default::default()
+                    },
                 );
                 return;
             }
@@ -1000,15 +1015,15 @@ impl BinderState {
                 crate::state::SemanticDefKind::Interface,
                 name,
                 idx,
-                tp_count,
-                tp_names,
-                is_exported,
-                Vec::new(),
-                false,
-                false,
-                is_declare,
-                extends_names,
-                implements_names,
+                SemanticDefDetails {
+                    type_param_count: tp_count,
+                    type_param_names: tp_names,
+                    is_exported,
+                    is_declare,
+                    extends_names,
+                    implements_names,
+                    ..Default::default()
+                },
             );
 
             // Hoist global augmentation interfaces to file_locals for cross-file visibility.
@@ -1075,10 +1090,13 @@ impl BinderState {
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
                     idx,
-                    tp_count,
-                    tp_names,
-                    is_exported,
-                    is_declare,
+                    SemanticDefDetails {
+                        type_param_count: tp_count,
+                        type_param_names: tp_names,
+                        is_exported,
+                        is_declare,
+                        ..Default::default()
+                    },
                 );
 
                 self.enter_scope(ContainerKind::Block, idx);
@@ -1146,10 +1164,13 @@ impl BinderState {
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
                     idx,
-                    tp_count,
-                    tp_names,
-                    is_exported,
-                    is_declare,
+                    SemanticDefDetails {
+                        type_param_count: tp_count,
+                        type_param_names: tp_names,
+                        is_exported,
+                        is_declare,
+                        ..Default::default()
+                    },
                 );
             } else {
                 let sym_id =
@@ -1166,10 +1187,13 @@ impl BinderState {
                     crate::state::SemanticDefKind::TypeAlias,
                     name,
                     idx,
-                    tp_count,
-                    tp_names,
-                    is_exported,
-                    is_declare,
+                    SemanticDefDetails {
+                        type_param_count: tp_count,
+                        type_param_names: tp_names,
+                        is_exported,
+                        is_declare,
+                        ..Default::default()
+                    },
                 );
             }
 
@@ -1223,15 +1247,13 @@ impl BinderState {
                 crate::state::SemanticDefKind::Enum,
                 name,
                 idx,
-                0,
-                Vec::new(), // type_param_names (enums are not generic)
-                is_exported,
-                enum_member_names,
-                is_const,
-                false, // is_abstract
-                is_declare,
-                Vec::new(), // extends_names
-                Vec::new(), // implements_names
+                SemanticDefDetails {
+                    enum_member_names,
+                    is_const,
+                    is_exported,
+                    is_declare,
+                    ..Default::default()
+                },
             );
 
             // Get existing exports (for namespace merging)
@@ -2716,46 +2738,30 @@ impl BinderState {
         type_param_names: Vec<String>,
         is_exported: bool,
     ) {
-        self.record_semantic_def_with_declare(
+        self.record_semantic_def_ext(
             sym_id,
             kind,
             name,
             declaration,
-            type_param_count,
-            type_param_names,
-            is_exported,
-            false,
+            SemanticDefDetails {
+                type_param_count,
+                type_param_names,
+                is_exported,
+                ..Default::default()
+            },
         );
     }
 
     /// Like `record_semantic_def` but with explicit `is_declare` flag.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_semantic_def_with_declare(
         &mut self,
         sym_id: SymbolId,
         kind: crate::state::SemanticDefKind,
         name: &str,
         declaration: NodeIndex,
-        type_param_count: u16,
-        type_param_names: Vec<String>,
-        is_exported: bool,
-        is_declare: bool,
+        details: SemanticDefDetails,
     ) {
-        self.record_semantic_def_ext(
-            sym_id,
-            kind,
-            name,
-            declaration,
-            type_param_count,
-            type_param_names,
-            is_exported,
-            Vec::new(),
-            false,
-            false,
-            is_declare,
-            Vec::new(),
-            Vec::new(),
-        );
+        self.record_semantic_def_ext(sym_id, kind, name, declaration, details);
     }
 
     /// Extended version of `record_semantic_def` that also captures enriched
@@ -2766,26 +2772,28 @@ impl BinderState {
     /// can pre-create solver `DefIds` during construction rather than inventing
     /// them on demand in hot paths.
     ///
-    /// Only records entries for declarations at the source file scope (ScopeId(0))
+    /// Only records entries for declarations at the source file scope (`ScopeId(0)`)
     /// to avoid noise from nested declarations that are less likely to be
     /// cross-file semantic references.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_semantic_def_ext(
         &mut self,
         sym_id: SymbolId,
         kind: crate::state::SemanticDefKind,
         name: &str,
         declaration: NodeIndex,
-        type_param_count: u16,
-        type_param_names: Vec<String>,
-        is_exported: bool,
-        enum_member_names: Vec<String>,
-        is_const: bool,
-        is_abstract: bool,
-        is_declare: bool,
-        extends_names: Vec<String>,
-        implements_names: Vec<String>,
+        details: SemanticDefDetails,
     ) {
+        let SemanticDefDetails {
+            type_param_count,
+            type_param_names,
+            is_exported,
+            enum_member_names,
+            is_const,
+            is_abstract,
+            is_declare,
+            extends_names,
+            implements_names,
+        } = details;
         // Only capture top-level declarations (source file scope or module scope)
         // and declarations inside `declare global { }` blocks.
         // Nested declarations (inside function bodies, class bodies, etc.) are not

@@ -1476,8 +1476,17 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(prop_name_idx)
                 .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            // Track whether the computed key is a numeric/string literal (text-resolvable).
+            // Symbol-keyed computed properties (`[sym]`, `[Symbol.iterator]`) fall through to
+            // `get_property_name_resolved` and must always use TS2418, not TS2322.
+            let mut is_computed_literal_key = false;
             let prop_name = match self.object_literal_property_name_text(prop_name_idx) {
-                Some(name) => name,
+                Some(name) => {
+                    if is_computed_property {
+                        is_computed_literal_key = true;
+                    }
+                    name
+                }
                 None if is_computed_property => {
                     match self.get_property_name_resolved(prop_name_idx) {
                         Some(name) => name,
@@ -1944,12 +1953,17 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // For computed property names, emit TS2418 ("Type of computed
-                // property's value is '{0}', which is not assignable to type
-                // '{1}'.") instead of the generic TS2322.  This matches tsc's
-                // behavior in `elaborateElementwise`.  tsc does not widen
-                // literal types in the TS2418 message.
-                if is_computed_property {
+                // TS2418 applies when:
+                //   (a) the key is computed, AND
+                //   (b) either the key is a symbol (unique/well-known, never TS2322)
+                //       or the key is a numeric/string literal but the target has
+                //       no named property for it (matches only via index signature).
+                // When a literal key like `[0]` or `["x"]` resolves to a named
+                // property in the target, tsc uses TS2322 instead.
+                if is_computed_property
+                    && !(is_computed_literal_key
+                        && self.target_has_named_property_for_key(effective_param_type, &prop_name))
+                {
                     // For TS2418, use the literal type from the initializer
                     // expression when available (tsc shows "str" not string).
                     let computed_source = self
@@ -2173,6 +2187,27 @@ impl<'a> CheckerState<'a> {
 
     fn target_has_indexed_access_surface(&self, target_type: TypeId) -> bool {
         self.type_has_indexed_access_surface(target_type, 0)
+    }
+
+    /// `true` when any shape reachable from `target_type` has a named property
+    /// (not an index signature) whose atom equals `prop_name`.
+    fn target_has_named_property_for_key(&mut self, target_type: TypeId, prop_name: &str) -> bool {
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        let resolved = self.resolve_type_for_property_access(target_type);
+        let evaluated = self.evaluate_type_with_env(target_type);
+        let has_named = |type_id: TypeId| {
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+                .is_some_and(|shape| shape.properties.iter().any(|p| p.name == prop_atom))
+        };
+        [target_type, resolved, evaluated]
+            .into_iter()
+            .any(|candidate| {
+                crate::query_boundaries::common::union_members(self.ctx.types, candidate)
+                    .map_or_else(
+                        || has_named(candidate),
+                        |ms| ms.iter().copied().any(has_named),
+                    )
+            })
     }
 
     fn type_has_indexed_access_surface(&self, target_type: TypeId, depth: usize) -> bool {

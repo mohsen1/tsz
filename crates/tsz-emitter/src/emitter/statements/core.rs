@@ -1,4 +1,6 @@
-use super::super::{Printer, get_trailing_comment_ranges};
+use super::super::Printer;
+use super::super::get_trailing_comment_ranges;
+use super::super::hoist_anchor::HoistAnchor;
 use crate::safe_slice;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::node_flags;
@@ -294,10 +296,13 @@ impl<'a> Printer<'a> {
         let static_super_scope =
             self.enter_pending_lowered_async_arrow_super_capture_scope(is_function_body_block);
 
-        let block_scoped_private_byte_offset =
-            Some((self.writer.len(), self.writer.current_line()));
-        let hoisted_var_byte_offset = if is_function_body_block {
-            block_scoped_private_byte_offset
+        // The function-body hoist and the block-scoped private temp
+        // insertion share this anchor; both write at the surrounding
+        // block's indent regardless of whether a block-level `using` try
+        // wrapper later increases `indent_level`.
+        let block_scoped_private_anchor = Some(self.capture_hoist_anchor());
+        let hoisted_var_anchor = if is_function_body_block {
+            block_scoped_private_anchor
         } else {
             None
         };
@@ -343,8 +348,12 @@ impl<'a> Printer<'a> {
         self.recovered_module_syntax_block_depth += 1;
         let prev_lexical_block_missing_initializer_function_depth =
             self.lexical_block_missing_initializer_function_depth;
+        let prev_lexical_block_missing_initializer_is_loop_body =
+            self.lexical_block_missing_initializer_is_loop_body;
         if self.ctx.target_es5 && !is_function_body_block {
             self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
+            self.lexical_block_missing_initializer_is_loop_body =
+                prev_lexical_block_missing_initializer_is_loop_body;
         }
         for (stmt_i, &stmt_idx) in stmts.iter().enumerate().skip(directive_prologue_count) {
             // Save state before leading comments so we can undo them if the
@@ -512,24 +521,27 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
         self.lexical_block_missing_initializer_function_depth =
             prev_lexical_block_missing_initializer_function_depth;
-        self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
+        self.lexical_block_missing_initializer_is_loop_body =
+            prev_lexical_block_missing_initializer_is_loop_body;
 
-        if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
-            self.insert_function_body_hoisted_temps_at(byte_offset, line_no);
+        if let Some(anchor) = hoisted_var_anchor {
+            self.insert_function_body_hoisted_temps_at(anchor);
         }
 
-        if let Some((byte_offset, line_no)) = block_scoped_private_byte_offset
+        if let Some(anchor) = block_scoped_private_anchor
             && !self.block_scoped_private_temps.is_empty()
         {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let indent = self.writer.indent_string_at(anchor.indent_level);
             let let_decl = format!(
                 "{}let {};",
                 indent,
                 self.block_scoped_private_temps.join(", ")
             );
-            self.writer.insert_line_at(byte_offset, line_no, &let_decl);
+            self.writer
+                .insert_line_at(anchor.byte_offset, anchor.line_no, &let_decl);
             self.block_scoped_private_temps.clear();
         }
 
@@ -644,17 +656,17 @@ impl<'a> Printer<'a> {
 
     pub(in crate::emitter) fn insert_function_body_hoisted_temps_at(
         &mut self,
-        byte_offset: usize,
-        line_no: u32,
+        anchor: HoistAnchor,
     ) {
-        let indent = " ".repeat(self.writer.indent_width() as usize);
+        let indent = self.writer.indent_string_at(anchor.indent_level);
         let mut ref_vars = Vec::new();
         ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
         ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
 
         if !ref_vars.is_empty() {
             let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
-            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+            self.writer
+                .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
         }
 
         if !self.hoisted_assignment_value_temps.is_empty() {
@@ -663,7 +675,8 @@ impl<'a> Printer<'a> {
                 indent,
                 self.hoisted_assignment_value_temps.join(", ")
             );
-            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+            self.writer
+                .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
         }
     }
 
@@ -830,7 +843,68 @@ impl<'a> Printer<'a> {
             && !self.in_namespace_iife
             && is_var_declaration
         {
+            // Collect deferred named exports before the mutable emit call.
+            // When a `var` is assigned inside a nested block (if/for/while body) and
+            // its name is re-exported via `export { name }`, tsc emits
+            // `exports_1("name", name)` after the assignment statement.
+            // Top-level `var` statements are handled by the System execute loops
+            // (which call emit_system_variable_initializers directly, bypassing this
+            // path), so this deferred-export path only activates for vars inside
+            // nested blocks where the outer loop already skipped the export { name }
+            // declaration.
+            let deferred_exports: Vec<(String, String)> = if let Some(bindings) =
+                deferred_export_bindings.as_ref()
+                && !bindings.is_empty()
+                && !self
+                    .arena
+                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            {
+                let mut result = Vec::new();
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                        continue;
+                    };
+                    let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                        continue;
+                    };
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        let Some(decl_node) = self.arena.get(decl_idx) else {
+                            continue;
+                        };
+                        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                            continue;
+                        };
+                        if decl.initializer.is_none() {
+                            continue;
+                        }
+                        let Some(name_node) = self.arena.get(decl.name) else {
+                            continue;
+                        };
+                        if name_node.kind != SyntaxKind::Identifier as u16 {
+                            continue;
+                        }
+                        let local_name = self.get_identifier_text_idx(decl.name);
+                        if local_name.is_empty() {
+                            continue;
+                        }
+                        if let Some(export_name) = bindings.get(&local_name).cloned() {
+                            result.push((local_name, export_name));
+                        }
+                    }
+                }
+                result
+            } else {
+                Vec::new()
+            };
+
             self.emit_system_variable_initializers(node);
+
+            for (local_name, export_name) in deferred_exports {
+                self.write_line();
+                self.write_export_binding_start(&export_name);
+                self.write(&local_name);
+                self.write_export_binding_end();
+            }
             return;
         }
 

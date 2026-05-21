@@ -23,6 +23,7 @@
 //!
 use crate::CheckerContext;
 use crate::context::{CheckerOptions, TypingRequest};
+use crate::control_flow::type_guards::reference_uses_outer_class_property_initializer_binding;
 use crate::query_boundaries::common::QueryDatabase;
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
@@ -409,11 +410,35 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if self.reference_uses_outer_class_property_initializer_binding(idx) {
+            return false;
+        }
+
         if self.is_require_call_bound_identifier(idx) {
             return false;
         }
 
         self.is_narrowable_identifier(idx)
+    }
+
+    fn reference_uses_outer_class_property_initializer_binding(&self, idx: NodeIndex) -> bool {
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.value_declaration.is_some()
+            && reference_uses_outer_class_property_initializer_binding(
+                self.ctx.arena,
+                idx,
+                symbol.value_declaration,
+            )
     }
 
     /// Check if a node is a narrowable identifier (variable with flow analysis).
@@ -1063,6 +1088,30 @@ impl<'a> CheckerState<'a> {
         self.get_type_of_node_with_request(idx, &TypingRequest::NONE)
     }
 
+    /// Compute the receiver type that should be bound to `this:` when a
+    /// callee expression is a property or element access.
+    ///
+    /// Used by call sites that mirror tsc's `getThisArgumentOfCall` for
+    /// callee shapes that bypass the regular call-expression path —
+    /// decorators and tagged templates. Callers may pass the raw callee
+    /// node; parentheses, non-null assertions, and type assertions are
+    /// unwrapped before inspecting the kind.
+    ///
+    /// Returns `None` for bare identifiers, call expressions, and other
+    /// shapes with no receiver — letting the call resolver apply the default
+    /// `void` receiver.
+    pub(crate) fn access_receiver_type(&mut self, callee_idx: NodeIndex) -> Option<TypeId> {
+        let unwrapped = self.ctx.arena.skip_parenthesized_and_assertions(callee_idx);
+        let node = self.ctx.arena.get(unwrapped)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+        Some(self.get_type_of_node(access.expression))
+    }
+
     /// Compute the type of a node using an explicit [`TypingRequest`] instead of
     /// mutating ambient context fields.
     pub fn get_type_of_node_with_request(
@@ -1161,6 +1210,7 @@ impl<'a> CheckerState<'a> {
                 && (is_identifier || is_this_keyword)
                 && !self.ctx.daa_error_nodes.contains(&idx.0)
                 && !self.is_require_call_bound_identifier(idx)
+                && !self.reference_uses_outer_class_property_initializer_binding(idx)
                 && let Some(flow_node) = self.ctx.binder.get_node_flow(idx)
                 && let Some(sym_id) = self
                     .ctx

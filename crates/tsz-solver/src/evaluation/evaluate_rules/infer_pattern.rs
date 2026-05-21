@@ -23,6 +23,16 @@ use tsz_common::interner::Atom;
 use super::super::evaluate::TypeEvaluator;
 use super::infer_substitutor::InferSubstitutor;
 
+/// Selects how co-located `infer T` candidates are merged when the same name
+/// gets distinct bindings from multiple structurally adjacent positions.
+#[derive(Clone, Copy)]
+enum CoLocatedMerge {
+    /// Tuple elements, array elements, optional-tail elements — covariant.
+    Union,
+    /// Function/callable parameters — contravariant.
+    Intersection,
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Substitute infer bindings into a type.
     ///
@@ -794,6 +804,71 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Merge co-located `infer T` candidates extracted by independent
+    /// sub-matches against the same outer pattern.
+    ///
+    /// For each `(source, pattern)` pair, the helper runs `match_infer_pattern`
+    /// on a fresh clone of `bindings` so the first slot's binding does not
+    /// poison the next slot's mutual-subtype check inside `bind_infer`. After
+    /// every slot has produced its local bindings, names introduced by these
+    /// slots are folded back into `bindings` using `merge_kind`: union for
+    /// covariant container positions (tuple elements, array elements), or
+    /// intersection for contravariant function/callable parameters. Bindings
+    /// that already existed before the helper was called are preserved
+    /// unchanged.
+    pub(crate) fn match_co_located_intersect_pairs(
+        &self,
+        pairs: &[(TypeId, TypeId)],
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        self.match_co_located_with_merge(
+            pairs,
+            bindings,
+            visited,
+            checker,
+            CoLocatedMerge::Intersection,
+        )
+    }
+
+    fn match_co_located_with_merge(
+        &self,
+        pairs: &[(TypeId, TypeId)],
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        checker: &mut SubtypeChecker<'_, R>,
+        merge_kind: CoLocatedMerge,
+    ) -> bool {
+        let base = bindings.clone();
+        let mut merged = base.clone();
+        for &(source, pattern) in pairs {
+            let mut local = base.clone();
+            if !self.match_infer_pattern(source, pattern, &mut local, visited, checker) {
+                return false;
+            }
+            for (name, ty) in local {
+                if base.contains_key(&name) {
+                    continue;
+                }
+                if let Some(existing) = merged.get_mut(&name) {
+                    if *existing != ty {
+                        *existing = match merge_kind {
+                            CoLocatedMerge::Union => self.interner().union2(*existing, ty),
+                            CoLocatedMerge::Intersection => {
+                                self.interner().intersection2(*existing, ty)
+                            }
+                        };
+                    }
+                } else {
+                    merged.insert(name, ty);
+                }
+            }
+        }
+        *bindings = merged;
+        true
+    }
+
     /// Match tuple elements against a pattern, extracting infer bindings.
     pub(crate) fn match_tuple_elements(
         &self,
@@ -933,7 +1008,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return false;
         }
 
+        // Collect (source, pattern) pairs for the matched prefix and any
+        // optional-tail slots, then route them through the co-located merge
+        // helper so that `[infer U, infer U]` against `[string, number]`
+        // unions to `string | number` instead of failing on the second slot's
+        // mutual-subtype check inside `bind_infer`.
         let shared = std::cmp::min(source_len, pattern_len);
+        let mut pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(pattern_len);
         for i in 0..shared {
             let source_elem = &source_elems[i];
             let pattern_elem = &pattern_elems[i];
@@ -946,15 +1027,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 source_elem.type_id
             };
-            if !self.match_infer_pattern(
-                source_type,
-                pattern_elem.type_id,
-                bindings,
-                visited,
-                checker,
-            ) {
-                return false;
-            }
+            pairs.push((source_type, pattern_elem.type_id));
         }
 
         if source_len < pattern_len {
@@ -965,21 +1038,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if !pattern_elem.optional {
                     return false;
                 }
-                if self.type_contains_infer(pattern_elem.type_id)
-                    && !self.match_infer_pattern(
-                        TypeId::UNDEFINED,
-                        pattern_elem.type_id,
-                        bindings,
-                        visited,
-                        checker,
-                    )
-                {
-                    return false;
+                if self.type_contains_infer(pattern_elem.type_id) {
+                    pairs.push((TypeId::UNDEFINED, pattern_elem.type_id));
                 }
             }
         }
 
-        true
+        self.match_co_located_with_merge(&pairs, bindings, visited, checker, CoLocatedMerge::Union)
     }
 
     /// Match function signature parameters against a pattern.
@@ -994,6 +1059,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if source_params.len() != pattern_params.len() {
             return false;
         }
+        // Function/callable parameters are contravariant: when the same
+        // `infer T` name appears in multiple parameter positions and the
+        // source supplies distinct types, tsc intersects the candidates so
+        // that `(a: infer U, b: infer U) => void` against
+        // `(a: string, b: "hello") => void` infers `U = string & "hello"`
+        // instead of failing the second slot via `bind_infer`'s mutual
+        // subtype check.
+        let mut pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(pattern_params.len());
         for (source_param, pattern_param) in source_params.iter().zip(pattern_params.iter()) {
             if source_param.optional != pattern_param.optional
                 || source_param.rest != pattern_param.rest
@@ -1008,17 +1081,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 source_param.type_id
             };
-            if !self.match_infer_pattern(
-                source_param_type,
-                pattern_param.type_id,
-                bindings,
-                visited,
-                checker,
-            ) {
-                return false;
-            }
+            pairs.push((source_param_type, pattern_param.type_id));
         }
-        true
+        self.match_co_located_with_merge(
+            &pairs,
+            bindings,
+            visited,
+            checker,
+            CoLocatedMerge::Intersection,
+        )
     }
 
     /// Maximum iterations for alias-application reduction loops.

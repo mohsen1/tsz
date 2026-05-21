@@ -157,7 +157,7 @@ fn direct_actual_lib_alias_proof_matches_mapped_utility_fallback_bodies() {
         let proof = state
             .direct_actual_lib_type_alias_body(sym_id, &symbol, name, delegate_arena)
             .unwrap_or_else(|| panic!("{name} should have a proven actual-lib alias body"));
-        assert_eq!(proof.outcome, expected_outcome);
+        assert_eq!(proof.outcome, expected_outcome, "{name} outcome");
         assert_eq!(
             proof.type_params.len(),
             expected_param_count,

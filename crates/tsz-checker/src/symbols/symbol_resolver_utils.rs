@@ -782,6 +782,17 @@ impl<'a> CheckerState<'a> {
     /// qualified names keep TS2694/TS2724.
     /// Returns true if an error was reported.
     pub(crate) fn report_type_query_missing_member(&mut self, idx: NodeIndex) -> bool {
+        self.report_qualified_member_missing(idx, true)
+    }
+
+    /// Report a qualified-name missing member error for non-`typeof` callers
+    /// (import-equals, type-alias resolution). Always emits TS2694/TS2724 on
+    /// failure; never the value-space TS2339.
+    pub(crate) fn report_qualified_alias_missing_member(&mut self, idx: NodeIndex) -> bool {
+        self.report_qualified_member_missing(idx, false)
+    }
+
+    fn report_qualified_member_missing(&mut self, idx: NodeIndex, from_typeof: bool) -> bool {
         let node = match self.ctx.arena.get(idx) {
             Some(node) => node,
             None => return false,
@@ -800,7 +811,7 @@ impl<'a> CheckerState<'a> {
                 // The left side couldn't be fully resolved. For nested qualified names
                 // like X.Y.Z where Y doesn't exist in X, the resolution of X.Y fails.
                 // Recursively check if we can report TS2694 on the left sub-expression.
-                return self.report_type_query_missing_member(qn.left);
+                return self.report_qualified_member_missing(qn.left, from_typeof);
             }
         };
         let lib_binders = self.get_lib_binders();
@@ -889,7 +900,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if left_symbol.import_module.is_none() && self.is_inside_type_query(idx) {
+        if from_typeof && left_symbol.import_module.is_none() {
             let left_text = self
                 .entity_name_text(qn.left)
                 .unwrap_or_else(|| left_symbol.escaped_name.clone());

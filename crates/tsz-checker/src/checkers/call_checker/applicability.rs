@@ -135,7 +135,6 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn resolve_call_with_checker_adapter_and_arg_sources(
         &mut self,
         func_type: TypeId,

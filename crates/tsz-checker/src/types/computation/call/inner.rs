@@ -2814,16 +2814,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let (mut result, mut allow_contextual_mismatch_deferral) = self
-            .finalize_generic_call_result(
+            .finalize_generic_call_result(super::super::call_finalize::GenericCallFinalizeCtx {
                 callee_type_for_call,
-                generic_instantiated_params.as_ref(),
+                generic_instantiated_params: generic_instantiated_params.as_ref(),
                 args,
-                &arg_types,
+                arg_types: &arg_types,
                 result,
                 sanitized_generic_inference,
                 needs_real_type_recheck,
-                shape_this_type,
-            );
+            });
         let finalized_contextual_param_types = generic_instantiated_params
             .as_ref()
             .map(|params| self.contextual_param_types_from_instantiated_params(params, args.len()));

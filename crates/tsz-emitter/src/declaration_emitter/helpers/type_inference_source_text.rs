@@ -214,8 +214,12 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
+        // Peel parens to inspect the structural kind: `X<(<T>() => T)>` and
+        // `X< <T>() => T >` both have a generic function type argument.
+        // The caller guards with `!already_has_parens` to avoid double-wrapping.
+        let peeled = self.peel_paren(type_arg_idx);
         self.arena
-            .get(type_arg_idx)
+            .get(peeled)
             .and_then(|node| self.arena.get_function_type(node))
             .is_some_and(|func| {
                 !func

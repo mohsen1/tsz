@@ -286,9 +286,10 @@ impl<'a> CodeActionProvider<'a> {
     /// The innermost enclosing context decides:
     ///
     /// - Async function-like (`FunctionDeclaration`/`Expression`/`ArrowFunction`
-    ///   with `is_async`, `MethodDeclaration` with the `async` modifier),
-    ///   class static initialization blocks, and the top-level module body
-    ///   all permit `await`.
+    ///   with `is_async`, `MethodDeclaration` with the `async` modifier) and
+    ///   the top-level module body permit `await`.
+    /// - Class static initialization blocks do NOT permit `await`, matching
+    ///   TypeScript's behavior (analogous to class field initializers).
     /// - Any other function-like ancestor (non-async function, non-async
     ///   generator, non-async arrow, non-async method, constructor, getter,
     ///   setter) makes `await` a parser error.
@@ -319,10 +320,9 @@ impl<'a> CodeActionProvider<'a> {
                 }
                 syntax_kind_ext::CONSTRUCTOR
                 | syntax_kind_ext::GET_ACCESSOR
-                | syntax_kind_ext::SET_ACCESSOR => return false,
-                // Class static initialization blocks and the top-level
-                // module body both permit `await` per TC39.
-                syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION | syntax_kind_ext::SOURCE_FILE => {
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => return false,
+                syntax_kind_ext::SOURCE_FILE => {
                     return true;
                 }
                 _ => {}
@@ -385,6 +385,10 @@ impl<'a> CodeActionProvider<'a> {
                 || node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
             {
                 return false;
+            }
+
+            if node.kind == syntax_kind_ext::SOURCE_FILE {
+                return true;
             }
 
             let Some(ext) = self.arena.get_extended(current) else {

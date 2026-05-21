@@ -3,6 +3,7 @@
 //! This module handles binding of module/namespace declarations, including
 //! ambient modules, module augmentation, export population, and symbol visibility.
 
+use crate::binding::SemanticDefDetails;
 use crate::state::BinderState;
 use crate::{ContainerKind, Symbol, SymbolId, SymbolTable, symbol_flags};
 use std::sync::Arc;
@@ -275,10 +276,11 @@ impl BinderState {
                     crate::state::SemanticDefKind::Namespace,
                     &name,
                     idx,
-                    0,
-                    Vec::new(), // namespaces are not generic
-                    is_exported,
-                    is_declare,
+                    SemanticDefDetails {
+                        is_exported,
+                        is_declare,
+                        ..Default::default()
+                    },
                 );
 
                 // `declare global { namespace X { ... } }` makes X visible at the global

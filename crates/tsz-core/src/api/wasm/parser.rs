@@ -137,7 +137,8 @@ impl Parser {
     }
 
     /// Get the number of nodes in the AST.
-    #[allow(clippy::missing_const_for_fn)] // wasm_bindgen does not support const fn
+    // wasm_bindgen cannot bind const fn.
+    #[allow(clippy::missing_const_for_fn)]
     #[wasm_bindgen(js_name = getNodeCount)]
     pub fn get_node_count(&self) -> usize {
         self.parser.get_node_count()
