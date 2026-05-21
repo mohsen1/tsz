@@ -463,6 +463,13 @@ impl<'a> AsyncES5Transformer<'a> {
         if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
             return false;
         }
+        // Only `var` may be hoisted to function scope. `let`/`const`/`using`
+        // are block-scoped: turning them into a hoisted `var` would change the
+        // binding's scope/semantics. Leave block-scoped initializers to the
+        // verbatim path (and the ES5 block-scoping transform that owns them).
+        if tsz_parser::parser::node_flags::is_block_scoped(u32::from(init_node.flags)) {
+            return false;
+        }
         let Some(var_list) = self.arena.get_variable(init_node) else {
             return false;
         };

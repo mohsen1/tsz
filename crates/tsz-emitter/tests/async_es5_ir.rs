@@ -1651,6 +1651,29 @@ fn async_for_var_initializer_without_value_is_hoisted() {
     );
 }
 
+#[test]
+fn async_for_block_scoped_initializer_is_not_var_hoisted() {
+    // `let`/`const` are block-scoped: the `var`-hoist shortcut must not apply,
+    // otherwise the binding's scope/semantics would change. The block-scoped
+    // initializer is left to the verbatim / ES5 block-scoping path. With the
+    // bug present the emitter would produce a hoisted `var c;` plus
+    // `for (c = x; y; z)`; the gate prevents both.
+    for keyword in ["let", "const"] {
+        let output = transform_and_print(&format!(
+            "async function f() {{ for ({keyword} c = x; y; z) {{ a; }} }}"
+        ));
+
+        assert!(
+            !output.contains("var c;"),
+            "A block-scoped `{keyword}` for-initializer must not be hoisted to `var`.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("for (c = x"),
+            "A block-scoped `{keyword}` initializer must not be rewritten to a bare assignment.\nOutput:\n{output}"
+        );
+    }
+}
+
 // Negative/fallback case (no suspension and no hoistable `var` -> the for loop
 // is emitted verbatim, not a state machine) is covered end-to-end by the
 // `es5-asyncFunctionForStatements` emit baseline (`forStatement0`); the
