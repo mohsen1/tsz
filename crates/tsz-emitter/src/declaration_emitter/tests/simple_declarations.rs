@@ -2348,6 +2348,77 @@ export const x = 1;
 }
 
 #[test]
+fn test_js_commonjs_named_object_export_emits_typedef_aliases_first() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {'alpha'|'beta'} GroupIds */
+
+/**
+ * @typedef Group
+ * @property {GroupIds} id
+ * @property {string[]} names
+ */
+
+/** @type {{[P in GroupIds]: {id: P, label: string}}} */
+const groups = {
+    alpha: { id: 'alpha', label: 'Alpha' },
+    beta: { id: 'beta', label: 'Beta' },
+};
+
+/** @type {Object<string, Group>} */
+const nameToGroup = {};
+
+module.exports = { groups, nameToGroup };
+"#,
+    );
+
+    let ids_pos = output
+        .find("export type GroupIds = \"alpha\" | \"beta\";")
+        .expect("Expected exported GroupIds alias");
+    let group_pos = output
+        .find("export type Group = {")
+        .expect("Expected exported Group alias");
+    let groups_pos = output
+        .find("export const groups: { [P in GroupIds]: {\n    id: P;\n    label: string;\n}; };")
+        .expect("Expected mapped JSDoc object type to match tsc shape");
+    let map_pos = output
+        .find("export const nameToGroup: {\n    [x: string]: Group;\n};")
+        .expect("Expected exported Object<string, Group> index signature");
+
+    assert!(
+        ids_pos < group_pos && group_pos < groups_pos && groups_pos < map_pos,
+        "Expected exported typedef aliases before CommonJS named values: {output}"
+    );
+    assert!(
+        output.contains("/** @typedef {'alpha'|'beta'} GroupIds */"),
+        "Expected source typedef comments to remain attached to the original JS declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_property_export_emits_typedef_aliases_first() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Token */
+const value = "x";
+exports.value = value;
+"#,
+    );
+
+    let alias_pos = output
+        .find("export type Token = string | number;")
+        .expect("Expected CommonJS named export file to export the typedef alias");
+    let value_pos = output
+        .find("export const value: \"x\";")
+        .expect("Expected named CommonJS value export");
+
+    assert!(
+        alias_pos < value_pos,
+        "Expected typedef alias before direct CommonJS named export: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_uses_jsdoc_signature_types() {
     let source = r#"
 /**

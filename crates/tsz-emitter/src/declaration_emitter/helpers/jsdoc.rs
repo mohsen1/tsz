@@ -1108,6 +1108,11 @@ impl<'a> DeclarationEmitter<'a> {
         if members.is_empty() {
             return None;
         }
+        if members.len() == 1
+            && let Some(formatted) = Self::format_jsdoc_mapped_object_member(members[0].trim())
+        {
+            return Some(formatted);
+        }
 
         let mut formatted = String::from("{\n");
         for member in members {
@@ -1120,6 +1125,42 @@ impl<'a> DeclarationEmitter<'a> {
             formatted.push_str(";\n");
         }
         formatted.push('}');
+        Some(formatted)
+    }
+
+    fn format_jsdoc_mapped_object_member(member: &str) -> Option<String> {
+        let member = member.trim().trim_end_matches(';').trim();
+        let (key, value) = member.split_once(':')?;
+        let key = key.trim();
+        if !(key.starts_with('[') && key.ends_with(']')) {
+            return None;
+        }
+        let value_inner = value.trim().strip_prefix('{')?.strip_suffix('}')?.trim();
+        if value_inner.is_empty() || value_inner.contains(['{', '}']) {
+            return None;
+        }
+
+        let fields = Self::split_jsdoc_params(value_inner);
+        if fields.is_empty() {
+            return None;
+        }
+
+        let mut formatted = format!("{{ {key}: {{\n");
+        for field in fields {
+            let field = field.trim().trim_end_matches(';').trim();
+            let (name, ty) = field.split_once(':')?;
+            let name = name.trim();
+            let ty = ty.trim();
+            if name.is_empty() || ty.is_empty() {
+                return None;
+            }
+            formatted.push_str("    ");
+            formatted.push_str(name);
+            formatted.push_str(": ");
+            formatted.push_str(ty);
+            formatted.push_str(";\n");
+        }
+        formatted.push_str("}; }");
         Some(formatted)
     }
 
@@ -3573,6 +3614,7 @@ impl<'a> DeclarationEmitter<'a> {
         let mut parser = ParserState::new("jsdoc-alias.ts".to_string(), source);
         let root = parser.parse_source_file();
         let mut emitter = DeclarationEmitter::new(&parser.arena);
+        emitter.normalize_string_literal_type_quotes = true;
         let mut rendered = emitter.emit(root);
         rendered = Self::compact_rendered_jsdoc_type_alias(&rendered);
         if !decl.type_params.is_empty() && decl.type_text.contains('\n') {
@@ -3984,6 +4026,57 @@ impl<'a> DeclarationEmitter<'a> {
 
         for decl in decls {
             self.emit_rendered_jsdoc_type_alias(decl, exported);
+        }
+    }
+
+    pub(crate) fn emit_commonjs_named_export_top_level_jsdoc_type_aliases(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if !self.source_is_js_file
+            || !self.js_export_equals_names.is_empty()
+            || self.source_file_has_native_esm_syntax(source_file)
+        {
+            return;
+        }
+        let has_commonjs_named_exports = !self.js_named_export_names.is_empty()
+            || source_file.statements.nodes.iter().any(|&stmt_idx| {
+                self.js_anonymous_module_exports_named_members_initializer(stmt_idx)
+                    .is_some()
+                    || self
+                        .js_module_exports_property_assignment(stmt_idx)
+                        .is_some()
+                    || self
+                        .js_commonjs_named_export_for_statement(stmt_idx)
+                        .is_some()
+            });
+        if !has_commonjs_named_exports {
+            return;
+        }
+
+        let mut decls = Vec::new();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            for jsdoc in self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos) {
+                if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
+                    decls.push(decl);
+                }
+            }
+        }
+
+        let Ok(eof_pos) = u32::try_from(source_file.text.len()) else {
+            return;
+        };
+        for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
+            if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
+                decls.push(decl);
+            }
+        }
+
+        for decl in decls {
+            self.emit_rendered_jsdoc_type_alias(decl, true);
         }
     }
 
