@@ -24,6 +24,10 @@ import {
   REQUIRED_PROJECT_ROWS,
   PROJECT_ROWS_BY_NAME,
 } from "./project-rows.mjs";
+import {
+  isGreen,
+  isIncompleteCompat,
+} from "./row-utils.mjs";
 
 const args = process.argv.slice(2);
 const jsonOutput = args.includes("--json");
@@ -49,9 +53,12 @@ function loadArtifact() {
 function rowState(row) {
   if (!row) return "missing";
   if (row.status) return "red";
+  if (isIncompleteCompat(row)) return "gray";
   const compat = row.compatibility;
   if (!compat) return "gray";
-  return compat.state ?? "gray";
+  if (isGreen(row)) return "green";
+  if (compat.state === "yellow" || compat.state === "red") return compat.state;
+  return "gray";
 }
 
 const STATE_ICON = { green: "✅", yellow: "⚠️", red: "❌", gray: "⬜", missing: "🚫" };
