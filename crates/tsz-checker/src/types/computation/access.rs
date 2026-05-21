@@ -1442,9 +1442,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Preserve mapped-type/generic-index relationships for solver evaluation.
-        if result_type.is_none()
-            && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
-        {
+        if result_type.is_none() && self.is_generic_index_type(index_type) {
             let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
             if crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved_pre)
                 .is_some()

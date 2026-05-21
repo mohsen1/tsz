@@ -777,7 +777,10 @@ impl<'a> DeclarationEmitter<'a> {
         Some(format!("typeof {name}"))
     }
 
-    fn symbol_has_unique_symbol_type(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    pub(in crate::declaration_emitter) fn symbol_has_unique_symbol_type(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
         let Some(binder) = self.binder else {
             return false;
         };

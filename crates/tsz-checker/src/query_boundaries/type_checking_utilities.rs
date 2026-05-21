@@ -77,6 +77,10 @@ pub(crate) fn classify_for_union_members(
     tsz_solver::type_queries::classify_for_union_members(db, type_id)
 }
 
+pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    tsz_solver::type_queries::get_union_members(db, type_id)
+}
+
 pub(crate) fn get_intersection_members(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -89,7 +93,7 @@ pub(crate) use super::common::{
 };
 
 /// Whether the AST node at `idx` is a bare type-parameter reference whose
-/// name resolves to a TypeParameter symbol in the current lexical scope.
+/// name resolves to a `TypeParameter` symbol in the current lexical scope.
 /// Used to suppress the "any cannot be used as an index type" check when
 /// our type resolution collapsed the parameter to `any` — tsc keeps the
 /// index syntactically generic and defers rejection to instantiation time.

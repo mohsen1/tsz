@@ -66,6 +66,31 @@ function f(s: S) {
     );
 }
 
+#[test]
+fn nested_check_preserves_outer_source_narrowing() {
+    // The impossible nested check should not corrupt the surrounding branch's
+    // source narrowing; after the nested block, `s` is still the "a" variant.
+    let diags = diags(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(s: S) {
+  const { kind } = s;
+  if (kind === "a") {
+    if (kind === "b") {
+      kind;
+    }
+    s.a;
+  }
+}
+"#,
+    );
+    let cs = codes(&diags);
+    assert!(
+        !cs.contains(&2339),
+        "Expected outer source narrowing to survive nested check; got: {diags:?}"
+    );
+}
+
 // ── Renamed destructure ────────────────────────────────────────────────────
 
 #[test]

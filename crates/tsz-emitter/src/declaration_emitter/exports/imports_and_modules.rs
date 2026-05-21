@@ -1,6 +1,7 @@
 //! Declaration emitter - import, module, parameter, and heritage clause emission.
 
 use super::super::DeclarationEmitter;
+use crate::transforms::emit_utils::string_literal_text;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -519,6 +520,12 @@ impl<'a> DeclarationEmitter<'a> {
             // Inside a declare namespace, don't emit 'declare' keyword for members
             let prev_inside_declare_namespace = self.inside_declare_namespace;
             self.inside_declare_namespace = true;
+            let prev_ambient_module_specifier = self.current_ambient_module_specifier.clone();
+            if use_module_keyword
+                && let Some(specifier) = string_literal_text(self.arena, module.name)
+            {
+                self.current_ambient_module_specifier = Some(specifier);
+            }
             // Track innermost namespace symbol for context-relative type names
             let prev_enclosing_ns = self.enclosing_namespace_symbol;
             if let Some(binder) = self.binder
@@ -557,8 +564,10 @@ impl<'a> DeclarationEmitter<'a> {
                 let prev_emitted_non_exported = self.emitted_non_exported_declaration;
                 let prev_emitted_scope_marker = self.emitted_scope_marker;
                 let prev_emitted_module_indicator = self.emitted_module_indicator;
+                let prev_function_names_with_overloads = self.function_names_with_overloads.clone();
                 self.emitted_non_exported_declaration = false;
                 self.emitted_scope_marker = false;
+                self.function_names_with_overloads.clear();
 
                 // Pre-scan to check if the body has a mix of exported and
                 // non-exported members. When it does, tsc preserves `export`
@@ -593,23 +602,27 @@ impl<'a> DeclarationEmitter<'a> {
                     Some(previous)
                 };
 
-                for &stmt_idx in &stmts.nodes {
-                    if scoped_js_named_export_targets
-                        .iter()
-                        .any(|(_, targets)| targets.contains(&stmt_idx))
-                    {
-                        if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                let should_emit_body_statements =
+                    is_ambient_ns || self.module_body_has_exported_member(stmts);
+                if should_emit_body_statements {
+                    for &stmt_idx in &stmts.nodes {
+                        if scoped_js_named_export_targets
+                            .iter()
+                            .any(|(_, targets)| targets.contains(&stmt_idx))
+                        {
+                            if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                                self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                            }
+                            continue;
                         }
-                        continue;
-                    }
-                    self.emit_statement(stmt_idx);
-                    if let Some((_, targets)) = scoped_js_named_export_targets
-                        .iter()
-                        .find(|(export_idx, _)| *export_idx == stmt_idx)
-                    {
-                        for &target_idx in targets {
-                            self.emit_statement_with_options(target_idx, true);
+                        self.emit_statement(stmt_idx);
+                        if let Some((_, targets)) = scoped_js_named_export_targets
+                            .iter()
+                            .find(|(export_idx, _)| *export_idx == stmt_idx)
+                        {
+                            for &target_idx in targets {
+                                self.emit_statement_with_options(target_idx, true);
+                            }
                         }
                     }
                 }
@@ -640,6 +653,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emitted_scope_marker = prev_emitted_scope_marker;
                 self.emitted_module_indicator = prev_emitted_module_indicator;
                 self.ambient_module_has_scope_marker = prev_ambient_scope_marker;
+                self.function_names_with_overloads = prev_function_names_with_overloads;
                 self.current_namespace_self_import_alias = prev_self_import_alias;
                 self.current_namespace_self_export_names = prev_self_export_names;
                 self.current_namespace_shadowed_default_name = prev_shadowed_default_name;
@@ -648,6 +662,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.public_api_scope_depth = prev_public_api_scope_depth;
             self.inside_non_ambient_namespace = prev_inside_non_ambient_namespace;
             self.inside_declare_namespace = prev_inside_declare_namespace;
+            self.current_ambient_module_specifier = prev_ambient_module_specifier;
             self.enclosing_namespace_symbol = prev_enclosing_ns;
             self.decrease_indent();
             self.write_indent();
@@ -1638,6 +1653,12 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.write(": ");
                     self.write(type_text);
+                } else if param.initializer.is_some()
+                    && let Some(type_text) =
+                        self.widened_inferred_expression_type_text(param.initializer)
+                {
+                    self.write(": ");
+                    self.write(&type_text);
                 } else if let Some(type_id) = self.parameter_type_for_emit(param_idx, param.name) {
                     // Inferred type from type cache
                     self.write(": ");
@@ -2734,6 +2755,24 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         false
+    }
+
+    fn module_body_has_exported_member(&self, stmts: &tsz_parser::parser::NodeList) -> bool {
+        stmts.nodes.iter().copied().any(|stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            if self.stmt_has_export_modifier(stmt_node) {
+                return true;
+            }
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                || stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                || stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+            {
+                return true;
+            }
+            false
+        })
     }
 
     pub(crate) fn emit_member_modifiers(&mut self, modifiers: &Option<NodeList>) {

@@ -1801,10 +1801,12 @@ impl<'a> LoweringPass<'a> {
                 .insert(idx, TransformDirective::ES5SuperCall);
         }
 
-        // CJS dynamic import: import("mod") needs __importStar helper
+        // CJS-like dynamic import: import("mod") needs __importStar helper.
+        // `--module none --outFile` uses the same lowering below native
+        // dynamic import support without promoting the script to CJS.
         // This applies regardless of esModuleInterop setting.
         // Skip for node module CJS files where native import() is supported.
-        if self.commonjs_mode
+        if (self.commonjs_mode || (self.ctx.module_none_out_file && self.ctx.needs_es2020_lowering))
             && !self.ctx.options.resolved_node_module_to_cjs
             && !is_super_call
             && let Some(expr_node) = self.arena.get(call.expression)

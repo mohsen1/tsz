@@ -40,12 +40,13 @@ function makeCompatibility(state) {
     exit_class: state === "green" ? "exit success" : state === "red" ? "nonzero exit" : "exit success",
     first_failure_class: state === "green" ? null : "some failure",
     owner_track: null,
+    semantic_owner_family: "recursive type evaluation pressure",
     phase: "check",
     last_successful_phase: "check",
     diagnostic_status: state === "green" ? "none" : state === "yellow" ? "diagnostic mismatch" : "none",
     diagnostic_deltas: [],
     diagnostic_subsystems: [],
-    known_blockers: [],
+    known_blockers: state === "green" ? [] : ["recursive alias instantiation"],
     reduced_repro_path: null,
     repro: {
       tsconfig_path: null,
@@ -210,6 +211,15 @@ withTempDir((dir) => {
   // Red rows are present but not missing — script exits 0 (all rows present)
   assert.equal(result.status, 0, `red row present in artifact should still exit 0, got:\n${result.stderr}`);
   assert.match(result.stdout, /❌.*red.*\| 1/i, "should show 1 red row");
+  assert.match(result.stdout, /Phase.*Blocker family/, "should include phase and blocker family columns");
+  assert.match(result.stdout, /Last phase.*Files.*Peak RSS/, "should include residency metadata columns");
+  assert.match(result.stdout, /some failure/, "should name the first failure class for red rows");
+  assert.match(result.stdout, /0\.0 MiB/, "should show peak RSS in MiB");
+  assert.match(
+    result.stdout,
+    /recursive alias instantiation/,
+    "should name the first known blocker for red rows",
+  );
 });
 console.log("✅ red row present in artifact exits 0 (not missing)");
 
@@ -225,8 +235,67 @@ withTempDir((dir) => {
   const result = run(file);
   assert.equal(result.status, 0, `yellow row should exit 0, got:\n${result.stderr}`);
   assert.match(result.stdout, /⚠️.*yellow.*\| 1/i, "should show 1 yellow row");
+  assert.match(result.stdout, /some failure/, "should name the first failure class for yellow rows");
 });
 console.log("✅ yellow row present exits 0");
+
+// ---------------------------------------------------------------------------
+// Test: partial compatibility metadata cannot be reported as green.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const partialGreen = makeRow(REQUIRED_PROJECT_ROWS[0], "green");
+  delete partialGreen.compatibility.phase;
+  const rows = REQUIRED_PROJECT_ROWS.map((name, i) =>
+    i === 0 ? partialGreen : makeRow(name, "green"),
+  );
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 0, `partial green compatibility should not fail readiness:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.green, REQUIRED_PROJECT_ROWS.length - 1, "partial green row must not count as green");
+  assert.equal(parsed.gray, 1, "partial green row should count as gray/incomplete");
+  assert.equal(parsed.rows[0].state, "gray", "partial green row should render as gray");
+});
+console.log("✅ partial green compatibility is gray");
+
+// ---------------------------------------------------------------------------
+// Test: partial yellow metadata is incomplete, not an authoritative yellow.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const partialYellow = makeRow(REQUIRED_PROJECT_ROWS[0], "yellow");
+  delete partialYellow.compatibility.exit_class;
+  const rows = REQUIRED_PROJECT_ROWS.map((name, i) =>
+    i === 0 ? partialYellow : makeRow(name, "green"),
+  );
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 0, `partial yellow compatibility should not fail readiness:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.yellow, 0, "partial yellow row must not count as yellow");
+  assert.equal(parsed.gray, 1, "partial yellow row should count as gray/incomplete");
+  assert.equal(parsed.rows[0].state, "gray", "partial yellow row should render as gray");
+});
+console.log("✅ partial yellow compatibility is gray");
+
+// ---------------------------------------------------------------------------
+// Test: complete red compatibility still reports as red.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const rows = REQUIRED_PROJECT_ROWS.map((name, i) =>
+    i === 0 ? makeRow(name, "red") : makeRow(name, "green"),
+  );
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 0, `complete red compatibility should remain present:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.red, 1, "complete red row should count as red");
+  assert.equal(parsed.rows[0].state, "red", "complete red row should render as red");
+  assert.equal(parsed.rows[0].phase, "check", "complete red row should preserve phase metadata");
+});
+console.log("✅ complete red compatibility stays red");
 
 // ---------------------------------------------------------------------------
 // Test: --json flag writes ONLY JSON to stdout (markdown goes to stderr)
@@ -257,6 +326,16 @@ withTempDir((dir) => {
   assert.equal(parsed.green, REQUIRED_PROJECT_ROWS.length, "JSON output should show all green");
   assert.ok(Array.isArray(parsed.rows), "JSON output should have rows array");
   assert.equal(parsed.rows.length, REQUIRED_PROJECT_ROWS.length, "rows array should have all required rows");
+  assert.equal(parsed.rows[0].phase, "check", "JSON rows should report phase reached");
+  assert.equal(parsed.rows[0].last_successful_phase, "check", "JSON rows should report last successful phase");
+  assert.equal(parsed.rows[0].files_reached, 1, "JSON rows should report files reached");
+  assert.equal(parsed.rows[0].peak_memory_bytes, 1024, "JSON rows should report peak memory");
+  assert.equal(
+    parsed.rows[0].owner_family,
+    "recursive type evaluation pressure",
+    "JSON rows should report semantic owner family",
+  );
+  assert.deepEqual(parsed.rows[0].known_blockers, [], "green JSON rows should preserve known blocker list");
   // markdown goes to stderr, not stdout
   assert.match(result.stderr, /Benchmark artifact readiness/i, "markdown report should be on stderr with --json");
 });

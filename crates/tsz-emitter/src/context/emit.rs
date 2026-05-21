@@ -279,6 +279,11 @@ pub struct EmitContext {
     /// Auto-detect module mode: if true, detect imports/exports and apply `CommonJS`
     pub auto_detect_module: bool,
 
+    /// Whether this source is being emitted into a `--module none --outFile`
+    /// bundle. Such script bundles still downlevel dynamic import for targets
+    /// below native `import()`, but they do not promote the source to CJS.
+    pub module_none_out_file: bool,
+
     /// Original module kind before wrapper body override (AMD/UMD → `CommonJS`).
     /// Used by export assignment to emit `return X` instead of `module.exports = X` in AMD.
     pub original_module_kind: Option<ModuleKind>,
@@ -328,6 +333,7 @@ impl EmitContext {
             arguments_capture_counter: 0,
             async_generator_shadowed_parameter_names: Vec::new(),
             auto_detect_module: false,
+            module_none_out_file: false,
             original_module_kind: None,
             cjs_export_body_outer_module: None,
             file_is_module: false,

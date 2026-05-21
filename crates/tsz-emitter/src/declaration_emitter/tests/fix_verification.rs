@@ -1763,11 +1763,15 @@ const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumbe
 "#,
     );
 
+    // When the left operand has an explicitly-annotated non-empty string literal type,
+    // it is always truthy, so tsc gives just the left type (right is unreachable).
     for expected in [
         r#"declare const explicitStringOrNumber: "string";"#,
         r#"declare const explicitStringOrBoolean: "string";"#,
         r#"declare const explicitBooleanOrNumber: "number";"#,
         r#"declare const explicitStringOrBooleanOrNumber: "string";"#,
+        // Inferred const literals are widened intentionally in short-circuit operand
+        // position (matching the tsc DTS surface for mutable bindings built from them).
         "declare const inferredStringOrNumber: string;",
         "declare const inferredStringOrBoolean: string;",
         "declare const inferredBooleanOrNumber: string;",
@@ -2098,5 +2102,97 @@ fn fix_predicate_pattern2_does_not_rewrite_unrelated_union_shapes() {
     assert!(
         !text.contains("& ({} | undefined)"),
         "should not rewrite (T & undefined) | string as T & ({{}} | undefined): {text}"
+    );
+}
+
+// Tests for returned-function-expression recursive unrolling (issue #8683)
+
+#[test]
+fn fix_returned_arrow_chain_three_levels_no_shadowing() {
+    // outer<A> → middle<B>() → inner<C>(x: C): C — distinct params, no renaming needed
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export function outer<A>() {
+    return function middle<B>() {
+        return function inner<C>(x: C): C {
+            return x;
+        };
+    };
+}
+"#,
+    );
+    assert!(
+        output.contains("<B>() => <C>(x: C) => C"),
+        "three-level chain with distinct type params: {output}"
+    );
+    assert!(
+        output.contains("declare function outer<A>"),
+        "outer type param A preserved: {output}"
+    );
+}
+
+#[test]
+fn fix_returned_arrow_chain_three_levels_all_shadowed() {
+    // outer<K> → middle<K>() → inner<K>(x: K): K — K shadows K shadows K
+    // expected renames: outer=K, middle=K_1, inner=K_2
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export function outer<K>() {
+    return function middle<K>() {
+        return function inner<K>(x: K): K {
+            return x;
+        };
+    };
+}
+"#,
+    );
+    assert!(
+        output.contains("<K_1>() => <K_2>(x: K_2) => K_2"),
+        "three-level all-shadowed chain must produce K_1/K_2 renames: {output}"
+    );
+}
+
+#[test]
+fn fix_returned_arrow_chain_two_levels_inner_shadows_outer() {
+    // Rule: when the inner closure's type param shadows the outer's, the
+    // emitter must rename the inner param (T → T_1) in the DTS return type,
+    // and free references to inner's T inside the returned function type
+    // must also be updated to T_1.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export function outer<T>() {
+    return function inner<T>(x: T) {
+        return function deepest<U>(y: U): [T, U] {
+            return [x, y];
+        };
+    };
+}
+"#,
+    );
+    // inner's T shadows outer's T → T_1; deepest's [T, U] references T_1
+    assert!(
+        output.contains("<T_1>(x: T_1) => <U>(y: U) => [T_1, U]"),
+        "two-level inner-shadows-outer chain: {output}"
+    );
+}
+
+#[test]
+fn fix_returned_arrow_chain_concise_arrows() {
+    // Concise arrow bodies: outer<V> returns arrow returning arrow.
+    // inner has an explicit return annotation `[W, X]` which is used as-is.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export function outer<V>() {
+    return function middle<W>(x: W) {
+        return function inner<X>(y: X): [W, X] {
+            return [x, y];
+        };
+    };
+}
+"#,
+    );
+    assert!(
+        output.contains("<W>(x: W) => <X>(y: X) => [W, X]"),
+        "three-level chain with explicit tuple return annotation: {output}"
     );
 }
