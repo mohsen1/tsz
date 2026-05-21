@@ -28,6 +28,31 @@ enum SyntacticNullishness {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Recover the un-widened literal type of a logical-operator (`&&`/`||`/`??`)
+    /// operand for the result union, when a literal-preserving context requested
+    /// it (`ctx.preserve_logical_operand_literals`).
+    ///
+    /// tsc forms the logical result by unioning the operand types *as checked*,
+    /// preserving fresh literal operands (`"yes"`, `9`); the widening to the base
+    /// primitive only happens later at mutable (`let`/`var`) binding sites via
+    /// `getWidenedLiteralType`. tsz types operands with literal widening already
+    /// applied, so a literal operand arrives here as its base primitive
+    /// (`"yes"` → `string`). For unannotated `const` initializers the result must
+    /// stay precise (e.g. `const x = a && "yes"` with `a: 0 | 1` is `0 | "yes"`,
+    /// not `0 | string`); for mutable bindings and other contexts the widened
+    /// operand type is kept so the result matches tsc's `getWidenedLiteralType`.
+    ///
+    /// Only top-level primitive literals are recovered; object/array literal
+    /// operands keep their widened shape, matching tsc (object widening is
+    /// independent of `const`-ness).
+    fn preserve_logical_operand_literal(&self, operand: NodeIndex, widened: TypeId) -> TypeId {
+        if !self.ctx.preserve_logical_operand_literals {
+            return widened;
+        }
+        self.literal_type_from_initializer(operand)
+            .unwrap_or(widened)
+    }
+
     pub(crate) fn resolve_literal_index_access_property_type(
         &mut self,
         type_id: TypeId,
@@ -1207,6 +1232,7 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
                     self.ctx.preserve_literal_types = prev_preserve;
                     let right_type = self.get_type_of_node_with_request(right_idx, request);
+                    let right_type = self.preserve_logical_operand_literal(right_idx, right_type);
 
                     type_stack.push(left_type);
                     type_stack.push(right_type);
@@ -1274,6 +1300,7 @@ impl<'a> CheckerState<'a> {
                         TypingRequest::NONE
                     };
                     let right_type = self.get_type_of_node_with_request(right_idx, &right_request);
+                    let right_type = self.preserve_logical_operand_literal(right_idx, right_type);
 
                     let should_check_contextual_right =
                         outer_context.is_some() && right_accepts_context && {

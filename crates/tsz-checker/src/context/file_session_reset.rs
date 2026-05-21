@@ -291,6 +291,7 @@ impl<'a> CheckerContext<'a> {
         self.inside_closure_depth = 0;
         self.in_const_assertion = false;
         self.preserve_literal_types = false;
+        self.preserve_logical_operand_literals = false;
         self.use_declared_type_for_identifier = false;
         self.skip_array_contextual_supertype_collapse = false;
         self.generic_excess_skip = None;

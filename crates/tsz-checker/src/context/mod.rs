@@ -1311,6 +1311,15 @@ pub struct CheckerContext<'a> {
     /// `"a" | "b"` instead of `string`.
     pub preserve_literal_types: bool,
 
+    /// When true, the right operand of a logical (`&&`/`||`/`??`) expression
+    /// keeps its un-widened primitive literal type in the result union instead
+    /// of the base primitive. Set only while typing an unannotated `const`
+    /// initializer so `const x = a && "yes"` (with `a: 0 | 1`) infers
+    /// `0 | "yes"` — matching tsc, which widens such operands only at mutable
+    /// binding sites. Unlike `preserve_literal_types`, this does not affect
+    /// object/array literal widening.
+    pub preserve_logical_operand_literals: bool,
+
     /// When true, identifier resolution should return the symbol's declared
     /// type (when one is explicitly annotated) rather than a flow-narrowed
     /// type. Set during class property initializer evaluation so that

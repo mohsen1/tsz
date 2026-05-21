@@ -752,7 +752,14 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .preserve_destructuring_initializer_overload_diagnostics =
                 prev_preserve_overloads || preserve_initializer_overload_diagnostics;
+            // For `const` initializers, keep logical-operator operands' literal
+            // types in the result (tsc only widens them at mutable binding
+            // sites). `let`/`var` keep the widened operand types.
+            let prev_preserve_logical = self.ctx.preserve_logical_operand_literals;
+            self.ctx.preserve_logical_operand_literals =
+                self.is_const_variable_declaration(facts.decl_idx);
             let mut init_type = self.get_type_of_node_with_request(facts.initializer, &request);
+            self.ctx.preserve_logical_operand_literals = prev_preserve_logical;
             self.ctx
                 .preserve_destructuring_initializer_overload_diagnostics = prev_preserve_overloads;
             // TypeScript treats unannotated empty-array declaration initializers

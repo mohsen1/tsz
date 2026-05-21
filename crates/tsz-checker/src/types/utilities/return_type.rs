@@ -583,7 +583,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Function bodies compute their own return type and widen inferred
+        // literal results (tsc's `getReturnTypeFromBody`). Clear the const
+        // initializer's logical-literal preservation so a body like
+        // `() => a && "yes"` infers `0 | string`, not `0 | "yes"`, even when
+        // the function itself is a `const` initializer.
+        let prev_preserve_logical = self.ctx.preserve_logical_operand_literals;
+        self.ctx.preserve_logical_operand_literals = false;
         let result = self.infer_return_type_from_body_inner(body_idx, return_context);
+        self.ctx.preserve_logical_operand_literals = prev_preserve_logical;
 
         // Direct self-recursive functions with no base case return `never`.
         // Example: `function fn2(n: number) { return fn2(n); }` → return type `never`.
