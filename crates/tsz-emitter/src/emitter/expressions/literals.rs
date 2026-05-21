@@ -882,7 +882,7 @@ impl<'a> Printer<'a> {
         // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
         // ES5 doesn't support shorthand property syntax (ES6 feature)
         if is_shorthand && self.ctx.target_es5 {
-            self.emit_decl_name(prop.name);
+            self.emit_property_key_name(prop.name);
             self.write(": ");
             self.emit_expression(prop.initializer);
             return;
@@ -940,7 +940,7 @@ impl<'a> Printer<'a> {
                 }
             } else if let Some(name) = self.tc39_class_expression_name_from_property_name(prop.name)
             {
-                self.emit_decl_name(prop.name);
+                self.emit_property_key_name(prop.name);
                 self.write(": ");
                 self.emit_with_tc39_class_expression_name(prop.initializer, name, false);
                 return;
@@ -949,7 +949,7 @@ impl<'a> Printer<'a> {
         if is_computed {
             self.emit(prop.name);
         } else {
-            self.emit_decl_name(prop.name);
+            self.emit_property_key_name(prop.name);
         }
         self.write(": ");
         if self.ctx.target_es5
@@ -1012,7 +1012,7 @@ impl<'a> Printer<'a> {
         // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
         // ES5 doesn't support shorthand property syntax (ES6 feature)
         if self.ctx.target_es5 {
-            self.emit_decl_name(shorthand.name);
+            self.emit_property_key_name(shorthand.name);
             self.write(": ");
             self.emit(shorthand.name);
             return;

@@ -392,7 +392,10 @@ impl<'a> Printer<'a> {
         }
 
         if decl.initializer.is_none() {
-            if self.emit_missing_initializer_as_void_0 {
+            if self.emit_missing_initializer_as_void_0
+                && (self.lexical_block_missing_initializer_is_loop_body
+                    || !self.variable_declaration_name_is_block_scope_renamed(decl.name))
+            {
                 self.write(" = void 0");
             } else if self.variable_declaration_has_recovered_empty_initializer(node, decl) {
                 if let Some(name_node) = self.arena.get(decl.name) {
@@ -917,6 +920,20 @@ impl<'a> Printer<'a> {
         self.write(" = ");
         self.emit(type_alias.type_node);
         self.write_semicolon();
+    }
+
+    fn variable_declaration_name_is_block_scope_renamed(&self, name: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name) else {
+            return false;
+        };
+        let Some(ident) = self.arena.get_identifier(name_node) else {
+            return false;
+        };
+
+        self.ctx
+            .block_scope_state
+            .get_emitted_name(&ident.escaped_text)
+            .is_some_and(|emitted| emitted != ident.escaped_text)
     }
 
     /// Emit `export as namespace X;` (UMD global namespace declaration).
