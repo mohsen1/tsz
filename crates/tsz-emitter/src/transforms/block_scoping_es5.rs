@@ -334,6 +334,22 @@ impl BlockScopeState {
         self.reserved_names.insert(name);
     }
 
+    /// Reserve several generated names in the current file-level block-scope
+    /// naming state.
+    pub fn reserve_names<I>(&mut self, names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.reserved_names.extend(names);
+    }
+
+    /// Return generated names that have been reserved for block-scope lowering.
+    pub fn visible_reserved_names(&self) -> Vec<String> {
+        let mut names: Vec<_> = self.reserved_names.iter().cloned().collect();
+        names.sort();
+        names
+    }
+
     /// Return whether a generated helper/temp name has already been reserved.
     pub fn is_reserved_name(&self, name: &str) -> bool {
         self.reserved_names.contains(name)

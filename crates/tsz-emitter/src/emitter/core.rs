@@ -1361,6 +1361,16 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(crate) fn seed_block_scope_reserved_names(&mut self, names: &[String]) {
+        self.ctx
+            .block_scope_state
+            .reserve_names(names.iter().cloned());
+    }
+
+    pub(crate) fn block_scope_reserved_names(&self) -> Vec<String> {
+        self.ctx.block_scope_state.visible_reserved_names()
+    }
+
     #[must_use]
     pub const fn emit_plan(&self) -> &EmitPlan {
         &self.emit_plan
