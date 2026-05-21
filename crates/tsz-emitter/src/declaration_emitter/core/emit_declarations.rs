@@ -223,6 +223,17 @@ impl<'a> DeclarationEmitter<'a> {
             .collect();
         let js_namespace_class_expando_declarations =
             self.collect_js_namespace_class_expando_declarations(source_file);
+        let js_namespace_class_expando_statement_idxs: FxHashSet<NodeIndex> = if self
+            .source_file_has_native_esm_syntax(source_file)
+            || !self.js_export_equals_names.is_empty()
+        {
+            FxHashSet::default()
+        } else {
+            js_namespace_class_expando_declarations
+                .keys()
+                .copied()
+                .collect()
+        };
         let js_commonjs_expando_declarations = self
             .collect_js_commonjs_expando_declarations(source_file, &self.js_export_equals_names);
         self.js_deferred_function_export_statements = js_commonjs_expando_declarations
@@ -477,6 +488,12 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 continue;
             }
+            if js_namespace_class_expando_statement_idxs.contains(&stmt_idx) {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
+                continue;
+            }
             if self.js_module_exports_object_stmts.contains(&stmt_idx) {
                 if let Some(initializer) = self.js_module_exports_assignment_initializer(stmt_idx) {
                     self.emit_js_anonymous_module_exports_object_members(initializer);
@@ -542,6 +559,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_js_require_property_import_aliases();
         self.emit_deferred_js_local_export_enum_statements(source_file);
         self.emit_deferred_js_local_export_interface_statements(source_file);
+        for &stmt_idx in &source_file.statements.nodes {
+            if js_namespace_class_expando_statement_idxs.contains(&stmt_idx) {
+                self.emit_js_synthetic_expression_statement(stmt_idx);
+            }
+        }
         self.emit_deferred_js_local_export_alias_function_statements(source_file);
         self.emit_js_local_export_aliases();
         self.emit_js_cjs_export_aliases();

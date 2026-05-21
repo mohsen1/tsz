@@ -518,6 +518,7 @@ impl<'a> DeclarationEmitter<'a> {
         type_text: &str,
     ) -> String {
         let portable = self.qualify_jsdoc_typeof_self_exports(type_text);
+        let portable = self.rewrite_jsdoc_typeof_module_exports_surfaces(&portable);
         let portable = self.rewrite_ambient_module_relative_import_type_text(&portable);
         let portable = self.rewrite_jsdoc_bare_module_import_type_text(&portable);
         Self::format_jsdoc_declaration_type_text(&portable)
@@ -556,6 +557,41 @@ impl<'a> DeclarationEmitter<'a> {
             remaining = tail;
         }
         output.push_str(remaining);
+        output
+    }
+
+    fn rewrite_jsdoc_typeof_module_exports_surfaces(&self, type_text: &str) -> String {
+        const NEEDLE: &str = "typeof module.exports.";
+        if !self.source_is_js_file || !type_text.contains(NEEDLE) {
+            return type_text.to_string();
+        }
+
+        let mut output = String::new();
+        let mut cursor = 0usize;
+        while let Some(relative) = type_text[cursor..].find(NEEDLE) {
+            let start = cursor + relative;
+            let name_start = start + NEEDLE.len();
+            let export_name: String = type_text[name_start..]
+                .chars()
+                .take_while(|ch| Self::is_jsdoc_identifier_part(*ch))
+                .collect();
+            if export_name.is_empty() {
+                output.push_str(&type_text[cursor..name_start]);
+                cursor = name_start;
+                continue;
+            }
+
+            let end = name_start + export_name.len();
+            output.push_str(&type_text[cursor..start]);
+            if let Some(surface) = self.jsdoc_same_file_commonjs_named_export_surface(&export_name)
+            {
+                output.push_str(&surface);
+            } else {
+                output.push_str(&type_text[start..end]);
+            }
+            cursor = end;
+        }
+        output.push_str(&type_text[cursor..]);
         output
     }
 
@@ -679,6 +715,214 @@ impl<'a> DeclarationEmitter<'a> {
         }
         surface.push('}');
         Some(surface)
+    }
+
+    fn jsdoc_same_file_commonjs_named_export_surface(&self, export_name: &str) -> Option<String> {
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+
+        let mut call_signature = None;
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((name_idx, initializer)) =
+                self.js_commonjs_named_export_for_statement(stmt_idx)
+            else {
+                continue;
+            };
+            if self.js_commonjs_export_name_text(name_idx).as_deref() != Some(export_name) {
+                continue;
+            }
+            let initializer = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(initializer);
+            let init_node = self.arena.get(initializer)?;
+            if !self.is_js_function_initializer(initializer) {
+                return None;
+            }
+            let func = self.arena.get_function(init_node)?;
+            call_signature = self.jsdoc_same_file_function_call_signature_text(initializer, func);
+            break;
+        }
+        let call_signature = call_signature?;
+
+        let mut members = Vec::new();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((member_name, initializer)) =
+                self.jsdoc_same_file_commonjs_named_export_member(stmt_idx, export_name)
+            else {
+                continue;
+            };
+            if !Self::is_unquoted_property_name(&member_name) {
+                return None;
+            }
+            let type_text = self.jsdoc_same_file_commonjs_export_member_type_text(initializer)?;
+            members.push((member_name, type_text));
+        }
+
+        let mut surface = String::from("{\n");
+        surface.push_str("    ");
+        surface.push_str(&call_signature);
+        surface.push('\n');
+        for (name, type_text) in members {
+            surface.push_str("    ");
+            surface.push_str(&name);
+            surface.push_str(": ");
+            surface.push_str(&Self::indent_jsdoc_inline_member_type(&type_text));
+            if !type_text.trim_end().ends_with(';') {
+                surface.push(';');
+            }
+            surface.push('\n');
+        }
+        surface.push('}');
+        Some(surface)
+    }
+
+    fn jsdoc_same_file_function_call_signature_text(
+        &self,
+        initializer: NodeIndex,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        let jsdoc = self.function_like_jsdoc_for_node(initializer);
+        let jsdoc_params = jsdoc
+            .as_deref()
+            .map(Self::parse_jsdoc_param_decls)
+            .unwrap_or_default();
+        let mut params = Vec::with_capacity(func.parameters.nodes.len());
+        for (idx, &param_idx) in func.parameters.nodes.iter().enumerate() {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            let name = self
+                .get_identifier_text(param.name)
+                .unwrap_or_else(|| "arg".to_string());
+            let rest =
+                if param.dot_dot_dot_token || jsdoc_params.get(idx).is_some_and(|decl| decl.rest) {
+                    "..."
+                } else {
+                    ""
+                };
+            let optional = if param.question_token
+                || jsdoc_params
+                    .get(idx)
+                    .is_some_and(|decl| decl.optional && !decl.rest)
+            {
+                "?"
+            } else {
+                ""
+            };
+            let type_text = if param.type_annotation.is_some() {
+                self.emit_type_node_text_from_arena(self.arena, param.type_annotation)
+                    .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| "any".to_string())
+            } else if let Some(jsdoc_param) = jsdoc_params.get(idx) {
+                self.jsdoc_type_text_for_declaration_emit(&jsdoc_param.type_text)
+            } else {
+                "any".to_string()
+            };
+            params.push(format!("{rest}{name}{optional}: {type_text}"));
+        }
+
+        let return_type = if func.type_annotation.is_some() {
+            self.emit_type_node_text_from_arena(self.arena, func.type_annotation)
+                .or_else(|| self.source_slice_from_arena(self.arena, func.type_annotation))
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())
+                .unwrap_or_else(|| "any".to_string())
+        } else if let Some(return_type) = jsdoc
+            .as_deref()
+            .and_then(Self::parse_jsdoc_return_type_text)
+        {
+            self.jsdoc_type_text_for_declaration_emit(&return_type)
+        } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache)
+            && let Some(func_type_id) = cache.node_types.get(&initializer.0).copied()
+            && let Some(return_type_id) =
+                tsz_solver::type_queries::get_return_type(*interner, func_type_id)
+        {
+            if return_type_id == tsz_solver::types::TypeId::ANY
+                && func.body.is_some()
+                && self.body_returns_void(func.body)
+            {
+                "void".to_string()
+            } else {
+                self.print_type_id(return_type_id)
+            }
+        } else if func.body.is_some() && self.body_returns_void(func.body) {
+            "void".to_string()
+        } else {
+            "any".to_string()
+        };
+
+        Some(format!("({}): {return_type};", params.join(", ")))
+    }
+
+    fn jsdoc_same_file_commonjs_named_export_member(
+        &self,
+        stmt_idx: NodeIndex,
+        export_name: &str,
+    ) -> Option<(String, NodeIndex)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+        let lhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        let member_name = self.get_identifier_text(lhs_access.name_or_argument)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let receiver_node = self.arena.get(receiver)?;
+        if receiver_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let receiver_access = self.arena.get_access_expr(receiver_node)?;
+        if self
+            .get_identifier_text(receiver_access.name_or_argument)
+            .as_deref()
+            != Some(export_name)
+            || !self.is_module_exports_reference(receiver_access.expression)
+        {
+            return None;
+        }
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        Some((member_name, initializer))
+    }
+
+    fn jsdoc_same_file_commonjs_export_member_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if self.is_js_function_initializer(initializer) {
+            let func = self.arena.get_function(init_node)?;
+            let signature = self.jsdoc_same_file_function_call_signature_text(initializer, func)?;
+            let signature = signature.trim_end_matches(';');
+            if let Some((params, return_type)) = signature.split_once(": ") {
+                return Some(format!("{params} => {return_type}"));
+            }
+        }
+        self.js_namespace_value_member_type_text(initializer)
+            .or_else(|| self.js_synthetic_export_value_type_text(initializer))
     }
 
     fn jsdoc_commonjs_source_export_equals_name(
@@ -1095,7 +1339,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn format_jsdoc_object_type_text(type_text: &str) -> Option<String> {
         let trimmed = type_text.trim();
         let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
-        if inner.is_empty() || inner.contains('\n') {
+        if inner.is_empty() {
             return None;
         }
 
@@ -1110,9 +1354,20 @@ impl<'a> DeclarationEmitter<'a> {
             if member.is_empty() || !member.contains(':') {
                 return None;
             }
+            let (name, member_type) = member.split_once(':')?;
+            let name = name.trim();
+            let member_type = member_type.trim();
+            if name.is_empty() || member_type.is_empty() {
+                return None;
+            }
             formatted.push_str("    ");
-            formatted.push_str(member);
-            formatted.push_str(";\n");
+            formatted.push_str(name);
+            formatted.push_str(": ");
+            formatted.push_str(&Self::indent_jsdoc_inline_member_type(member_type));
+            if !member_type.trim_end().ends_with(';') {
+                formatted.push(';');
+            }
+            formatted.push('\n');
         }
         formatted.push('}');
         Some(formatted)
