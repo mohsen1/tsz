@@ -316,6 +316,7 @@ impl<'a> DeclarationEmitter<'a> {
             // Auto-generated imports count as external module indicators
             self.emitted_module_indicator = true;
         }
+        self.emit_commonjs_named_export_top_level_jsdoc_type_aliases(source_file);
 
         for &stmt_idx in &source_file.statements.nodes {
             if let Some((name_idx, initializer)) =
@@ -784,7 +785,14 @@ impl<'a> DeclarationEmitter<'a> {
         let should_join_single_line_jsdoc_type_comment = self.source_is_js_file
             && kind == syntax_kind_ext::VARIABLE_STATEMENT
             && !self.inside_declare_namespace
-            && self.emitted_leading_single_line_jsdoc_type_comment_for_pos(stmt_node.pos);
+            && self.emitted_leading_single_line_jsdoc_type_comment_for_pos(stmt_node.pos)
+            && self
+                .jsdoc_type_text_for_node(stmt_idx)
+                .is_none_or(|type_text| {
+                    !self
+                        .jsdoc_type_text_for_declaration_emit(&type_text)
+                        .contains('\n')
+                });
         if has_jsdoc_overload_signatures {
             // JSDoc overload comments are emitted once per structured signature
             // by `emit_function_declaration`.
