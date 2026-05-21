@@ -1381,15 +1381,16 @@ impl<'a> CheckerState<'a> {
 
     /// Widen `nested_target` to `outer_object` when `normalize_intersection` merged a
     /// `Rec & Extra` type alias into a single Object but the recursive property still
-    /// carries `Lazy(Rec_DefId)`. Detects recursion by checking that `Lazy`'s body
-    /// properties are a strict sub-shape of `outer_object` (sound because non-recursive
-    /// aliases resolve to their body, not `Lazy`, when referenced by other types).
+    /// carries `Lazy(Rec_DefId)`. Only fires when `Lazy`'s body is self-referential
+    /// (the body itself contains a property that refers back to `Rec_DefId`), to avoid
+    /// suppressing valid TS2353 errors for non-recursive types whose properties happen
+    /// to be a name-subset of the outer object.
     fn widen_nested_target_if_sub_shape(
         &mut self,
         nested_target: TypeId,
         outer_object: TypeId,
     ) -> TypeId {
-        let Some(outer_shape) =
+        let Some(_outer_shape) =
             tsz_solver::type_queries::get_object_shape(self.ctx.types, outer_object)
         else {
             return nested_target;
@@ -1413,7 +1414,20 @@ impl<'a> CheckerState<'a> {
             return nested_target;
         };
 
-        let outer_props = outer_shape.properties.as_slice();
+        // Only widen for genuinely recursive types: the body must contain at least
+        // one property whose type directly references `def_id` (as `Lazy(def_id)`,
+        // `Recursive(n)`, or a union including those).  Non-recursive aliases whose
+        // property names happen to be a subset of `outer_object` must NOT be widened,
+        // or we suppress valid TS2353 errors across hundreds of unrelated tests.
+        let is_recursive = body_shape
+            .properties
+            .iter()
+            .any(|prop| self.type_directly_references_def(prop.type_id, def_id));
+        if !is_recursive {
+            return nested_target;
+        }
+
+        let outer_props = _outer_shape.properties.as_slice();
         let body_props = body_shape.properties.as_slice();
 
         // Require strict subset: body has fewer props AND all body props exist in outer.
@@ -1432,6 +1446,33 @@ impl<'a> CheckerState<'a> {
         } else {
             outer_object
         }
+    }
+
+    /// `true` when `type_id` directly encodes a reference back to `target_def_id`:
+    /// a `Lazy(target_def_id)`, a De Bruijn `Recursive(n)` index (used by structural
+    /// type-alias self-references), or a union/optional wrapper of either.
+    fn type_directly_references_def(
+        &self,
+        type_id: TypeId,
+        target_def_id: tsz_solver::def::DefId,
+    ) -> bool {
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+        {
+            return def_id == target_def_id;
+        }
+        if crate::query_boundaries::type_predicates::is_recursive_type_reference(
+            self.ctx.types,
+            type_id,
+        ) {
+            return true;
+        }
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .any(|&m| self.type_directly_references_def(m, target_def_id));
+        }
+        false
     }
 
     pub(crate) fn excess_property_target_from_type_annotation(
