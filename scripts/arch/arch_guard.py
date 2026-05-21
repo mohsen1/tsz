@@ -513,7 +513,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # Bumped by 2 for the deferred-conditional diagnostic-display fix
         # (`is_conditional_type` guards in the assignment-target display path,
         # matching the existing direct-call pattern in type_display.rs).
-        3377,
+        #
+        # Ratcheted down by 5 after literal alias / literal widening
+        # diagnostic display probes moved through query_boundaries::diagnostics.
+        3372,
     ),
 ]
 
