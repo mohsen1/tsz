@@ -2,8 +2,8 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
+use crate::error_reporter::render_failure::RenderContext;
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -114,22 +114,22 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn render_property_type_mismatch(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-        depth: u32,
-        start: u32,
-        length: u32,
-        file_name: String,
+        ctx: &RenderContext,
         property_name: tsz_common::interner::Atom,
         source_property_type: TypeId,
         target_property_type: TypeId,
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
         let target_property_type = if self.should_strip_nullish_for_property_display(target) {
             self.strip_nullish_for_assignability_display(target_property_type, source_property_type)
                 .unwrap_or(target_property_type)

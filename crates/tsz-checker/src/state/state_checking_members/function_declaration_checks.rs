@@ -11,6 +11,17 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::{TypeId, TypeParamInfo};
 
+struct FunctionBodyCtx<'a> {
+    func_idx: NodeIndex,
+    func: &'a tsz_parser::parser::node::FunctionData,
+    node: &'a tsz_parser::parser::node::Node,
+    is_closure: bool,
+    has_type_annotation: bool,
+    has_jsdoc_return_type: bool,
+    jsdoc_return_type: Option<TypeId>,
+    func_decl_jsdoc: &'a Option<String>,
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn collect_untyped_this_references_in_function_body(
         &self,
@@ -363,7 +374,7 @@ impl<'a> CheckerState<'a> {
         };
         let has_jsdoc_return_type = jsdoc_return_type.is_some();
         if func.body.is_some() {
-            self.check_function_body(
+            self.check_function_body(FunctionBodyCtx {
                 func_idx,
                 func,
                 node,
@@ -371,8 +382,8 @@ impl<'a> CheckerState<'a> {
                 has_type_annotation,
                 has_jsdoc_return_type,
                 jsdoc_return_type,
-                &func_decl_jsdoc,
-            );
+                func_decl_jsdoc: &func_decl_jsdoc,
+            });
         } else if self.ctx.no_implicit_any() && !has_type_annotation {
             let is_ambient =
                 self.has_declare_modifier(&func.modifiers) || self.ctx.is_declaration_file();
@@ -466,18 +477,17 @@ impl<'a> CheckerState<'a> {
 
     /// Check the body of a function declaration, including return type inference,
     /// generator/async semantics, and return path analysis.
-    #[allow(clippy::too_many_arguments)]
-    fn check_function_body(
-        &mut self,
-        func_idx: NodeIndex,
-        func: &tsz_parser::parser::node::FunctionData,
-        _node: &tsz_parser::parser::node::Node,
-        is_closure: bool,
-        has_type_annotation: bool,
-        has_jsdoc_return_type: bool,
-        jsdoc_return_type: Option<TypeId>,
-        func_decl_jsdoc: &Option<String>,
-    ) {
+    fn check_function_body(&mut self, ctx: FunctionBodyCtx<'_>) {
+        let FunctionBodyCtx {
+            func_idx,
+            func,
+            node: _node,
+            is_closure,
+            has_type_annotation,
+            has_jsdoc_return_type,
+            jsdoc_return_type,
+            func_decl_jsdoc,
+        } = ctx;
         // For JS files, push the function's `@template T` JSDoc declarations
         // into `type_parameter_scope` so that `@type {T}` annotations inside
         // the function body resolve to the same type parameter the signature
@@ -496,15 +506,18 @@ impl<'a> CheckerState<'a> {
             let template_names = Self::jsdoc_template_type_params(jsdoc);
             let mut updates = Vec::with_capacity(template_names.len());
             let factory = self.ctx.types.factory();
-            for (name, is_const) in template_names {
+            for (name, is_const, default_str) in template_names {
                 if self.ctx.type_parameter_scope.contains_key(&name) {
                     continue;
                 }
                 let atom = self.ctx.types.intern_string(&name);
+                let default = default_str
+                    .as_deref()
+                    .and_then(|s| self.resolve_jsdoc_reference(s));
                 let info = TypeParamInfo {
                     name: atom,
                     constraint: None,
-                    default: None,
+                    default,
                     is_const,
                 };
                 let ty = factory.type_param(info);

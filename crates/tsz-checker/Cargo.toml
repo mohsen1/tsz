@@ -42,6 +42,10 @@ name = "abstract_constructor_argument_tests"
 path = "tests/abstract_constructor_argument_tests.rs"
 
 [[test]]
+name = "ts2511_abstract_type_param_tests"
+path = "tests/ts2511_abstract_type_param_tests.rs"
+
+[[test]]
 name = "generic_alias_assignability_pollution_tests"
 path = "tests/generic_alias_assignability_pollution_tests.rs"
 
@@ -96,6 +100,10 @@ path = "tests/array_subclass_inheritance_tests.rs"
 [[test]]
 name = "tuple_infer_mapped_recursive_tests"
 path = "tests/tuple_infer_mapped_recursive_tests.rs"
+
+[[test]]
+name = "reverse_mapped_inference_tests"
+path = "tests/reverse_mapped_inference_tests.rs"
 
 [[test]]
 name = "recursive_alias_resolution_tests"
@@ -326,6 +334,10 @@ name = "module_augmentation_isolation_tests"
 path = "tests/module_augmentation_isolation_tests.rs"
 
 [[test]]
+name = "ambient_module_renamed_export_ts2460_tests"
+path = "tests/ambient_module_renamed_export_ts2460_tests.rs"
+
+[[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
 
@@ -422,6 +434,10 @@ name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
 
 [[test]]
+name = "thisless_functions_not_context_sensitive_tests"
+path = "tests/thisless_functions_not_context_sensitive_tests.rs"
+
+[[test]]
 name = "rest_tuple_conditional_arg_tests"
 path = "tests/rest_tuple_conditional_arg_tests.rs"
 
@@ -464,6 +480,10 @@ path = "tests/binding_pattern_inference_tests.rs"
 [[test]]
 name = "ts2353_tests"
 path = "tests/ts2353_tests.rs"
+
+[[test]]
+name = "excess_property_check_recursive_intersection_tests"
+path = "tests/excess_property_check_recursive_intersection_tests.rs"
 
 [[test]]
 name = "ts2353_omit_pick_excess_property_tests"
@@ -770,6 +790,10 @@ name = "homomorphic_mapped_union_distribution_tests"
 path = "tests/homomorphic_mapped_union_distribution_tests.rs"
 
 [[test]]
+name = "homomorphic_remove_optional_conditional_tests"
+path = "tests/homomorphic_remove_optional_conditional_tests.rs"
+
+[[test]]
 name = "ts2344_self_referential_interface_constraint"
 path = "tests/ts2344_self_referential_interface_constraint.rs"
 
@@ -832,6 +856,10 @@ path = "tests/imported_companion_value_type_tests.rs"
 [[test]]
 name = "import_type_utility_identity_tests"
 path = "tests/import_type_utility_identity_tests.rs"
+
+[[test]]
+name = "import_type_ambient_module_member_tests"
+path = "tests/import_type_ambient_module_member_tests.rs"
 
 [[test]]
 name = "json_namespace_import_tests"
@@ -1146,6 +1174,10 @@ name = "discriminant_narrow_function_lazy_preserved_tests"
 path = "tests/discriminant_narrow_function_lazy_preserved_tests.rs"
 
 [[test]]
+name = "discriminant_literal_reference_narrowing_tests"
+path = "tests/discriminant_literal_reference_narrowing_tests.rs"
+
+[[test]]
 name = "unique_symbol_discriminant_narrowing_tests"
 path = "tests/unique_symbol_discriminant_narrowing_tests.rs"
 
@@ -1286,6 +1318,10 @@ name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
 
 [[test]]
+name = "class_arrow_property_type_inference_tests"
+path = "tests/class_arrow_property_type_inference_tests.rs"
+
+[[test]]
 name = "class_implements_index_signature_tests"
 path = "tests/class_implements_index_signature_tests.rs"
 
@@ -1366,6 +1402,10 @@ name = "satisfies_generic_inference_literal_widening_tests"
 path = "tests/satisfies_generic_inference_literal_widening_tests.rs"
 
 [[test]]
+name = "issue_9785_const_type_param_satisfies_repro"
+path = "tests/issue_9785_const_type_param_satisfies_repro.rs"
+
+[[test]]
 name = "satisfies_object_property_position_tests"
 path = "tests/satisfies_object_property_position_tests.rs"
 
@@ -1398,8 +1438,16 @@ name = "static_readonly_unique_symbol_tests"
 path = "tests/static_readonly_unique_symbol_tests.rs"
 
 [[test]]
+name = "ts2542_readonly_index_coemission_tests"
+path = "tests/ts2542_readonly_index_coemission_tests.rs"
+
+[[test]]
 name = "issue_7681_super_decorator_tests"
 path = "tests/issue_7681_super_decorator_tests.rs"
+
+[[test]]
+name = "decorator_this_binding_tests"
+path = "tests/decorator_this_binding_tests.rs"
 
 [[test]]
 name = "index_signature_argument_assignability_tests"

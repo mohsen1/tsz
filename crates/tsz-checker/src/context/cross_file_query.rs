@@ -177,7 +177,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let Some((cached_type, params)) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            CrossFileQueryKind::Symbol.as_storage_kind(),
             file_idx,
             sym_id.0,
             secondary,
@@ -201,7 +201,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up a cached cross-file symbol-type via the canonical
-    /// `CrossFileQueryKind::SymbolType` bucket.
+    /// `CrossFileQueryKind::Symbol` bucket.
     ///
     /// Returns `None` when:
     /// - the share-owner gate is off (`share_owner_symbol_type_results == false`),
@@ -272,7 +272,7 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.definition_store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            CrossFileQueryKind::Symbol.as_storage_kind(),
             file_idx,
             sym_id.0,
             secondary,
@@ -283,7 +283,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Cache a cross-file symbol-type result in the canonical
-    /// `CrossFileQueryKind::SymbolType` bucket.
+    /// `CrossFileQueryKind::Symbol` bucket.
     ///
     /// No-op when:
     /// - the share-owner gate is off, or
@@ -336,7 +336,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up a cached cross-file interface-type via the canonical
-    /// `CrossFileQueryKind::InterfaceType` bucket.
+    /// `CrossFileQueryKind::Interface` bucket.
     ///
     /// Returns `None` when:
     /// - the share-owner gate is off,
@@ -358,7 +358,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let Some((cached_type, _params)) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceType.as_storage_kind(),
+            CrossFileQueryKind::Interface.as_storage_kind(),
             file_idx,
             sym_id.0,
             0,
@@ -382,7 +382,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Cache a cross-file interface-type result in the canonical
-    /// `CrossFileQueryKind::InterfaceType` bucket.
+    /// `CrossFileQueryKind::Interface` bucket.
     ///
     /// No-op when:
     /// - the share-owner gate is off, or
@@ -407,7 +407,7 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.definition_store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceType.as_storage_kind(),
+            CrossFileQueryKind::Interface.as_storage_kind(),
             file_idx,
             sym_id.0,
             0,
@@ -418,7 +418,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up a cached cross-file interface-member simple type via the
-    /// canonical `CrossFileQueryKind::InterfaceMemberSimpleType` bucket.
+    /// canonical `CrossFileQueryKind::InterfaceMemberSimple` bucket.
     ///
     /// Unlike the `SymbolType` / `InterfaceType` buckets (keyed by `sym_id`),
     /// this bucket is keyed by `(interface_idx, member_idx)` so a single
@@ -440,7 +440,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let Some((cached_type, _params)) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
+            CrossFileQueryKind::InterfaceMemberSimple.as_storage_kind(),
             file_idx,
             interface_idx.0,
             member_idx.0,
@@ -464,7 +464,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Cache a cross-file interface-member simple type result in the
-    /// canonical `CrossFileQueryKind::InterfaceMemberSimpleType` bucket.
+    /// canonical `CrossFileQueryKind::InterfaceMemberSimple` bucket.
     ///
     /// No-op when:
     /// - the share-owner gate is off, or
@@ -491,7 +491,7 @@ impl<'a> CheckerContext<'a> {
             return;
         }
         self.definition_store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
+            CrossFileQueryKind::InterfaceMemberSimple.as_storage_kind(),
             file_idx,
             interface_idx.0,
             member_idx.0,
@@ -502,7 +502,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Look up a cached cross-file class-instance-type via the canonical
-    /// `CrossFileQueryKind::ClassInstanceType` bucket.
+    /// `CrossFileQueryKind::ClassInstance` bucket.
     ///
     /// Returns `None` when:
     /// - the share-owner gate is off (`share_owner_symbol_type_results == false`), or
@@ -527,7 +527,7 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
         let Some((cached_type, params)) = self.definition_store.get_resolved_cross_file_query(
-            CrossFileQueryKind::ClassInstanceType.as_storage_kind(),
+            CrossFileQueryKind::ClassInstance.as_storage_kind(),
             file_idx,
             sym_id.0,
             0,
@@ -618,7 +618,7 @@ mod tests {
         ));
 
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::SymbolType.as_storage_kind(),
+            CrossFileQueryKind::Symbol.as_storage_kind(),
             7,
             11,
             0,
@@ -627,7 +627,7 @@ mod tests {
             Vec::new(),
         );
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceType.as_storage_kind(),
+            CrossFileQueryKind::Interface.as_storage_kind(),
             7,
             12,
             0,
@@ -636,7 +636,7 @@ mod tests {
             Vec::new(),
         );
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::InterfaceMemberSimpleType.as_storage_kind(),
+            CrossFileQueryKind::InterfaceMemberSimple.as_storage_kind(),
             7,
             21,
             22,
@@ -645,7 +645,7 @@ mod tests {
             Vec::new(),
         );
         store.cache_resolved_cross_file_query(
-            CrossFileQueryKind::ClassInstanceType.as_storage_kind(),
+            CrossFileQueryKind::ClassInstance.as_storage_kind(),
             7,
             13,
             0,

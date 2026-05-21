@@ -2160,6 +2160,42 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to(source, target)
     }
 
+    /// Environment-aware boolean relation guard for diagnostic code paths.
+    ///
+    /// Use this only when the caller intentionally needs the current
+    /// `TypeEnvironment` and no relation-cache lookup.
+    pub(crate) fn diagnostic_relation_boolean_guard_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_with_env(source, target)
+    }
+
+    /// Bivariant-callback boolean relation guard for diagnostic code paths.
+    ///
+    /// Use this only when the caller intentionally needs the legacy bivariant
+    /// callback relation rather than the default assignability relation.
+    pub(crate) fn diagnostic_relation_boolean_guard_bivariant(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_bivariant(source, target)
+    }
+
+    /// No-weak-checks boolean relation guard for diagnostic code paths.
+    ///
+    /// Use this only when the caller intentionally mirrors `tsc`'s
+    /// `isTypeAssignableTo` path without TS2559 weak-type detection.
+    pub(crate) fn diagnostic_relation_boolean_guard_no_weak_checks(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_no_weak_checks(source, target)
+    }
+
     /// Check if source type is assignable to target type.
     ///
     /// This is the main entry point for assignability checking, used throughout
@@ -2574,23 +2610,19 @@ impl<'a> CheckerState<'a> {
                 if target_arg.is_any() {
                     return false;
                 }
-                // When variance for this parameter is `rejection_unreliable`
-                // (e.g. the type parameter only appears inside a template
-                // literal interpolation, where stringification can make a
-                // structurally valid assignment look like a covariant
-                // failure), the structural check that already passed is the
-                // authoritative signal. Forcing strict covariance here would
-                // override that with a spurious rejection — for example
-                // `AGen<number>` should be assignable to `AGen<string>` when
-                // `type AGen<T> = { field: \`a${T}\` }` because
-                // \`a${number}\` <: \`a${string}\`.
-                if let Some(ref vs) = variances
-                    && let Some(variance) = vs.get(i)
-                    && variance.rejection_unreliable()
-                {
-                    return false;
+                let variance = variances.as_ref().and_then(|vs| vs.get(i)).copied();
+                match variance {
+                    // Variance is unreliable or requires a structural fallback — the
+                    // structural check is authoritative; don't force a rejection here.
+                    Some(v) if v.rejection_unreliable() || v.needs_structural_fallback() => false,
+                    // K in `{ [P in K]: V }` is CONTRAVARIANT: a source with wider keys
+                    // covers a target with narrower keys, so reverse the direction.
+                    Some(v) if v.is_contravariant() => {
+                        !self.is_assignable_to(target_arg, source_arg)
+                    }
+                    // Covariant or unknown: source must be assignable to target.
+                    _ => !self.is_assignable_to(source_arg, target_arg),
                 }
-                !self.is_assignable_to(source_arg, target_arg)
             },
         )
     }

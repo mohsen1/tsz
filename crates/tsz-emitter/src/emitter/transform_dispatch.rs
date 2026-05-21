@@ -340,6 +340,7 @@ impl<'a> Printer<'a> {
                 }
                 let system_export_fold = self.pending_system_namespace_export_fold.take();
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                 ns_emitter.set_const_enum_facts(
                     self.const_enum_values.clone(),
                     self.const_enum_import_aliases.clone(),
@@ -363,6 +364,7 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
                 ns_emitter.set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
                 ns_emitter.set_transforms(self.transforms.clone());
+                self.configure_es5_namespace_emitter_block_scope(&mut ns_emitter);
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
@@ -382,6 +384,7 @@ impl<'a> Printer<'a> {
                 } else {
                     ns_emitter.emit_namespace(namespace_node)
                 };
+                self.sync_es5_namespace_emitter_block_scope(&ns_emitter);
                 self.write(output.trim_end_matches('\n'));
                 // Skip comments within the namespace range - the ES5 namespace emitter
                 // doesn't use the main comment system, so we must advance past them
@@ -436,6 +439,7 @@ impl<'a> Printer<'a> {
                                 self.arena,
                                 !merges_with_default_func,
                             );
+                            ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                             ns_emitter.set_const_enum_facts(
                                 self.const_enum_values.clone(),
                                 self.const_enum_import_aliases.clone(),
@@ -463,6 +467,7 @@ impl<'a> Printer<'a> {
                             );
                             ns_emitter.set_commonjs_export_name(cjs_export_name.clone());
                             ns_emitter.set_transforms(self.transforms.clone());
+                            self.configure_es5_namespace_emitter_block_scope(&mut ns_emitter);
                             if let Some(text) = self.source_text_for_map() {
                                 ns_emitter.set_source_text(text);
                             }
@@ -509,6 +514,7 @@ impl<'a> Printer<'a> {
                             } else {
                                 ns_emitter.emit_exported_namespace(idx)
                             };
+                            self.sync_es5_namespace_emitter_block_scope(&ns_emitter);
                             self.write(output.trim_end_matches('\n'));
                             self.skip_comments_for_erased_node(node);
                             return;
@@ -859,9 +865,32 @@ impl<'a> Printer<'a> {
         &mut self,
         es5_emitter: &mut ClassES5Emitter<'a>,
     ) {
+        es5_emitter
+            .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
+        es5_emitter
+            .set_block_scope_reserved_names(self.ctx.block_scope_state.visible_reserved_names());
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         es5_emitter
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
+    }
+
+    pub(in crate::emitter) fn configure_es5_namespace_emitter_block_scope(
+        &mut self,
+        ns_emitter: &mut NamespaceES5Emitter<'a>,
+    ) {
+        ns_emitter
+            .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
+        ns_emitter
+            .set_block_scope_reserved_names(self.ctx.block_scope_state.visible_reserved_names());
+    }
+
+    pub(in crate::emitter) fn sync_es5_namespace_emitter_block_scope(
+        &mut self,
+        ns_emitter: &NamespaceES5Emitter<'a>,
+    ) {
+        self.ctx
+            .block_scope_state
+            .reserve_names(ns_emitter.block_scope_reserved_names());
     }
 
     pub(in crate::emitter) fn sync_es5_class_emitter_state(
@@ -875,6 +904,9 @@ impl<'a> Printer<'a> {
         for generated_name in es5_emitter.take_generated_disposable_env_names() {
             self.generated_temp_names.insert(generated_name);
         }
+        self.ctx
+            .block_scope_state
+            .reserve_names(es5_emitter.block_scope_reserved_names());
     }
 
     fn register_es5_class_binding_name(&mut self, class_node: NodeIndex) -> Option<String> {
@@ -918,7 +950,7 @@ impl<'a> Printer<'a> {
         {
             let class_name = self.get_identifier_text_idx(class_data.name);
             let externally_hoisted_decls =
-                self.es5_computed_auto_accessor_hoisted_decls(class_node, &class_name);
+                self.es5_class_externally_hoisted_decls(class_node, &class_name);
             if !externally_hoisted_decls.is_empty() {
                 for decl in &externally_hoisted_decls {
                     if !self.hoisted_assignment_temps.contains(decl) {
@@ -1321,6 +1353,7 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                 ns_emitter.set_const_enum_facts(
                     self.const_enum_values.clone(),
                     self.const_enum_import_aliases.clone(),
@@ -1341,11 +1374,13 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
                 ns_emitter.set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
                 ns_emitter.set_transforms(self.transforms.clone());
+                self.configure_es5_namespace_emitter_block_scope(&mut ns_emitter);
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
                 ns_emitter.set_should_declare_var(*should_declare_var);
                 let output = ns_emitter.emit_exported_namespace(*namespace_node);
+                self.sync_es5_namespace_emitter_block_scope(&ns_emitter);
                 self.write(output.trim_end_matches('\n'));
                 // Advance comment cursor past comments inside the namespace body,
                 // since the sub-emitter already handled them.
@@ -1539,6 +1574,7 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                 ns_emitter.set_const_enum_facts(
                     self.const_enum_values.clone(),
                     self.const_enum_import_aliases.clone(),
@@ -1589,6 +1625,7 @@ impl<'a> Printer<'a> {
                             .map(|ident| ident.escaped_text.clone())
                     });
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                    ns_emitter.set_module_kind(self.ctx.outer_module_kind());
                     ns_emitter.set_const_enum_facts(
                         self.const_enum_values.clone(),
                         self.const_enum_import_aliases.clone(),
@@ -1615,6 +1652,7 @@ impl<'a> Printer<'a> {
                         .set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
                     ns_emitter.set_commonjs_export_name(cjs_export_name.clone());
                     ns_emitter.set_transforms(self.transforms.clone());
+                    self.configure_es5_namespace_emitter_block_scope(&mut ns_emitter);
                     if let Some(text) = self.source_text_for_map() {
                         ns_emitter.set_source_text(text);
                     }
@@ -1629,6 +1667,7 @@ impl<'a> Printer<'a> {
                         ns_emitter.set_should_declare_var(should_declare_var);
                     }
                     let output = ns_emitter.emit_exported_namespace(idx);
+                    self.sync_es5_namespace_emitter_block_scope(&ns_emitter);
                     if let Some(module_decl) = self.arena.get_module(node) {
                         let ns_name = self.get_identifier_text_idx(module_decl.name);
                         if !ns_name.is_empty() {

@@ -317,6 +317,9 @@ pub struct Printer<'a> {
     /// Function depth whose ES5 lexical block should reset initializerless bindings.
     pub(crate) lexical_block_missing_initializer_function_depth: Option<u32>,
 
+    /// Whether the current ES5 lexical reset context is a loop body.
+    pub(crate) lexical_block_missing_initializer_is_loop_body: bool,
+
     /// Current declaration list is being printed in a `for` header.
     pub(crate) in_for_initializer: bool,
 
@@ -1102,6 +1105,7 @@ impl<'a> Printer<'a> {
             emit_plan,
             emit_missing_initializer_as_void_0: false,
             lexical_block_missing_initializer_function_depth: None,
+            lexical_block_missing_initializer_is_loop_body: false,
             in_for_initializer: false,
             source_text: None,
             jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts::default(),
@@ -1346,6 +1350,31 @@ impl<'a> Printer<'a> {
         self.emit_plan = plan;
     }
 
+    /// Seed a nested printer with outer function-scope names that nested
+    /// block-scoped declarations must not capture when lowered to ES5 `var`.
+    pub(crate) fn seed_function_scope_shadowed_names(&mut self, names: &[String]) {
+        if names.is_empty() {
+            return;
+        }
+
+        self.ctx.block_scope_state.enter_function_scope();
+        for name in names {
+            self.ctx
+                .block_scope_state
+                .register_function_scope_shadowed_name(name);
+        }
+    }
+
+    pub(crate) fn seed_block_scope_reserved_names(&mut self, names: &[String]) {
+        self.ctx
+            .block_scope_state
+            .reserve_names(names.iter().cloned());
+    }
+
+    pub(crate) fn block_scope_reserved_names(&self) -> Vec<String> {
+        self.ctx.block_scope_state.visible_reserved_names()
+    }
+
     #[must_use]
     pub const fn emit_plan(&self) -> &EmitPlan {
         &self.emit_plan
@@ -1376,6 +1405,11 @@ impl<'a> Printer<'a> {
     /// transforms automatically.
     pub const fn set_auto_detect_module(&mut self, enabled: bool) {
         self.ctx.auto_detect_module = enabled;
+    }
+
+    /// Mark this printer as emitting a `--module none --outFile` bundle.
+    pub const fn set_module_none_out_file(&mut self, enabled: bool) {
+        self.ctx.module_none_out_file = enabled;
     }
 
     /// Set the source text (for detecting single-line constructs).

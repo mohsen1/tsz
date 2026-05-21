@@ -140,7 +140,8 @@ impl WasmProgram {
     }
 
     /// Get the number of files in the program.
-    #[allow(clippy::missing_const_for_fn)] // wasm_bindgen does not support const fn
+    // wasm_bindgen cannot bind const fn.
+    #[allow(clippy::missing_const_for_fn)]
     #[wasm_bindgen(js_name = getFileCount)]
     pub fn get_file_count(&self) -> usize {
         self.files.len()

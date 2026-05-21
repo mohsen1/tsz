@@ -15,7 +15,12 @@ permissions:
 
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Draft/light CI should stay fast and replace stale runs. Ready-review CI is
+  # different: canceling it leaves red "cancelled" heavy-check entries on the
+  # PR, and those stale check runs make mergeable PRs look blocked even while a
+  # newer run is healthy. Let ready-review runs finish; a newer head SHA still
+  # becomes the authoritative PR status.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == true }}
 
 env:
   TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
@@ -959,6 +964,7 @@ jobs:
           path: |
             .ci-metrics/conformance.json
             .ci-metrics/conformance-failures-*.txt
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 1
 

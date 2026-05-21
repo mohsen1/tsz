@@ -277,45 +277,11 @@ impl ParserState {
     }
 
     fn look_ahead_can_commit_async_arrow_function(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-        let saved_context_flags = self.context_flags;
-        let saved_last_error_pos = self.last_error_pos;
-        let saved_diagnostics_len = self.parse_diagnostics.len();
-        let saved_nodes_len = self.arena.nodes.len();
-        let saved_extended_info_len = self.arena.extended_info.len();
-        let saved_deferred_module_close_braces = self.deferred_module_close_braces;
-        let saved_abort_intersection_continuation = self.abort_intersection_continuation;
-        let saved_fallback_import_type_options_once = self.fallback_import_type_options_once;
-        let saved_in_import_type_options_context = self.in_import_type_options_context;
-        let saved_import_attribute_tail_recovered = self.import_attribute_tail_recovered;
-        let saved_suppress_object_literal_comma_once = self.suppress_object_literal_comma_once;
-        let saved_suppress_next_missing_close_paren_error_once =
-            self.suppress_next_missing_close_paren_error_once;
-        let saved_saw_arrow_parameter_recovery = self.saw_arrow_parameter_recovery;
-
-        self.saw_arrow_parameter_recovery = false;
-        let _ = self.parse_async_arrow_function_expression();
-        let can_commit = !self.saw_arrow_parameter_recovery;
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        self.context_flags = saved_context_flags;
-        self.last_error_pos = saved_last_error_pos;
-        self.parse_diagnostics.truncate(saved_diagnostics_len);
-        self.arena.nodes.truncate(saved_nodes_len);
-        self.arena.extended_info.truncate(saved_extended_info_len);
-        self.deferred_module_close_braces = saved_deferred_module_close_braces;
-        self.abort_intersection_continuation = saved_abort_intersection_continuation;
-        self.fallback_import_type_options_once = saved_fallback_import_type_options_once;
-        self.in_import_type_options_context = saved_in_import_type_options_context;
-        self.import_attribute_tail_recovered = saved_import_attribute_tail_recovered;
-        self.suppress_object_literal_comma_once = saved_suppress_object_literal_comma_once;
-        self.suppress_next_missing_close_paren_error_once =
-            saved_suppress_next_missing_close_paren_error_once;
-        self.saw_arrow_parameter_recovery = saved_saw_arrow_parameter_recovery;
-
-        can_commit
+        self.speculate(|p| {
+            p.saw_arrow_parameter_recovery = false;
+            let _ = p.parse_async_arrow_function_expression();
+            !p.saw_arrow_parameter_recovery
+        })
     }
 
     // Parse async arrow function: async (x) => ... or async x => ...
@@ -1940,14 +1906,6 @@ impl ParserState {
         let mut expr = self.parse_primary_expression();
 
         loop {
-            if (self.context_flags & crate::parser::state::CONTEXT_FLAG_ENUM_MEMBER_INITIALIZER)
-                != 0
-                && self.scanner.has_preceding_line_break()
-                && self.is_token(SyntaxKind::OpenBracketToken)
-            {
-                break;
-            }
-
             match self.token() {
                 SyntaxKind::DotToken => {
                     let missing_name_pos = self.token_end();

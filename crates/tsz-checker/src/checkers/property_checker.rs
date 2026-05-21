@@ -198,6 +198,7 @@ impl<'a> CheckerState<'a> {
         if self.is_super_expression(object_expr)
             && !is_static
             && !in_static_context
+            && !self.has_syntax_parse_errors()
             && matches!(
                 self.class_chain_member_kind_name_only(class_idx, property_name, false, true)
                     .map(|(kind, _)| kind),

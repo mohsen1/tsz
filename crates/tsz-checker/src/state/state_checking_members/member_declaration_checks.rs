@@ -1578,12 +1578,23 @@ impl<'a> CheckerState<'a> {
                 self.check_grammar_decorator(decorator.expression);
 
                 let decorator_type = self.compute_type_of_node(decorator.expression);
+                // Only thread a receiver for decorators whose signature
+                // actually constrains `this:`; the dominant case
+                // (`this`-less decorators or `this: any`) skips this so
+                // we don't perturb generic inference for unrelated
+                // decorator shapes.
+                let actual_this_type = if self.decorator_has_explicit_this(decorator_type) {
+                    self.access_receiver_type(decorator.expression)
+                } else {
+                    None
+                };
 
                 if let Some(first_arg) = es_member_first_arg {
                     self.check_es_member_decorator_call_signature(
                         modifier_idx,
                         decorator_type,
                         first_arg,
+                        actual_this_type,
                     );
                 }
 
@@ -1596,6 +1607,7 @@ impl<'a> CheckerState<'a> {
                         modifier_idx,
                         decorator_type,
                         self.has_accessor_modifier_ref(Some(modifiers)),
+                        actual_this_type,
                     );
                 }
 
@@ -1611,6 +1623,7 @@ impl<'a> CheckerState<'a> {
                         modifier_idx,
                         member_idx,
                         self.ctx.compiler_options.experimental_decorators,
+                        actual_this_type,
                     );
                 }
             }
@@ -1668,10 +1681,17 @@ impl<'a> CheckerState<'a> {
                             if self.ctx.compiler_options.experimental_decorators {
                                 let is_constructor_parameter =
                                     node.kind == syntax_kind_ext::CONSTRUCTOR;
+                                let actual_this_type =
+                                    if self.decorator_has_explicit_this(decorator_type) {
+                                        self.access_receiver_type(decorator.expression)
+                                    } else {
+                                        None
+                                    };
                                 self.check_parameter_decorator_call_signature(
                                     modifier_idx,
                                     decorator_type,
                                     is_constructor_parameter,
+                                    actual_this_type,
                                 );
                             }
                         }

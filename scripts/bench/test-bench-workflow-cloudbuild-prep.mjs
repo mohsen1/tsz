@@ -33,8 +33,35 @@ assert.match(
 
 assert.match(
   workflow,
-  /expected \$\{\{ env\.BENCH_TARGET_SHA \}\}\."\s*\n\s+exit 1/,
-  "benchmark prep path should report the expected target and exit immediately",
+  /expected \$\{target_sha\} \/ PGO=1\."\s*\n\s+exit 1/,
+  "benchmark prep path should report the expected target and PGO marker before exiting immediately",
+);
+
+assert.match(
+  workflow,
+  /gs:\/\/tsz-ci_cloudbuild\/bench-prep\/\$\{prep_prefix\}\/bench-prep\.env[\s\S]+gs:\/\/tsz-ci_cloudbuild\/bench-prep\/\$\{prep_prefix\}\/bench-prep\.tar[\s\S]+tar -tf bench-prep\.tar \.target-bench\/dist\/tsz[\s\S]+tar -tf bench-prep\.tar \.target-bench\/dist\/\.bench-pgo-optimized[\s\S]+Cloud Build prep artifact already exists/,
+  "Cloud Build prep reuse should only skip submit after validating both the env and tar artifacts",
+);
+
+assert.match(
+  workflow,
+  /target_sha="\$\{\{ env\.BENCH_TARGET_SHA \}\}"[\s\S]+gs:\/\/tsz-ci_cloudbuild\/bench-prep\/\$\{target_sha\}\/bench-prep\.env[\s\S]+gs:\/\/tsz-ci_cloudbuild\/bench-prep\/\$\{target_sha\}\/bench-prep\.tar/,
+  "benchmark prep artifact polling should keep using the stable workflow target SHA",
+);
+
+assert.match(
+  workflow,
+  /manifest_target_sha="\$\(manifest_value BENCH_TARGET_SHA\)"[\s\S]+manifest_pgo_optimized="\$\(manifest_value BENCH_PGO_OPTIMIZED\)"[\s\S]+\$\{manifest_target_sha\}" == "\$\{target_sha\}" &&[\s\S]+\$\{manifest_pgo_optimized\}" == "1"/,
+  "benchmark prep artifact polling should validate manifest target and PGO without sourcing bench-prep.env",
+);
+
+const benchmarkPrepDownload = workflow.match(
+  /needs\.bench-prepare\.outputs\.should_run != 'true'[\s\S]+?      - name: Validate benchmark prep artifact/,
+)?.[0] ?? "";
+assert.doesNotMatch(
+  benchmarkPrepDownload,
+  /source bench-prep\.env/,
+  "benchmark prep artifact polling must not source bench-prep.env because it can clobber BENCH_TARGET_SHA",
 );
 
 console.log("bench workflow Cloud Build prep artifact tests passed");

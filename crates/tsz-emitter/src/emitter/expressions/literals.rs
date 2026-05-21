@@ -882,7 +882,7 @@ impl<'a> Printer<'a> {
         // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
         // ES5 doesn't support shorthand property syntax (ES6 feature)
         if is_shorthand && self.ctx.target_es5 {
-            self.emit_decl_name(prop.name);
+            self.emit_property_key_name(prop.name);
             self.write(": ");
             self.emit_expression(prop.initializer);
             return;
@@ -940,7 +940,7 @@ impl<'a> Printer<'a> {
                 }
             } else if let Some(name) = self.tc39_class_expression_name_from_property_name(prop.name)
             {
-                self.emit_decl_name(prop.name);
+                self.emit_property_key_name(prop.name);
                 self.write(": ");
                 self.emit_with_tc39_class_expression_name(prop.initializer, name, false);
                 return;
@@ -949,7 +949,7 @@ impl<'a> Printer<'a> {
         if is_computed {
             self.emit(prop.name);
         } else {
-            self.emit_decl_name(prop.name);
+            self.emit_property_key_name(prop.name);
         }
         self.write(": ");
         if self.ctx.target_es5
@@ -1012,13 +1012,9 @@ impl<'a> Printer<'a> {
         // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
         // ES5 doesn't support shorthand property syntax (ES6 feature)
         if self.ctx.target_es5 {
-            self.emit_decl_name(shorthand.name);
+            self.emit_property_key_name(shorthand.name);
             self.write(": ");
             self.emit(shorthand.name);
-            if shorthand.equals_token {
-                self.write(" = ");
-                self.emit(shorthand.object_assignment_initializer);
-            }
             return;
         }
 
@@ -1429,7 +1425,9 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::emitter::Printer;
+    use crate::emitter::{Printer, PrinterOptions};
+    use tsz_common::ScriptTarget;
+
     fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
         let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
@@ -1549,6 +1547,37 @@ mod tests {
         assert!(
             output.contains("1, /* trailing */"),
             "Block comment should stay on same line after comma.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_object_literal_recovery_shorthand_drops_initializer() {
+        let source = "var h = {\n    x = 1,\n    y = 2\n};\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("x: x,"),
+            "ES5 recovery shorthand should expand without its initializer.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("y: y"),
+            "ES5 recovery shorthand should expand without its initializer.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("x: x = 1") && !output.contains("y: y = 2"),
+            "ES5 recovery shorthand must not keep invalid assignment syntax.\nOutput:\n{output}"
         );
     }
 }

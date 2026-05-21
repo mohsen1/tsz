@@ -64,6 +64,7 @@ use crate::transforms::enum_es5_ir::transform_enum_to_ir;
 use crate::transforms::ir::{EnumMemberValue, IRNode, IRParam, IRPropertyKey};
 use crate::transforms::ir_printer::IRPrinter;
 use rustc_hash::FxHashMap;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -93,6 +94,7 @@ use tsz_scanner::SyntaxKind;
 pub struct NamespaceES5Transformer<'a> {
     arena: &'a NodeArena,
     is_commonjs: bool,
+    module_kind: ModuleKind,
     source_text: Option<&'a str>,
     comment_ranges: Vec<tsz_common::comments::CommentRange>,
     /// Exported variable names from prior blocks of the same namespace.
@@ -122,6 +124,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         Self {
             arena,
             is_commonjs: false,
+            module_kind: ModuleKind::None,
             source_text: None,
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
@@ -141,6 +144,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         Self {
             arena,
             is_commonjs,
+            module_kind: ModuleKind::None,
             source_text: None,
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
@@ -175,6 +179,10 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Set `CommonJS` mode
     pub const fn set_commonjs(&mut self, is_commonjs: bool) {
         self.is_commonjs = is_commonjs;
+    }
+
+    pub const fn set_module_kind(&mut self, kind: ModuleKind) {
+        self.module_kind = kind;
     }
 
     pub fn set_default_exported_func_names(&mut self, names: std::collections::HashSet<String>) {
@@ -231,6 +239,16 @@ impl<'a> NamespaceES5Transformer<'a> {
             }
         }
         Some((ns_name, names))
+    }
+
+    pub fn collect_namespace_block_scope_shadowed_names(
+        &self,
+        ns_idx: NodeIndex,
+    ) -> std::collections::HashSet<String> {
+        let Some((_parts, innermost_body)) = self.collect_all_namespace_parts(ns_idx) else {
+            return std::collections::HashSet::new();
+        };
+        collect_namespace_function_scope_reference_names(self.arena, innermost_body)
     }
 
     /// Extract leading comments from source text that fall within [`from_pos`, `to_pos`) range.
@@ -954,6 +972,13 @@ impl<'a> NamespaceES5Transformer<'a> {
                 let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
                 let is_class_like = self.is_class_like_member(stmt_idx);
                 let is_namespace_like_stmt = is_namespace_like(self.arena, stmt_node);
+                let next_erases_runtime = stmts
+                    .nodes
+                    .iter()
+                    .copied()
+                    .skip_while(|&idx| idx != stmt_idx)
+                    .nth(1)
+                    .is_some_and(|next_idx| self.namespace_statement_erases_runtime(next_idx));
                 let trailing_standalone = if is_class_like || is_namespace_like_stmt {
                     Vec::new()
                 } else {
@@ -1045,8 +1070,10 @@ impl<'a> NamespaceES5Transformer<'a> {
                     // statement kinds.)
                 }
 
-                for c in trailing_standalone {
-                    result.push(c);
+                if !next_erases_runtime {
+                    for c in trailing_standalone {
+                        result.push(c);
+                    }
                 }
 
                 // For class-like members the class sub-emitter handles its own
@@ -1165,6 +1192,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             k if k == syntax_kind_ext::EXPORT_DECLARATION && !force_export => {
                 // Handle export declarations by extracting the inner declaration
                 if let Some(export_data) = self.arena.get_export_decl(member_node) {
+                    if self.namespace_statement_erases_runtime(export_data.export_clause) {
+                        return None;
+                    }
                     self.transform_namespace_member(ns_name, export_data.export_clause, true)
                 } else {
                     None
@@ -1187,12 +1217,17 @@ impl<'a> NamespaceES5Transformer<'a> {
                 self.transform_enum_in_namespace(ns_name, member_idx, force_export)
             }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                if self.import_equals_uses_external_module_ref(member_idx) {
+                    return None;
+                }
                 if force_export {
                     self.transform_import_equals_exported(ns_name, member_idx)
                 } else {
                     self.transform_import_equals_in_namespace(ns_name, member_idx)
                 }
             }
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => None,
+            k if k == syntax_kind_ext::NAMED_EXPORTS => None,
             k if !force_export
                 && (k == syntax_kind_ext::INTERFACE_DECLARATION
                     || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION) =>
@@ -1202,6 +1237,42 @@ impl<'a> NamespaceES5Transformer<'a> {
             _ if !force_export => self.namespace_member_ast_ref_if_non_empty(member_idx),
             _ => None,
         }
+    }
+
+    fn namespace_statement_erases_runtime(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return true;
+        };
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => self
+                .arena
+                .get_export_decl(member_node)
+                .is_none_or(|export_data| {
+                    self.namespace_statement_erases_runtime(export_data.export_clause)
+                }),
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION
+                || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                || k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::NAMED_EXPORTS =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.import_equals_uses_external_module_ref(member_idx)
+            }
+            _ => false,
+        }
+    }
+
+    fn import_equals_uses_external_module_ref(&self, import_idx: NodeIndex) -> bool {
+        let Some(import) = self.arena.get_import_decl_at(import_idx) else {
+            return false;
+        };
+        self.arena.get(import.module_specifier).is_some_and(|node| {
+            node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                || node.kind == SyntaxKind::StringLiteral as u16
+        })
     }
 
     fn transform_import_equals_in_namespace(
@@ -1723,7 +1794,12 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .has_modifier(&func_data.modifiers, SyntaxKind::ExportKeyword);
 
         let func_decl = if func_data.is_async && !func_data.asterisk_token {
-            AsyncES5Transformer::new(self.arena).transform_async_function(func_idx)
+            let mut async_transformer = AsyncES5Transformer::new(self.arena);
+            async_transformer.set_module_kind(self.module_kind);
+            if let Some(src) = self.source_text {
+                async_transformer.set_source_text(src);
+            }
+            async_transformer.transform_async_function(func_idx)
         } else {
             let body_source_range = self.arena.pos_end_at(func_data.body);
 
@@ -1891,6 +1967,10 @@ impl<'a> NamespaceES5Transformer<'a> {
                 Some(IRNode::Sequence(decls))
             }
         } else {
+            if self.variable_statement_has_binding_pattern(var_idx) {
+                return Some(IRNode::ASTRef(var_idx));
+            }
+
             let empty_decl_keyword =
                 self.declaration_keyword_from_var_declarations(&var_data.declarations);
             let (decls, temps) = convert_variable_declarations(
@@ -1901,6 +1981,28 @@ impl<'a> NamespaceES5Transformer<'a> {
             self.hoisted_temps.borrow_mut().extend(temps);
             Some(IRNode::Sequence(decls))
         }
+    }
+
+    fn variable_statement_has_binding_pattern(&self, var_idx: NodeIndex) -> bool {
+        let Some(var_data) = self.arena.get_variable_at(var_idx) else {
+            return false;
+        };
+
+        var_data.declarations.nodes.iter().any(|&decl_list_idx| {
+            self.arena
+                .get_variable_at(decl_list_idx)
+                .is_some_and(|decl_list| {
+                    decl_list.declarations.nodes.iter().any(|&decl_idx| {
+                        let Some(decl) = self.arena.get_variable_declaration_at(decl_idx) else {
+                            return false;
+                        };
+                        self.arena.get(decl.name).is_some_and(|name| {
+                            name.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || name.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        })
+                    })
+                })
+        })
     }
 
     /// Transform an enum in namespace. When `force_export` is true, the enum

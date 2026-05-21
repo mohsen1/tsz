@@ -1,8 +1,7 @@
 use super::FlowAnalyzer;
-use crate::query_boundaries::common::is_union_type;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis::{
-    empty_object_type, is_unit_type, is_unknown_narrowing_literal,
+    empty_object_type, is_union_type, is_unit_type, is_unknown_narrowing_literal,
 };
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};

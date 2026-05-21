@@ -47,6 +47,15 @@ impl<'a> Printer<'a> {
             }
         }
 
+        if self.is_emitting_object_literal_accessor()
+            && let Some(name_node) = self.arena.get(name)
+            && name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(literal) = self.arena.get_literal(name_node)
+        {
+            self.write(&literal.text);
+            return;
+        }
+
         let prev_alias = self.scoped_class_expression_self_alias.take();
         if let Some(name_node) = self.arena.get(name)
             && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
@@ -1216,9 +1225,12 @@ impl<'a> Printer<'a> {
             self.emit_pending_object_rest_param_defaults(false);
         }
 
-        // Capture position for inserting hoisted temps created during statement emit
-        // (e.g., `_a` from `??` lowering inside the constructor body).
-        let hoisted_var_insert_pos = (self.writer.len(), self.writer.current_line());
+        // Capture anchor for inserting hoisted temps created during statement
+        // emit (e.g., `_a` from `??` lowering inside the constructor body).
+        // The constructor body emit below may open a `using` try wrapper
+        // which raises the live `indent_level` - pinning the anchor's level
+        // here keeps the inserted `var _a;` at the body's own indent.
+        let hoisted_var_anchor = self.capture_hoist_anchor();
         // Find the super() call index so we can emit prologue after it.
         // In derived class constructors, super() must be called before
         // accessing `this`, so param property and field init assignments
@@ -1311,15 +1323,17 @@ impl<'a> Printer<'a> {
 
         // Insert any hoisted temps created during statement emit (e.g., `_a` from `??` lowering).
         if !self.hoisted_assignment_temps.is_empty() {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let indent = self
+                .writer
+                .indent_string_at(hoisted_var_anchor.indent_level);
             let var_decl = format!(
                 "{}var {};",
                 indent,
                 self.hoisted_assignment_temps.join(", ")
             );
             self.writer.insert_line_at(
-                hoisted_var_insert_pos.0,
-                hoisted_var_insert_pos.1,
+                hoisted_var_anchor.byte_offset,
+                hoisted_var_anchor.line_no,
                 &var_decl,
             );
             self.hoisted_assignment_temps.clear();
@@ -1920,6 +1934,26 @@ mod tests {
         assert!(
             !output.contains("set setter(v) { },"),
             "JS input object-literal accessor should prefer compact braces.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn es5_object_literal_accessor_numeric_name_preserves_source_text() {
+        let output = emit_ts_with_options(
+            "var f = { 0: 0, get 0o0() { return 0; } };",
+            PrinterOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        );
+
+        assert!(
+            output.contains("get 0o0()"),
+            "Object-literal accessor numeric names are property keys and should keep source token text.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("get 0()"),
+            "Object-literal accessor numeric names should not use numeric expression downleveling.\nOutput: {output}"
         );
     }
 
