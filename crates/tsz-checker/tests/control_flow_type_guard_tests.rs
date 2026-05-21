@@ -2886,6 +2886,33 @@ function f(s: S) {
     );
 }
 
+/// Rest binding on the same top-level destructure must not hide the discriminant
+/// alias relationship between the extracted property and the source binding.
+#[test]
+fn destructured_discriminant_with_rest_narrows_source_binding() {
+    let diagnostics = strict_diagnostics(
+        r#"
+type S = { kind: "a"; a: number } | { kind: "b"; b: string };
+function f(s: S) {
+    const { kind, ...rest } = s;
+    rest;
+    if (kind === "a") {
+        const _x: number = s.a;
+    } else {
+        const _y: string = s.b;
+    }
+}
+"#,
+    );
+    let ts2339: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2339).collect();
+    let ts2322: Vec<_> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        ts2339.is_empty() && ts2322.is_empty(),
+        "Rest binding must not prevent destructured discriminant narrowing of source binding; \
+         ts2339={ts2339:#?}, ts2322={ts2322:#?}"
+    );
+}
+
 /// Non-const destructured discriminant must NOT narrow the source binding.
 /// `let { kind } = s; if (kind === "a") { s.a; }` — `s` remains `S`, TS2339 expected.
 #[test]
