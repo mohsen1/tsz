@@ -1,7 +1,7 @@
 //! Shared mapped-type key-space relationship helpers.
 
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
-use crate::types::{MappedType, TypeData, TypeId};
+use crate::types::{MappedType, TypeId};
 use crate::visitor::{keyof_inner_type, type_param_info};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
@@ -12,10 +12,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let Some(name) = mapped.name_type else {
             return true;
         };
-        matches!(
-            self.interner.lookup(name),
-            Some(TypeData::TypeParameter(p)) if p.name == mapped.type_param.name
-        )
+        type_param_info(self.interner, name).is_some_and(|p| p.name == mapped.type_param.name)
     }
 
     pub(super) fn mapped_name_types_compatible(

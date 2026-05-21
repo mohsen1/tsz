@@ -1903,10 +1903,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let Some(name) = mapped.name_type else {
             return true;
         };
-        matches!(
-            self.interner.lookup(name),
-            Some(TypeData::TypeParameter(p)) if p.name == mapped.type_param.name
-        )
+        type_param_info(self.interner, name).is_some_and(|p| p.name == mapped.type_param.name)
     }
 
     fn mapped_name_types_compatible(
