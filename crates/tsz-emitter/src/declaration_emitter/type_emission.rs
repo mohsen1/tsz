@@ -1424,7 +1424,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        // tsc keeps mapped-type constraint expressions on a single line; suppress multiline tuple formatting.
+        let saved_indent = self.indent_level;
+        self.indent_level = 0;
         self.emit_type(constraint_idx);
+        self.indent_level = saved_indent;
     }
 
     pub(in crate::declaration_emitter) fn emit_mapped_type_name_type(
@@ -1441,7 +1445,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        // tsc keeps mapped-type name-type expressions on a single line; suppress multiline tuple formatting.
+        let saved_indent = self.indent_level;
+        self.indent_level = 0;
         self.emit_type(name_type_idx);
+        self.indent_level = saved_indent;
     }
 
     pub(in crate::declaration_emitter) fn emit_mapped_type_as_clause(
