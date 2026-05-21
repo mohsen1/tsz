@@ -1577,5 +1577,9 @@ path = "tests/type_parameter_canonical_typeid_tests.rs"
 name = "jsdoc_enum_member_assignability_tests"
 path = "tests/jsdoc_enum_member_assignability_tests.rs"
 
+[[test]]
+name = "structural_dispatch_void_tests"
+path = "tests/structural_dispatch_void_tests.rs"
+
 [lints]
 workspace = true

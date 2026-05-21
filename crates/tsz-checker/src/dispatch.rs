@@ -1925,19 +1925,36 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     _ => TypeId::ANY,
                 }
             }
-            // Structural statement/import/export nodes can be reached by broad
-            // expression walks in real projects. They do not have a value type,
-            // but they also should not poison checking with TypeId::ERROR.
+            // Structural/declaration nodes reached by broad expression walks
+            // (cross-file traversal, import/export processing, callback-shape
+            // resolution). None are value-producing expressions; return VOID
+            // instead of ERROR to avoid poisoning downstream relation checks.
             k if k == syntax_kind_ext::BLOCK
                 || k == syntax_kind_ext::NAMED_IMPORTS
                 || k == syntax_kind_ext::NAMED_EXPORTS
-                || k == syntax_kind_ext::METHOD_SIGNATURE =>
+                || k == syntax_kind_ext::METHOD_SIGNATURE
+                || k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::IMPORT_CLAUSE
+                || k == syntax_kind_ext::NAMESPACE_IMPORT
+                || k == syntax_kind_ext::IMPORT_SPECIFIER
+                || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                || k == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                || k == syntax_kind_ext::IMPORT_ATTRIBUTE
+                || k == syntax_kind_ext::IMPORT_ATTRIBUTES
+                || k == syntax_kind_ext::EXPORT_DECLARATION
+                || k == syntax_kind_ext::EXPORT_SPECIFIER
+                || k == syntax_kind_ext::NAMESPACE_EXPORT
+                || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                // Parameter/type-parameter declarations; types resolved via
+                // dedicated param APIs, not expression dispatch.
+                || k == syntax_kind_ext::PARAMETER
+                || k == syntax_kind_ext::TYPE_PARAMETER =>
             {
                 TypeId::VOID
             }
-            k if k == syntax_kind_ext::METHOD_SIGNATURE => {
-                self.checker.get_type_of_interface_member_simple(idx)
-            }
+            // `import` keyword token in structural positions (import declarations,
+            // ExpressionWithTypeArguments). Not a value-producing expression.
+            k if k == SyntaxKind::ImportKeyword as u16 => TypeId::VOID,
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(
