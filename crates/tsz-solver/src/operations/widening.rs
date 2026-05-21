@@ -336,7 +336,16 @@ fn widen_type_cached(
                 }
             };
             let has_literal = members.iter().any(|&m| is_fresh_member(m));
-            let small_fresh_union = has_literal
+            // tsc only widens unions of literals when the entire type is being
+            // widened for semantic reasons (apparent type, type-of-symbol). At
+            // diagnostic display time tsc preserves the literal union surface,
+            // so `(1 | 2)[]` displays as `(1 | 2)[]` even though `[1, 2]` would
+            // semantically widen to `number[]`. Display-only widening paths set
+            // `widen_boolean_intrinsics = false` (preserving `string | false`
+            // shapes for narrowed displays); use that flag as the gate for
+            // collapsing all-literal unions to their primitive base too.
+            let small_fresh_union = widen_boolean_intrinsics
+                && has_literal
                 && members.len() <= 3
                 && members
                     .iter()

@@ -671,9 +671,16 @@ impl<'a> InferenceContext<'a> {
             .iter()
             .any(|candidate| candidate.source_is_type_annotation);
         let resolved = if priority_implies_combination || all_from_index_signatures {
-            // Union: used for return type inference, low-priority contexts,
-            // index signature inference, and nullable parameter inference
-            self.best_common_type(&candidate_types)
+            // Mirror tsc's `getCovariantInference`: when the priority implies
+            // combination (return type, low priority, mapped-type/index-signature),
+            // build `getUnionType(baseCandidates, UnionReduction.Subtype)` — a
+            // subtype-reduced union of candidates. We must NOT collapse to a
+            // common primitive base here (e.g. `1 | 2` -> `number`); that step
+            // belongs to the later `getWidenedType` pass, which is gated on
+            // candidate freshness via `is_fresh_literal`. Using
+            // `best_common_type` here would widen non-fresh `as const` literals
+            // and drop precision (issue #9714 case a/c).
+            self.interner.union_from_slice(&candidate_types)
         } else {
             // Common supertype: used for NakedTypeVariable and other direct inference.
             // tsc widens literal candidates BEFORE getCommonSupertype (via baseCandidates =
@@ -747,7 +754,10 @@ impl<'a> InferenceContext<'a> {
                 resolved
             } else {
                 // Create a union of all valid candidate types (subtype-reduced).
-                self.best_common_type(&valid_candidates)
+                // See the matching note above the `priority_implies_combination`
+                // branch: we must not collapse same-base literals to their
+                // common primitive here.
+                self.interner.union(valid_candidates)
             }
         } else {
             resolved
