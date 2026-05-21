@@ -421,6 +421,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Fill `default_ty` for every infer parameter in `pattern` that does not
+    /// already have a candidate in `bindings`. Unlike `bind_infer_defaults`,
+    /// this only fills gaps: it never overwrites or rejects an already-bound
+    /// name. Used when a pattern position has no corresponding source position
+    /// (e.g. the source callable supplies fewer parameters than the inference
+    /// pattern requires), where tsc leaves the unmatched `infer` slots at their
+    /// default of `unknown`.
+    pub(crate) fn fill_unbound_infer_defaults(
+        &self,
+        pattern: TypeId,
+        default_ty: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+    ) {
+        let mut names = FxHashSet::default();
+        self.collect_all_infer_names(pattern, &mut names);
+        for name in names {
+            bindings.entry(name).or_insert(default_ty);
+        }
+    }
+
     /// Bind an inferred type to an infer parameter.
     ///
     /// Handles constraint checking and merging with existing bindings.

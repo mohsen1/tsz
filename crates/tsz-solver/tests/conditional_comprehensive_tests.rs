@@ -3122,3 +3122,220 @@ fn function_intrinsic_extends_callable_in_conditional_types() {
         "conditional types keep tsc's Function-extends-callable true branch"
     );
 }
+
+// =============================================================================
+// Infer-pattern callable arity: source with fewer parameters (issue #9662)
+// =============================================================================
+//
+// Rule: when a source callable is matched against an inference pattern
+// `(arg: infer A) => any` inside a conditional `extends`, a source with fewer
+// parameters is still assignable; the unmatched `infer` positions default to
+// `unknown` and the conditional takes the true branch. These previously took
+// the false branch because the params matcher rejected shorter sources.
+
+/// Build a one-parameter infer pattern `(p: infer <name>) => any`.
+fn one_arg_infer_pattern(interner: &TypeInterner, name: &str) -> (TypeId, TypeId) {
+    let infer_ty = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let pattern = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("p")),
+            type_id: infer_ty,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    (pattern, infer_ty)
+}
+
+#[test]
+fn infer_callable_fewer_params_defaults_unmatched_to_unknown() {
+    // `(() => void) extends (p: infer A) => any ? A : "no"` → unknown.
+    let interner = TypeInterner::new();
+    let (pattern, infer_a) = one_arg_infer_pattern(&interner, "A");
+    let source = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: interner.literal_string("no"),
+        is_distributive: false,
+    };
+    let cond_id = interner.conditional(cond);
+    assert_eq!(
+        evaluate_type(&interner, cond_id),
+        TypeId::UNKNOWN,
+        "a source function with fewer params is assignable; the unmatched infer \
+         slot must default to unknown (true branch)"
+    );
+}
+
+#[test]
+fn infer_callable_fewer_params_renamed_var_is_structural() {
+    // Same as above with the infer variable named `Q` — must behave identically.
+    let interner = TypeInterner::new();
+    let (pattern, infer_q) = one_arg_infer_pattern(&interner, "Q");
+    let source = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_q,
+        false_type: interner.literal_string("no"),
+        is_distributive: false,
+    };
+    let cond_id = interner.conditional(cond);
+    assert_eq!(
+        evaluate_type(&interner, cond_id),
+        TypeId::UNKNOWN,
+        "infer-variable name must not affect the result"
+    );
+}
+
+#[test]
+fn infer_callable_two_missing_params_default_each_to_unknown() {
+    // `(() => void) extends (a: infer A, b: infer B) => any ? [A, B] : "no"`
+    // → [unknown, unknown].
+    let interner = TypeInterner::new();
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("B"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let pattern = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("a")),
+                type_id: infer_a,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("b")),
+                type_id: infer_b,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let true_tuple = interner.tuple(vec![
+        crate::types::TupleElement {
+            type_id: infer_a,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: infer_b,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let source = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: true_tuple,
+        false_type: interner.literal_string("no"),
+        is_distributive: false,
+    };
+    let cond_id = interner.conditional(cond);
+    let expected = interner.tuple(vec![
+        crate::types::TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    assert_eq!(
+        evaluate_type(&interner, cond_id),
+        expected,
+        "both unmatched infer slots default to unknown → [unknown, unknown]"
+    );
+}
+
+#[test]
+fn infer_callable_supplied_param_still_infers_concrete_type() {
+    // Control: `((x: number) => void) extends (p: infer A) => any ? A : "no"`
+    // → number. A supplied parameter must win over the unknown default.
+    let interner = TypeInterner::new();
+    let (pattern, infer_a) = one_arg_infer_pattern(&interner, "A");
+    let source = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: interner.literal_string("no"),
+        is_distributive: false,
+    };
+    let cond_id = interner.conditional(cond);
+    assert_eq!(
+        evaluate_type(&interner, cond_id),
+        TypeId::NUMBER,
+        "a matched parameter must infer its concrete type, not the unknown default"
+    );
+}
+
+#[test]
+fn infer_callable_non_function_source_takes_false_branch() {
+    // Negative: `string extends (p: infer A) => any ? A : "no"` → "no".
+    let interner = TypeInterner::new();
+    let (pattern, infer_a) = one_arg_infer_pattern(&interner, "A");
+    let no_lit = interner.literal_string("no");
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: no_lit,
+        is_distributive: false,
+    };
+    let cond_id = interner.conditional(cond);
+    assert_eq!(
+        evaluate_type(&interner, cond_id),
+        no_lit,
+        "a non-function source must still take the false branch"
+    );
+}
