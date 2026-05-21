@@ -2401,7 +2401,7 @@ impl<'a> CheckerState<'a> {
         };
         if has_number_index
             && !is_for_in_index
-            && !self.ctx.types.is_assignable_to(index_type, TypeId::NUMBER)
+            && !self.diagnostic_relation_boolean_guard(index_type, TypeId::NUMBER)
         {
             // tsc reports TS7015 at the index expression (arg_idx), not the full element access.
             self.error_at_anchor(
@@ -2552,7 +2552,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        self.ctx.types.is_assignable_to(index_type, first.type_id)
+        self.diagnostic_relation_boolean_guard(index_type, first.type_id)
     }
 
     fn is_named_method_suggestion_receiver(&self, idx: NodeIndex) -> bool {

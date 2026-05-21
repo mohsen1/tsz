@@ -12,7 +12,9 @@ use crate::test_parser::{
     should_skip_test,
 };
 use crate::text_decode::{decode_source_text, DecodedSourceText};
-use crate::tsc_results::{DiagnosticFingerprint, ErrorFrequency, TestResult, TestStats};
+use crate::tsc_results::{
+    DiagnosticFingerprint, ErrorFrequency, TestResult, TestResultFail, TestStats,
+};
 use crate::tsz_wrapper;
 use anyhow::Context;
 use futures::stream::{self, StreamExt};
@@ -58,6 +60,14 @@ fn use_fingerprint_compare(
     tsz_fingerprints: &std::collections::HashSet<DiagnosticFingerprint>,
 ) -> bool {
     !tsc_fingerprints.is_empty() && !tsz_fingerprints.is_empty()
+}
+
+fn is_project_config_diagnostic_code(code: u32) -> bool {
+    matches!(code, 18003 | 5023 | 5057 | 5058 | 5081 | 5101 | 5102 | 5107)
+}
+
+fn is_compiler_option_config_diagnostic_code(code: u32) -> bool {
+    matches!(code, 5101 | 5102 | 5107)
 }
 
 fn sanitize_artifact_name(path: &str) -> String {
@@ -322,7 +332,7 @@ fn compare_diagnostics(
         let mut actual = compile_result.error_codes.clone();
         expected.sort_unstable();
         actual.sort_unstable();
-        TestResult::Fail {
+        TestResult::Fail(Box::new(TestResultFail {
             expected,
             actual,
             missing,
@@ -333,7 +343,7 @@ fn compare_diagnostics(
             actual_fingerprints,
             options,
             known_failure: None,
-        }
+        }))
     }
 }
 
@@ -770,18 +780,19 @@ impl Runner {
                                         writeln!(buf, "PASS {}", rel_path).ok();
                                     }
                                 }
-                                TestResult::Fail {
-                                    expected,
-                                    actual,
-                                    missing,
-                                    extra,
-                                    missing_fingerprints,
-                                    extra_fingerprints,
-                                    expected_fingerprints,
-                                    actual_fingerprints,
-                                    options,
-                                    known_failure,
-                                } => {
+                                TestResult::Fail(fail) => {
+                                    let TestResultFail {
+                                        expected,
+                                        actual,
+                                        missing,
+                                        extra,
+                                        missing_fingerprints,
+                                        extra_fingerprints,
+                                        expected_fingerprints,
+                                        actual_fingerprints,
+                                        options,
+                                        known_failure,
+                                    } = *fail;
                                     stats.failed.fetch_add(1, Ordering::SeqCst);
                                     if known_failure.is_some() {
                                         stats.known_failures.fetch_add(1, Ordering::SeqCst);
@@ -1472,52 +1483,40 @@ impl Runner {
                         &tsc_fps,
                     );
 
-                    // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
                     // config-level deprecation warnings. These should not be compared as they are
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
                     // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003, TS5023) that the cache
                     // stores in fingerprints but not in error_codes.
-                    let config_level_codes: std::collections::HashSet<u32> = [
-                        18003u32, 5023u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32,
-                    ]
-                    .iter()
-                    .cloned()
-                    .collect();
-                    tsc_error_codes.retain(|c| !config_level_codes.contains(c));
+                    tsc_error_codes.retain(|c| !is_project_config_diagnostic_code(*c));
                     let tsc_fps: Vec<_> = tsc_fps
                         .into_iter()
-                        .filter(|fp| !config_level_codes.contains(&fp.code))
+                        .filter(|fp| !is_project_config_diagnostic_code(fp.code))
                         .collect();
                     compile_result
                         .error_codes
-                        .retain(|c| !config_level_codes.contains(c));
+                        .retain(|c| !is_project_config_diagnostic_code(*c));
                     compile_result
                         .diagnostic_fingerprints
-                        .retain(|fp| !config_level_codes.contains(&fp.code));
+                        .retain(|fp| !is_project_config_diagnostic_code(fp.code));
 
-                    // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
                     // config-level deprecation warnings. These should not be compared as they are
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
                     // Also filter project-level diagnostics (TS5057, TS5058, TS5081, TS18003, TS5023) that the cache
                     // stores in fingerprints but not in error_codes.
-                    let config_level_codes: std::collections::HashSet<u32> = [
-                        18003u32, 5023u32, 5057u32, 5058u32, 5081u32, 5101u32, 5107u32,
-                    ]
-                    .iter()
-                    .cloned()
-                    .collect();
                     let tsc_error_codes: Vec<u32> = tsc_error_codes
                         .into_iter()
-                        .filter(|c| !config_level_codes.contains(c))
+                        .filter(|c| !is_project_config_diagnostic_code(*c))
                         .collect();
                     compile_result
                         .error_codes
-                        .retain(|c| !config_level_codes.contains(c));
+                        .retain(|c| !is_project_config_diagnostic_code(*c));
                     compile_result
                         .diagnostic_fingerprints
-                        .retain(|fp| !config_level_codes.contains(&fp.code));
+                        .retain(|fp| !is_project_config_diagnostic_code(fp.code));
                     // When @noLib is set, tsc only emits TS2318 ("Cannot find global type")
                     // and suppresses downstream errors caused by missing lib types.
                     // tsz doesn't yet suppress these, so filter extra codes/fingerprints
@@ -1688,27 +1687,25 @@ impl Runner {
                         &tsc_fps,
                     );
 
-                    // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
                     // config-level deprecation warnings. These should not be compared as they are
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
-                    let config_level_codes: std::collections::HashSet<u32> =
-                        [5101u32, 5107u32].iter().cloned().collect();
-                    tsc_error_codes.retain(|c| !config_level_codes.contains(c));
+                    tsc_error_codes.retain(|c| !is_compiler_option_config_diagnostic_code(*c));
                     let tsc_fps: Vec<_> = tsc_fps
                         .into_iter()
-                        .filter(|fp| !config_level_codes.contains(&fp.code))
+                        .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
                         .collect();
                     let compile_result = crate::tsz_wrapper::CompilationResult {
                         error_codes: compile_result
                             .error_codes
                             .into_iter()
-                            .filter(|c| !config_level_codes.contains(c))
+                            .filter(|c| !is_compiler_option_config_diagnostic_code(*c))
                             .collect(),
                         diagnostic_fingerprints: compile_result
                             .diagnostic_fingerprints
                             .into_iter()
-                            .filter(|fp| !config_level_codes.contains(&fp.code))
+                            .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
                             .collect(),
                         ..compile_result
                     };
@@ -1821,27 +1818,25 @@ impl Runner {
                         &tsc_fps,
                     );
 
-                    // Filter config-level diagnostics (TS5101, TS5107, etc.) from both expected and actual.
+                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
                     // The TSC cache only stores file-level diagnostics, but our compiler also emits
                     // config-level deprecation warnings. These should not be compared as they are
                     // compiler configuration diagnostics, not file-level type checking diagnostics.
-                    let config_level_codes: std::collections::HashSet<u32> =
-                        [5101u32, 5107u32].iter().cloned().collect();
-                    tsc_error_codes.retain(|c| !config_level_codes.contains(c));
+                    tsc_error_codes.retain(|c| !is_compiler_option_config_diagnostic_code(*c));
                     let tsc_fps: Vec<_> = tsc_fps
                         .into_iter()
-                        .filter(|fp| !config_level_codes.contains(&fp.code))
+                        .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
                         .collect();
                     let compile_result = crate::tsz_wrapper::CompilationResult {
                         error_codes: compile_result
                             .error_codes
                             .into_iter()
-                            .filter(|c| !config_level_codes.contains(c))
+                            .filter(|c| !is_compiler_option_config_diagnostic_code(*c))
                             .collect(),
                         diagnostic_fingerprints: compile_result
                             .diagnostic_fingerprints
                             .into_iter()
-                            .filter(|fp| !config_level_codes.contains(&fp.code))
+                            .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
                             .collect(),
                         ..compile_result
                     };
@@ -1988,6 +1983,15 @@ mod tests {
         ));
         // CLI mode: both sides populated — enable fingerprint compare.
         assert!(use_fingerprint_compare(&tsc, &tsz_populated));
+    }
+
+    #[test]
+    fn config_diagnostic_filters_include_removed_compiler_options() {
+        assert!(is_project_config_diagnostic_code(5102));
+        assert!(is_compiler_option_config_diagnostic_code(5102));
+        assert!(is_compiler_option_config_diagnostic_code(5101));
+        assert!(is_compiler_option_config_diagnostic_code(5107));
+        assert!(!is_compiler_option_config_diagnostic_code(2322));
     }
 
     #[test]
@@ -2270,18 +2274,12 @@ mod tests {
         extra_codes: &[u32],
     ) {
         match result {
-            TestResult::Fail {
-                expected,
-                actual,
-                missing,
-                extra,
-                ..
-            } => {
-                assert_eq!(expected, expected_codes, "expected codes mismatch");
-                assert_eq!(actual, actual_codes, "actual codes mismatch");
-                let mut m = missing.clone();
+            TestResult::Fail(fail) => {
+                assert_eq!(&fail.expected, expected_codes, "expected codes mismatch");
+                assert_eq!(&fail.actual, actual_codes, "actual codes mismatch");
+                let mut m = fail.missing.clone();
                 m.sort_unstable();
-                let mut e = extra.clone();
+                let mut e = fail.extra.clone();
                 e.sort_unstable();
                 let mut want_m = missing_codes.to_vec();
                 want_m.sort_unstable();
@@ -2352,21 +2350,15 @@ mod tests {
 
         let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
         match result {
-            TestResult::Fail {
-                missing,
-                extra,
-                missing_fingerprints,
-                extra_fingerprints,
-                ..
-            } => {
+            TestResult::Fail(fail) => {
                 assert!(
-                    missing.is_empty() && extra.is_empty(),
+                    fail.missing.is_empty() && fail.extra.is_empty(),
                     "codes should match exactly"
                 );
-                assert_eq!(missing_fingerprints.len(), 1);
-                assert_eq!(missing_fingerprints[0].file, "expected.ts");
-                assert_eq!(extra_fingerprints.len(), 1);
-                assert_eq!(extra_fingerprints[0].file, "actual.ts");
+                assert_eq!(fail.missing_fingerprints.len(), 1);
+                assert_eq!(fail.missing_fingerprints[0].file, "expected.ts");
+                assert_eq!(fail.extra_fingerprints.len(), 1);
+                assert_eq!(fail.extra_fingerprints[0].file, "actual.ts");
             }
             other => panic!("expected Fail with fingerprint diff, got {other:?}"),
         }
@@ -2382,11 +2374,9 @@ mod tests {
 
         let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
         match result {
-            TestResult::Fail {
-                expected, actual, ..
-            } => {
-                assert_eq!(expected, vec![2304, 2345]);
-                assert_eq!(actual, vec![2304, 7027]);
+            TestResult::Fail(fail) => {
+                assert_eq!(fail.expected, vec![2304, 2345]);
+                assert_eq!(fail.actual, vec![2304, 7027]);
             }
             other => panic!("expected Fail, got {other:?}"),
         }
@@ -2406,13 +2396,10 @@ mod tests {
 
         let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
         match result {
-            TestResult::Fail {
-                missing_fingerprints,
-                ..
-            } => {
+            TestResult::Fail(fail) => {
                 // Sort key is (code, file, line, column, message_key).
                 assert_eq!(
-                    missing_fingerprints
+                    fail.missing_fingerprints
                         .iter()
                         .map(|f| (f.code, f.file.clone()))
                         .collect::<Vec<_>>(),
@@ -2440,20 +2427,16 @@ mod tests {
 
         let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
         match result {
-            TestResult::Fail {
-                expected_fingerprints,
-                actual_fingerprints,
-                ..
-            } => {
+            TestResult::Fail(fail) => {
                 assert_eq!(
-                    expected_fingerprints
+                    fail.expected_fingerprints
                         .iter()
                         .map(|f| (f.code, f.file.as_str()))
                         .collect::<Vec<_>>(),
                     vec![(2304, "a.ts"), (2322, "b.ts")],
                 );
                 assert_eq!(
-                    actual_fingerprints
+                    fail.actual_fingerprints
                         .iter()
                         .map(|f| (f.code, f.file.as_str()))
                         .collect::<Vec<_>>(),
@@ -2473,10 +2456,7 @@ mod tests {
 
         let result = compare_diagnostics(&compile, &tsc_codes, &[], options.clone());
         match result {
-            TestResult::Fail {
-                options: got_options,
-                ..
-            } => assert_eq!(got_options, options),
+            TestResult::Fail(fail) => assert_eq!(fail.options, options),
             other => panic!("expected Fail, got {other:?}"),
         }
     }

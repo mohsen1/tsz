@@ -305,6 +305,12 @@ impl ParserState {
                 start_pos: u32,
             }
 
+            struct CharEscapeScanCtx<'a> {
+                body: &'a [u8],
+                strict_mode: bool,
+                end: usize,
+            }
+
             fn scan_digits(body: &[u8], end: usize, pos: &mut usize) -> usize {
                 let start = *pos;
                 while *pos < end && body[*pos].is_ascii_digit() {
@@ -434,18 +440,17 @@ impl ParserState {
                 consumed_any
             }
 
-            #[allow(clippy::too_many_arguments)]
             fn scan_character_escape(
                 parser: &mut ParserState,
                 emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
-                body: &[u8],
-                strict_mode: bool,
-                end: usize,
+                scan_ctx: &CharEscapeScanCtx<'_>,
                 pos: &mut usize,
                 atom_escape: bool,
                 escape_start: usize,
-                _start_pos: u32,
             ) {
+                let body = scan_ctx.body;
+                let strict_mode = scan_ctx.strict_mode;
+                let end = scan_ctx.end;
                 if *pos >= end {
                     return;
                 }
@@ -762,13 +767,14 @@ impl ParserState {
                             scan_character_escape(
                                 parser,
                                 ctx.emit,
-                                ctx.body,
-                                ctx.strict_mode,
-                                ctx.body_end,
+                                &CharEscapeScanCtx {
+                                    body: ctx.body,
+                                    strict_mode: ctx.strict_mode,
+                                    end: ctx.body_end,
+                                },
                                 pos,
                                 false,
                                 current_pos.saturating_sub(1),
-                                ctx.start_pos,
                             );
                             if *pos > current_pos {
                                 range.push(ClassAtomKind::Character);
@@ -947,13 +953,14 @@ impl ParserState {
                                 scan_character_escape(
                                     parser,
                                     ctx.emit,
-                                    ctx.body,
-                                    ctx.strict_mode,
-                                    ctx.body_end,
+                                    &CharEscapeScanCtx {
+                                        body: ctx.body,
+                                        strict_mode: ctx.strict_mode,
+                                        end: ctx.body_end,
+                                    },
                                     pos,
                                     true,
                                     escape_start,
-                                    ctx.start_pos,
                                 );
                             }
 
