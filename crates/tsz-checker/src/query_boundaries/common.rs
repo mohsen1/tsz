@@ -289,7 +289,7 @@ pub(crate) fn is_generic_mapped_application<R: TypeResolver>(
 
 /// Check if a type contains type parameters that require instantiation,
 /// but correctly handles mapped types by only checking their constraint and
-/// name_type (not the template, which always contains the iteration variable).
+/// `name_type` (not the template, which always contains the iteration variable).
 ///
 /// Use this instead of raw `contains_type_parameters` when deciding whether
 /// to suppress TS2339 — a fully-instantiated mapped type like

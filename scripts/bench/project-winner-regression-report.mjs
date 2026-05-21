@@ -39,6 +39,10 @@ function rowTiming(row) {
   };
 }
 
+function isGreenProjectRow(row) {
+  return Boolean(row?.compatibility) && isGreen(row);
+}
+
 function compareRegressions(previous, current, previousPath, currentPath) {
   const previousRows = rowsByName(previous);
   const currentRows = rowsByName(current);
@@ -49,7 +53,7 @@ function compareRegressions(previous, current, previousPath, currentPath) {
     const before = previousRows.get(name);
     const after = currentRows.get(name);
     if (!before || !after) continue;
-    if (!isGreen(before) || !isGreen(after)) continue;
+    if (!isGreenProjectRow(before) || !isGreenProjectRow(after)) continue;
     compared += 1;
     if (before.winner !== "tsz" || after.winner !== "tsgo") continue;
     regressions.push({

@@ -344,6 +344,40 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // In tsc, `this` in an interface member always refers to the derived type,
+        // not an opaque ThisType token. Build the self type for substitution.
+        let interface_self_type: Option<TypeId> = self
+            .ctx
+            .binder
+            .node_symbols
+            .get(&_iface_idx.0)
+            .copied()
+            .map(|sym_id| {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                let lazy_type = self.ctx.types.factory().lazy(def_id);
+                if let Some(ref tp_list) = iface_data.type_parameters {
+                    let mut tp_type_ids = Vec::new();
+                    for &tp_idx in &tp_list.nodes {
+                        if let Some(tp_node) = self.ctx.arena.get(tp_idx)
+                            && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                            && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                            && let Some(&tp_type_id) =
+                                self.ctx.type_parameter_scope.get(&ident.escaped_text)
+                        {
+                            tp_type_ids.push(tp_type_id);
+                        }
+                    }
+                    if tp_type_ids.is_empty() {
+                        lazy_type
+                    } else {
+                        self.ctx.types.factory().application(lazy_type, tp_type_ids)
+                    }
+                } else {
+                    lazy_type
+                }
+            });
+
         // Substitute `ThisType` in derived member types with the interface's self type.
         // In tsc, `this` in an interface refers to the interface's declared type. When
         // checking interface extension compatibility, derived member types containing
@@ -351,64 +385,12 @@ impl<'a> CheckerState<'a> {
         // member types where the type parameter has been concretized (e.g.,
         // `oninit?(vnode: Vnode<A, ClassComponent<A>>)`). Without this substitution,
         // the comparison fails because the solver has no constraint info for `ThisType`.
-        {
-            // Check if any derived member contains ThisType (fast path: skip if none do)
-            let any_has_this = derived_members.iter().any(|(_, tid, _, _, _, _)| {
-                crate::query_boundaries::common::contains_this_type(self.ctx.types, *tid)
-            });
-            if any_has_this {
-                // Compute the interface's self type as a named type reference
-                // (Lazy(DefId) or Application(Lazy(DefId), [type_params]))
-                let interface_self_type = self
-                    .ctx
-                    .binder
-                    .node_symbols
-                    .get(&_iface_idx.0)
-                    .copied()
-                    .map(|sym_id| {
-                        let def_id = self.ctx.get_or_create_def_id(sym_id);
-                        let lazy_type = self.ctx.types.factory().lazy(def_id);
-
-                        // Collect type parameter TypeIds from the current scope
-                        if let Some(ref tp_list) = iface_data.type_parameters {
-                            let mut tp_type_ids = Vec::new();
-                            for &tp_idx in &tp_list.nodes {
-                                if let Some(tp_node) = self.ctx.arena.get(tp_idx)
-                                    && let Some(tp_data) =
-                                        self.ctx.arena.get_type_parameter(tp_node)
-                                    && let Some(name_node) = self.ctx.arena.get(tp_data.name)
-                                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                                    && let Some(&tp_type_id) =
-                                        self.ctx.type_parameter_scope.get(&ident.escaped_text)
-                                {
-                                    tp_type_ids.push(tp_type_id);
-                                }
-                            }
-                            if tp_type_ids.is_empty() {
-                                lazy_type
-                            } else {
-                                self.ctx.types.factory().application(lazy_type, tp_type_ids)
-                            }
-                        } else {
-                            lazy_type
-                        }
-                    });
-
-                if let Some(self_type) = interface_self_type {
-                    for member in &mut derived_members {
-                        if crate::query_boundaries::common::contains_this_type(
-                            self.ctx.types,
-                            member.1,
-                        ) {
-                            member.1 = crate::query_boundaries::common::substitute_this_type(
-                                self.ctx.types,
-                                member.1,
-                                self_type,
-                            );
-                        }
-                    }
-                }
-            }
+        for member in &mut derived_members {
+            member.1 = crate::query_boundaries::class::maybe_substitute_this_type(
+                self.ctx.types,
+                member.1,
+                interface_self_type,
+            );
         }
 
         let mut derived_method_counts: rustc_hash::FxHashMap<String, usize> =
@@ -1827,13 +1809,16 @@ impl<'a> CheckerState<'a> {
             // overload is unmatched, emit TS2430.
             if !ts2430_emitted_for_base {
                 self.check_interface_overload_coverage(
-                    iface_data.name,
-                    &derived_name,
-                    &base_name,
-                    &base_iface_indices,
-                    &derived_member_names,
-                    &derived_members,
-                    &substitution,
+                    super::class_checker_compat_overloads::InterfaceOverloadCoverageCtx {
+                        iface_name: iface_data.name,
+                        derived_name: &derived_name,
+                        base_name: &base_name,
+                        base_iface_indices: &base_iface_indices,
+                        derived_member_names: &derived_member_names,
+                        derived_members: &derived_members,
+                        substitution: &substitution,
+                        interface_self_type,
+                    },
                 );
             }
 

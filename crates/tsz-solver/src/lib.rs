@@ -129,6 +129,10 @@ pub mod query {
 /// These perform type computation and should be accessed through
 /// `query_boundaries` in the checker crate, not imported directly.
 pub mod computation {
+    use crate::caches::db::TypeDatabase;
+    use crate::types::TypeId;
+    use tsz_common::interner::Atom;
+
     // Subtype/assignability relations
     pub use crate::relations::compat::CompatChecker;
     pub use crate::relations::lawyer::AnyPropagationRules;
@@ -136,6 +140,22 @@ pub mod computation {
         AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
         are_types_structurally_identical, is_subtype_of,
     };
+
+    pub fn are_types_structurally_identical_in_param_scope<R: TypeResolver>(
+        interner: &dyn TypeDatabase,
+        resolver: &R,
+        a: TypeId,
+        b: TypeId,
+        param_names: &[Atom],
+    ) -> bool {
+        crate::relations::subtype::are_types_structurally_identical_in_param_scope(
+            interner,
+            resolver,
+            a,
+            b,
+            param_names,
+        )
+    }
 
     // Evaluation
     pub use crate::evaluation::evaluate::{
@@ -153,9 +173,11 @@ pub mod computation {
         instantiate_type_preserving, instantiate_type_preserving_cached,
         instantiate_type_preserving_meta, instantiate_type_preserving_meta_cached,
         instantiate_type_with_depth_status, instantiate_type_with_infer,
-        instantiate_type_with_infer_cached, substitute_this_type,
+        instantiate_type_with_infer_cached, instantiate_type_with_request, substitute_this_type,
         substitute_this_type_at_return_position, substitute_this_type_cached,
     };
+    pub use crate::instantiation::request::{InstantiationOptions, InstantiationRequest};
+    pub use crate::instantiation::result::InstantiationResult;
 
     // Contextual typing
     pub use crate::contextual::{
@@ -166,7 +188,8 @@ pub mod computation {
     pub use crate::operations::infer_generic_function;
     pub use crate::operations::{
         AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
-        MAX_CONSTRAINT_RECURSION_DEPTH, get_contextual_signature_cached_with_compat_checker,
+        GenericCallRequest, GenericCallResult, MAX_CONSTRAINT_RECURSION_DEPTH,
+        get_contextual_signature_cached_with_compat_checker,
         get_contextual_signature_for_arity_cached_with_compat_checker,
         get_contextual_signature_for_arity_with_compat_checker,
         get_contextual_signature_with_compat_checker,

@@ -1790,23 +1790,23 @@ const stringOrBooleanOrNumber = stringOrBoolean || number;
 "#,
     );
 
+    // When the left operand of `||` is an always-truthy literal type (non-empty string),
+    // tsc gives just the left type — the right operand is unreachable.
     assert!(
-        output.contains("declare const stringOrNumber: \"string\" | \"number\";"),
-        "Expected `||` over literal-typed consts to preserve both arms: {output}"
+        output.contains("declare const stringOrNumber: \"string\";"),
+        "Expected `||` with always-truthy left literal to produce left type only: {output}"
     );
     assert!(
-        output.contains("declare const stringOrBoolean: \"string\" | \"boolean\";"),
-        "Expected `||` to preserve string and boolean literal arms: {output}"
+        output.contains("declare const stringOrBoolean: \"string\";"),
+        "Expected `||` with always-truthy left literal to produce left type only: {output}"
     );
     assert!(
-        output.contains("declare const booleanOrNumber: \"number\" | \"boolean\";"),
-        "Expected `||` to preserve source declaration order for operands: {output}"
+        output.contains("declare const booleanOrNumber: \"number\";"),
+        "Expected `||` with always-truthy left literal to produce left type only: {output}"
     );
     assert!(
-        output.contains(
-            "declare const stringOrBooleanOrNumber: \"string\" | \"number\" | \"boolean\";"
-        ),
-        "Expected chained `||` to merge prior literal unions in declaration order: {output}"
+        output.contains("declare const stringOrBooleanOrNumber: \"string\";"),
+        "Expected chained `||` with always-truthy left to produce left type only: {output}"
     );
 }
 
@@ -1823,6 +1823,50 @@ const value = empty || fallback;
     assert!(
         output.contains("declare const value: \"fallback\";"),
         "Expected `||` declaration inference to exclude a known-falsy left literal: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_omits_right_operand_when_left_is_syntactically_truthy() {
+    let output = emit_dts_with_binding(
+        r#"
+class C {}
+const value = (() => new C()) || "";
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: () => C;"),
+        "Expected declaration inference to omit unreachable `||` right operand: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_numeric_and_bigint_truthiness_matches_tsc_dts_surface() {
+    let output = emit_dts_with_binding(
+        r#"
+const zero = 0 || "";
+const one = 1 || "";
+const zeroBig = 0n || "";
+const oneBig = 1n || "";
+"#,
+    );
+
+    assert!(
+        output.contains("declare const zero: \"\";"),
+        "Expected numeric zero left operand to expose the fallback literal: {output}"
+    );
+    assert!(
+        output.contains("declare const one: 1;"),
+        "Expected non-zero numeric left operand to omit unreachable fallback: {output}"
+    );
+    assert!(
+        output.contains("declare const zeroBig: \"\";"),
+        "Expected bigint zero left operand to expose the fallback literal: {output}"
+    );
+    assert!(
+        output.contains("declare const oneBig: 1n;"),
+        "Expected non-zero bigint left operand to omit unreachable fallback: {output}"
     );
 }
 
@@ -1861,6 +1905,31 @@ const value = maybe ?? fallback;
     assert!(
         output.contains("declare const value: \"value\" | \"fallback\";"),
         "Expected `??` declaration inference to remove nullish left arms and keep fallback: {output}"
+    );
+}
+
+#[test]
+fn test_instantiated_short_circuit_function_union_deduplicates_identical_members() {
+    let output = emit_dts_with_binding(
+        r#"
+declare let g: (<T>(x: T) => T) | undefined;
+
+const orValue = g<string> || ((x: string) => x);
+const nullishValue = g<string> ?? ((x: string) => x);
+"#,
+    );
+
+    assert!(
+        output.contains("declare const orValue: (x: string) => string;"),
+        "Expected `||` over identical instantiated function surfaces to collapse to one signature: {output}"
+    );
+    assert!(
+        output.contains("declare const nullishValue: (x: string) => string;"),
+        "Expected `??` over identical instantiated function surfaces to collapse to one signature: {output}"
+    );
+    assert!(
+        !output.contains("((x: string) => string) | ((x: string) => string)"),
+        "Duplicate rendered function signatures should not remain in DTS unions: {output}"
     );
 }
 

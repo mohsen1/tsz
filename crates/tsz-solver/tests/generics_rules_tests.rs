@@ -455,15 +455,205 @@ fn test_type_alias_with_failed_variance_check_rejects_same_application_family() 
     };
     let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
 
-    // With structural fallback on variance failure, this correctly returns True:
-    // T<{x: string, y: number}> = Pick<{x: string, y: number}, "x"> = {x: string}
-    // T<{x: string, z: boolean}> = Pick<{x: string, z: boolean}, "x"> = {x: string}
-    // The type arguments differ but the expanded types are structurally equivalent.
+    // Variance rejects (A not subtype of B invariantly) but structural expansion collapses
+    // both T<A> and T<B> to the same {x:string} type. Without REJECTION_UNRELIABLE (T is not
+    // used as the object of an indexed-access T[K] here), we trust the structural result.
     assert!(
         checker
             .check_application_to_application_subtype(source_app, target_app)
             .is_true()
     );
+}
+
+/// Helper: build `T<X extends {x:any}> = Application(pick_def, [X, 'x'])` where
+/// `pick_def` expands to `{[P in K]: T[P]}`. Registers everything in env.
+fn build_pick_alias_env(
+    interner: &TypeInterner,
+    env: &mut TypeEnvironment,
+    x_param_name: &str,
+    pick_def: DefId,
+    alias_def: DefId,
+) {
+    let pick_t = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let pick_t_type = interner.intern(TypeData::TypeParameter(pick_t));
+    let pick_k = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(interner.keyof(pick_t_type)),
+        default: None,
+        is_const: false,
+    };
+    let pick_k_type = interner.intern(TypeData::TypeParameter(pick_k));
+    let pick_iter = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let pick_iter_type = interner.intern(TypeData::TypeParameter(pick_iter));
+    let pick_body = interner.mapped(MappedType {
+        type_param: pick_iter,
+        constraint: pick_k_type,
+        name_type: None,
+        template: interner.index_access(pick_t_type, pick_iter_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    env.insert_def_with_params(pick_def, pick_body, vec![pick_t, pick_k]);
+    env.insert_def_kind(pick_def, DefKind::TypeAlias);
+
+    let x_constraint = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::ANY,
+    )]);
+    let x_info = TypeParamInfo {
+        name: interner.intern_string(x_param_name),
+        constraint: Some(x_constraint),
+        default: None,
+        is_const: false,
+    };
+    let x_type = interner.intern(TypeData::TypeParameter(x_info));
+    let alias_body = interner.application(
+        interner.lazy(pick_def),
+        vec![x_type, interner.literal_string("x")],
+    );
+    env.insert_def_with_params(alias_def, alias_body, vec![x_info]);
+    env.insert_def_kind(alias_def, DefKind::TypeAlias);
+}
+
+// Variance the solver computes for T<X> = Pick<X,'x'>: X is the object of X[P]
+// inside a mapped type with non-literal P.
+const INDEXED_ACCESS_OBJECT_VARIANCE: Variance = Variance::COVARIANT
+    .union(Variance::NEEDS_STRUCTURAL_FALLBACK)
+    .union(Variance::REJECTION_UNRELIABLE);
+
+/// Rule: when T's type parameter X appears as the object of an indexed access
+/// (X[K] in a mapped type with non-literal K), variance is `REJECTION_UNRELIABLE`.
+/// For concrete unrelated args A and B, T<A> must NOT be assignable to T<B> even
+/// though both evaluate to the same structural type via Pick<_,'x'> = {x:string}.
+/// Matches tsc: `b = a` with `b: T<B>` and `a: T<A>` is TS2322.
+#[test]
+fn test_indexed_access_object_variance_rejects_concrete_unrelated_args() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+    build_pick_alias_env(&interner, &mut env, "X", DefId(2000), DefId(2001));
+    let alias_def = DefId(2001);
+
+    // A = {x:string, y:number}, B = {x:string, z:boolean}: unrelated, but
+    // Pick<A,'x'>={x:string} = Pick<B,'x'>, so structural collapse gives True.
+    // Variance rejection must win because A and B are not related by subtyping.
+    let arg_a = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("x"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("y"), TypeId::NUMBER),
+    ]);
+    let arg_b = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("x"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("z"), TypeId::BOOLEAN),
+    ]);
+    let source = interner.application(interner.lazy(alias_def), vec![arg_a]);
+    let target = interner.application(interner.lazy(alias_def), vec![arg_b]);
+    let source_app = application_id(&interner, source).unwrap();
+    let target_app = application_id(&interner, target).unwrap();
+
+    let resolver = MockVarianceResolver {
+        env: &env,
+        def_id: alias_def,
+        symbol: None,
+        variances: Arc::from(vec![INDEXED_ACCESS_OBJECT_VARIANCE]),
+    };
+    let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
+    assert!(
+        checker
+            .check_application_to_application_subtype(source_app, target_app)
+            .is_false(),
+        "T<A> must not be assignable to T<B> when A and B are unrelated"
+    );
+}
+
+/// Same rule with renamed outer type param (X→U) — the fix must not depend on
+/// the name of the type parameter, only on structural position (object of T[K]).
+#[test]
+fn test_indexed_access_object_variance_rejects_concrete_unrelated_args_renamed_param() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+    build_pick_alias_env(&interner, &mut env, "U", DefId(3000), DefId(3001));
+    let alias_def = DefId(3001);
+
+    let arg_a = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("x"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("y"), TypeId::NUMBER),
+    ]);
+    let arg_b = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("x"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("z"), TypeId::BOOLEAN),
+    ]);
+    let source = interner.application(interner.lazy(alias_def), vec![arg_a]);
+    let target = interner.application(interner.lazy(alias_def), vec![arg_b]);
+    let source_app = application_id(&interner, source).unwrap();
+    let target_app = application_id(&interner, target).unwrap();
+
+    let resolver = MockVarianceResolver {
+        env: &env,
+        def_id: alias_def,
+        symbol: None,
+        variances: Arc::from(vec![INDEXED_ACCESS_OBJECT_VARIANCE]),
+    };
+    let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
+    assert!(
+        checker
+            .check_application_to_application_subtype(source_app, target_app)
+            .is_false(),
+        "rejection must not depend on type parameter name"
+    );
+}
+
+/// When source args contain type parameters (not concrete types), `REJECTION_UNRELIABLE`
+/// does not force rejection: expanded forms may introduce implicit index signatures.
+/// The check falls through to structural expansion without crashing.
+#[test]
+fn test_indexed_access_object_variance_with_type_param_args_falls_through() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+    build_pick_alias_env(&interner, &mut env, "X", DefId(4000), DefId(4001));
+    let alias_def = DefId(4001);
+
+    let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(interner.object(vec![PropertyInfo::new(
+            interner.intern_string("x"),
+            TypeId::ANY,
+        )])),
+        default: None,
+        is_const: false,
+    }));
+    let v_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("V"),
+        constraint: Some(interner.object(vec![PropertyInfo::new(
+            interner.intern_string("x"),
+            TypeId::ANY,
+        )])),
+        default: None,
+        is_const: false,
+    }));
+
+    let source = interner.application(interner.lazy(alias_def), vec![u_type]);
+    let target = interner.application(interner.lazy(alias_def), vec![v_type]);
+    let source_app = application_id(&interner, source).unwrap();
+    let target_app = application_id(&interner, target).unwrap();
+
+    let resolver = MockVarianceResolver {
+        env: &env,
+        def_id: alias_def,
+        symbol: None,
+        variances: Arc::from(vec![INDEXED_ACCESS_OBJECT_VARIANCE]),
+    };
+    let mut checker = SubtypeChecker::with_resolver(&interner, &resolver);
+    // Must not panic; result depends on structural expansion for type-param args
+    let _ = checker.check_application_to_application_subtype(source_app, target_app);
 }
 
 #[test]

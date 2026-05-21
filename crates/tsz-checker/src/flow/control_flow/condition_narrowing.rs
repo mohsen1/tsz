@@ -1,8 +1,7 @@
 use super::FlowAnalyzer;
-use crate::query_boundaries::common::is_union_type;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis::{
-    empty_object_type, is_unit_type, is_unknown_narrowing_literal,
+    empty_object_type, is_union_type, is_unit_type, is_unknown_narrowing_literal,
 };
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
@@ -936,7 +935,7 @@ impl<'a> FlowAnalyzer<'a> {
                     return narrowed;
                 }
 
-                if let Some((base, prop_name)) = self.binding_element_property_alias(condition_ref)
+                if let Some((base, prop_names)) = self.binding_element_property_alias(condition_ref)
                     && self.is_matching_reference(base, target)
                     && let Some(alias_sym_id) =
                         self.binder.resolve_identifier(self.arena, condition_ref)
@@ -944,7 +943,7 @@ impl<'a> FlowAnalyzer<'a> {
                 {
                     let narrowed = narrowing.narrow_by_property_truthiness(
                         type_id,
-                        &[prop_name],
+                        &prop_names,
                         is_true_branch,
                     );
                     if narrowed != TypeId::NEVER || is_union_type(self.interner, type_id) {

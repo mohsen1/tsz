@@ -17,6 +17,7 @@
 
 pub mod base;
 pub mod flags;
+pub mod incomplete_call;
 pub mod node;
 mod node_access;
 mod node_access_typed_getters;
@@ -126,6 +127,10 @@ mod this_param_modifier_tests;
 #[cfg(test)]
 #[path = "../../tests/legacy_octal_bigint_continuation_tests.rs"]
 mod legacy_octal_bigint_continuation_tests;
+
+#[cfg(test)]
+#[path = "../../tests/computed_property_binding_recovery_tests.rs"]
+mod computed_property_binding_recovery_tests;
 
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};

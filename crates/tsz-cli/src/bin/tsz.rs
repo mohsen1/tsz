@@ -7,7 +7,7 @@ use clap::{CommandFactory, Parser};
 use rustc_hash::FxHashMap;
 use std::ffi::OsString;
 use std::io::IsTerminal;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tsz::checker::diagnostics::DiagnosticCategory;
@@ -113,11 +113,12 @@ fn actual_main(mut args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     }
 
     // `--listFilesOnly` still uses the normal no-input command-line behavior before
-    // the file-list-only path can print default libs.
+    // the file-list-only path can print default libs. Use walk-up discovery to
+    // match tsc: a tsconfig.json in any ancestor directory counts as "has input".
     if args.list_files_only
         && args.files.is_empty()
         && args.project.is_none()
-        && !cwd.join("tsconfig.json").exists()
+        && driver::find_tsconfig(&cwd).is_none()
     {
         println!("Version {TSC_VERSION}");
         println!("{}", help::colorize_help(&help::render_help(TSC_VERSION)));
@@ -1562,261 +1563,739 @@ fn merge_output_only_options_from_tsconfig(args: &mut CliArgs, cwd: &std::path::
     take_bool("traceResolution", &mut args.trace_resolution);
 }
 
-fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
-    let files_count = result.files_read.len();
+/// Line counts categorized by source-file type, matching tsc's `--diagnostics` output.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct FileLinesStats {
+    library: u64,
+    definitions: u64,
+    typescript: u64,
+    javascript: u64,
+    json: u64,
+    other: u64,
+}
 
-    // Count lines by file category, matching tsc's --diagnostics output
-    let mut lines_of_library: u64 = 0;
-    let mut lines_of_definitions: u64 = 0;
-    let mut lines_of_typescript: u64 = 0;
-    let mut lines_of_javascript: u64 = 0;
-    let mut lines_of_json: u64 = 0;
-    let mut lines_of_other: u64 = 0;
-
-    for path in &result.files_read {
+/// Read each file and count its lines, grouped by source-file category.
+///
+/// This is the only I/O-performing step in the diagnostics pipeline; all
+/// downstream rendering operates on the returned counts.
+fn collect_file_lines(files: &[PathBuf]) -> FileLinesStats {
+    let mut stats = FileLinesStats::default();
+    for path in files {
         let count = std::fs::read_to_string(path)
             .ok()
             .map_or(0, |text| text.lines().count() as u64);
         let name = path.to_string_lossy();
         if name.contains("lib.") && name.ends_with(".d.ts") {
-            lines_of_library += count;
+            stats.library += count;
         } else if name.ends_with(".d.ts") || name.ends_with(".d.mts") || name.ends_with(".d.cts") {
-            lines_of_definitions += count;
+            stats.definitions += count;
         } else if name.ends_with(".ts")
             || name.ends_with(".tsx")
             || name.ends_with(".mts")
             || name.ends_with(".cts")
         {
-            lines_of_typescript += count;
+            stats.typescript += count;
         } else if name.ends_with(".js")
             || name.ends_with(".jsx")
             || name.ends_with(".mjs")
             || name.ends_with(".cjs")
         {
-            lines_of_javascript += count;
+            stats.javascript += count;
         } else if name.ends_with(".json") {
-            lines_of_json += count;
+            stats.json += count;
         } else {
-            lines_of_other += count;
+            stats.other += count;
         }
     }
+    stats
+}
 
-    let errors = result
+/// Flat snapshot of all values needed to render the `--diagnostics` /
+/// `--extendedDiagnostics` report.  Contains only primitive types so it is
+/// easy to construct in unit tests without pulling in solver/checker types.
+#[derive(Debug, Default)]
+struct DiagnosticsReport {
+    // Basic (always rendered)
+    files_count: usize,
+    lines: FileLinesStats,
+    error_count: usize,
+    has_phase_timings: bool,
+    io_read_secs: f64,
+    parse_bind_secs: f64,
+    check_secs: f64,
+    emit_secs: f64,
+    total_secs: f64,
+    // Extended section
+    memory_used_kb: u64,
+    emitted_files_count: usize,
+    total_diagnostics: usize,
+    request_cache_hits: u64,
+    request_cache_misses: u64,
+    contextual_cache_bypasses: u64,
+    clear_type_cache_recursive_calls: u64,
+    property_access_cache_hits: u64,
+    property_access_cache_lookups: u64,
+    interned_types_count: usize,
+    interner_kb: f64,
+    // Solver relation caches (present when query_cache_stats is Some)
+    has_query_cache: bool,
+    subtype_entries: usize,
+    subtype_hits: u64,
+    subtype_misses: u64,
+    assignability_entries: usize,
+    assignability_hits: u64,
+    assignability_misses: u64,
+    eval_cache_entries: usize,
+    property_cache_entries: usize,
+    variance_cache_entries: usize,
+    query_cache_kb: f64,
+    // Definition store (present when def_store_stats is Some)
+    has_def_store: bool,
+    def_total: usize,
+    def_type_aliases: usize,
+    def_interfaces: usize,
+    def_classes: usize,
+    def_enums: usize,
+    def_type_to_def_entries: usize,
+    def_symbol_def_index_entries: usize,
+    def_body_to_alias_entries: usize,
+    def_shape_to_def_entries: usize,
+    def_store_kb: f64,
+    // AST residency (present when residency_stats is Some)
+    has_residency: bool,
+    residency_unique_arena_count: usize,
+    residency_arena_kb: f64,
+    residency_file_count: usize,
+    residency_bound_kb: f64,
+    residency_has_pre_merge: bool,
+    residency_pre_merge_kb: f64,
+    residency_has_skeleton: bool,
+    residency_skeleton_symbol_count: usize,
+    residency_skeleton_merge_candidate_count: usize,
+    residency_skeleton_kb: f64,
+    // Module dependency graph (present when module_dep_stats is Some)
+    has_module_deps: bool,
+    module_file_count: usize,
+    module_dependency_edges: usize,
+    module_import_cycles: usize,
+    module_largest_cycle: usize,
+    // Perf-counter dump (non-empty only when TSZ_PERF_COUNTERS is set)
+    perf_counter_dump: String,
+}
+
+/// Collect all data needed for the diagnostics report from a `CompilationResult`.
+///
+/// Performs no I/O; the caller is responsible for supplying `file_lines`
+/// (from `collect_file_lines`) and `memory_used_kb` (from `get_memory_usage_kb`).
+fn build_diagnostics_report(
+    result: &driver::CompilationResult,
+    file_lines: FileLinesStats,
+    elapsed: Duration,
+    memory_used_kb: u64,
+    extended: bool,
+) -> DiagnosticsReport {
+    let pt = &result.phase_timings;
+    let error_count = result
         .diagnostics
         .iter()
         .filter(|d| d.category == DiagnosticCategory::Error)
         .count();
 
-    println!();
-    println!("Files:                         {files_count}");
-    println!("Lines of Library:              {lines_of_library}");
-    println!("Lines of Definitions:          {lines_of_definitions}");
-    println!("Lines of TypeScript:           {lines_of_typescript}");
-    println!("Lines of JavaScript:           {lines_of_javascript}");
-    println!("Lines of JSON:                 {lines_of_json}");
-    println!("Lines of Other:                {lines_of_other}");
-    println!("Errors:                        {errors}");
+    let mut report = DiagnosticsReport {
+        files_count: result.files_read.len(),
+        lines: file_lines,
+        error_count,
+        has_phase_timings: pt.total_ms > 0.0,
+        io_read_secs: pt.io_read_ms / 1000.0,
+        parse_bind_secs: (pt.load_libs_ms + pt.parse_bind_ms) / 1000.0,
+        check_secs: pt.check_ms / 1000.0,
+        emit_secs: pt.emit_ms / 1000.0,
+        total_secs: elapsed.as_secs_f64(),
+        ..DiagnosticsReport::default()
+    };
 
-    // Phase timing breakdown (shown for both --diagnostics and --extendedDiagnostics)
-    let pt = &result.phase_timings;
-    if pt.total_ms > 0.0 {
-        println!(
-            "I/O Read:                      {:.2}s",
-            pt.io_read_ms / 1000.0
-        );
-        println!(
-            "Parse & Bind:                  {:.2}s",
-            (pt.load_libs_ms + pt.parse_bind_ms) / 1000.0
-        );
-        println!(
-            "Check:                         {:.2}s",
-            pt.check_ms / 1000.0
-        );
-        println!("Emit:                          {:.2}s", pt.emit_ms / 1000.0);
+    if !extended {
+        return report;
     }
-    println!(
+
+    let counters = result.request_cache_counters;
+    report.memory_used_kb = memory_used_kb;
+    report.emitted_files_count = result.emitted_files.len();
+    report.total_diagnostics = result.diagnostics.len();
+    report.request_cache_hits = counters.request_cache_hits;
+    report.request_cache_misses = counters.request_cache_misses;
+    report.contextual_cache_bypasses = counters.contextual_cache_bypasses;
+    report.clear_type_cache_recursive_calls = counters.clear_type_cache_recursive_calls;
+    report.property_access_cache_hits = counters.property_access_request_cache_hits;
+    report.property_access_cache_lookups = counters.property_access_request_cache_lookups;
+    report.interned_types_count = result.interned_types_count;
+    report.interner_kb = result.interner_estimated_bytes as f64 / 1024.0;
+
+    if let Some(ref qc) = result.query_cache_stats {
+        report.has_query_cache = true;
+        report.subtype_entries = qc.relation.subtype_entries;
+        report.subtype_hits = qc.relation.subtype_hits;
+        report.subtype_misses = qc.relation.subtype_misses;
+        report.assignability_entries = qc.relation.assignability_entries;
+        report.assignability_hits = qc.relation.assignability_hits;
+        report.assignability_misses = qc.relation.assignability_misses;
+        report.eval_cache_entries = qc.eval_cache_entries;
+        report.property_cache_entries = qc.property_cache_entries;
+        report.variance_cache_entries = qc.variance_cache_entries;
+        report.query_cache_kb = qc.estimated_size_bytes() as f64 / 1024.0;
+    }
+
+    if let Some(ref ds) = result.def_store_stats {
+        report.has_def_store = true;
+        report.def_total = ds.total_definitions;
+        report.def_type_aliases = ds.type_aliases;
+        report.def_interfaces = ds.interfaces;
+        report.def_classes = ds.classes;
+        report.def_enums = ds.enums;
+        report.def_type_to_def_entries = ds.type_to_def_entries;
+        report.def_symbol_def_index_entries = ds.symbol_def_index_entries;
+        report.def_body_to_alias_entries = ds.body_to_alias_entries;
+        report.def_shape_to_def_entries = ds.shape_to_def_entries;
+        report.def_store_kb = ds.estimated_size_bytes as f64 / 1024.0;
+    }
+
+    if let Some(ref rs) = result.residency_stats {
+        report.has_residency = true;
+        report.residency_unique_arena_count = rs.unique_arena_count;
+        report.residency_arena_kb = rs.unique_arena_estimated_bytes as f64 / 1024.0;
+        report.residency_file_count = rs.file_count;
+        report.residency_bound_kb = rs.total_bound_file_bytes as f64 / 1024.0;
+        report.residency_has_pre_merge = rs.pre_merge_bind_total_bytes > 0;
+        report.residency_pre_merge_kb = rs.pre_merge_bind_total_bytes as f64 / 1024.0;
+        report.residency_has_skeleton = rs.has_skeleton_index;
+        report.residency_skeleton_symbol_count = rs.skeleton_total_symbol_count;
+        report.residency_skeleton_merge_candidate_count = rs.skeleton_merge_candidate_count;
+        report.residency_skeleton_kb = rs.skeleton_estimated_size_bytes as f64 / 1024.0;
+    }
+
+    if let Some(ref md) = result.module_dep_stats {
+        report.has_module_deps = true;
+        report.module_file_count = md.file_count;
+        report.module_dependency_edges = md.dependency_edges;
+        report.module_import_cycles = md.import_cycles;
+        report.module_largest_cycle = md.largest_cycle_size;
+    }
+
+    report.perf_counter_dump = tsz_common::perf_counters::PerfCounters::dump_string();
+
+    report
+}
+
+/// Render a `--diagnostics` / `--extendedDiagnostics` report as a `String`.
+///
+/// This function is pure: it reads only from `report` and writes only to the
+/// returned `String`.  All I/O (file reads, memory probing, env-var access)
+/// must have been completed by the caller before calling this function.
+fn render_diagnostics_report(report: &DiagnosticsReport, extended: bool) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+
+    let _ = writeln!(out);
+    let _ = writeln!(out, "Files:                         {}", report.files_count);
+    let _ = writeln!(
+        out,
+        "Lines of Library:              {}",
+        report.lines.library
+    );
+    let _ = writeln!(
+        out,
+        "Lines of Definitions:          {}",
+        report.lines.definitions
+    );
+    let _ = writeln!(
+        out,
+        "Lines of TypeScript:           {}",
+        report.lines.typescript
+    );
+    let _ = writeln!(
+        out,
+        "Lines of JavaScript:           {}",
+        report.lines.javascript
+    );
+    let _ = writeln!(out, "Lines of JSON:                 {}", report.lines.json);
+    let _ = writeln!(out, "Lines of Other:                {}", report.lines.other);
+    let _ = writeln!(out, "Errors:                        {}", report.error_count);
+
+    if report.has_phase_timings {
+        let _ = writeln!(
+            out,
+            "I/O Read:                      {:.2}s",
+            report.io_read_secs
+        );
+        let _ = writeln!(
+            out,
+            "Parse & Bind:                  {:.2}s",
+            report.parse_bind_secs
+        );
+        let _ = writeln!(
+            out,
+            "Check:                         {:.2}s",
+            report.check_secs
+        );
+        let _ = writeln!(
+            out,
+            "Emit:                          {:.2}s",
+            report.emit_secs
+        );
+    }
+    let _ = writeln!(
+        out,
         "Total time:                    {:.2}s",
-        elapsed.as_secs_f64()
+        report.total_secs
     );
 
-    if extended {
-        // Use process memory info if available
-        let memory_used = get_memory_usage_kb();
-        let counters = result.request_cache_counters;
-        let request_lookups = counters.request_cache_hits + counters.request_cache_misses;
-        let request_hit_rate = if request_lookups == 0 {
+    if !extended {
+        return out;
+    }
+
+    let _ = writeln!(
+        out,
+        "Emitted files:                 {}",
+        report.emitted_files_count
+    );
+    let _ = writeln!(
+        out,
+        "Total diagnostics:             {}",
+        report.total_diagnostics
+    );
+    let _ = writeln!(
+        out,
+        "Request cache hits:            {}",
+        report.request_cache_hits
+    );
+    let _ = writeln!(
+        out,
+        "Request cache misses:          {}",
+        report.request_cache_misses
+    );
+
+    let request_lookups = report.request_cache_hits + report.request_cache_misses;
+    let request_hit_rate = if request_lookups == 0 {
+        0.0
+    } else {
+        report.request_cache_hits as f64 * 100.0 / request_lookups as f64
+    };
+    let _ = writeln!(out, "Request cache hit rate:        {request_hit_rate:.1}%");
+    let _ = writeln!(
+        out,
+        "Contextual cache bypasses:     {}",
+        report.contextual_cache_bypasses
+    );
+    let _ = writeln!(
+        out,
+        "clear_type_cache_recursive:    {}",
+        report.clear_type_cache_recursive_calls
+    );
+
+    let access_hit_rate = if report.property_access_cache_lookups == 0 {
+        0.0
+    } else {
+        report.property_access_cache_hits as f64 * 100.0
+            / report.property_access_cache_lookups as f64
+    };
+    let _ = writeln!(
+        out,
+        "Access request-cache hit rate: {:.1}% ({}/{})",
+        access_hit_rate, report.property_access_cache_hits, report.property_access_cache_lookups
+    );
+
+    if report.interned_types_count > 0 {
+        let _ = writeln!(
+            out,
+            "Interned types:                {}",
+            report.interned_types_count
+        );
+    }
+
+    if report.has_query_cache {
+        let sub_total = report.subtype_hits + report.subtype_misses;
+        let sub_rate = if sub_total == 0 {
             0.0
         } else {
-            counters.request_cache_hits as f64 * 100.0 / request_lookups as f64
+            report.subtype_hits as f64 * 100.0 / sub_total as f64
         };
-        let access_hit_rate = if counters.property_access_request_cache_lookups == 0 {
+        let assign_total = report.assignability_hits + report.assignability_misses;
+        let assign_rate = if assign_total == 0 {
             0.0
         } else {
-            counters.property_access_request_cache_hits as f64 * 100.0
-                / counters.property_access_request_cache_lookups as f64
+            report.assignability_hits as f64 * 100.0 / assign_total as f64
         };
-        println!(
-            "Emitted files:                 {}",
-            result.emitted_files.len()
+        let _ = writeln!(
+            out,
+            "Subtype cache:                 {} entries ({} hits, {} misses, {sub_rate:.1}%)",
+            report.subtype_entries, report.subtype_hits, report.subtype_misses,
         );
-        println!(
-            "Total diagnostics:             {}",
-            result.diagnostics.len()
+        let _ = writeln!(
+            out,
+            "Assignability cache:           {} entries ({} hits, {} misses, {assign_rate:.1}%)",
+            report.assignability_entries, report.assignability_hits, report.assignability_misses,
         );
-        println!(
-            "Request cache hits:            {}",
-            counters.request_cache_hits
+        let _ = writeln!(
+            out,
+            "Eval cache:                    {}",
+            report.eval_cache_entries
         );
-        println!(
-            "Request cache misses:          {}",
-            counters.request_cache_misses
+        let _ = writeln!(
+            out,
+            "Property cache:                {}",
+            report.property_cache_entries
         );
-        println!("Request cache hit rate:        {request_hit_rate:.1}%");
-        println!(
-            "Contextual cache bypasses:     {}",
-            counters.contextual_cache_bypasses
+        let _ = writeln!(
+            out,
+            "Variance cache:                {}",
+            report.variance_cache_entries
         );
-        println!(
-            "clear_type_cache_recursive:    {}",
-            counters.clear_type_cache_recursive_calls
+    }
+
+    if report.has_def_store {
+        let _ = writeln!(
+            out,
+            "Definitions:                   {} total ({} aliases, {} interfaces, {} classes, {} enums)",
+            report.def_total,
+            report.def_type_aliases,
+            report.def_interfaces,
+            report.def_classes,
+            report.def_enums,
         );
-        println!(
-            "Access request-cache hit rate: {:.1}% ({}/{})",
-            access_hit_rate,
-            counters.property_access_request_cache_hits,
-            counters.property_access_request_cache_lookups
+        let _ = writeln!(
+            out,
+            "Def indices:                   type_to_def={}, symbol_def={}, body_to_alias={}, shape_to_def={}",
+            report.def_type_to_def_entries,
+            report.def_symbol_def_index_entries,
+            report.def_body_to_alias_entries,
+            report.def_shape_to_def_entries,
         );
-        // Type interner statistics
-        if result.interned_types_count > 0 {
-            println!(
-                "Interned types:                {}",
-                result.interned_types_count
-            );
-        }
+    }
 
-        // Solver query-cache statistics
-        if let Some(ref qc) = result.query_cache_stats {
-            let sub_total = qc.relation.subtype_hits + qc.relation.subtype_misses;
-            let sub_rate = if sub_total == 0 {
-                0.0
-            } else {
-                qc.relation.subtype_hits as f64 * 100.0 / sub_total as f64
-            };
-            let assign_total = qc.relation.assignability_hits + qc.relation.assignability_misses;
-            let assign_rate = if assign_total == 0 {
-                0.0
-            } else {
-                qc.relation.assignability_hits as f64 * 100.0 / assign_total as f64
-            };
-            println!(
-                "Subtype cache:                 {} entries ({} hits, {} misses, {sub_rate:.1}%)",
-                qc.relation.subtype_entries, qc.relation.subtype_hits, qc.relation.subtype_misses,
-            );
-            println!(
-                "Assignability cache:           {} entries ({} hits, {} misses, {assign_rate:.1}%)",
-                qc.relation.assignability_entries,
-                qc.relation.assignability_hits,
-                qc.relation.assignability_misses,
-            );
-            println!("Eval cache:                    {}", qc.eval_cache_entries);
-            println!(
-                "Property cache:                {}",
-                qc.property_cache_entries
-            );
-            println!(
-                "Variance cache:                {}",
-                qc.variance_cache_entries
-            );
-        }
+    let solver_total_kb = report.interner_kb + report.query_cache_kb + report.def_store_kb;
+    if solver_total_kb > 0.0 {
+        let _ = writeln!(
+            out,
+            "Type interner memory:          {:.1}K ({} types)",
+            report.interner_kb, report.interned_types_count,
+        );
+        let _ = writeln!(
+            out,
+            "Query cache memory:            {:.1}K",
+            report.query_cache_kb
+        );
+        let _ = writeln!(
+            out,
+            "Definition store memory:       {:.1}K",
+            report.def_store_kb
+        );
+        let _ = writeln!(out, "Solver total memory:           {solver_total_kb:.1}K");
+    }
 
-        // Definition-store statistics
-        if let Some(ref ds) = result.def_store_stats {
-            println!(
-                "Definitions:                   {} total ({} aliases, {} interfaces, {} classes, {} enums)",
-                ds.total_definitions, ds.type_aliases, ds.interfaces, ds.classes, ds.enums,
+    if report.has_residency {
+        let _ = writeln!(
+            out,
+            "AST arenas:                    {} unique ({:.1}K)",
+            report.residency_unique_arena_count, report.residency_arena_kb,
+        );
+        let _ = writeln!(
+            out,
+            "Bound files:                   {} ({:.1}K)",
+            report.residency_file_count, report.residency_bound_kb,
+        );
+        if report.residency_has_pre_merge {
+            let _ = writeln!(
+                out,
+                "Pre-merge bind data:           {:.1}K",
+                report.residency_pre_merge_kb
             );
-            println!(
-                "Def indices:                   type_to_def={}, symbol_def={}, body_to_alias={}, shape_to_def={}",
-                ds.type_to_def_entries,
-                ds.symbol_def_index_entries,
-                ds.body_to_alias_entries,
-                ds.shape_to_def_entries,
+        }
+        if report.residency_has_skeleton {
+            let _ = writeln!(
+                out,
+                "Skeleton index:                {} symbols, {} merge candidates ({:.1}K)",
+                report.residency_skeleton_symbol_count,
+                report.residency_skeleton_merge_candidate_count,
+                report.residency_skeleton_kb,
             );
         }
+    }
 
-        // Solver/interner memory breakdown
-        {
-            let interner_kb = result.interner_estimated_bytes as f64 / 1024.0;
-            let qc_kb = result
-                .query_cache_stats
-                .as_ref()
-                .map_or(0.0, |qc| qc.estimated_size_bytes() as f64 / 1024.0);
-            let ds_kb = result
-                .def_store_stats
-                .as_ref()
-                .map_or(0.0, |ds| ds.estimated_size_bytes as f64 / 1024.0);
-            let total_kb = interner_kb + qc_kb + ds_kb;
-            if total_kb > 0.0 {
-                println!(
-                    "Type interner memory:          {interner_kb:.1}K ({} types)",
-                    result.interned_types_count,
-                );
-                println!("Query cache memory:            {qc_kb:.1}K");
-                println!("Definition store memory:       {ds_kb:.1}K");
-                println!("Solver total memory:           {total_kb:.1}K");
-            }
-        }
-
-        // AST / program residency statistics
-        if let Some(ref rs) = result.residency_stats {
-            let arena_kb = rs.unique_arena_estimated_bytes as f64 / 1024.0;
-            let bound_kb = rs.total_bound_file_bytes as f64 / 1024.0;
-            let pre_merge_kb = rs.pre_merge_bind_total_bytes as f64 / 1024.0;
-            println!(
-                "AST arenas:                    {} unique ({arena_kb:.1}K)",
-                rs.unique_arena_count,
+    if report.has_module_deps {
+        let _ = writeln!(
+            out,
+            "Module files:                  {}",
+            report.module_file_count
+        );
+        let _ = writeln!(
+            out,
+            "Dependency edges:              {}",
+            report.module_dependency_edges
+        );
+        let _ = writeln!(
+            out,
+            "Import cycles:                 {}",
+            report.module_import_cycles
+        );
+        if report.module_largest_cycle > 0 {
+            let _ = writeln!(
+                out,
+                "Largest cycle:                 {} files",
+                report.module_largest_cycle
             );
-            println!(
-                "Bound files:                   {} ({bound_kb:.1}K)",
-                rs.file_count,
-            );
-            if rs.pre_merge_bind_total_bytes > 0 {
-                println!("Pre-merge bind data:           {pre_merge_kb:.1}K");
-            }
-            if rs.has_skeleton_index {
-                let skel_kb = rs.skeleton_estimated_size_bytes as f64 / 1024.0;
-                println!(
-                    "Skeleton index:                {} symbols, {} merge candidates ({skel_kb:.1}K)",
-                    rs.skeleton_total_symbol_count, rs.skeleton_merge_candidate_count,
-                );
-            }
         }
+    }
 
-        // Module dependency graph statistics
-        if let Some(ref md) = result.module_dep_stats {
-            println!("Module files:                  {}", md.file_count,);
-            println!("Dependency edges:              {}", md.dependency_edges,);
-            println!("Import cycles:                 {}", md.import_cycles,);
-            if md.largest_cycle_size > 0 {
-                println!(
-                    "Largest cycle:                 {} files",
-                    md.largest_cycle_size,
-                );
-            }
-        }
+    if report.memory_used_kb > 0 {
+        let _ = writeln!(
+            out,
+            "Memory used:                   {}K",
+            report.memory_used_kb
+        );
+    }
 
-        if memory_used > 0 {
-            println!("Memory used:                   {memory_used}K");
-        }
+    if !report.perf_counter_dump.is_empty() {
+        out.push_str(&report.perf_counter_dump);
+    }
 
-        // PERF: dump perf counters when TSZ_PERF_COUNTERS is set. Empty
-        // string when the env var isn't present, so the noisy counter dump
-        // only appears in profiling runs. See
-        // `docs/plan/PERFORMANCE_PLAN.md`.
-        let counter_dump = tsz_common::perf_counters::PerfCounters::dump_string();
-        if !counter_dump.is_empty() {
-            print!("{counter_dump}");
+    out
+}
+
+/// Thin orchestrator: collect data, render, then emit to stdout.
+fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
+    let file_lines = collect_file_lines(&result.files_read);
+    let memory_used_kb = if extended { get_memory_usage_kb() } else { 0 };
+    let report = build_diagnostics_report(result, file_lines, elapsed, memory_used_kb, extended);
+    print!("{}", render_diagnostics_report(&report, extended));
+}
+
+#[cfg(test)]
+mod diagnostics_report_tests {
+    use super::*;
+
+    fn basic_report() -> DiagnosticsReport {
+        DiagnosticsReport {
+            files_count: 3,
+            lines: FileLinesStats {
+                library: 100,
+                definitions: 50,
+                typescript: 200,
+                ..FileLinesStats::default()
+            },
+            error_count: 2,
+            total_secs: 1.23,
+            ..DiagnosticsReport::default()
         }
+    }
+
+    #[test]
+    fn basic_output_contains_required_fields() {
+        let report = basic_report();
+        let out = render_diagnostics_report(&report, false);
+        assert!(
+            out.contains("Files:                         3"),
+            "files count"
+        );
+        assert!(
+            out.contains("Lines of Library:              100"),
+            "library lines"
+        );
+        assert!(
+            out.contains("Lines of TypeScript:           200"),
+            "typescript lines"
+        );
+        assert!(out.contains("Errors:                        2"), "errors");
+        assert!(out.contains("Total time:                    1.23s"), "time");
+    }
+
+    #[test]
+    fn basic_output_excludes_extended_fields() {
+        let report = basic_report();
+        let out = render_diagnostics_report(&report, false);
+        assert!(
+            !out.contains("Request cache"),
+            "no cache stats in basic mode"
+        );
+        assert!(!out.contains("Memory used"), "no memory in basic mode");
+    }
+
+    #[test]
+    fn extended_output_includes_cache_stats() {
+        let report = DiagnosticsReport {
+            files_count: 1,
+            total_secs: 0.5,
+            request_cache_hits: 80,
+            request_cache_misses: 20,
+            has_query_cache: true,
+            subtype_entries: 10,
+            subtype_hits: 8,
+            subtype_misses: 2,
+            assignability_entries: 5,
+            assignability_hits: 3,
+            assignability_misses: 2,
+            memory_used_kb: 4096,
+            ..DiagnosticsReport::default()
+        };
+        let out = render_diagnostics_report(&report, true);
+        assert!(
+            out.contains("Request cache hit rate:        80.0%"),
+            "hit rate: {out}"
+        );
+        assert!(out.contains("Subtype cache:"), "subtype cache");
+        assert!(
+            out.contains("Memory used:                   4096K"),
+            "memory"
+        );
+    }
+
+    #[test]
+    fn phase_timings_only_shown_when_present() {
+        let without = DiagnosticsReport {
+            has_phase_timings: false,
+            total_secs: 0.1,
+            ..DiagnosticsReport::default()
+        };
+        let with_timings = DiagnosticsReport {
+            has_phase_timings: true,
+            io_read_secs: 0.05,
+            parse_bind_secs: 0.03,
+            check_secs: 0.02,
+            emit_secs: 0.01,
+            total_secs: 0.1,
+            ..DiagnosticsReport::default()
+        };
+        let out_without = render_diagnostics_report(&without, false);
+        let out_with = render_diagnostics_report(&with_timings, false);
+        assert!(
+            !out_without.contains("I/O Read:"),
+            "no timings without flag"
+        );
+        assert!(
+            out_with.contains("I/O Read:                      0.05s"),
+            "has timings"
+        );
+    }
+
+    #[test]
+    fn collect_file_lines_categorizes_correctly() {
+        // Build a temp dir with files of different types to verify categorization.
+        let dir = std::env::temp_dir().join("tsz_test_file_lines");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let lib_d_ts = dir.join("lib.es5.d.ts");
+        let user_ts = dir.join("user.ts");
+        let js_file = dir.join("helper.js");
+
+        std::fs::write(&lib_d_ts, "line1\nline2\nline3\n").unwrap();
+        std::fs::write(&user_ts, "line1\nline2\n").unwrap();
+        std::fs::write(&js_file, "line1\n").unwrap();
+
+        let stats = collect_file_lines(&[lib_d_ts, user_ts, js_file]);
+
+        assert_eq!(stats.library, 3, "lib.d.ts lines");
+        assert_eq!(stats.typescript, 2, "ts lines");
+        assert_eq!(stats.javascript, 1, "js lines");
+        assert_eq!(stats.definitions, 0);
+        assert_eq!(stats.json, 0);
+        assert_eq!(stats.other, 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn basic_golden_full_output() {
+        let report = DiagnosticsReport {
+            files_count: 5,
+            lines: FileLinesStats {
+                library: 1000,
+                definitions: 200,
+                typescript: 300,
+                javascript: 50,
+                json: 10,
+                other: 0,
+            },
+            error_count: 3,
+            has_phase_timings: true,
+            io_read_secs: 0.10,
+            parse_bind_secs: 0.20,
+            check_secs: 0.30,
+            emit_secs: 0.05,
+            total_secs: 0.65,
+            ..DiagnosticsReport::default()
+        };
+        let out = render_diagnostics_report(&report, false);
+        let expected = "\n\
+Files:                         5\n\
+Lines of Library:              1000\n\
+Lines of Definitions:          200\n\
+Lines of TypeScript:           300\n\
+Lines of JavaScript:           50\n\
+Lines of JSON:                 10\n\
+Lines of Other:                0\n\
+Errors:                        3\n\
+I/O Read:                      0.10s\n\
+Parse & Bind:                  0.20s\n\
+Check:                         0.30s\n\
+Emit:                          0.05s\n\
+Total time:                    0.65s\n";
+        assert_eq!(out, expected, "basic golden mismatch:\n{out}");
+    }
+
+    #[test]
+    fn extended_golden_full_output() {
+        let report = DiagnosticsReport {
+            files_count: 2,
+            lines: FileLinesStats {
+                library: 500,
+                definitions: 0,
+                typescript: 100,
+                javascript: 0,
+                json: 0,
+                other: 0,
+            },
+            error_count: 0,
+            has_phase_timings: false,
+            total_secs: 1.00,
+            // Extended fields
+            memory_used_kb: 8192,
+            emitted_files_count: 1,
+            total_diagnostics: 0,
+            request_cache_hits: 90,
+            request_cache_misses: 10,
+            contextual_cache_bypasses: 2,
+            clear_type_cache_recursive_calls: 1,
+            property_access_cache_hits: 45,
+            property_access_cache_lookups: 50,
+            interned_types_count: 0,
+            interner_kb: 0.0,
+            has_query_cache: false,
+            has_def_store: false,
+            has_residency: false,
+            has_module_deps: false,
+            perf_counter_dump: String::new(),
+            ..DiagnosticsReport::default()
+        };
+        let out = render_diagnostics_report(&report, true);
+        let expected = "\n\
+Files:                         2\n\
+Lines of Library:              500\n\
+Lines of Definitions:          0\n\
+Lines of TypeScript:           100\n\
+Lines of JavaScript:           0\n\
+Lines of JSON:                 0\n\
+Lines of Other:                0\n\
+Errors:                        0\n\
+Total time:                    1.00s\n\
+Emitted files:                 1\n\
+Total diagnostics:             0\n\
+Request cache hits:            90\n\
+Request cache misses:          10\n\
+Request cache hit rate:        90.0%\n\
+Contextual cache bypasses:     2\n\
+clear_type_cache_recursive:    1\n\
+Access request-cache hit rate: 90.0% (45/50)\n\
+Memory used:                   8192K\n";
+        assert_eq!(out, expected, "extended golden mismatch:\n{out}");
     }
 }
 
@@ -2510,17 +2989,12 @@ fn render_init_template(overrides: &[(&'static str, String)]) -> String {
 
 fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use tsz::checker::diagnostics::diagnostic_codes;
-    use tsz_cli::config::{load_tsconfig_with_diagnostics, resolve_compiler_options};
-    use tsz_cli::fs::{FileDiscoveryOptions, discover_ts_files};
+    use tsz_cli::config::load_tsconfig_with_diagnostics;
 
-    // Resolve a tsconfig path for `--showConfig`. We track whether the path
-    // was found by walking up the filesystem so the TS5112 "implicit
-    // tsconfig + explicit files" check below knows to fire only on
-    // walk-up discoveries (an explicit `--project` path is the user opting
-    // into a specific config, and tsc keeps loading it in that case).
+    // Track whether the path was discovered via filesystem walk-up so the
+    // TS5112 "implicit tsconfig + explicit files" check fires only for
+    // walk-up discoveries (an explicit --project is the user opting in).
     let (tsconfig_path, discovered_via_walkup) = if let Some(p) = args.project.as_ref() {
-        // Canonicalize relative paths by joining with cwd first,
-        // so that p.parent() later returns a valid directory.
         let resolved = if p.is_relative() {
             cwd.join(p)
         } else {
@@ -2538,25 +3012,11 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         (driver::find_tsconfig(cwd), true)
     };
 
-    // tsc parity: when files are passed on the command line and a
-    // `tsconfig.json` was discovered by walking up the filesystem (i.e. the
-    // user did not opt in via `--project`), tsc refuses to silently load
-    // that config and emits TS5112. The user can suppress with
-    // `--ignoreConfig`. Without this check, tsz would inherit options from
-    // an unrelated parent project for what the user expected to be a
-    // single-file synthesis.
     if discovered_via_walkup && tsconfig_path.is_some() && !args.files.is_empty() {
-        println!(
-            "error TS5112: tsconfig.json is present but will not be loaded if files are specified on commandline. Use '--ignoreConfig' to skip this error."
-        );
+        println!("error TS5112: {TS5112_COMMAND_LINE_FILES_MESSAGE}");
         std::process::exit(1);
     }
 
-    // tsc parity: with no files passed and no tsconfig resolved (either
-    // because `--ignoreConfig` was set or because none was found by walking
-    // up), tsc emits TS5081 even if other CLI options were provided. The
-    // synthesized output requires either a `tsconfig.json` to anchor the
-    // project or an explicit root-file list.
     if tsconfig_path.is_none() && args.files.is_empty() {
         println!(
             "error TS5081: Cannot find a tsconfig.json file at the current directory: {}.",
@@ -2565,15 +3025,6 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         std::process::exit(1);
     }
 
-    // When the resolved tsconfig path does not exist on disk, emit the
-    // appropriate tsc error code. This now only fires for explicit
-    // `--project` paths because `find_tsconfig` returns `Some` only for an
-    // existing file; the `args.project.is_none()` branch is kept as a
-    // defensive fallback in case of a TOCTOU race between discovery and
-    // the existence check.
-    //   TS5057 – `--project` dir exists but has no tsconfig.json
-    //   TS5058 – `--project` path does not exist at all
-    //   TS5081 – defensive fallback (walk-up race)
     if let Some(ref path) = tsconfig_path
         && !path.exists()
     {
@@ -2598,11 +3049,6 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         std::process::exit(1);
     }
 
-    // Issue 2: load_tsconfig_with_diagnostics already resolves extends chains
-    // and validates compiler-option types (TS5024) on every file in the chain,
-    // so the returned config is the fully merged, validated result. Surfacing
-    // the config diagnostics keeps `--showConfig` parity with tsc, which exits
-    // 1 when an invalid option is present in the root config or any base.
     let (config, config_diagnostics) = if let Some(path) = tsconfig_path.as_ref() {
         let parsed = load_tsconfig_with_diagnostics(path)?;
         (Some(parsed.config), parsed.diagnostics)
@@ -2633,1211 +3079,23 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         .and_then(|p| p.parent())
         .unwrap_or(cwd);
 
-    // Build the compiler options map from the MERGED config (extends-resolved).
-    let mut compiler_options_map: serde_json::Map<String, serde_json::Value> =
-        if let Some(ref cfg) = config {
-            show_config_compiler_options_to_json(cfg.compiler_options.as_ref())
-        } else {
-            serde_json::Map::new()
-        };
-
-    // Issue 1: Merge CLI-provided flags into the compiler options map.
-    show_config_apply_cli_overrides(&mut compiler_options_map, args);
-
-    // Issue 3: Compute and add implied options.
-    show_config_add_implied_options(&mut compiler_options_map);
-
-    show_config_relativize_resolved_path_options(&mut compiler_options_map, base_dir);
-
-    // Issue 5: Normalize outDir/outFile/rootDir paths with "./" prefix
-    for path_key in &["outDir", "outFile", "rootDir", "declarationDir", "baseUrl"] {
-        if let Some(serde_json::Value::String(s)) = compiler_options_map.get(*path_key) {
-            let normalized = if s == "." {
-                // "." → "./" (not "./.")
-                "./".to_string()
-            } else if !s.starts_with("./") && !s.starts_with("../") && !s.starts_with('/') {
-                format!("./{s}")
-            } else {
-                continue;
-            };
-            compiler_options_map.insert(
-                (*path_key).to_string(),
-                serde_json::Value::String(normalized),
-            );
-        }
-    }
-
-    let raw_opts = config
-        .as_ref()
-        .and_then(|cfg| cfg.compiler_options.as_ref());
-
-    // We need resolved options for file discovery (allow_js, out_dir).
-    let resolved = resolve_compiler_options(raw_opts).ok();
-    let allow_js = resolved.as_ref().is_some_and(|r| r.allow_js) || args.allow_js || args.check_js;
-    let out_dir = args
-        .out_dir
-        .clone()
-        .or_else(|| resolved.as_ref().and_then(|r| r.out_dir.clone()));
-
-    // Discover resolved file list
-    let explicit_files: Vec<std::path::PathBuf> = if !args.files.is_empty() {
-        args.files.clone()
-    } else if let Some(ref cfg) = config {
-        cfg.files
-            .as_ref()
-            .map(|f| f.iter().map(std::path::PathBuf::from).collect())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    let files_explicitly_set =
-        !args.files.is_empty() || config.as_ref().and_then(|c| c.files.as_ref()).is_some();
-
-    // `--showConfig` should print the resolved config without validating root
-    // files (matching `tsc --showConfig`). When `files` is explicitly set,
-    // preserve every entry verbatim — even unsupported extensions or missing
-    // paths — and normalize with a `./` prefix. The TS6053/TS6054/TS18003
-    // diagnostics belong to normal compilation, not to the config display.
-    let file_paths: Vec<String> = if files_explicitly_set {
-        explicit_files
-            .iter()
-            .map(|p| show_config_normalize_relative(base_dir, p))
-            .collect()
-    } else {
-        // No explicit `files` — fall back to glob-based discovery so the
-        // displayed list reflects what include/exclude would resolve. Treat
-        // discovery errors and empty results as "nothing to print" instead of
-        // TS18003; tsc's --showConfig also exits 0 in that case.
-        let discovery = FileDiscoveryOptions {
-            base_dir: base_dir.to_path_buf(),
-            files: explicit_files,
-            files_explicitly_set,
-            include: config.as_ref().and_then(|c| c.include.clone()),
-            exclude: config.as_ref().and_then(|c| c.exclude.clone()),
-            out_dir: out_dir.clone(),
-            follow_links: false,
-            allow_js,
-            resolve_json_module: resolved.as_ref().is_some_and(|r| r.resolve_json_module),
-        };
-        discover_ts_files(&discovery)
-            .unwrap_or_default()
-            .iter()
-            .map(|f| {
-                if let Ok(rel) = f.strip_prefix(base_dir) {
-                    format!("./{}", rel.display())
-                } else {
-                    f.display().to_string()
-                }
-            })
-            .collect()
-    };
-
-    // Issue 6: Auto-add outDir to exclude array (tsc behavior)
-    let effective_exclude = {
-        let mut excl = config
-            .as_ref()
-            .and_then(|c| c.exclude.clone())
-            .unwrap_or_default();
-        if let Some(ref od) = out_dir {
-            let od_str = od.display().to_string();
-            let normalized_od = if !od_str.starts_with("./")
-                && !od_str.starts_with("../")
-                && !od_str.starts_with('/')
-            {
-                format!("./{od_str}")
-            } else {
-                od_str
-            };
-            if !excl.iter().any(|e| e == &normalized_od) {
-                excl.push(normalized_od);
-            }
-        }
-        excl
-    };
-
-    // Build the output manually with 4-space indentation (matching tsc --showConfig)
-    let mut output = String::from("{\n");
-
-    // compilerOptions
-    output.push_str("    \"compilerOptions\": {");
-    if compiler_options_map.is_empty() {
-        output.push('}');
-    } else {
-        output.push('\n');
-        let entries: Vec<_> = compiler_options_map.iter().collect();
-        for (i, (key, value)) in entries.iter().enumerate() {
-            output.push_str("        ");
-            output.push_str(&format_json_value_with_indent(key, value, 8));
-            if i + 1 < entries.len() {
-                output.push(',');
-            }
-            output.push('\n');
-        }
-        output.push_str("    }");
-    }
-
-    // tsc v6 output order: compilerOptions, references, files, include, exclude
-
-    // references (before files, matching tsc v6 ordering)
-    if let Some(ref cfg) = config
-        && let Some(ref refs) = cfg.references
-    {
-        output.push_str(",\n    \"references\": [\n");
-        for (i, r) in refs.iter().enumerate() {
-            if r.prepend {
-                output.push_str(&format!(
-                        "        {{\n            \"path\": \"{}\",\n            \"prepend\": true\n        }}",
-                        r.path
-                    ));
-            } else {
-                output.push_str(&format!(
-                    "        {{\n            \"path\": \"{}\"\n        }}",
-                    r.path
-                ));
-            }
-            if i + 1 < refs.len() {
-                output.push(',');
-            }
-            output.push('\n');
-        }
-        output.push_str("    ]");
-    }
-
-    // files
-    if !file_paths.is_empty() {
-        output.push_str(",\n    \"files\": [\n");
-        for (i, f) in file_paths.iter().enumerate() {
-            output.push_str(&format!("        \"{f}\""));
-            if i + 1 < file_paths.len() {
-                output.push(',');
-            }
-            output.push('\n');
-        }
-        output.push_str("    ]");
-    }
-
-    // include
-    if let Some(ref cfg) = config {
-        if let Some(ref include) = cfg.include {
-            output.push_str(",\n    \"include\": [\n");
-            for (i, v) in include.iter().enumerate() {
-                let display = show_config_display_selector(base_dir, v);
-                output.push_str(&format!("        \"{display}\""));
-                if i + 1 < include.len() {
-                    output.push(',');
-                }
-                output.push('\n');
-            }
-            output.push_str("    ]");
-        }
-        // exclude (with auto-added outDir)
-        if !effective_exclude.is_empty() {
-            output.push_str(",\n    \"exclude\": [\n");
-            for (i, v) in effective_exclude.iter().enumerate() {
-                let display = show_config_display_selector(base_dir, v);
-                output.push_str(&format!("        \"{display}\""));
-                if i + 1 < effective_exclude.len() {
-                    output.push(',');
-                }
-                output.push('\n');
-            }
-            output.push_str("    ]");
-        }
-    }
-
-    output.push_str("\n}\n");
+    let compiler_options_map =
+        show_config::build_compiler_options_map(config.as_ref(), args, base_dir);
+    let (file_paths, effective_exclude) = show_config::collect_files_and_excludes(
+        args,
+        config.as_ref(),
+        base_dir,
+        &compiler_options_map,
+    );
+    let output = show_config::render_output(
+        &compiler_options_map,
+        &file_paths,
+        &effective_exclude,
+        config.as_ref(),
+        base_dir,
+    );
     print!("{output}");
-
     Ok(())
-}
-
-fn show_config_display_selector(base_dir: &Path, selector: &str) -> String {
-    let path = Path::new(selector);
-    if path.is_absolute() {
-        show_config_display_path(base_dir, path)
-    } else {
-        selector.to_string()
-    }
-}
-
-fn show_config_display_path(base_dir: &Path, path: &Path) -> String {
-    let relative = if path.is_absolute() {
-        diff_paths(path, base_dir).unwrap_or_else(|| path.to_path_buf())
-    } else {
-        path.to_path_buf()
-    };
-    path_to_show_config_string(&relative)
-}
-
-/// Normalize a path for the --showConfig `files` array: strip the tsconfig
-/// base directory if the input is absolute, convert backslashes to forward
-/// slashes, and prepend `./` for plain relative paths so the output mirrors
-/// `tsc --showConfig` (`["./style.css"]` rather than `["style.css"]`).
-fn show_config_normalize_relative(base_dir: &std::path::Path, path: &std::path::Path) -> String {
-    let rel = if path.is_absolute() {
-        path.strip_prefix(base_dir)
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|_| path.to_path_buf())
-    } else {
-        path.to_path_buf()
-    };
-    let s = rel.display().to_string().replace('\\', "/");
-    if s.starts_with("./") || s.starts_with("../") || s.starts_with('/') {
-        s
-    } else {
-        format!("./{s}")
-    }
-}
-
-fn show_config_relativize_resolved_path_options(
-    options: &mut serde_json::Map<String, serde_json::Value>,
-    base_dir: &Path,
-) {
-    if let Some(serde_json::Value::String(base_url)) = options.get_mut("baseUrl") {
-        *base_url = show_config_format_path_option(base_url, base_dir);
-    }
-
-    if let Some(serde_json::Value::Array(root_dirs)) = options.get_mut("rootDirs") {
-        for root_dir in root_dirs {
-            if let serde_json::Value::String(path) = root_dir {
-                *path = show_config_format_path_option(path, base_dir);
-            }
-        }
-    }
-}
-
-fn show_config_format_path_option(path: &str, base_dir: &Path) -> String {
-    let path_obj = Path::new(path);
-    if !path_obj.is_absolute() {
-        return path.to_string();
-    }
-
-    let canonical_base = base_dir
-        .canonicalize()
-        .unwrap_or_else(|_| base_dir.to_path_buf());
-    let canonical_path = path_obj
-        .canonicalize()
-        .unwrap_or_else(|_| path_obj.to_path_buf());
-    let relative = diff_paths(&canonical_path, &canonical_base)
-        .unwrap_or_else(|| canonical_path.to_path_buf());
-    path_to_show_config_string(&relative)
-}
-
-fn path_to_show_config_string(path: &Path) -> String {
-    let display = path.to_string_lossy().replace('\\', "/");
-    if display.is_empty() || display == "." {
-        "./".to_string()
-    } else if display.starts_with("../") || display.starts_with('/') {
-        display
-    } else {
-        format!("./{display}")
-    }
-}
-
-fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
-    let path_components: Vec<Component<'_>> = path.components().collect();
-    let base_components: Vec<Component<'_>> = base.components().collect();
-    let common_len = path_components
-        .iter()
-        .zip(base_components.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
-    if common_len == 0 && path.is_absolute() && base.is_absolute() {
-        return None;
-    }
-
-    let mut result = PathBuf::new();
-    for _ in common_len..base_components.len() {
-        result.push("..");
-    }
-    for component in &path_components[common_len..] {
-        result.push(component);
-    }
-    Some(result)
-}
-
-/// Convert merged `CompilerOptions` (from extends-resolved `TsConfig`) into a JSON map
-/// for --showConfig output. Only includes options that are explicitly set (non-None).
-fn show_config_compiler_options_to_json(
-    opts: Option<&tsz_cli::config::CompilerOptions>,
-) -> serde_json::Map<String, serde_json::Value> {
-    use serde_json::Value;
-    let mut map = serde_json::Map::new();
-    let Some(opts) = opts else { return map };
-
-    if let Some(ref v) = opts.target {
-        // tsc uses the first key in the type map: ES2015 → "es6"
-        let lowered = v.to_lowercase();
-        let normalized = if lowered == "es2015" {
-            "es6".to_string()
-        } else {
-            lowered
-        };
-        map.insert("target".into(), Value::String(normalized));
-    }
-    if let Some(ref v) = opts.module {
-        // tsc uses the first key in the type map: ES2015 → "es6"
-        let lowered = v.to_lowercase();
-        let normalized = if lowered == "es2015" {
-            "es6".to_string()
-        } else {
-            lowered
-        };
-        map.insert("module".into(), Value::String(normalized));
-    }
-    if let Some(ref v) = opts.module_resolution {
-        map.insert("moduleResolution".into(), Value::String(v.to_lowercase()));
-    }
-    if let Some(ref v) = opts.jsx {
-        map.insert("jsx".into(), Value::String(v.to_lowercase()));
-    }
-    if let Some(ref v) = opts.jsx_factory {
-        map.insert("jsxFactory".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = opts.jsx_fragment_factory {
-        map.insert("jsxFragmentFactory".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = opts.jsx_import_source {
-        map.insert("jsxImportSource".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = opts.react_namespace {
-        map.insert("reactNamespace".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = opts.base_url {
-        map.insert("baseUrl".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = opts.root_dir {
-        map.insert("rootDir".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = opts.root_dirs {
-        map.insert(
-            "rootDirs".into(),
-            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
-        );
-    }
-    if let Some(ref v) = opts.out_dir {
-        map.insert("outDir".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = opts.out_file {
-        map.insert("outFile".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = opts.declaration_dir {
-        map.insert("declarationDir".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = opts.ts_build_info_file {
-        map.insert("tsBuildInfoFile".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = opts.module_detection {
-        map.insert("moduleDetection".into(), Value::String(v.to_lowercase()));
-    }
-    if let Some(ref v) = opts.ignore_deprecations {
-        map.insert("ignoreDeprecations".into(), Value::String(v.clone()));
-    }
-
-    macro_rules! set_bool {
-        ($f:ident, $k:expr) => {
-            if let Some(v) = opts.$f {
-                map.insert($k.into(), Value::Bool(v));
-            }
-        };
-    }
-    set_bool!(strict, "strict");
-    set_bool!(no_emit, "noEmit");
-    set_bool!(no_check, "noCheck");
-    set_bool!(no_emit_on_error, "noEmitOnError");
-    set_bool!(declaration, "declaration");
-    set_bool!(emit_declaration_only, "emitDeclarationOnly");
-    set_bool!(source_map, "sourceMap");
-    set_bool!(inline_source_map, "inlineSourceMap");
-    set_bool!(declaration_map, "declarationMap");
-    set_bool!(composite, "composite");
-    set_bool!(incremental, "incremental");
-    set_bool!(isolated_modules, "isolatedModules");
-    set_bool!(isolated_declarations, "isolatedDeclarations");
-    set_bool!(verbatim_module_syntax, "verbatimModuleSyntax");
-    set_bool!(es_module_interop, "esModuleInterop");
-    set_bool!(
-        allow_synthetic_default_imports,
-        "allowSyntheticDefaultImports"
-    );
-    set_bool!(allow_js, "allowJs");
-    set_bool!(check_js, "checkJs");
-    set_bool!(skip_lib_check, "skipLibCheck");
-    set_bool!(skip_default_lib_check, "skipDefaultLibCheck");
-    set_bool!(strip_internal, "stripInternal");
-    set_bool!(no_lib, "noLib");
-    set_bool!(lib_replacement, "libReplacement");
-    set_bool!(no_types_and_symbols, "noTypesAndSymbols");
-    set_bool!(import_helpers, "importHelpers");
-    set_bool!(no_emit_helpers, "noEmitHelpers");
-    set_bool!(remove_comments, "removeComments");
-    set_bool!(emit_bom, "emitBOM");
-    set_bool!(no_implicit_any, "noImplicitAny");
-    set_bool!(no_implicit_returns, "noImplicitReturns");
-    set_bool!(strict_null_checks, "strictNullChecks");
-    set_bool!(strict_function_types, "strictFunctionTypes");
-    set_bool!(
-        strict_property_initialization,
-        "strictPropertyInitialization"
-    );
-    set_bool!(no_implicit_this, "noImplicitThis");
-    set_bool!(use_unknown_in_catch_variables, "useUnknownInCatchVariables");
-    set_bool!(exact_optional_property_types, "exactOptionalPropertyTypes");
-    set_bool!(strict_bind_call_apply, "strictBindCallApply");
-    set_bool!(
-        strict_builtin_iterator_return,
-        "strictBuiltinIteratorReturn"
-    );
-    set_bool!(no_unchecked_indexed_access, "noUncheckedIndexedAccess");
-    set_bool!(
-        no_property_access_from_index_signature,
-        "noPropertyAccessFromIndexSignature"
-    );
-    set_bool!(no_unused_locals, "noUnusedLocals");
-    set_bool!(no_unused_parameters, "noUnusedParameters");
-    set_bool!(allow_unreachable_code, "allowUnreachableCode");
-    set_bool!(allow_unused_labels, "allowUnusedLabels");
-    set_bool!(no_fallthrough_cases_in_switch, "noFallthroughCasesInSwitch");
-    set_bool!(no_resolve, "noResolve");
-    set_bool!(
-        no_unchecked_side_effect_imports,
-        "noUncheckedSideEffectImports"
-    );
-    set_bool!(no_implicit_override, "noImplicitOverride");
-    set_bool!(always_strict, "alwaysStrict");
-    set_bool!(preserve_symlinks, "preserveSymlinks");
-    set_bool!(use_define_for_class_fields, "useDefineForClassFields");
-    set_bool!(experimental_decorators, "experimentalDecorators");
-    set_bool!(emit_decorator_metadata, "emitDecoratorMetadata");
-    set_bool!(allow_umd_global_access, "allowUmdGlobalAccess");
-    set_bool!(resolve_package_json_exports, "resolvePackageJsonExports");
-    set_bool!(resolve_package_json_imports, "resolvePackageJsonImports");
-    set_bool!(resolve_json_module, "resolveJsonModule");
-    set_bool!(allow_arbitrary_extensions, "allowArbitraryExtensions");
-    set_bool!(allow_importing_ts_extensions, "allowImportingTsExtensions");
-    set_bool!(
-        rewrite_relative_import_extensions,
-        "rewriteRelativeImportExtensions"
-    );
-    set_bool!(preserve_const_enums, "preserveConstEnums");
-    set_bool!(erasable_syntax_only, "erasableSyntaxOnly");
-    set_bool!(sound, "sound");
-
-    if let Some(ref v) = opts.new_line {
-        map.insert("newLine".into(), Value::String(v.to_lowercase()));
-    }
-    if let Some(v) = opts.max_node_module_js_depth {
-        map.insert(
-            "maxNodeModuleJsDepth".into(),
-            Value::Number(serde_json::Number::from(v)),
-        );
-    }
-
-    if let Some(ref v) = opts.lib {
-        map.insert(
-            "lib".into(),
-            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
-        );
-    }
-    if let Some(ref v) = opts.types {
-        map.insert(
-            "types".into(),
-            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
-        );
-    }
-    if let Some(ref v) = opts.type_roots {
-        map.insert(
-            "typeRoots".into(),
-            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
-        );
-    }
-    if let Some(ref v) = opts.module_suffixes {
-        map.insert(
-            "moduleSuffixes".into(),
-            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
-        );
-    }
-    if let Some(ref v) = opts.custom_conditions {
-        map.insert(
-            "customConditions".into(),
-            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
-        );
-    }
-    if let Some(ref paths) = opts.paths {
-        let mut paths_obj = serde_json::Map::new();
-        for (pattern, targets) in paths {
-            paths_obj.insert(
-                pattern.clone(),
-                Value::Array(targets.iter().map(|s| Value::String(s.clone())).collect()),
-            );
-        }
-        map.insert("paths".into(), Value::Object(paths_obj));
-    }
-    map
-}
-
-/// Merge CLI-provided flags into the compiler options JSON map for --showConfig output.
-fn show_config_apply_cli_overrides(
-    map: &mut serde_json::Map<String, serde_json::Value>,
-    args: &CliArgs,
-) {
-    use serde_json::Value;
-    if let Some(target) = args.target {
-        let s = match target {
-            tsz_cli::args::Target::Es3 => "es3",
-            tsz_cli::args::Target::Es5 => "es5",
-            tsz_cli::args::Target::Es2015 => "es6",
-            tsz_cli::args::Target::Es2016 => "es2016",
-            tsz_cli::args::Target::Es2017 => "es2017",
-            tsz_cli::args::Target::Es2018 => "es2018",
-            tsz_cli::args::Target::Es2019 => "es2019",
-            tsz_cli::args::Target::Es2020 => "es2020",
-            tsz_cli::args::Target::Es2021 => "es2021",
-            tsz_cli::args::Target::Es2022 => "es2022",
-            tsz_cli::args::Target::Es2023 => "es2023",
-            tsz_cli::args::Target::Es2024 => "es2024",
-            tsz_cli::args::Target::Es2025 => "es2025",
-            tsz_cli::args::Target::EsNext => "esnext",
-        };
-        map.insert("target".into(), Value::String(s.into()));
-    }
-    if let Some(module) = args.module {
-        let s = match module {
-            tsz_cli::args::Module::None => "none",
-            tsz_cli::args::Module::CommonJs => "commonjs",
-            tsz_cli::args::Module::Amd => "amd",
-            tsz_cli::args::Module::Umd => "umd",
-            tsz_cli::args::Module::System => "system",
-            tsz_cli::args::Module::Es2015 => "es6",
-            tsz_cli::args::Module::Es2020 => "es2020",
-            tsz_cli::args::Module::Es2022 => "es2022",
-            tsz_cli::args::Module::EsNext => "esnext",
-            tsz_cli::args::Module::Node16 => "node16",
-            tsz_cli::args::Module::Node18 => "node18",
-            tsz_cli::args::Module::Node20 => "node20",
-            tsz_cli::args::Module::NodeNext => "nodenext",
-            tsz_cli::args::Module::Preserve => "preserve",
-        };
-        map.insert("module".into(), Value::String(s.into()));
-    }
-    if let Some(mr) = args.module_resolution {
-        let s = match mr {
-            tsz_cli::args::ModuleResolution::Classic => "classic",
-            tsz_cli::args::ModuleResolution::Node10 => "node10",
-            tsz_cli::args::ModuleResolution::Node16 => "node16",
-            tsz_cli::args::ModuleResolution::NodeNext => "nodenext",
-            tsz_cli::args::ModuleResolution::Bundler => "bundler",
-        };
-        map.insert("moduleResolution".into(), Value::String(s.into()));
-    }
-    if let Some(jsx) = args.jsx {
-        let s = match jsx {
-            tsz_cli::args::JsxEmit::Preserve => "preserve",
-            tsz_cli::args::JsxEmit::React => "react",
-            tsz_cli::args::JsxEmit::ReactJsx => "react-jsx",
-            tsz_cli::args::JsxEmit::ReactJsxDev => "react-jsxdev",
-            tsz_cli::args::JsxEmit::ReactNative => "react-native",
-        };
-        map.insert("jsx".into(), Value::String(s.into()));
-    }
-    if let Some(ref v) = args.jsx_factory {
-        map.insert("jsxFactory".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = args.jsx_fragment_factory {
-        map.insert("jsxFragmentFactory".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = args.jsx_import_source {
-        map.insert("jsxImportSource".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = args.out_dir {
-        map.insert("outDir".into(), Value::String(v.display().to_string()));
-    }
-    if let Some(ref v) = args.out_file {
-        map.insert("outFile".into(), Value::String(v.display().to_string()));
-    }
-    if let Some(ref v) = args.root_dir {
-        map.insert("rootDir".into(), Value::String(v.display().to_string()));
-    }
-    if let Some(ref v) = args.declaration_dir {
-        map.insert(
-            "declarationDir".into(),
-            Value::String(v.display().to_string()),
-        );
-    }
-    if let Some(ref v) = args.base_url {
-        map.insert("baseUrl".into(), Value::String(v.display().to_string()));
-    }
-    if let Some(ref v) = args.ignore_deprecations {
-        map.insert("ignoreDeprecations".into(), Value::String(v.clone()));
-    }
-    if args.ignore_config {
-        map.insert("ignoreConfig".into(), Value::Bool(true));
-    }
-
-    // `--flag false` for plain `bool` flags is forwarded through this hidden
-    // side-channel by `preprocess_args`. Explicit `false` must round-trip into
-    // `--showConfig` output so a CLI override of a `tsconfig.json` `true` value
-    // is visible to the caller, matching `tsc --showConfig --flag false`.
-    let disabled_bool_flags: rustc_hash::FxHashSet<&str> = args
-        .explicitly_disabled_bool_flags
-        .iter()
-        .map(String::as_str)
-        .collect();
-
-    macro_rules! set_if_true {
-        ($f:ident, $k:expr) => {
-            if args.$f {
-                map.insert($k.into(), Value::Bool(true));
-            } else if disabled_bool_flags.contains($k) {
-                map.insert($k.into(), Value::Bool(false));
-            }
-        };
-    }
-    set_if_true!(strict, "strict");
-    set_if_true!(no_emit, "noEmit");
-    set_if_true!(no_check, "noCheck");
-    set_if_true!(no_emit_on_error, "noEmitOnError");
-    set_if_true!(declaration, "declaration");
-    set_if_true!(source_map, "sourceMap");
-    set_if_true!(declaration_map, "declarationMap");
-    set_if_true!(composite, "composite");
-    set_if_true!(incremental, "incremental");
-    set_if_true!(isolated_modules, "isolatedModules");
-    set_if_true!(verbatim_module_syntax, "verbatimModuleSyntax");
-    set_if_true!(es_module_interop, "esModuleInterop");
-    set_if_true!(allow_js, "allowJs");
-    set_if_true!(check_js, "checkJs");
-    set_if_true!(skip_lib_check, "skipLibCheck");
-    set_if_true!(skip_default_lib_check, "skipDefaultLibCheck");
-    set_if_true!(strip_internal, "stripInternal");
-    set_if_true!(no_lib, "noLib");
-    set_if_true!(import_helpers, "importHelpers");
-    set_if_true!(no_emit_helpers, "noEmitHelpers");
-    set_if_true!(no_unused_locals, "noUnusedLocals");
-    set_if_true!(no_unused_parameters, "noUnusedParameters");
-    set_if_true!(no_implicit_returns, "noImplicitReturns");
-    set_if_true!(no_fallthrough_cases_in_switch, "noFallthroughCasesInSwitch");
-    set_if_true!(exact_optional_property_types, "exactOptionalPropertyTypes");
-    set_if_true!(no_unchecked_indexed_access, "noUncheckedIndexedAccess");
-    set_if_true!(no_implicit_override, "noImplicitOverride");
-    set_if_true!(
-        no_property_access_from_index_signature,
-        "noPropertyAccessFromIndexSignature"
-    );
-    set_if_true!(no_resolve, "noResolve");
-    set_if_true!(
-        no_unchecked_side_effect_imports,
-        "noUncheckedSideEffectImports"
-    );
-    set_if_true!(allow_umd_global_access, "allowUmdGlobalAccess");
-    set_if_true!(downlevel_iteration, "downlevelIteration");
-    set_if_true!(experimental_decorators, "experimentalDecorators");
-    set_if_true!(emit_decorator_metadata, "emitDecoratorMetadata");
-    set_if_true!(preserve_const_enums, "preserveConstEnums");
-    set_if_true!(remove_comments, "removeComments");
-    set_if_true!(emit_bom, "emitBOM");
-    set_if_true!(inline_source_map, "inlineSourceMap");
-    set_if_true!(inline_sources, "inlineSources");
-    set_if_true!(resolve_json_module, "resolveJsonModule");
-    set_if_true!(allow_arbitrary_extensions, "allowArbitraryExtensions");
-    set_if_true!(allow_importing_ts_extensions, "allowImportingTsExtensions");
-    set_if_true!(
-        rewrite_relative_import_extensions,
-        "rewriteRelativeImportExtensions"
-    );
-    set_if_true!(preserve_symlinks, "preserveSymlinks");
-    set_if_true!(isolated_declarations, "isolatedDeclarations");
-    set_if_true!(erasable_syntax_only, "erasableSyntaxOnly");
-
-    macro_rules! set_opt_bool {
-        ($f:ident, $k:expr) => {
-            if let Some(v) = args.$f {
-                map.insert($k.into(), Value::Bool(v));
-            }
-        };
-    }
-    set_opt_bool!(no_implicit_any, "noImplicitAny");
-    set_opt_bool!(strict_null_checks, "strictNullChecks");
-    set_opt_bool!(strict_function_types, "strictFunctionTypes");
-    set_opt_bool!(strict_bind_call_apply, "strictBindCallApply");
-    set_opt_bool!(
-        strict_property_initialization,
-        "strictPropertyInitialization"
-    );
-    set_opt_bool!(
-        strict_builtin_iterator_return,
-        "strictBuiltinIteratorReturn"
-    );
-    set_opt_bool!(no_implicit_this, "noImplicitThis");
-    set_opt_bool!(use_unknown_in_catch_variables, "useUnknownInCatchVariables");
-    set_opt_bool!(always_strict, "alwaysStrict");
-    set_opt_bool!(use_define_for_class_fields, "useDefineForClassFields");
-    set_opt_bool!(allow_unreachable_code, "allowUnreachableCode");
-    set_opt_bool!(allow_unused_labels, "allowUnusedLabels");
-    set_opt_bool!(
-        allow_synthetic_default_imports,
-        "allowSyntheticDefaultImports"
-    );
-    set_opt_bool!(
-        force_consistent_casing_in_file_names,
-        "forceConsistentCasingInFileNames"
-    );
-    set_opt_bool!(pretty, "pretty");
-    set_opt_bool!(resolve_package_json_exports, "resolvePackageJsonExports");
-    set_opt_bool!(resolve_package_json_imports, "resolvePackageJsonImports");
-
-    if let Some(ref v) = args.lib {
-        map.insert(
-            "lib".into(),
-            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
-        );
-    }
-    if let Some(ref v) = args.types {
-        map.insert(
-            "types".into(),
-            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
-        );
-    }
-    if let Some(ref v) = args.type_roots {
-        map.insert(
-            "typeRoots".into(),
-            Value::Array(
-                v.iter()
-                    .map(|s| Value::String(s.display().to_string()))
-                    .collect(),
-            ),
-        );
-    }
-    if let Some(ref v) = args.root_dirs {
-        map.insert(
-            "rootDirs".into(),
-            Value::Array(
-                v.iter()
-                    .map(|s| Value::String(s.display().to_string()))
-                    .collect(),
-            ),
-        );
-    }
-    if let Some(ref v) = args.module_suffixes {
-        map.insert(
-            "moduleSuffixes".into(),
-            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
-        );
-    }
-    if let Some(ref v) = args.custom_conditions {
-        map.insert(
-            "customConditions".into(),
-            Value::Array(v.iter().map(|s| Value::String(s.clone())).collect()),
-        );
-    }
-    if let Some(md) = args.module_detection {
-        let s = match md {
-            tsz_cli::args::ModuleDetection::Auto => "auto",
-            tsz_cli::args::ModuleDetection::Force => "force",
-            tsz_cli::args::ModuleDetection::Legacy => "legacy",
-        };
-        map.insert("moduleDetection".into(), Value::String(s.into()));
-    }
-    if let Some(nl) = args.new_line {
-        let s = match nl {
-            tsz_cli::args::NewLine::Crlf => "crlf",
-            tsz_cli::args::NewLine::Lf => "lf",
-        };
-        map.insert("newLine".into(), Value::String(s.into()));
-    }
-    if let Some(ref v) = args.map_root {
-        map.insert("mapRoot".into(), Value::String(v.clone()));
-    }
-    if let Some(ref v) = args.source_root {
-        map.insert("sourceRoot".into(), Value::String(v.clone()));
-    }
-    if let Some(v) = args.max_node_module_js_depth {
-        map.insert(
-            "maxNodeModuleJsDepth".into(),
-            Value::Number(serde_json::Number::from(v)),
-        );
-    }
-}
-
-/// Add implied options that tsc v6 shows in --showConfig output.
-///
-/// Algorithm from tsc v6 `convertToTSConfig` (commandLineParser.ts:2686-2697):
-/// 1. Get the set of explicitly provided options (providedKeys)
-/// 2. For each computed option:
-///    a. If NOT in providedKeys AND transitively depends on any provided key
-///    b. Compute its value using the user's config
-///    c. Compute its value using empty config (defaults)
-///    d. Only show it if computed != default
-fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json::Value>) {
-    use serde_json::Value;
-
-    // Collect the set of explicitly provided option keys (owned to avoid borrow conflicts)
-    let provided: std::collections::HashSet<String> = map.keys().cloned().collect();
-
-    // --- Helper: parse target string ---
-    fn parse_target(s: &str) -> tsz::common::ScriptTarget {
-        tsz::common::ScriptTarget::from_ts_str(s).unwrap_or(tsz::common::ScriptTarget::ES2025)
-    }
-
-    // --- Helper: compute module from target ---
-    const fn compute_module(target: tsz::common::ScriptTarget) -> &'static str {
-        match tsz_cli::config::default_module_kind_for_target(target, true) {
-            // tsc still prints this computed default as "es6" in --showConfig.
-            tsz::common::ModuleKind::ES2015 => "es6",
-            module => module.as_ts_str(),
-        }
-    }
-
-    // --- Helper: compute moduleResolution from module string ---
-    fn compute_module_resolution(module_str: &str) -> &'static str {
-        tsz::common::ModuleKind::from_ts_str(module_str)
-            .map(tsz_cli::config::default_module_resolution_for_module)
-            .unwrap_or(tsz_cli::config::ModuleResolutionKind::Bundler)
-            .as_ts_str()
-    }
-
-    // --- Helper: compute moduleDetection from module string ---
-    fn compute_module_detection(module_str: &str) -> &'static str {
-        tsz::common::ModuleKind::from_ts_str(module_str)
-            .map(tsz_cli::config::default_module_detection_for_module)
-            .unwrap_or("auto")
-    }
-
-    // v6 defaults (empty config):
-    // target=es2025(12), module=es2022, moduleResolution=bundler
-    // esModuleInterop=true, allowSyntheticDefaultImports=true
-    // useDefineForClassFields=true (es2025 >= ES2022)
-    // strict sub-flags: false, declaration=false, incremental=false
-    const DEFAULT_TARGET: tsz::common::ScriptTarget = tsz::common::ScriptTarget::ES2025;
-    const DEFAULT_MODULE_RESOLUTION: &str = "bundler";
-    const DEFAULT_MODULE_DETECTION: &str = "auto";
-
-    // --- Compute effective values using user's config ---
-    let user_target_str = map
-        .get("target")
-        .and_then(|v| v.as_str())
-        .unwrap_or("es2025");
-    let user_target = parse_target(user_target_str);
-
-    let user_composite = map
-        .get("composite")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let user_verbatim = map
-        .get("verbatimModuleSyntax")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let user_check_js = map
-        .get("checkJs")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let user_isolated_modules = map
-        .get("isolatedModules")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let user_rewrite_relative = map
-        .get("rewriteRelativeImportExtensions")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    // --- Helper: check if a computed option depends on any provided key ---
-    let depends_on_provided =
-        |deps: &[&str]| -> bool { deps.iter().any(|d| provided.contains(*d)) };
-
-    // --- target: deps=[], computed = target ?? ES2025 ---
-    // target has no deps, so it's only shown if explicitly set (already in map)
-
-    // --- module: deps=["target"] ---
-    if !provided.contains("module") && depends_on_provided(&["target"]) {
-        let computed = compute_module(user_target);
-        let default = compute_module(DEFAULT_TARGET); // es2022
-        if computed != default {
-            map.insert("module".into(), Value::String(computed.into()));
-        }
-    }
-
-    // Re-compute effective module after possible insertion (clone to avoid borrow)
-    let eff_module: String = map
-        .get("module")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| compute_module(user_target).to_string());
-
-    // --- moduleResolution: deps=["module","target"] ---
-    if !provided.contains("moduleResolution") && depends_on_provided(&["module", "target"]) {
-        let computed = compute_module_resolution(&eff_module);
-        if computed != DEFAULT_MODULE_RESOLUTION {
-            map.insert("moduleResolution".into(), Value::String(computed.into()));
-        }
-    }
-
-    // --- moduleDetection: deps=["module","target"] ---
-    if !provided.contains("moduleDetection") && depends_on_provided(&["module", "target"]) {
-        let computed = compute_module_detection(&eff_module);
-        if computed != DEFAULT_MODULE_DETECTION {
-            map.insert("moduleDetection".into(), Value::String(computed.into()));
-        }
-    }
-
-    // --- useDefineForClassFields: deps=["target","module"] ---
-    if !provided.contains("useDefineForClassFields") && depends_on_provided(&["target", "module"]) {
-        let computed = user_target.supports_es2022();
-        let default_val = DEFAULT_TARGET.supports_es2022(); // true
-        if computed != default_val {
-            map.insert("useDefineForClassFields".into(), Value::Bool(computed));
-        }
-    }
-
-    // --- esModuleInterop: deps=[] ---
-    // No deps, so only shown if explicitly set (already in map)
-
-    // --- allowSyntheticDefaultImports: deps=[] ---
-    // No deps, so only shown if explicitly set (already in map)
-
-    // --- declaration: deps=["composite"] ---
-    if !provided.contains("declaration") && depends_on_provided(&["composite"]) {
-        let user_decl = map
-            .get("declaration")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let computed = user_decl || user_composite;
-        let default_val = false; // default declaration = false, default composite = false
-        if computed != default_val {
-            map.insert("declaration".into(), Value::Bool(computed));
-        }
-    }
-
-    // --- incremental: deps=["composite"] ---
-    if !provided.contains("incremental") && depends_on_provided(&["composite"]) {
-        let user_incr = map
-            .get("incremental")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let computed = user_incr || user_composite;
-        let default_val = false;
-        if computed != default_val {
-            map.insert("incremental".into(), Value::Bool(computed));
-        }
-    }
-
-    // --- strict sub-flags: deps=["strict"] ---
-    // tsc 6.0 keeps `strict: true` compact in --showConfig output. Explicit
-    // strict sub-options are already present in `map`, but the aggregate
-    // `strict` flag no longer expands every sub-option here.
-
-    // --- isolatedModules: deps=["verbatimModuleSyntax"] ---
-    if !provided.contains("isolatedModules") && depends_on_provided(&["verbatimModuleSyntax"]) {
-        let computed = user_isolated_modules || user_verbatim;
-        let default_val = false;
-        if computed != default_val {
-            map.insert("isolatedModules".into(), Value::Bool(computed));
-        }
-    }
-
-    // --- allowJs: deps=["checkJs"] ---
-    if !provided.contains("allowJs") && depends_on_provided(&["checkJs"]) {
-        let user_allow_js = map
-            .get("allowJs")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        // allowJs ?? checkJs
-        let computed = if provided.contains("allowJs") {
-            user_allow_js
-        } else {
-            user_check_js
-        };
-        let default_val = false;
-        if computed != default_val {
-            map.insert("allowJs".into(), Value::Bool(computed));
-        }
-    }
-
-    // --- preserveConstEnums: deps=["isolatedModules","verbatimModuleSyntax"] ---
-    if !provided.contains("preserveConstEnums")
-        && depends_on_provided(&["isolatedModules", "verbatimModuleSyntax"])
-    {
-        let user_preserve = map
-            .get("preserveConstEnums")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let computed = user_preserve || user_isolated_modules || user_verbatim;
-        let default_val = false;
-        if computed != default_val {
-            map.insert("preserveConstEnums".into(), Value::Bool(computed));
-        }
-    }
-
-    // --- declarationMap: deps=["declaration","composite"] ---
-    if !provided.contains("declarationMap") && depends_on_provided(&["declaration", "composite"]) {
-        let user_decl_map = map
-            .get("declarationMap")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let eff_declaration = map
-            .get("declaration")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let computed = user_decl_map && eff_declaration;
-        let default_val = false;
-        if computed != default_val {
-            map.insert("declarationMap".into(), Value::Bool(computed));
-        }
-    }
-
-    // --- allowImportingTsExtensions: deps=["rewriteRelativeImportExtensions"] ---
-    if !provided.contains("allowImportingTsExtensions")
-        && depends_on_provided(&["rewriteRelativeImportExtensions"])
-    {
-        let user_allow = map
-            .get("allowImportingTsExtensions")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let computed = user_allow || user_rewrite_relative;
-        let default_val = false;
-        if computed != default_val {
-            map.insert("allowImportingTsExtensions".into(), Value::Bool(computed));
-        }
-    }
-
-    // --- resolveJsonModule: deps=["moduleResolution","module","target"] ---
-    // Complex logic; for now skip unless we need it. tsc computes this based on
-    // whether moduleResolution >= Node16. The default (bundler) resolves to true.
-    // Only show if computed != default.
-    if !provided.contains("resolveJsonModule")
-        && depends_on_provided(&["moduleResolution", "module", "target"])
-    {
-        let user_resolve_json = map.get("resolveJsonModule").and_then(|v| v.as_bool());
-        // tsc 6.0 shows the empty-config default as true (bundler), but node16
-        // and legacy resolution compute false while nodenext/bundler compute true.
-        let eff_mr = map
-            .get("moduleResolution")
-            .and_then(|v| v.as_str())
-            .unwrap_or(DEFAULT_MODULE_RESOLUTION);
-        let mr_implies_json = matches!(eff_mr.to_lowercase().as_str(), "nodenext" | "bundler");
-        let computed = user_resolve_json.unwrap_or(mr_implies_json);
-        // default: bundler implies true
-        let default_mr_implies = matches!(
-            DEFAULT_MODULE_RESOLUTION.to_lowercase().as_str(),
-            "node16" | "nodenext" | "bundler"
-        );
-        let default_val = default_mr_implies; // true
-        if computed != default_val {
-            map.insert("resolveJsonModule".into(), Value::Bool(computed));
-        }
-    }
-
-    // --- resolvePackageJsonExports: deps=["moduleResolution","module","target"] ---
-    if !provided.contains("resolvePackageJsonExports")
-        && depends_on_provided(&["moduleResolution", "module", "target"])
-    {
-        let user_val = map
-            .get("resolvePackageJsonExports")
-            .and_then(|v| v.as_bool());
-        let eff_mr = map
-            .get("moduleResolution")
-            .and_then(|v| v.as_str())
-            .unwrap_or(DEFAULT_MODULE_RESOLUTION);
-        let mr_implies = matches!(
-            eff_mr.to_lowercase().as_str(),
-            "node16" | "nodenext" | "bundler"
-        );
-        let computed = user_val.unwrap_or(mr_implies);
-        let default_val = true; // bundler implies true
-        if computed != default_val {
-            map.insert("resolvePackageJsonExports".into(), Value::Bool(computed));
-        }
-    }
-
-    // --- resolvePackageJsonImports: deps=["moduleResolution","resolvePackageJsonExports","module","target"] ---
-    if !provided.contains("resolvePackageJsonImports")
-        && depends_on_provided(&[
-            "moduleResolution",
-            "resolvePackageJsonExports",
-            "module",
-            "target",
-        ])
-    {
-        let user_val = map
-            .get("resolvePackageJsonImports")
-            .and_then(|v| v.as_bool());
-        let eff_mr = map
-            .get("moduleResolution")
-            .and_then(|v| v.as_str())
-            .unwrap_or(DEFAULT_MODULE_RESOLUTION);
-        let mr_implies = matches!(
-            eff_mr.to_lowercase().as_str(),
-            "node16" | "nodenext" | "bundler"
-        );
-        let computed = user_val.unwrap_or(mr_implies);
-        let default_val = true; // bundler implies true
-        if computed != default_val {
-            map.insert("resolvePackageJsonImports".into(), Value::Bool(computed));
-        }
-    }
-}
-
-/// Format a JSON key-value pair for --showConfig output with proper indentation.
-/// `indent` is the current indentation level (number of spaces for the key line).
-fn format_json_value_with_indent(key: &str, value: &serde_json::Value, indent: usize) -> String {
-    let formatted_value = format_json_value(value, indent);
-    format!("\"{key}\": {formatted_value}")
-}
-
-/// Format a `serde_json::Value` for --showConfig output.
-/// `indent` is the indentation level of the line containing this value.
-/// Arrays and objects are formatted multi-line with items at indent+4 and
-/// closing bracket at indent.
-fn format_json_value(value: &serde_json::Value, indent: usize) -> String {
-    match value {
-        serde_json::Value::String(s) => format!("\"{s}\""),
-        serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Array(arr) => {
-            if arr.is_empty() {
-                "[]".to_string()
-            } else {
-                let item_indent = indent + 4;
-                let item_pad = " ".repeat(item_indent);
-                let close_pad = " ".repeat(indent);
-                let mut result = String::from("[\n");
-                for (i, item) in arr.iter().enumerate() {
-                    result.push_str(&item_pad);
-                    result.push_str(&format_json_value(item, item_indent));
-                    if i + 1 < arr.len() {
-                        result.push(',');
-                    }
-                    result.push('\n');
-                }
-                result.push_str(&close_pad);
-                result.push(']');
-                result
-            }
-        }
-        serde_json::Value::Object(map) => {
-            if map.is_empty() {
-                "{}".to_string()
-            } else {
-                let item_indent = indent + 4;
-                let item_pad = " ".repeat(item_indent);
-                let close_pad = " ".repeat(indent);
-                let mut result = String::from("{\n");
-                let entries: Vec<_> = map.iter().collect();
-                for (i, (k, v)) in entries.iter().enumerate() {
-                    result.push_str(&item_pad);
-                    result.push_str(&format!("\"{}\": {}", k, format_json_value(v, item_indent)));
-                    if i + 1 < entries.len() {
-                        result.push(',');
-                    }
-                    result.push('\n');
-                }
-                result.push_str(&close_pad);
-                result.push('}');
-                result
-            }
-        }
-        serde_json::Value::Null => "null".to_string(),
-    }
 }
 
 fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
@@ -4306,6 +3564,9 @@ fn handle_build_single_project(
 
     Ok(())
 }
+
+#[path = "tsz/show_config.rs"]
+mod show_config;
 
 #[cfg(test)]
 #[path = "tsz/tests.rs"]

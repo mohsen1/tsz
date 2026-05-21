@@ -2,6 +2,7 @@
 //!
 //! Provides shared extraction and parsing for hover and signature help.
 
+pub mod inline_links;
 pub mod markdown_escape;
 
 pub use markdown_escape::{escape_markdown_label, format_inline_code};

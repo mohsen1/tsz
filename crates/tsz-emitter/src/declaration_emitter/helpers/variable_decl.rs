@@ -398,7 +398,7 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = jsdoc_type_text.as_deref()
             {
                 self.write(": ");
-                self.write(&Self::format_jsdoc_type_text_for_declaration(type_text));
+                self.write(&self.jsdoc_type_text_for_declaration_emit(type_text));
             } else if self.source_is_js_file
                 && has_initializer
                 && let Some(type_text) = self.js_special_initializer_type_text(initializer)
@@ -660,7 +660,9 @@ impl<'a> DeclarationEmitter<'a> {
                     .arena
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
-                && let Some(type_text) = self.preferred_expression_type_text(initializer)
+                && let Some(type_text) = self
+                    .short_circuit_expression_type_text(initializer)
+                    .or_else(|| self.preferred_expression_type_text(initializer))
             {
                 self.write(": ");
                 self.write(&type_text);

@@ -98,6 +98,10 @@ name = "tuple_infer_mapped_recursive_tests"
 path = "tests/tuple_infer_mapped_recursive_tests.rs"
 
 [[test]]
+name = "reverse_mapped_inference_tests"
+path = "tests/reverse_mapped_inference_tests.rs"
+
+[[test]]
 name = "recursive_alias_resolution_tests"
 path = "tests/recursive_alias_resolution_tests.rs"
 
@@ -352,6 +356,10 @@ path = "tests/reserved_await_multiple_ts1262_tests.rs"
 [[test]]
 name = "interface_heritage_display_tests"
 path = "tests/interface_heritage_display_tests.rs"
+
+[[test]]
+name = "ts2430_tests"
+path = "tests/ts2430_tests.rs"
 
 [[test]]
 name = "ts2540_readonly_tests"
@@ -1394,8 +1402,16 @@ name = "static_readonly_unique_symbol_tests"
 path = "tests/static_readonly_unique_symbol_tests.rs"
 
 [[test]]
+name = "ts2542_readonly_index_coemission_tests"
+path = "tests/ts2542_readonly_index_coemission_tests.rs"
+
+[[test]]
 name = "issue_7681_super_decorator_tests"
 path = "tests/issue_7681_super_decorator_tests.rs"
+
+[[test]]
+name = "decorator_this_binding_tests"
+path = "tests/decorator_this_binding_tests.rs"
 
 [[test]]
 name = "index_signature_argument_assignability_tests"
@@ -1444,6 +1460,10 @@ path = "tests/ts2321_ts2859_tests.rs"
 [[test]]
 name = "deeply_nested_conditional_mapped_recursion_tests"
 path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
+
+[[test]]
+name = "type_parameter_canonical_typeid_tests"
+path = "tests/type_parameter_canonical_typeid_tests.rs"
 
 [lints]
 workspace = true

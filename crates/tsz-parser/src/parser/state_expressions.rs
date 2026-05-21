@@ -1917,8 +1917,8 @@ impl ParserState {
                 || self.is_token(SyntaxKind::MinusMinusToken))
         {
             let operator = self.token() as u16;
-            self.next_token();
             let end_pos = self.token_end();
+            self.next_token();
 
             expr = self.arena.add_unary_expr(
                 syntax_kind_ext::POSTFIX_UNARY_EXPRESSION,
@@ -1940,22 +1940,6 @@ impl ParserState {
         let mut expr = self.parse_primary_expression();
 
         loop {
-            if (self.context_flags & crate::parser::state::CONTEXT_FLAG_CLASS_FIELD_INITIALIZER)
-                != 0
-                && self.scanner.has_preceding_line_break()
-                && matches!(
-                    self.token(),
-                    SyntaxKind::OpenBracketToken
-                        | SyntaxKind::OpenParenToken
-                        | SyntaxKind::DotToken
-                        | SyntaxKind::QuestionDotToken
-                        | SyntaxKind::NoSubstitutionTemplateLiteral
-                        | SyntaxKind::TemplateHead
-                )
-            {
-                break;
-            }
-
             match self.token() {
                 SyntaxKind::DotToken => {
                     let missing_name_pos = self.token_end();

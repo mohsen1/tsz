@@ -1346,6 +1346,21 @@ impl<'a> Printer<'a> {
         self.emit_plan = plan;
     }
 
+    /// Seed a nested printer with outer function-scope names that nested
+    /// block-scoped declarations must not capture when lowered to ES5 `var`.
+    pub(crate) fn seed_function_scope_shadowed_names(&mut self, names: &[String]) {
+        if names.is_empty() {
+            return;
+        }
+
+        self.ctx.block_scope_state.enter_function_scope();
+        for name in names {
+            self.ctx
+                .block_scope_state
+                .register_function_scope_shadowed_name(name);
+        }
+    }
+
     #[must_use]
     pub const fn emit_plan(&self) -> &EmitPlan {
         &self.emit_plan
@@ -1376,6 +1391,11 @@ impl<'a> Printer<'a> {
     /// transforms automatically.
     pub const fn set_auto_detect_module(&mut self, enabled: bool) {
         self.ctx.auto_detect_module = enabled;
+    }
+
+    /// Mark this printer as emitting a `--module none --outFile` bundle.
+    pub const fn set_module_none_out_file(&mut self, enabled: bool) {
+        self.ctx.module_none_out_file = enabled;
     }
 
     /// Set the source text (for detecting single-line constructs).

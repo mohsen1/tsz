@@ -22,8 +22,19 @@ type DuplicateDeclList = Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOr
 pub(super) enum DuplicateDeclarationOrigin {
     SymbolDeclaration,
     TargetedModuleAugmentation,
+    CurrentFileAugmentationTargetExport(usize),
     /// Remote declaration from a cross-file UMD global / `declare global` conflict.
     GlobalScopeConflict,
+}
+
+impl DuplicateDeclarationOrigin {
+    pub(super) const fn is_targeted_module_augmentation(self) -> bool {
+        matches!(
+            self,
+            DuplicateDeclarationOrigin::TargetedModuleAugmentation
+                | DuplicateDeclarationOrigin::CurrentFileAugmentationTargetExport(_)
+        )
+    }
 }
 
 impl<'a> CheckerState<'a> {
@@ -633,26 +644,9 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            // Find the implementation (function with body) — used as reference
-            // for modifier agreement checks. tsc uses the implementation's flags.
-            let impl_decl_idx = func_decls_for_2384.iter().copied().find(|&d| {
-                self.function_has_body(d)
-                    || self
-                        .ctx
-                        .arena
-                        .get(d)
-                        .and_then(|n| self.ctx.arena.get_method_decl(n))
-                        .is_some_and(|m| m.body.is_some())
-            });
-
             if has_ambient_func && has_non_ambient_func {
-                let ref_is_ambient = impl_decl_idx
-                    .map(|d| self.is_ambient_declaration(d))
-                    .unwrap_or_else(|| self.is_ambient_declaration(func_decls_for_2384[0]));
+                let ref_is_ambient = self.is_ambient_declaration(func_decls_for_2384[0]);
                 for &decl_idx in &func_decls_for_2384 {
-                    if Some(decl_idx) == impl_decl_idx {
-                        continue;
-                    }
                     if self.is_ambient_declaration(decl_idx) != ref_is_ambient {
                         let error_node =
                             self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
@@ -665,34 +659,32 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // TS2383: Overload signatures must all be exported or non-exported
+            // TS2383: all bodyless overload signatures must agree on export status.
+            // The rule applies when 2+ overload signatures exist; the implementation
+            // is not an overload signature and is not checked for export agreement.
             if func_decls_for_2384.len() >= 2 {
-                let mut has_exported = false;
-                let mut has_non_exported = false;
-                let mut func_export_info: Vec<(NodeIndex, bool)> = Vec::new();
-                for &(decl_idx, flags, is_local, is_exported, _) in &declarations {
-                    if is_local && (flags & (symbol_flags::FUNCTION | symbol_flags::METHOD)) != 0 {
-                        func_export_info.push((decl_idx, is_exported));
-                        if is_exported {
-                            has_exported = true;
-                        } else {
-                            has_non_exported = true;
-                        }
-                    }
-                }
-                if has_exported && has_non_exported && func_export_info.len() >= 2 {
-                    let ref_exported = impl_decl_idx
-                        .and_then(|d| {
-                            func_export_info
-                                .iter()
-                                .find(|(idx, _)| *idx == d)
-                                .map(|(_, e)| *e)
-                        })
-                        .unwrap_or(func_export_info[0].1);
+                // Restrict to bodyless overload signatures only by looking up export
+                // status for each entry in func_decls_for_2384. The implementation
+                // (absent from func_decls_for_2384) must not influence the check.
+                let func_export_info: Vec<(NodeIndex, bool)> = func_decls_for_2384
+                    .iter()
+                    .filter_map(|&decl_idx| {
+                        declarations
+                            .iter()
+                            .find(|&&(di, _, _, _, _)| di == decl_idx)
+                            .map(|&(di, _, _, is_exported, _)| (di, is_exported))
+                    })
+                    .collect();
+                let (has_exported, has_non_exported) = func_export_info
+                    .iter()
+                    .fold((false, false), |(exp, non_exp), &(_, e)| {
+                        (exp || e, non_exp || !e)
+                    });
+                // has_exported && has_non_exported already implies len >= 2
+                if has_exported && has_non_exported {
+                    // declarations is ordered, so [0] is always the first overload signature.
+                    let ref_exported = func_export_info[0].1;
                     for &(decl_idx, is_exported) in &func_export_info {
-                        if Some(decl_idx) == impl_decl_idx {
-                            continue;
-                        }
                         if is_exported != ref_exported {
                             let error_node =
                                 self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
@@ -713,15 +705,10 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&decl_idx| (decl_idx, self.get_access_modifier(decl_idx)))
                     .collect();
-                let ref_access = impl_decl_idx
-                    .map(|d| self.get_access_modifier(d))
-                    .unwrap_or(access_infos[0].1);
+                let ref_access = access_infos[0].1;
                 let has_mismatch = access_infos.iter().any(|(_, a)| *a != ref_access);
                 if has_mismatch {
                     for &(decl_idx, access) in &access_infos {
-                        if Some(decl_idx) == impl_decl_idx {
-                            continue;
-                        }
                         if access != ref_access {
                             // TSC anchors TS2385 at the start of the overload declaration
                             // (including modifiers), not at the declaration name.
@@ -753,15 +740,10 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&decl_idx| (decl_idx, self.is_declaration_optional(decl_idx)))
                     .collect();
-                let ref_optional = impl_decl_idx
-                    .map(|d| self.is_declaration_optional(d))
-                    .unwrap_or(optional_infos[0].1);
+                let ref_optional = optional_infos[0].1;
                 let has_mismatch = optional_infos.iter().any(|(_, o)| *o != ref_optional);
                 if has_mismatch {
                     for &(decl_idx, optional) in &optional_infos {
-                        if Some(decl_idx) == impl_decl_idx {
-                            continue;
-                        }
                         if optional != ref_optional {
                             let error_node =
                                 self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
@@ -1232,8 +1214,8 @@ impl<'a> CheckerState<'a> {
                     // conflict with an augmentation of that same source module).
                     // Property-vs-method mismatches are handled by the dedicated cross-file
                     // interface-member conflict pass above.
-                    if (decl_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
-                        || other_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation)
+                    if (decl_origin.is_targeted_module_augmentation()
+                        || other_origin.is_targeted_module_augmentation())
                         && (((decl_flags & symbol_flags::INTERFACE) != 0
                             && (other_flags & symbol_flags::INTERFACE) != 0)
                             || ((decl_flags & symbol_flags::FUNCTION) != 0

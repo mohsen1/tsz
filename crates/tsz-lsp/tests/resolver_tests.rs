@@ -2,21 +2,30 @@ use crate::resolver::ScopeWalker;
 use tsz_binder::{BinderState, symbol_flags};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_scanner::SyntaxKind;
-fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
+fn bind_test_source(
+    source: &str,
+) -> (
+    tsz_parser::ParserState,
+    tsz_parser::parser::NodeIndex,
+    BinderState,
+) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    (parser, root)
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    (parser, root, binder)
 }
 
 #[test]
 fn test_resolve_simple_variable() {
     // const x = 1; x + 1;
     let source = "const x = 1; x + 1;";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // Should have a symbol for 'x'
     assert!(binder.file_locals.get("x").is_some());
@@ -30,11 +39,9 @@ export { foo as "__<alias>" };
 import { "__<alias>" as bar } from "./foo";
 bar;
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, mut binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let literal_nodes: Vec<_> = arena
         .nodes
@@ -99,11 +106,9 @@ bar;
 #[test]
 fn test_resolve_function_name() {
     let source = "function greet() {}\ngreet();";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // Should have a symbol for 'greet'
     assert!(
@@ -116,11 +121,9 @@ fn test_resolve_function_name() {
 fn test_resolve_variable_in_nested_scope() {
     // Variable declared inside a function body
     let source = "function outer() {\n  const inner = 1;\n  return inner;\n}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // 'outer' should be in file_locals
     assert!(
@@ -137,11 +140,9 @@ fn test_resolve_variable_in_nested_scope() {
 #[test]
 fn test_resolve_class_name() {
     let source = "class MyClass {\n  method() {}\n}\nconst c = new MyClass();";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("MyClass").is_some(),
@@ -156,11 +157,9 @@ fn test_resolve_class_name() {
 #[test]
 fn test_resolve_interface_name() {
     let source = "interface IFoo {\n  bar: string;\n}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("IFoo").is_some(),
@@ -171,11 +170,9 @@ fn test_resolve_interface_name() {
 #[test]
 fn test_resolve_enum_name() {
     let source = "enum Color {\n  Red,\n  Green,\n  Blue\n}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Color").is_some(),
@@ -187,11 +184,9 @@ fn test_resolve_enum_name() {
 fn test_resolve_parameter_stays_in_function_scope() {
     // Parameters should be scoped to their function, not in file_locals
     let source = "function add(a: number, b: number) { return a + b; }";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("add").is_some(),
@@ -212,11 +207,9 @@ fn test_resolve_parameter_stays_in_function_scope() {
 fn test_scope_walker_resolve_identifier_usage() {
     // Use ScopeWalker to resolve an identifier usage back to its declaration
     let source = "const x = 10;\nconst y = x + 1;";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let x_symbol = binder.file_locals.get("x").expect("x should be bound");
 
@@ -250,11 +243,9 @@ fn test_scope_walker_resolve_identifier_usage() {
 #[test]
 fn test_find_references_variable_multiple_usages() {
     let source = "const val = 1;\nconst a = val;\nconst b = val;\nconst c = val;";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let val_symbol = binder.file_locals.get("val").expect("val should be bound");
 
@@ -273,11 +264,9 @@ fn test_find_references_variable_multiple_usages() {
 #[test]
 fn test_find_references_function_multiple_calls() {
     let source = "function doWork() {}\ndoWork();\ndoWork();\ndoWork();";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let fn_symbol = binder
         .file_locals
@@ -298,11 +287,9 @@ fn test_find_references_function_multiple_calls() {
 #[test]
 fn test_no_resolution_for_undefined_symbol() {
     let source = "const x = 1;";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // 'nonexistent' is not declared anywhere
     assert!(
@@ -314,11 +301,9 @@ fn test_no_resolution_for_undefined_symbol() {
 #[test]
 fn test_resolve_type_alias_name() {
     let source = "type StringOrNumber = string | number;";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("StringOrNumber").is_some(),
@@ -336,11 +321,9 @@ fn test_resolve_node_cached_returns_same_as_uncached() {
     use rustc_hash::FxHashMap;
 
     let source = "const x = 10;\nconst y = x + 1;";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let x_symbol = binder.file_locals.get("x").expect("x should be bound");
 
@@ -383,11 +366,9 @@ fn test_resolve_node_cached_hits_on_second_call() {
     use rustc_hash::FxHashMap;
 
     let source = "const x = 10;\nconst y = x + 1;";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let x_usage = arena
         .nodes
@@ -425,11 +406,9 @@ fn test_resolve_node_cached_hits_on_second_call() {
 #[test]
 fn test_get_scope_chain_at_file_level() {
     let source = "const a = 1;\nconst b = 2;";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find the identifier 'b' in the declaration
     let b_node = arena
@@ -466,11 +445,9 @@ fn test_get_scope_chain_at_file_level() {
 #[test]
 fn test_get_scope_chain_inside_function() {
     let source = "const outer = 1;\nfunction foo() {\n  const inner = 2;\n  return inner;\n}";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find the 'inner' usage in 'return inner;'
     let inner_nodes: Vec<_> = arena
@@ -518,11 +495,9 @@ fn test_get_scope_chain_cached_returns_same_as_uncached() {
     use rustc_hash::FxHashMap;
 
     let source = "const x = 1;\nfunction f() { const y = x; }";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find 'y' identifier
     let y_node = arena
@@ -576,11 +551,9 @@ function foo() {
     return hoisted;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find the 'hoisted' usage in 'return hoisted;'
     let hoisted_nodes: Vec<_> = arena
@@ -623,11 +596,9 @@ const fn1 = (x: number) => {
     return inner;
 };
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // 'outer' and 'fn1' should be in file_locals
     assert!(
@@ -657,11 +628,9 @@ for (let i = 0; i < 10; i++) {
     const x = i;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // 'i' and 'x' should NOT be in file_locals (scoped to the for loop)
     assert!(
@@ -682,11 +651,9 @@ for (const key in obj) {
     const val = key;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("obj").is_some(),
@@ -707,11 +674,9 @@ try {
     const msg = err;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // Neither 'a', 'err', nor 'msg' should be in file_locals
     assert!(
@@ -738,11 +703,9 @@ function factory() {
     return new Inner();
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("factory").is_some(),
@@ -765,11 +728,9 @@ function foo() {
 }
 const y = x;
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let outer_x = binder
         .file_locals
@@ -807,11 +768,9 @@ const y = x;
 #[test]
 fn test_find_references_no_matching_references() {
     let source = "const x = 1;\nconst y = 2;";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, mut binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Create a symbol that doesn't appear in the source
     let fake_symbol = binder
@@ -841,11 +800,9 @@ function bar() {
     return x;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // 'foo' and 'bar' should be in file_locals
     assert!(binder.file_locals.get("foo").is_some());
@@ -866,11 +823,9 @@ namespace MyModule {
     const internal = "hidden";
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("MyModule").is_some(),
@@ -893,11 +848,9 @@ fn test_export_declaration_resolution() {
 export const exported = 1;
 export function exportedFn() {}
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("exported").is_some(),
@@ -923,11 +876,9 @@ fn test_resolve_node_for_declaration_node_directly() {
     // When resolve_node is called on a declaration node, it should return
     // the symbol directly from node_symbols without walking
     let source = "const directDecl = 42;";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let decl_symbol = binder
         .file_locals
@@ -967,11 +918,9 @@ for (const item of items) {
     const doubled = item * 2;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("items").is_some(),
@@ -1002,11 +951,9 @@ if (true) {
 }
 const z = x;
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let outer_x = binder
         .file_locals
@@ -1054,11 +1001,9 @@ function test() {
     return a + b;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // 'a' and 'b' should NOT be in file_locals (they're hoisted to function scope, not file)
     assert!(
@@ -1108,11 +1053,9 @@ try {
 }
 const result = e;
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let outer_e = binder
         .file_locals
@@ -1157,11 +1100,9 @@ class Foo {
 }
 const z = x;
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // 'x', 'Foo', 'z' should be in file_locals; 'y' should not
     assert!(binder.file_locals.get("x").is_some());
@@ -1180,11 +1121,9 @@ fn test_multiple_functions_same_named_parameters() {
 function foo(x: number) { return x; }
 function bar(x: string) { return x; }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     assert!(binder.file_locals.get("foo").is_some());
     assert!(binder.file_locals.get("bar").is_some());
@@ -1234,11 +1173,9 @@ const outer = 1;
 const fn1 = (a: number, b: number) => a + b;
 const fn2 = (a: string) => a;
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(binder.file_locals.get("outer").is_some());
     assert!(binder.file_locals.get("fn1").is_some());
@@ -1260,11 +1197,9 @@ export function exported() { return 1; }
 export class ExportedClass {}
 export interface ExportedInterface { x: number; }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("exported").is_some(),
@@ -1290,11 +1225,9 @@ namespace Outer {
     const local = 2;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Outer").is_some(),
@@ -1329,11 +1262,9 @@ class MyClass {
     }
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("MyClass").is_some(),
@@ -1367,11 +1298,9 @@ class Counter {
     }
 }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Counter").is_some(),
@@ -1415,11 +1344,9 @@ for (const key in obj) {
     const value = obj[key];
 }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find the 'key' usage inside the for-in body (in obj[key])
     let key_nodes: Vec<_> = arena
@@ -1460,11 +1387,9 @@ for (const item of items) {
     const doubled = item * 2;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find the 'item' usage inside the for-of body
     let item_nodes: Vec<_> = arena
@@ -1511,11 +1436,9 @@ function outer() {
     }
 }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find the 'd' identifier in the return statement
     let d_nodes: Vec<_> = arena
@@ -1555,11 +1478,9 @@ fn test_resolve_node_cached_with_none_stats() {
     use rustc_hash::FxHashMap;
 
     let source = "const x = 10;\nconst y = x + 1;";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let x_usage = arena
         .nodes
@@ -1593,11 +1514,9 @@ fn test_resolve_node_cached_with_none_stats() {
 fn test_resolve_non_identifier_node() {
     // Resolving a node that is not an identifier should return None
     let source = "const x = 1 + 2;";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find a numeric literal node
     let numeric_node = arena.nodes.iter().enumerate().find_map(|(idx, node)| {
@@ -1627,11 +1546,9 @@ function foo() { return shared; }
 function bar() { return shared + 1; }
 const baz = () => shared;
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let shared_symbol = binder
         .file_locals
@@ -1655,11 +1572,9 @@ fn test_scope_chain_cached_second_call_hits() {
     use rustc_hash::FxHashMap;
 
     let source = "function f() { const a = 1; }";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let a_node = arena
         .nodes
@@ -1710,11 +1625,9 @@ function outer() {
     return deepVar;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("deepVar").is_none(),
@@ -1732,11 +1645,9 @@ try {
     console.log(message, code);
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // None of the catch-scoped variables should leak to file_locals
     assert!(
@@ -1759,11 +1670,9 @@ fn test_resolve_node_cached_for_non_identifier() {
     use rustc_hash::FxHashMap;
 
     let source = "const x = 123;";
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find a numeric literal
     let num_node = arena
@@ -1800,11 +1709,9 @@ class Foo {
     }
 }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find the 'local' usage in 'return local;'
     let local_nodes: Vec<_> = arena
@@ -1848,11 +1755,9 @@ class Foo {
 #[test]
 fn test_resolve_type_alias_in_file_locals() {
     let source = "type Callback = () => void;\ntype Result<T> = { ok: T };";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Callback").is_some(),
@@ -1867,11 +1772,9 @@ fn test_resolve_type_alias_in_file_locals() {
 #[test]
 fn test_const_enum_in_file_locals() {
     let source = "const enum Direction { Up, Down, Left, Right }";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Direction").is_some(),
@@ -1887,11 +1790,9 @@ while (true) {
     break;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("loopVar").is_none(),
@@ -1906,11 +1807,9 @@ do {
     const doVar = 1;
 } while (false);
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("doVar").is_none(),
@@ -1932,11 +1831,9 @@ switch (x) {
     }
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("x").is_some(),
@@ -1961,11 +1858,9 @@ if (true) {
     const elseVar = 2;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("ifVar").is_none(),
@@ -1984,11 +1879,9 @@ const fn1 = function namedExpr() {
     return namedExpr;
 };
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("fn1").is_some(),
@@ -2004,11 +1897,9 @@ const fn1 = function namedExpr() {
 #[test]
 fn test_multiple_declarations_same_scope() {
     let source = "const a = 1;\nlet b = 2;\nvar c = 3;\nfunction d() {}\nclass E {}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(binder.file_locals.get("a").is_some());
     assert!(binder.file_locals.get("b").is_some());
@@ -2024,11 +1915,9 @@ class MyClass {}
 const a: MyClass = new MyClass();
 function foo(x: MyClass) {}
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     let class_symbol = binder
         .file_locals
@@ -2055,11 +1944,9 @@ const fn1 = (x: number) => {
     return inner;
 };
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find the 'inner' usage in 'return inner;'
     let inner_nodes: Vec<_> = arena
@@ -2106,11 +1993,9 @@ try {
     const finallyVar = 2;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("tryVar").is_none(),
@@ -2129,11 +2014,9 @@ try {
 #[test]
 fn test_resolve_interface_in_file_locals() {
     let source = "interface Foo { x: number; }\ninterface Bar extends Foo {}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Foo").is_some(),
@@ -2148,11 +2031,9 @@ fn test_resolve_interface_in_file_locals() {
 #[test]
 fn test_resolve_enum_members_not_in_file_locals() {
     let source = "enum Direction { Up, Down, Left, Right }";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Direction").is_some(),
@@ -2168,11 +2049,9 @@ fn test_resolve_enum_members_not_in_file_locals() {
 #[test]
 fn test_resolve_class_in_file_locals() {
     let source = "class Animal { name: string = ''; }\nclass Dog extends Animal {}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Animal").is_some(),
@@ -2193,11 +2072,9 @@ outer: for (let i = 0; i < 10; i++) {
     }
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // Loop variables should be block-scoped and not in file_locals
     assert!(
@@ -2216,11 +2093,9 @@ fn test_resolve_variable_in_template_literal() {
 const name = "world";
 const greeting = `hello ${name}`;
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     assert!(
         binder.file_locals.get("name").is_some(),
@@ -2261,11 +2136,9 @@ const greeting = `hello ${name}`;
 #[test]
 fn test_resolve_default_parameter_value() {
     let source = "function greet(name: string = 'world') { return name; }";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("greet").is_some(),
@@ -2282,11 +2155,9 @@ fn test_resolve_default_parameter_value() {
 #[test]
 fn test_resolve_rest_parameter() {
     let source = "function sum(...nums: number[]) { return nums.reduce((a, b) => a + b, 0); }";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("sum").is_some(),
@@ -2308,11 +2179,9 @@ interface Config {
 const cfg: Config = { host: "localhost", port: 3000 };
 function setup(c: Config) {}
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     if let Some(config_symbol) = binder.file_locals.get("Config") {
         let mut walker = ScopeWalker::new(arena, &binder);
@@ -2336,11 +2205,9 @@ function foo() {
     return hoisted;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // 'hoisted' should NOT be in file_locals (var hoists to function, not file)
     assert!(
@@ -2355,11 +2222,9 @@ fn test_resolve_computed_property_no_crash() {
 const key = "hello";
 const obj = { [key]: 1 };
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     assert!(
         binder.file_locals.get("key").is_some(),
@@ -2400,11 +2265,9 @@ const obj = { [key]: 1 };
 #[test]
 fn test_namespace_members_in_file_locals() {
     let source = "namespace MyNS { export const inner = 1; }";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("MyNS").is_some(),
@@ -2429,11 +2292,9 @@ const outer = () => {
     };
 };
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find the 'c' usage in return statement
     let c_nodes: Vec<_> = arena
@@ -2475,11 +2336,9 @@ const outer = () => {
 #[test]
 fn test_resolve_empty_source() {
     let source = "";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // No file_locals should exist in an empty file
     assert!(
@@ -2491,11 +2350,9 @@ fn test_resolve_empty_source() {
 #[test]
 fn test_resolve_destructuring_array_declaration() {
     let source = "const [first, second, ...rest] = [1, 2, 3, 4, 5];";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // Array destructured variables should be in file_locals
     if let Some(_sym) = binder.file_locals.get("first") {
@@ -2508,11 +2365,9 @@ fn test_resolve_destructuring_array_declaration() {
 #[test]
 fn test_resolve_destructuring_object_declaration() {
     let source = "const { name, age } = { name: 'Alice', age: 30 };";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // Object destructured variables should be in file_locals
     if let Some(_sym) = binder.file_locals.get("name") {
@@ -2526,11 +2381,9 @@ fn test_resolve_destructuring_object_declaration() {
 #[test]
 fn test_abstract_class_in_file_locals() {
     let source = "abstract class Shape {\n  abstract area(): number;\n}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Shape").is_some(),
@@ -2541,11 +2394,9 @@ fn test_abstract_class_in_file_locals() {
 #[test]
 fn test_class_with_private_constructor_in_file_locals() {
     let source = "class Singleton {\n  private static instance: Singleton;\n  private constructor() {}\n  static getInstance() { return new Singleton(); }\n}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Singleton").is_some(),
@@ -2561,11 +2412,9 @@ const result = (() => {
     return inner;
 })();
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("result").is_some(),
@@ -2587,11 +2436,9 @@ function foo() {
     return x;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("foo").is_some(),
@@ -2607,11 +2454,9 @@ function foo() {
 #[test]
 fn test_resolve_export_default_class() {
     let source = "export default class DefaultClass {\n  value = 1;\n}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     // The class name should be in file_locals
     if let Some(_sym) = binder.file_locals.get("DefaultClass") {
@@ -2628,11 +2473,9 @@ class MathUtils {
     static multiply(a: number, b: number) { return a * b; }
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("MathUtils").is_some(),
@@ -2656,11 +2499,9 @@ enum Status { Active, Inactive }
 const s: Status = Status.Active;
 function check(status: Status) { return status; }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     if let Some(status_symbol) = binder.file_locals.get("Status") {
         let mut walker = ScopeWalker::new(arena, &binder);
@@ -2685,11 +2526,9 @@ class Counter {
     }
 }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find 'temp' usage in 'return temp;'
     let temp_nodes: Vec<_> = arena
@@ -2730,11 +2569,9 @@ class Counter {
 #[test]
 fn test_resolve_const_enum_name() {
     let source = "const enum Direction { Up, Down, Left, Right }";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Direction").is_some(),
@@ -2746,11 +2583,9 @@ fn test_resolve_const_enum_name() {
 fn test_resolve_generic_class_name() {
     let source =
         "class Container<T> {\n  value: T;\n  constructor(val: T) { this.value = val; }\n}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Container").is_some(),
@@ -2761,11 +2596,9 @@ fn test_resolve_generic_class_name() {
 #[test]
 fn test_resolve_async_function_name() {
     let source = "async function fetchData() {\n  return await Promise.resolve(1);\n}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("fetchData").is_some(),
@@ -2776,11 +2609,9 @@ fn test_resolve_async_function_name() {
 #[test]
 fn test_resolve_generator_function_name() {
     let source = "function* counter() {\n  let i = 0;\n  while (true) { yield i++; }\n}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("counter").is_some(),
@@ -2795,11 +2626,9 @@ fn test_let_not_hoisted_out_of_block() {
     let blockScoped = 1;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("blockScoped").is_none(),
@@ -2814,11 +2643,9 @@ if (true) {
     const inner = 42;
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("inner").is_none(),
@@ -2833,11 +2660,9 @@ fn test_resolve_multiple_interfaces_same_name() {
 interface Opts { x: number; }
 interface Opts { y: string; }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Opts").is_some(),
@@ -2855,11 +2680,9 @@ class Config {
     }
 }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find 'clamped' usage
     let clamped_nodes: Vec<_> = arena
@@ -2900,11 +2723,9 @@ type Point = { x: number; y: number };
 const origin: Point = { x: 0, y: 0 };
 function move(p: Point): Point { return p; }
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     if let Some(point_symbol) = binder.file_locals.get("Point") {
         let mut walker = ScopeWalker::new(arena, &binder);
@@ -2927,11 +2748,9 @@ namespace Outer {
     }
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Outer").is_some(),
@@ -2951,11 +2770,9 @@ namespace Outer {
 #[test]
 fn test_resolve_abstract_class_name() {
     let source = "abstract class Shape {\n  abstract area(): number;\n}";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("Shape").is_some(),
@@ -2971,11 +2788,9 @@ class Calculator {
     subtract(a: number, b: number) { return a - b; }
 }
 "#;
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(binder.file_locals.get("Calculator").is_some());
     assert!(
@@ -2991,11 +2806,9 @@ class Calculator {
 #[test]
 fn test_resolve_arrow_function_variable_in_file_locals() {
     let source = "const transform = (x: number) => x * 2;";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("transform").is_some(),
@@ -3014,11 +2827,9 @@ const fn1 = () => {
     };
 };
 "#;
-    let (parser, root) = parse_test_source(source);
+    let (parser, root, binder) = bind_test_source(source);
     let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let _ = root;
 
     // Find 'inner' identifier
     let inner_nodes: Vec<_> = arena
@@ -3055,11 +2866,9 @@ const fn1 = () => {
 #[test]
 fn test_resolve_enum_not_in_file_locals_members() {
     let source = "enum Color { Red, Green, Blue }";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(binder.file_locals.get("Color").is_some());
     assert!(
@@ -3075,11 +2884,9 @@ fn test_resolve_enum_not_in_file_locals_members() {
 #[test]
 fn test_resolve_export_const_in_file_locals() {
     let source = "export const API_KEY = 'abc123';";
-    let (parser, root) = parse_test_source(source);
-    let arena = parser.get_arena();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(arena, root);
+    let (parser, root, binder) = bind_test_source(source);
+    let _arena = parser.get_arena();
+    let _ = root;
 
     assert!(
         binder.file_locals.get("API_KEY").is_some(),

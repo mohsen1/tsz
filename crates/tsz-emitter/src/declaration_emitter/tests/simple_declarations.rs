@@ -29,6 +29,50 @@ fn test_function_declaration() {
 }
 
 #[test]
+fn namespace_overload_names_do_not_hide_outer_function_implementation() {
+    let source = r#"
+declare namespace ns {
+    function f(): C;
+    class C {}
+}
+
+function f() {
+    return ns.f();
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare function f(): C;"),
+        "Expected outer function declaration despite namespace overload: {output}"
+    );
+}
+
+#[test]
+fn non_ambient_namespace_without_exported_surface_emits_empty_namespace() {
+    let source = r#"
+namespace hidden {
+    class C {
+        private value;
+    }
+    interface I {
+        [n: number]: C;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare namespace hidden {\n}"),
+        "Expected hidden namespace to emit without private members: {output}"
+    );
+    assert!(
+        !output.contains("class C"),
+        "Expected hidden class to stay private: {output}"
+    );
+}
+
+#[test]
 fn test_invalid_ambient_style_getter_defaults_to_any() {
     let source = r#"
 export class C {
@@ -1558,7 +1602,6 @@ fn test_js_callback_without_return_tag_defaults_to_any() {
 }
 
 #[test]
-#[ignore = "broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
 fn test_js_leading_jsdoc_typedef_before_function_is_emitted() {
     let source = r#"
 /** @typedef {{x: string} | number} SomeType */
@@ -1589,6 +1632,142 @@ export function doTheThing(x) {
     assert!(
         alias_pos < function_pos,
         "Expected typedef alias to be emitted before the function declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_leading_jsdoc_typedef_before_exported_function_different_name() {
+    // Verify the fix works regardless of the typedef name (anti-hardcoding: second name variant).
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | boolean} ResultKind */
+/**
+ * @param {ResultKind} v
+ * @returns {ResultKind}
+ */
+export function transform(v) {
+  return v;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export type ResultKind = string | boolean;"),
+        "Expected leading typedef alias for renamed type before function: {output}"
+    );
+    let alias_pos = output
+        .find("export type ResultKind =")
+        .expect("Expected typedef alias to be emitted");
+    let function_pos = output
+        .find("export function transform(")
+        .expect("Expected exported function to be emitted");
+    assert!(
+        alias_pos < function_pos,
+        "Expected typedef alias before function declaration (renamed type): {output}"
+    );
+}
+
+#[test]
+fn test_js_leading_jsdoc_typedef_before_exported_class_is_emitted() {
+    // Leading @typedef before an exported class should also be emitted before the class.
+    let output = emit_js_dts(
+        r#"
+/** @typedef {{id: number}} ItemShape */
+export class ItemStore {
+  constructor() {}
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export type ItemShape = {"),
+        "Expected leading typedef alias before exported class: {output}"
+    );
+    let alias_pos = output
+        .find("export type ItemShape =")
+        .expect("Expected typedef alias to be emitted");
+    let class_pos = output
+        .find("export class ItemStore")
+        .expect("Expected exported class to be emitted");
+    assert!(
+        alias_pos < class_pos,
+        "Expected typedef alias before class declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_multiple_leading_jsdoc_typedefs_before_function_all_emitted_first() {
+    // Multiple @typedef comments before an exported function should all appear before the function.
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string} Key */
+/** @typedef {number} Value */
+/**
+ * @param {Key} k
+ * @returns {Value}
+ */
+export function lookup(k) {
+  return 1;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export type Key = string;"),
+        "Expected Key typedef alias: {output}"
+    );
+    assert!(
+        output.contains("export type Value = number;"),
+        "Expected Value typedef alias: {output}"
+    );
+    let key_pos = output
+        .find("export type Key =")
+        .expect("Expected Key typedef");
+    let value_pos = output
+        .find("export type Value =")
+        .expect("Expected Value typedef");
+    let function_pos = output
+        .find("export function lookup(")
+        .expect("Expected lookup function");
+    assert!(
+        key_pos < function_pos,
+        "Expected Key typedef before function: {output}"
+    );
+    assert!(
+        value_pos < function_pos,
+        "Expected Value typedef before function: {output}"
+    );
+}
+
+#[test]
+fn test_js_leading_jsdoc_typedef_not_emitted_as_raw_comment_before_function() {
+    // The raw @typedef JSDoc block should NOT appear in the output when the typedef
+    // alias has been emitted as export type — only the @param block should appear.
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | null} OptStr */
+/**
+ * @param {OptStr} s
+ */
+export function process(s) {}
+"#,
+    );
+
+    // The typedef comment must NOT appear as a raw JSDoc block before the function.
+    assert!(
+        !output.contains("/** @typedef {string | null} OptStr */"),
+        "Raw @typedef comment should be suppressed when emitted as export type: {output}"
+    );
+    // The type alias must appear before the function.
+    let alias_pos = output
+        .find("export type OptStr =")
+        .expect("Expected OptStr typedef alias");
+    let function_pos = output
+        .find("export function process(")
+        .expect("Expected process function");
+    assert!(
+        alias_pos < function_pos,
+        "Expected typedef alias before function: {output}"
     );
 }
 
@@ -4683,6 +4862,38 @@ var x = foo(5);
     assert!(
         !output.contains("declare var x: 5;"),
         "Did not expect mutable generic call literal result to stay narrow: {output}"
+    );
+}
+
+#[test]
+fn test_js_var_with_attached_jsdoc_preserves_mutable_declaration_kind() {
+    let output = emit_js_dts(
+        r#"
+/** {@link https://example.test} */
+var linked = true;
+
+/** Plain docs */
+var count = 1, label = "x";
+
+var narrow = false;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var linked: boolean;"),
+        "Expected documented JS var boolean literal to widen as mutable: {output}"
+    );
+    assert!(
+        output.contains("declare var count: number, label: string;"),
+        "Expected documented JS var group to keep var and widen literals: {output}"
+    );
+    assert!(
+        output.contains("declare const narrow: false;"),
+        "Undocumented JS var promotion should stay unchanged: {output}"
+    );
+    assert!(
+        !output.contains("declare const linked: true;"),
+        "Did not expect attached JSDoc JS var to be promoted to const: {output}"
     );
 }
 

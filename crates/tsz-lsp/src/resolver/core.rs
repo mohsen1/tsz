@@ -280,6 +280,17 @@ impl<'a> ScopeWalker<'a> {
         symbol_id
     }
 
+    /// Resolve a plain identifier name in the scope chain active at `target`.
+    pub fn resolve_name_at(
+        &mut self,
+        root: NodeIndex,
+        target: NodeIndex,
+        name: &str,
+    ) -> Option<SymbolId> {
+        let scopes = self.get_scope_chain(root, target);
+        Self::resolve_name_in_scopes(&scopes, name)
+    }
+
     /// Walk the AST to find a target node, building scope context.
     ///
     /// Returns the symbol ID if the target is an identifier that can be resolved.
@@ -684,8 +695,23 @@ impl<'a> ScopeWalker<'a> {
         result: &mut Option<Vec<SymbolTable>>,
     ) -> bool {
         if current == target {
-            // Found the target! Capture the current scope stack
+            // Found the target! If this node itself creates a new scope (e.g., it
+            // is a Block that contains the cursor in whitespace), register its own
+            // declarations so that symbols declared *inside* the target node but
+            // *before* the cursor are visible in the captured scope chain.
+            let creates_target_scope = self.node_creates_scope(current);
+            if creates_target_scope {
+                let is_function_scope = self.node_creates_function_scope(current);
+                self.push_scope(is_function_scope);
+                if is_function_scope {
+                    self.register_hoisted_var_declarations(current);
+                }
+                self.register_local_declarations(current);
+            }
             *result = Some(self.scope_stack.clone());
+            if creates_target_scope {
+                self.pop_scope();
+            }
             return true;
         }
 
