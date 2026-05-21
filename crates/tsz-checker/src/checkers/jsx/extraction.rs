@@ -700,6 +700,16 @@ impl<'a> CheckerState<'a> {
     }
 
     fn jsx_callable_return_types_for_return_check(&mut self, type_id: TypeId) -> Vec<TypeId> {
+        self.jsx_callable_signatures_for_return_check(type_id)
+            .into_iter()
+            .map(|(_, return_type)| return_type)
+            .collect()
+    }
+
+    fn jsx_callable_signatures_for_return_check(
+        &mut self,
+        type_id: TypeId,
+    ) -> Vec<(Vec<tsz_solver::ParamInfo>, TypeId)> {
         let type_id =
             if crate::query_boundaries::common::needs_evaluation_for_merge(self.ctx.types, type_id)
             {
@@ -707,22 +717,116 @@ impl<'a> CheckerState<'a> {
             } else {
                 type_id
             };
-        let mut returns = Vec::new();
+        let mut signatures = Vec::new();
         if let Some(shape) =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
             && !shape.is_constructor
         {
-            returns.push(self.evaluate_type_with_env(shape.return_type));
+            signatures.push((
+                shape.params.clone(),
+                self.evaluate_type_with_env(shape.return_type),
+            ));
         }
         if let Some(sigs) =
             crate::query_boundaries::common::get_call_signatures(self.ctx.types, type_id)
         {
-            returns.extend(
-                sigs.iter()
-                    .map(|sig| self.evaluate_type_with_env(sig.return_type)),
-            );
+            signatures.extend(sigs.iter().map(|sig| {
+                (
+                    sig.params.clone(),
+                    self.evaluate_type_with_env(sig.return_type),
+                )
+            }));
         }
-        returns
+        signatures
+    }
+
+    fn jsx_element_type_callable_signatures_for_return_check(
+        &mut self,
+        type_id: TypeId,
+    ) -> Vec<(Vec<tsz_solver::ParamInfo>, TypeId)> {
+        let mut stack = vec![type_id];
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut signatures = Vec::new();
+
+        while let Some(candidate) = stack.pop() {
+            if !seen.insert(candidate) {
+                continue;
+            }
+
+            signatures.extend(self.jsx_callable_signatures_for_return_check(candidate));
+
+            if let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, candidate)
+            {
+                stack.extend(members);
+            }
+            if let Some(members) =
+                crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
+            {
+                stack.extend(members);
+            }
+            if let Some(alias) = self.ctx.types.get_display_alias(candidate) {
+                stack.push(alias);
+            }
+            if let Some(instantiated) =
+                self.jsx_instantiated_application_body_for_return_check(candidate)
+            {
+                stack.push(instantiated);
+            }
+            let evaluated = self.evaluate_type_with_env(candidate);
+            if evaluated != candidate {
+                stack.push(evaluated);
+            }
+            let lazy_resolved = self.resolve_lazy_type(candidate);
+            if lazy_resolved != candidate {
+                stack.push(lazy_resolved);
+            }
+        }
+
+        signatures
+    }
+
+    fn jsx_callable_params_compatible_for_element_type(
+        source_params: &[tsz_solver::ParamInfo],
+        target_params: &[tsz_solver::ParamInfo],
+    ) -> bool {
+        let source_required = source_params
+            .iter()
+            .filter(|param| param.is_required())
+            .count();
+        let target_has_rest = target_params.iter().any(|param| param.rest);
+
+        source_required <= target_params.len()
+            && (target_has_rest || source_params.len() <= target_params.len())
+    }
+
+    fn jsx_component_satisfies_element_type_callable_return(
+        &mut self,
+        component_type: TypeId,
+        element_type: TypeId,
+    ) -> bool {
+        let source_signatures = self.jsx_callable_signatures_for_return_check(component_type);
+        if source_signatures.is_empty() {
+            return false;
+        }
+        let target_signatures =
+            self.jsx_element_type_callable_signatures_for_return_check(element_type);
+        if target_signatures.is_empty() {
+            return false;
+        }
+
+        source_signatures
+            .iter()
+            .any(|(source_params, source_return)| {
+                target_signatures
+                    .iter()
+                    .any(|(target_params, target_return)| {
+                        Self::jsx_callable_params_compatible_for_element_type(
+                            source_params,
+                            target_params,
+                        ) && self.is_assignable_to(*source_return, *target_return)
+                    })
+            })
     }
 
     pub(super) fn jsx_construct_return_satisfies_element_class_render(
@@ -786,11 +890,18 @@ impl<'a> CheckerState<'a> {
         // long as `JSX.ElementType` admits them.
         if let Some(element_type_sym_id) = self.get_jsx_namespace_export_symbol_id("ElementType") {
             let element_type = self.type_reference_symbol_type(element_type_sym_id);
+            let evaluated_element_type = self.evaluate_type_with_env(element_type);
             if !matches!(
-                element_type,
+                evaluated_element_type,
                 TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
             ) {
-                if self.diagnostic_relation_boolean_guard(component_type, element_type) {
+                if self.jsx_component_satisfies_element_type_callable_return(
+                    component_type,
+                    evaluated_element_type,
+                ) {
+                    return;
+                }
+                if self.is_assignable_to(component_type, evaluated_element_type) {
                     return;
                 }
                 self.report_invalid_jsx_component_return_type(tag_name_idx);

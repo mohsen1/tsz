@@ -35,6 +35,31 @@ declare global {
 }
 "#;
 
+const JSX_ALIAS_APPLICATION_ELEMENT_TYPE_PRELUDE: &str = r#"
+declare global {
+    namespace JSX {
+        interface Element {}
+        interface ElementClass {}
+        interface IntrinsicElements {}
+        type NodeLike = string | number;
+        type ComponentLike<P> = ((props: P) => NodeLike) | (new (props: P) => any);
+        type ElementType = string | ComponentLike<any>;
+    }
+}
+"#;
+
+const JSX_CONSTRUCTOR_ALIAS_ELEMENT_TYPE_PRELUDE: &str = r#"
+declare global {
+    namespace JSX {
+        interface Element {}
+        interface ElementClass {}
+        interface IntrinsicElements {}
+        type ConstructLike<P> = new (props: P) => any;
+        type ElementType = string | ConstructLike<any>;
+    }
+}
+"#;
+
 // ─── ElementType admits function components ───────────────────────────────────
 
 /// When `JSX.ElementType` admits `string`-returning function components,
@@ -69,6 +94,43 @@ const _ = <Counter value={{42}} />;
     assert!(
         !codes.contains(&2786),
         "Renamed: number-returning fn allowed by JSX.ElementType. Got: {codes:?}"
+    );
+}
+
+/// Alias/application cover: callable arms inside a generic `ElementType` alias
+/// still authorize components by return type.
+#[test]
+fn jsx_element_type_alias_application_admits_string_returning_function_component() {
+    let source = format!(
+        r#"
+{JSX_ALIAS_APPLICATION_ELEMENT_TYPE_PRELUDE}
+const Label = ({{ title }}: {{ title: string }}) => title;
+const _ = <Label title="ok" />;
+"#
+    );
+    let codes = diag_codes(&source);
+    assert!(
+        !codes.contains(&2786),
+        "Generic alias ElementType admits string-returning function. Got: {codes:?}"
+    );
+}
+
+/// Return compatibility alone is not enough: a source callable that requires
+/// more parameters than the `ElementType` callable arm is not a valid JSX
+/// component.
+#[test]
+fn jsx_element_type_alias_application_rejects_two_parameter_function_component() {
+    let source = format!(
+        r#"
+{JSX_ALIAS_APPLICATION_ELEMENT_TYPE_PRELUDE}
+function Forwarded(props: {{}}, ref: unknown) {{ return "ok"; }}
+const _ = <Forwarded />;
+"#
+    );
+    let codes = diag_codes(&source);
+    assert!(
+        codes.contains(&2786),
+        "Generic alias ElementType must reject a two-parameter function component. Got: {codes:?}"
     );
 }
 
@@ -124,6 +186,24 @@ const _ = <Alert msg="hi" />;
     assert!(
         codes.contains(&2786),
         "Constructor-only ElementType must reject arrow function with TS2786. Got: {codes:?}"
+    );
+}
+
+/// Constructor-only aliases must not be accepted by the callable-return
+/// fallback used for generic `ElementType` aliases.
+#[test]
+fn jsx_constructor_alias_element_type_rejects_function_component() {
+    let source = format!(
+        r#"
+{JSX_CONSTRUCTOR_ALIAS_ELEMENT_TYPE_PRELUDE}
+const Label = ({{ title }}: {{ title: string }}) => title;
+const _ = <Label title="ok" />;
+"#
+    );
+    let codes = diag_codes(&source);
+    assert!(
+        codes.contains(&2786),
+        "Constructor-only alias ElementType must reject function component. Got: {codes:?}"
     );
 }
 
