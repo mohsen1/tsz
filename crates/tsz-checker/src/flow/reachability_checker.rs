@@ -334,15 +334,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let left_non_nullish =
-            crate::query_boundaries::flow::narrow_optional_chain(self.ctx.types, left_type);
-        if left_non_nullish == TypeId::ERROR {
-            return None;
-        }
-        if left_non_nullish == TypeId::NEVER {
-            return Some(right_type);
-        }
-        Some(self.ctx.types.union2(left_non_nullish, right_type))
+        query::nullish_coalescing_switch_domain(self.ctx.types, left_type, right_type)
     }
 
     fn normalize_enum_union_members(&self, type_id: TypeId) -> TypeId {
