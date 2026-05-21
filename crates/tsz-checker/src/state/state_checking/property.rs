@@ -716,6 +716,11 @@ impl<'a> CheckerState<'a> {
                             nested_target,
                         )
                     };
+                    let nested_target = self.widen_nested_target_for_property(
+                        nested_target,
+                        target,
+                        effective_target,
+                    );
 
                     if had_discriminant_narrowing
                         && self.try_emit_nested_discriminated_union_assignability_error(
@@ -878,11 +883,8 @@ impl<'a> CheckerState<'a> {
                         // `User.parent: User` in `User & { admin: boolean }`), widen it
                         // to the full outer intersection so nested literals are checked
                         // against all members, not just the recursive member alone.
-                        let nested_target = query::widen_recursive_intersection_member(
-                            self.ctx.types,
-                            nested_target,
-                            resolved_target,
-                        );
+                        let nested_target =
+                            self.widen_nested_target_if_recursive(nested_target, resolved_target);
                         if self.check_nested_object_literal_excess_properties(
                             source_prop.name,
                             Some(nested_target),
@@ -938,6 +940,11 @@ impl<'a> CheckerState<'a> {
                             effective_target,
                             source_prop.name,
                             type_id,
+                        );
+                        let nested_target = self.widen_nested_target_for_property(
+                            nested_target,
+                            target,
+                            effective_target,
                         );
                         if self.check_nested_object_literal_excess_properties(
                             source_prop.name,
@@ -1051,6 +1058,11 @@ impl<'a> CheckerState<'a> {
                         effective_target,
                         source_prop.name,
                         nested_target,
+                    );
+                    let nested_target = self.widen_nested_target_for_property(
+                        nested_target,
+                        target,
+                        effective_target,
                     );
                     if self.check_nested_object_literal_excess_properties(
                         source_prop.name,
@@ -1175,6 +1187,11 @@ impl<'a> CheckerState<'a> {
                             source_prop.name,
                             target_prop_type,
                         );
+                        let nested_target = self.widen_nested_target_for_property(
+                            nested_target,
+                            target,
+                            effective_target,
+                        );
                         if self.check_nested_object_literal_excess_properties(
                             source_prop.name,
                             Some(nested_target),
@@ -1219,6 +1236,201 @@ impl<'a> CheckerState<'a> {
             body
         } else {
             resolved_target
+        }
+    }
+
+    /// `true` when `lazy_candidate` is a `Lazy(DefId)` whose definition is one of
+    /// `outer_members`. Three lookups cover the different TypeId forms intersection
+    /// members can take (Lazy, resolved body, or registered canonical TypeId).
+    fn lazy_def_is_recursive_member(
+        &self,
+        lazy_candidate: TypeId,
+        outer_members: &[TypeId],
+    ) -> bool {
+        let Some(def_id) =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, lazy_candidate)
+        else {
+            return false;
+        };
+        if outer_members.contains(&lazy_candidate) {
+            return true;
+        }
+        let body = self.ctx.definition_store.get_body(def_id);
+        outer_members.iter().any(|&m| {
+            body == Some(m)
+                || self.ctx.definition_store.find_def_for_type(m) == Some(def_id)
+                || self.ctx.definition_store.find_type_alias_by_body(m) == Some(def_id)
+        })
+    }
+
+    /// `true` when `candidate` is the resolved body of a Lazy intersection member.
+    /// Property-access resolution can substitute `Recursive(0)` with the concrete body,
+    /// so we must check resolved forms too; only Lazy members are scanned to avoid
+    /// treating the literal extra-properties arm as a recursive self-reference.
+    fn resolved_lazy_is_recursive_member(
+        &mut self,
+        candidate: TypeId,
+        outer_members: &[TypeId],
+    ) -> bool {
+        outer_members.iter().any(|&m| {
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, m).is_some()
+                && self.resolve_type_for_property_access(m) == candidate
+        })
+    }
+
+    /// `true` when `candidate` is a recursive self-reference: a `Lazy(DefId)` member,
+    /// a De Bruijn `Recursive(n)` (type aliases only; interfaces keep `Lazy`),
+    /// or the resolved body of a Lazy member.
+    fn is_recursive_self_reference(&mut self, candidate: TypeId, outer_members: &[TypeId]) -> bool {
+        self.lazy_def_is_recursive_member(candidate, outer_members)
+            || matches!(
+                self.ctx.types.lookup(candidate),
+                Some(tsz_solver::TypeData::Recursive(_))
+            )
+            || self.resolved_lazy_is_recursive_member(candidate, outer_members)
+    }
+
+    /// Widen `nested_target` before a nested excess-property check, using
+    /// two complementary paths:
+    /// 1. If `target` (or its Lazy body) is an intersection, widen to the full
+    ///    intersection when `nested_target` is a recursive self-reference.
+    /// 2. Otherwise (`normalize_intersection` already merged the intersection into
+    ///    `effective_target`), widen when `nested_target` is a `Lazy(DefId)` whose
+    ///    body is a strict sub-shape of `effective_target`.
+    fn widen_nested_target_for_property(
+        &mut self,
+        nested_target: TypeId,
+        target: TypeId,
+        effective_target: TypeId,
+    ) -> TypeId {
+        if let Some(outer) = self.recover_outer_intersection_from_target(target) {
+            self.widen_nested_target_if_recursive(nested_target, outer)
+        } else {
+            self.widen_nested_target_if_sub_shape(nested_target, effective_target)
+        }
+    }
+
+    /// Widen `nested_target` to `outer_intersection` when `nested_target` is a
+    /// recursive self-reference inside the intersection.
+    ///
+    /// Structural rule: for `Rec & Extra`, a fresh object literal assigned to a
+    /// recursive property of `Rec` (type `Lazy(Rec_DefId)`) must be validated
+    /// against the whole intersection, suppressing false TS2353 errors for properties
+    /// contributed by `Extra`. Also widens `Lazy | undefined` to
+    /// `outer_intersection | undefined` for optional recursive properties.
+    fn widen_nested_target_if_recursive(
+        &mut self,
+        nested_target: TypeId,
+        outer_intersection: TypeId,
+    ) -> TypeId {
+        let Some(outer_members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, outer_intersection)
+        else {
+            return nested_target;
+        };
+
+        if self.is_recursive_self_reference(nested_target, &outer_members) {
+            return outer_intersection;
+        }
+
+        // Optional recursive property: `Union([Lazy(Rec_DefId), undefined])`.
+        if let Some((candidate, true)) = self.single_non_undefined_member(nested_target)
+            && self.is_recursive_self_reference(candidate, &outer_members)
+        {
+            return self
+                .ctx
+                .types
+                .union(vec![outer_intersection, TypeId::UNDEFINED]);
+        }
+
+        nested_target
+    }
+
+    fn single_non_undefined_member(&self, type_id: TypeId) -> Option<(TypeId, bool)> {
+        let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, type_id)
+        else {
+            return (type_id != TypeId::UNDEFINED).then_some((type_id, false));
+        };
+        let has_undefined = members.contains(&TypeId::UNDEFINED);
+        let mut non_undef = members.into_iter().filter(|&m| m != TypeId::UNDEFINED);
+        match (non_undef.next(), non_undef.next()) {
+            (Some(member), None) => Some((member, has_undefined)),
+            _ => None,
+        }
+    }
+
+    /// Returns the `TypeId` of an enclosing intersection reachable from `target`:
+    /// the type itself, its `Lazy` body, or an intersection member of a union wrapper.
+    fn recover_outer_intersection_from_target(&self, target: TypeId) -> Option<TypeId> {
+        let is_intersection = |t: TypeId| {
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, t).is_some()
+        };
+        if is_intersection(target) {
+            return Some(target);
+        }
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target)
+            && let Some(body) = self.ctx.definition_store.get_body(def_id)
+            && is_intersection(body)
+        {
+            return Some(body);
+        }
+        tsz_solver::type_queries::get_union_members(self.ctx.types, target)?
+            .into_iter()
+            .find(|&member| is_intersection(member))
+    }
+
+    /// Widen `nested_target` to `outer_object` when `normalize_intersection` merged a
+    /// `Rec & Extra` type alias into a single Object but the recursive property still
+    /// carries `Lazy(Rec_DefId)`. Detects recursion by checking that `Lazy`'s body
+    /// properties are a strict sub-shape of `outer_object` (sound because non-recursive
+    /// aliases resolve to their body, not `Lazy`, when referenced by other types).
+    fn widen_nested_target_if_sub_shape(
+        &mut self,
+        nested_target: TypeId,
+        outer_object: TypeId,
+    ) -> TypeId {
+        let Some(outer_shape) =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, outer_object)
+        else {
+            return nested_target;
+        };
+
+        let Some((candidate, has_undef)) = self.single_non_undefined_member(nested_target) else {
+            return nested_target;
+        };
+
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, candidate)
+        else {
+            return nested_target;
+        };
+
+        let Some(body) = self.ctx.definition_store.get_body(def_id) else {
+            return nested_target;
+        };
+
+        let Some(body_shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, body)
+        else {
+            return nested_target;
+        };
+
+        let outer_props = outer_shape.properties.as_slice();
+        let body_props = body_shape.properties.as_slice();
+
+        // Require strict subset: body has fewer props AND all body props exist in outer.
+        if body_props.len() >= outer_props.len() {
+            return nested_target;
+        }
+        if !body_props
+            .iter()
+            .all(|bp| outer_props.iter().any(|op| op.name == bp.name))
+        {
+            return nested_target;
+        }
+
+        if has_undef {
+            self.ctx.types.union(vec![outer_object, TypeId::UNDEFINED])
+        } else {
+            outer_object
         }
     }
 
@@ -2922,6 +3134,23 @@ const c: TaggedCategory = { name: "root", tag: "top", parent: { name: "child", t
         assert!(
             ts2353.is_empty(),
             "expected no TS2353 for valid tagged recursive category, got: {ts2353:?}"
+        );
+    }
+
+    #[test]
+    fn ts2353_debug_structural_type_alias_recursive_intersection() {
+        // DEBUG: structural type alias (not interface) recursive intersection
+        let diags = check_source_diagnostics(
+            r#"
+type Chain = { data: string; rest?: Chain; };
+type MarkedChain = Chain & { marker: number; }
+const c: MarkedChain = { data: "a", marker: 1, rest: { data: "b", marker: 2 } };
+"#,
+        );
+        let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+        assert!(
+            ts2353.is_empty(),
+            "expected no TS2353 for structural type alias recursive intersection, got: {ts2353:?}"
         );
     }
 }
