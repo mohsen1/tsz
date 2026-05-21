@@ -70,6 +70,20 @@ pub(crate) fn contains_anonymous_object_surface(
     contains_anonymous_object_surface_inner(db, def_store, type_id, &mut Vec::new())
 }
 
+/// Fetch construct signatures for a class-component-shaped type, falling back
+/// to the evaluated form when the unevaluated query returns nothing. The JSX
+/// `.props` extractor (`extraction_class_props.rs`) needs both branches but
+/// must not grow its direct `query_boundaries::common` reference count
+/// (#8225); folding both fetches into one boundary call keeps it at zero.
+pub(crate) fn construct_signatures_with_env_fallback(
+    db: &dyn TypeDatabase,
+    component_type: TypeId,
+    evaluated: TypeId,
+) -> Option<Vec<tsz_solver::CallSignature>> {
+    crate::query_boundaries::common::construct_signatures_for_type(db, component_type)
+        .or_else(|| crate::query_boundaries::common::construct_signatures_for_type(db, evaluated))
+}
+
 /// Detect the `react16.d.ts` `.props` shape that the JSX TS2322
 /// target-display takeover targets: an intersection containing at least one
 /// `Application` whose base is a type alias named `Readonly`. The match

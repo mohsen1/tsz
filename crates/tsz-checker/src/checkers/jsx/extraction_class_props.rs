@@ -33,17 +33,14 @@ impl<'a> CheckerState<'a> {
 
         let mut facts = JsxClassComponentConstructFacts::default();
 
-        let Some(sigs) = crate::query_boundaries::common::construct_signatures_for_type(
-            self.ctx.types,
-            component_type,
-        )
-        .or_else(|| {
-            let evaluated = self.evaluate_type_with_env(component_type);
-            crate::query_boundaries::common::construct_signatures_for_type(
+        let evaluated_component_type = self.evaluate_type_with_env(component_type);
+        let Some(sigs) =
+            crate::query_boundaries::checkers::jsx::construct_signatures_with_env_fallback(
                 self.ctx.types,
-                evaluated,
+                component_type,
+                evaluated_component_type,
             )
-        }) else {
+        else {
             return facts;
         };
 
