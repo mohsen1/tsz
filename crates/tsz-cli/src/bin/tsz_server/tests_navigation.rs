@@ -1931,6 +1931,41 @@ fn test_document_highlights_honors_files_to_search_across_files() {
     );
 }
 
+/// documentHighlights on an inherited property in a deep linear class chain
+/// must not crash. Previously the server ran on the default 8 MB thread stack
+/// and SIGABRT'd for deeply-nested ASTs / large inheritance hierarchies.
+#[test]
+fn test_document_highlights_does_not_overflow_on_deep_linear_chain() {
+    let mut server = make_server();
+    // 30-level linear inheritance chain: Base <- L1 <- L2 <- … <- L29
+    let mut source = String::from("class Base { prop: string; }\n");
+    for i in 1..30 {
+        source.push_str(&format!("class L{i} extends L{} {{}}\n", i - 1));
+    }
+    source.push_str("class L0 extends Base {}\n");
+    source.push_str("var x: L29; x.prop;\n");
+    let file_path = "/tests/cases/fourslash/deep_chain.ts";
+    server
+        .open_files
+        .insert(file_path.to_string(), source.clone());
+    // Line = last line (1-based), offset past 'x.' to land on 'prop'
+    let last_line = source.lines().count() as u32;
+    let req = make_request(
+        "documentHighlights",
+        serde_json::json!({
+            "file": file_path,
+            "line": last_line,
+            "offset": 5,
+            "filesToSearch": [file_path],
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(
+        resp.success,
+        "documentHighlights must not crash on a deep linear class chain; response: {resp:?}"
+    );
+}
+
 /// Regression for issue #8527: documentHighlight on a heritage-cycle source
 /// must not crash the server (previously SIGABRT'd via stack overflow).
 #[test]

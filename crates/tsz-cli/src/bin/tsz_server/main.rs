@@ -1738,6 +1738,20 @@ fn main() -> Result<()> {
     tsz_cli::tracing_config::init_tracing();
 
     let args = ServerArgs::parse();
+
+    // Run the server on a large-stack thread to prevent stack overflow from
+    // recursive AST traversals in find-references, document-highlight, and
+    // other LSP operations on complex TypeScript files. The same
+    // THREAD_STACK_SIZE_BYTES limit is already used by the tsz CLI binary.
+    std::thread::Builder::new()
+        .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
+        .spawn(move || run_server(args))
+        .expect("failed to spawn server thread")
+        .join()
+        .expect("server thread panicked")
+}
+
+fn run_server(args: ServerArgs) -> Result<()> {
     let mut server = Server::new(&args).context("failed to initialize server")?;
 
     info!("tsz-server ready (protocol: {:?})", args.protocol);
