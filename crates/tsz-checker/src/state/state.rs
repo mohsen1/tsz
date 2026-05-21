@@ -289,6 +289,28 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Copy resolution-cycle guard sets from `parent` into this child checker and
+    /// wire up the shared `DefinitionStore`. Call immediately after constructing a
+    /// class-delegation child checker via `with_parent_cache_attributed`.
+    pub(super) fn propagate_class_delegation_setup(
+        &mut self,
+        parent: &CheckerState,
+        skip_sym: tsz_binder::SymbolId,
+    ) {
+        for &id in &parent.ctx.class_instance_resolution_set {
+            self.ctx.class_instance_resolution_set.insert(id);
+        }
+        for &id in &parent.ctx.symbol_resolution_set {
+            if id != skip_sym {
+                self.ctx.symbol_resolution_set.insert(id);
+            }
+        }
+        for &id in &parent.ctx.class_constructor_resolution_set {
+            self.ctx.class_constructor_resolution_set.insert(id);
+        }
+        self.ctx.ensure_both_envs_have_definition_store();
+    }
+
     /// Thread-local guard for cross-arena delegation depth.
     /// All cross-arena delegation points (`delegate_cross_arena_symbol_resolution`,
     /// `get_type_params_for_symbol`, `type_of_value_declaration`) MUST call this
