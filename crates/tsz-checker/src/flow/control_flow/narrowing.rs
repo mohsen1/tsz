@@ -1795,11 +1795,18 @@ impl<'a> FlowAnalyzer<'a> {
                 return Some(TypeId::UNDEFINED);
             }
 
-            if let Some(sym_id) = self.reference_symbol(idx)
-                && let Some(sym) = self.binder.get_symbol(sym_id)
-                && sym.has_any_flags(symbol_flags::ENUM_MEMBER)
-            {
-                return self.literal_type_from_node(idx);
+            if let Some(sym_id) = self.reference_symbol(idx) {
+                if let Some(sym) = self.binder.get_symbol(sym_id)
+                    && sym.has_any_flags(symbol_flags::ENUM_MEMBER)
+                {
+                    return self.literal_type_from_node(idx);
+                }
+
+                if let Some(ty) = self.annotation_comparison_type(sym_id)
+                    && crate::query_boundaries::flow_analysis::is_unit_type(self.interner, ty)
+                {
+                    return Some(ty);
+                }
             }
 
             if let Some((_sym, initializer)) = self.const_condition_initializer(idx) {

@@ -1240,10 +1240,25 @@ record_project_compatibility() {
     local tsc_exit_codes="${8:-}"
     local tsz_exit_codes="${9:-}"
     local tsgo_exit_codes="${10:-}"
+    local tsconfig_path="${11:-}"
+    local source_root="${12:-}"
     local fixture_sources
+    local tsz_command_env_prefix=""
 
     [ -z "$PROJECT_COMPATIBILITY_JSONL" ] && return
     fixture_sources="$(tsz_project_fixture_sources "$name")"
+    if [ "$name" = "large-ts-repo" ] && [ -n "${LARGE_TS_NODE_OPTIONS:-}" ]; then
+        tsz_command_env_prefix="${tsz_command_env_prefix:+$tsz_command_env_prefix }NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS"
+    fi
+    if [ -n "${TSZ_USE_EMBEDDED_LIBS:-}" ]; then
+        tsz_command_env_prefix="${tsz_command_env_prefix:+$tsz_command_env_prefix }TSZ_USE_EMBEDDED_LIBS=$TSZ_USE_EMBEDDED_LIBS"
+    fi
+    if [ -n "${TSZ_LIB_DIR:-}" ]; then
+        tsz_command_env_prefix="${tsz_command_env_prefix:+$tsz_command_env_prefix }TSZ_LIB_DIR=$TSZ_LIB_DIR"
+    fi
+    if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
+        tsz_command_env_prefix="${tsz_command_env_prefix:+$tsz_command_env_prefix }RUST_MIN_STACK=$TSZ_RUST_MIN_STACK"
+    fi
 
     local peak_memory_bytes_reason=""
     if [ -z "$peak_memory_bytes" ]; then
@@ -1267,6 +1282,9 @@ record_project_compatibility() {
     COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
     COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
     COMPAT_TSGO_EXIT_CODES="$tsgo_exit_codes" \
+    COMPAT_TSCONFIG_PATH="$tsconfig_path" \
+    COMPAT_SOURCE_ROOT="$source_root" \
+    COMPAT_TSZ_COMMAND_ENV_PREFIX="$tsz_command_env_prefix" \
     COMPAT_FIXTURE_SOURCES="$fixture_sources" \
     node "$PROJECT_ROOT/scripts/ci/project-compatibility.mjs" record
 }
@@ -1602,7 +1620,7 @@ run_project_benchmark() {
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
                 echo -e "  ${CYAN}tsc error:${NC} $(printf '%s' "$tsc_error" | head -1)" >&2
             fi
-            record_project_compatibility "$name" "fixture invalid" "fixture setup" "tsc fixture failed" "$tsc_error" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes"
+            record_project_compatibility "$name" "fixture invalid" "fixture setup" "tsc fixture failed" "$tsc_error" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "" "$tsconfig" "$src_dir"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             return
         fi
@@ -1684,7 +1702,7 @@ run_project_benchmark() {
 
         local exit_class
         exit_class="$(project_failure_class "$status" "$tsz_check" "$tsgo_check")"
-        record_project_compatibility "$name" "$exit_class" "check" "$(project_failure_status "$exit_class")" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check"
+        record_project_compatibility "$name" "$exit_class" "check" "$(project_failure_status "$exit_class")" "$diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_check" "$tsgo_check" "$tsconfig" "$src_dir"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
         return
     fi
@@ -1762,7 +1780,7 @@ run_project_benchmark() {
                 -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
         fi
         if [ "$hyperfine_tsz_unavailable_status" -ne 0 ]; then
-            record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing tsgo-only project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes"
+            record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing tsgo-only project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "" "$tsconfig" "$src_dir"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,tsgo,0,tsz unavailable; tsgo error\n"
             rm -f "$json_file"
             return
@@ -1771,7 +1789,7 @@ run_project_benchmark() {
             local tsgo_exit_status
             tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
             if [ "$tsgo_exit_status" != "ok" ]; then
-                record_project_compatibility "$name" "nonzero exit" "timing" "tsgo exit mismatch" "tsgo ${tsgo_exit_status}" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "$tsgo_exit_status"
+                record_project_compatibility "$name" "nonzero exit" "timing" "tsgo exit mismatch" "tsgo ${tsgo_exit_status}" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "$tsgo_exit_status" "$tsconfig" "$src_dir"
                 RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,error,0,tsz unavailable; tsgo ${tsgo_exit_status}\n"
                 rm -f "$json_file"
                 return
@@ -1783,7 +1801,7 @@ run_project_benchmark() {
                 tsgo_lps=$(printf "%.0f" "$(echo "$lines / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
                 local tsgo_ms
                 tsgo_ms=$(printf "%.2f" "$(echo "$tsgo_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
-                record_project_compatibility "$name" "tsz unavailable" "timing" "tsz skipped by runner" "tsz unavailable" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "0"
+                record_project_compatibility "$name" "tsz unavailable" "timing" "tsz skipped by runner" "tsz unavailable" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "0" "$tsconfig" "$src_dir"
                 RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,${tsgo_ms},N/A,${tsgo_lps},tsgo,0,tsz unavailable\n"
             fi
         fi
@@ -1816,7 +1834,7 @@ run_project_benchmark() {
     fi
     if [ "$hyperfine_status" -ne 0 ]; then
         local status="hyperfine error"
-        record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes"
+        record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "" "" "$tsconfig" "$src_dir"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
         rm -f "$json_file"
         return
@@ -1835,7 +1853,7 @@ run_project_benchmark() {
             echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
             local exit_class
             exit_class="$(project_failure_class "$status" $(exit_codes_from_status "$status"))"
-            record_project_compatibility "$name" "$exit_class" "timing" "$(project_failure_status "$exit_class")" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status"
+            record_project_compatibility "$name" "$exit_class" "timing" "$(project_failure_status "$exit_class")" "$status" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "$tsz_exit_status" "$tsgo_exit_status" "$tsconfig" "$src_dir"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
             rm -f "$json_file"
             return
@@ -1869,7 +1887,7 @@ run_project_benchmark() {
                 success_diagnostic_status="tsc oracle unavailable"
                 success_diagnostic_delta="tsc oracle was not collected for this project row"
             fi
-            record_project_compatibility "$name" "$success_exit_class" "$success_phase" "$success_diagnostic_status" "$success_diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0"
+            record_project_compatibility "$name" "$success_exit_class" "$success_phase" "$success_diagnostic_status" "$success_diagnostic_delta" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes" "0" "0" "$tsconfig" "$src_dir"
             RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},\n"
         fi
     fi
