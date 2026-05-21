@@ -1827,6 +1827,50 @@ const value = empty || fallback;
 }
 
 #[test]
+fn test_short_circuit_omits_right_operand_when_left_is_syntactically_truthy() {
+    let output = emit_dts_with_binding(
+        r#"
+class C {}
+const value = (() => new C()) || "";
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: () => C;"),
+        "Expected declaration inference to omit unreachable `||` right operand: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_numeric_and_bigint_truthiness_matches_tsc_dts_surface() {
+    let output = emit_dts_with_binding(
+        r#"
+const zero = 0 || "";
+const one = 1 || "";
+const zeroBig = 0n || "";
+const oneBig = 1n || "";
+"#,
+    );
+
+    assert!(
+        output.contains("declare const zero: \"\";"),
+        "Expected numeric zero left operand to expose the fallback literal: {output}"
+    );
+    assert!(
+        output.contains("declare const one: 1;"),
+        "Expected non-zero numeric left operand to omit unreachable fallback: {output}"
+    );
+    assert!(
+        output.contains("declare const zeroBig: \"\";"),
+        "Expected bigint zero left operand to expose the fallback literal: {output}"
+    );
+    assert!(
+        output.contains("declare const oneBig: 1n;"),
+        "Expected non-zero bigint left operand to omit unreachable fallback: {output}"
+    );
+}
+
+#[test]
 fn test_short_circuit_reference_respects_annotated_widened_surface() {
     let output = emit_dts_with_binding(
         r#"
