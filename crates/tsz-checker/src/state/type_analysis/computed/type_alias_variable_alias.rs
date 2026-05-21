@@ -1,27 +1,17 @@
 //! Continuation of `compute_type_of_symbol`: type alias, class property, variable,
 //! and alias symbol resolution.
 
+use super::SymbolAliasCtx;
 use crate::query_boundaries::common::{array_element_type, is_generic_type};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use tsz_binder::{SymbolId, symbol_flags};
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
-
-pub(super) struct SymbolAliasCtx<'a> {
-    pub(super) sym_id: SymbolId,
-    pub(super) flags: u32,
-    pub(super) value_decl: NodeIndex,
-    pub(super) declarations: &'a [NodeIndex],
-    pub(super) import_module: &'a Option<String>,
-    pub(super) import_name: &'a Option<String>,
-    pub(super) escaped_name: &'a str,
-    pub(super) factory: &'a tsz_solver::construction::TypeFactory<'a>,
-}
 
 impl<'a> CheckerState<'a> {
     pub(super) fn compute_type_of_symbol_type_alias_variable_alias(
