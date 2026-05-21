@@ -50,7 +50,7 @@ fn codes(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
 
 /// Cross-file import specifier traversal must not poison the entry-file's
 /// assignability checks with ERROR types from the import specifier node.
-/// Name: `Widget` / `render` (varies from the Kysely repro spelling).
+/// Name: `Widget` / `render` (varies from the `Kysely` repro spelling).
 #[test]
 fn import_specifier_traversal_does_not_poison_assignability_widget() {
     let lib = r#"
