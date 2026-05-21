@@ -1773,6 +1773,16 @@ impl<'a> Printer<'a> {
             }
             return true;
         }
+        // Non-empty array patterns and multi-element object patterns use a
+        // planned source so each bound name can be published individually.
+        if let Some(source_temp) = self
+            .arena
+            .get(decl.name)
+            .and_then(|n| self.system_binding_pattern_temps.get(&n.pos).cloned())
+        {
+            self.emit_system_destructuring_with_source(decl, source_temp.as_deref(), is_exported);
+            return true;
+        }
         if name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
             return false;
         }
@@ -1852,6 +1862,135 @@ impl<'a> Printer<'a> {
         }
         self.write_semicolon();
         true
+    }
+
+    /// Emits a destructuring variable initializer for an exported array or
+    /// multi-element object binding pattern using either a preallocated source
+    /// temp or a reusable identifier initializer.
+    ///
+    /// Structural rule: when a System-module exported variable declaration has
+    /// a no-default array or multi-element object binding pattern as its name,
+    /// tsc publishes each bound name via `exports_1("n", n = source.path)`,
+    /// first assigning complex/non-reusable sources to a temp when needed.
+    fn emit_system_destructuring_with_source(
+        &mut self,
+        decl: &tsz_parser::parser::node::VariableDeclarationData,
+        source_temp: Option<&str>,
+        is_exported: bool,
+    ) {
+        let mut name_paths: Vec<(String, String)> = Vec::new();
+        self.collect_bound_names_with_paths(decl.name, String::new(), &mut name_paths);
+        let reusable_source = self.reusable_object_rest_export_source(decl.initializer);
+        let source_name = source_temp
+            .or(reusable_source.as_deref())
+            .unwrap_or_default();
+
+        if let Some(source_temp) = source_temp {
+            self.write(source_temp);
+            self.write(" = ");
+            self.emit_expression(decl.initializer);
+        }
+
+        for (index, (name, path)) in name_paths.iter().enumerate() {
+            if source_temp.is_some() || index > 0 {
+                self.write(", ");
+            }
+            if is_exported {
+                self.write("exports_1(\"");
+                self.write(name);
+                self.write("\", ");
+            }
+            self.write(name);
+            self.write(" = ");
+            self.write(source_name);
+            self.write(path);
+            if is_exported {
+                self.write(")");
+            }
+        }
+        self.write_semicolon();
+    }
+
+    /// Recursively collects `(bound_name, access_path)` pairs from a binding
+    /// pattern, where `access_path` is appended to a temp variable name to
+    /// form the full access expression (e.g. `[0]`, `.a`, `.b.c`).
+    ///
+    /// `prefix` accumulates the path from the containing pattern root and is
+    /// empty at the top-level call.  Elided array positions and elements with
+    /// rest tokens or default initializers are skipped for now.
+    fn collect_bound_names_with_paths(
+        &self,
+        name_idx: NodeIndex,
+        prefix: String,
+        out: &mut Vec<(String, String)>,
+    ) {
+        let Some(node) = self.arena.get(name_idx) else {
+            return;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(id) = self.arena.get_identifier(node) {
+                let text = id
+                    .original_text
+                    .as_deref()
+                    .unwrap_or(&id.escaped_text)
+                    .to_string();
+                if !text.is_empty() {
+                    out.push((text, prefix));
+                }
+            }
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            if let Some(pattern) = self.arena.get_binding_pattern(node) {
+                for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+                    if elem_idx.is_none() {
+                        continue; // elided element
+                    }
+                    let Some(elem_node) = self.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                        continue;
+                    };
+                    if elem.dot_dot_dot_token || elem.initializer.is_some() {
+                        continue;
+                    }
+                    let elem_path = format!("{prefix}[{i}]");
+                    self.collect_bound_names_with_paths(elem.name, elem_path, out);
+                }
+            }
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            if let Some(pattern) = self.arena.get_binding_pattern(node) {
+                for &elem_idx in &pattern.elements.nodes {
+                    let Some(elem_node) = self.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                        continue;
+                    };
+                    if elem.dot_dot_dot_token || elem.initializer.is_some() {
+                        continue;
+                    }
+                    // The property key: use `property_name` when present,
+                    // otherwise the element name itself is the key.
+                    let key = if elem.property_name.is_some() {
+                        self.get_identifier_text_idx(elem.property_name)
+                    } else {
+                        self.get_identifier_text_idx(elem.name)
+                    };
+                    if key.is_empty() {
+                        continue;
+                    }
+                    let elem_path = format!("{prefix}.{key}");
+                    self.collect_bound_names_with_paths(elem.name, elem_path, out);
+                }
+            }
+        }
     }
 }
 

@@ -7,11 +7,15 @@ use tsz_emitter::lowering::LoweringPass;
 use tsz_parser::parser::ParserState;
 
 fn emit_es5_downlevel_iteration(source: &str) -> String {
+    emit_es5_downlevel_iteration_with_module(source, ModuleKind::None)
+}
+
+fn emit_es5_downlevel_iteration_with_module(source: &str, module: ModuleKind) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let opts = PrinterOptions {
         target: ScriptTarget::ES5,
-        module: ModuleKind::None,
+        module,
         downlevel_iteration: true,
         remove_comments: true,
         ..Default::default()
@@ -59,6 +63,26 @@ fn empty_array_assignment_patterns_do_not_schedule_read_helpers() {
     assert!(
         !output.contains("var __read") && !output.contains("__read("),
         "Empty assignment patterns should evaluate the source without scheduling `__read`.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("(a);").count(),
+        2,
+        "Both empty assignment patterns should emit as source evaluations.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn empty_assignment_patterns_commonjs_do_not_schedule_read_helpers() {
+    let output = emit_es5_downlevel_iteration_with_module(
+        "var a: any;\n\
+         ({} = a);\n\
+         ([] = a);\n",
+        ModuleKind::CommonJS,
+    );
+
+    assert!(
+        !output.contains("var __read") && !output.contains("__read("),
+        "Empty assignment patterns (CommonJS) should evaluate the source without `__read`.\nOutput:\n{output}"
     );
     assert_eq!(
         output.matches("(a);").count(),

@@ -2161,3 +2161,46 @@ fn async_es5_system_dynamic_import_lowered_to_context_import() {
         "System async ES5: Promise.resolve() CJS form must not appear.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn empty_array_and_object_binding_patterns_evaluate_rhs_only() {
+    // When `var {} = expr` or `var [] = expr`, ES5 should just evaluate
+    // the RHS into a temp binding — no destructuring needed.
+    let output = emit_es5(
+        "(function () {\n\
+             var a: any;\n\
+             var {} = a;\n\
+             var [] = a;\n\
+         })();\n",
+    );
+
+    assert!(
+        !output.contains("void 0"),
+        "Empty binding should not produce `void 0` for a non-missing RHS.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("= a;"),
+        "Each empty binding must evaluate the RHS at least once.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_empty_binding_patterns_evaluate_intermediate_properties() {
+    // `var { p1: {}, p2: [] } = a` — evaluate `a.p1` and `a.p2` (side-effects)
+    // but extract nothing from either nested empty pattern.
+    let output = emit_es5(
+        "(function () {\n\
+             var a: any;\n\
+             var { p1: {}, p2: [] } = a;\n\
+         })();\n",
+    );
+
+    assert!(
+        output.contains("a.p1"),
+        "Nested empty binding should still access the intermediate property.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("a.p2"),
+        "Nested empty binding should access both intermediate properties.\nOutput:\n{output}"
+    );
+}

@@ -624,6 +624,13 @@ pub struct Printer<'a> {
     /// collection and consumed when emitting execute-body export initializers.
     pub(crate) system_object_rest_export_temps: FxHashMap<u32, String>,
 
+    /// `SystemJS` destructuring binding pattern source temps (for array
+    /// patterns and multi-element object patterns) planned during outer-scope
+    /// hoist collection and consumed when emitting execute-body export
+    /// initializers. `None` means the initializer is a reusable identifier and
+    /// no source temp should be emitted.
+    pub(crate) system_binding_pattern_temps: FxHashMap<u32, Option<String>>,
+
     /// Legacy-decorated class self-reference aliases planned while collecting
     /// `SystemJS` wrapper hoists and consumed when emitting the matching class.
     pub(crate) preplanned_legacy_decorated_class_aliases: FxHashMap<NodeIndex, String>,
@@ -1183,6 +1190,7 @@ impl<'a> Printer<'a> {
             cjs_destructuring_export_temps: Vec::new(),
             system_empty_binding_temps: FxHashMap::default(),
             system_object_rest_export_temps: FxHashMap::default(),
+            system_binding_pattern_temps: FxHashMap::default(),
             preplanned_legacy_decorated_class_aliases: FxHashMap::default(),
             cjs_destr_hoist_byte_offset: 0,
             cjs_destr_hoist_line: 0_u32,
