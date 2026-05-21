@@ -121,11 +121,10 @@ impl BlockScopeState {
 
         let needs_rename = is_builtin_shadow
             || self.reserved_names.contains(original_name)
-            || (!at_function_level
-                && self
-                    .function_scope_shadowed_names
-                    .last()
-                    .is_some_and(|names| names.contains(original_name)))
+            || self
+                .function_scope_shadowed_names
+                .last()
+                .is_some_and(|names| names.contains(original_name))
             || if at_function_level {
                 // At function body level: only check the current function scope itself
                 // (for redeclarations within the same scope)
@@ -332,6 +331,22 @@ impl BlockScopeState {
     /// This should be called for temp variables like _i, _a, `a_1`, etc.
     pub fn reserve_name(&mut self, name: String) {
         self.reserved_names.insert(name);
+    }
+
+    /// Reserve several generated names in the current file-level block-scope
+    /// naming state.
+    pub fn reserve_names<I>(&mut self, names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.reserved_names.extend(names);
+    }
+
+    /// Return generated names that have been reserved for block-scope lowering.
+    pub fn visible_reserved_names(&self) -> Vec<String> {
+        let mut names: Vec<_> = self.reserved_names.iter().cloned().collect();
+        names.sort();
+        names
     }
 
     /// Return whether a generated helper/temp name has already been reserved.

@@ -2160,6 +2160,42 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to(source, target)
     }
 
+    /// Environment-aware boolean relation guard for diagnostic code paths.
+    ///
+    /// Use this only when the caller intentionally needs the current
+    /// `TypeEnvironment` and no relation-cache lookup.
+    pub(crate) fn diagnostic_relation_boolean_guard_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_with_env(source, target)
+    }
+
+    /// Bivariant-callback boolean relation guard for diagnostic code paths.
+    ///
+    /// Use this only when the caller intentionally needs the legacy bivariant
+    /// callback relation rather than the default assignability relation.
+    pub(crate) fn diagnostic_relation_boolean_guard_bivariant(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_bivariant(source, target)
+    }
+
+    /// No-weak-checks boolean relation guard for diagnostic code paths.
+    ///
+    /// Use this only when the caller intentionally mirrors `tsc`'s
+    /// `isTypeAssignableTo` path without TS2559 weak-type detection.
+    pub(crate) fn diagnostic_relation_boolean_guard_no_weak_checks(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_no_weak_checks(source, target)
+    }
+
     /// Check if source type is assignable to target type.
     ///
     /// This is the main entry point for assignability checking, used throughout
