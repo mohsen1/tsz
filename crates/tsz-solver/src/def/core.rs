@@ -258,6 +258,7 @@ impl DefinitionInfo {
             properties,
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         };
         Self {
@@ -295,6 +296,7 @@ impl DefinitionInfo {
             properties: instance_properties,
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         };
         let static_shape = ObjectShape {
@@ -302,6 +304,7 @@ impl DefinitionInfo {
             properties: static_properties,
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         };
         Self {

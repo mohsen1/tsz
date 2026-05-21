@@ -1052,6 +1052,7 @@ fn canonicalize_object_with_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };

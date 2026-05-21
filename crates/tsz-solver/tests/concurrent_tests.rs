@@ -222,6 +222,7 @@ fn test_concurrent_property_map_building() {
         properties: props,
         string_index: None,
         number_index: None,
+        symbol_index: None,
     };
     let shape_id = interner.intern_object_shape(shape);
 
@@ -292,6 +293,7 @@ fn test_concurrent_callable_creation() {
                     TypeId::NUMBER,
                 )],
                 number_index: None,
+                symbol_index: None,
                 string_index: None,
             };
             interner.callable(shape)

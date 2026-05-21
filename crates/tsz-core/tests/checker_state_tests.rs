@@ -11673,6 +11673,7 @@ fn test_index_signature_at_solver_level() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     };
 
     let obj_type = types.object_with_index(shape);

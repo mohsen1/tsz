@@ -546,6 +546,7 @@ fn test_variance_indexed_access_skips_callable_method_signature_param() {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -866,6 +867,7 @@ fn test_variance_object_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let t_atom = interner.intern_string("T");
@@ -1072,6 +1074,7 @@ fn test_variance_callable_call_signatures() {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -1104,6 +1107,7 @@ fn test_variance_callable_return_type() {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -1137,6 +1141,7 @@ fn test_variance_callable_with_properties() {
         properties: vec![PropertyInfo::readonly(prop_atom, t_param)],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -1688,6 +1693,7 @@ fn test_variance_merged_promise_like_overloads_is_covariant() {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });

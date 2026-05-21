@@ -1190,6 +1190,7 @@ fn test_function_return_prefers_object_literal_over_return_type_wrapper() {
         ],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let function_arg = interner.function(FunctionShape::new(Vec::new(), object_type));

@@ -503,6 +503,7 @@ fn test_class_with_string_index() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // object_with_index returns ObjectWithIndex variant

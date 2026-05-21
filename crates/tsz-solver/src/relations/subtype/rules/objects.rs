@@ -1313,14 +1313,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &ObjectShape,
         target_receiver: Option<TypeId>,
     ) -> SubtypeResult {
-        let string_index = target
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type != TypeId::SYMBOL);
-        let symbol_index = target
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type == TypeId::SYMBOL);
+        let string_index = target.string_index.as_ref();
+        let symbol_index = target.symbol_index.as_ref();
         let number_index = target.number_index.as_ref();
 
         if string_index.is_none() && number_index.is_none() && symbol_index.is_none() {
@@ -1466,6 +1460,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     properties: source.to_vec(),
                     string_index: None,
                     number_index: None,
+                    symbol_index: None,
                     symbol: None,
                 }
                 .into()

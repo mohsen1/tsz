@@ -863,6 +863,7 @@ fn test_mapped_type_array_remap_preserves_array_base_display_order() {
             param_name: None,
         }),
         symbol: None,
+        symbol_index: None,
     });
     interner.set_array_base_type(array_base, vec![t_param]);
 

@@ -42,6 +42,7 @@ struct StaticMemberBuildData<'a> {
     accessors: &'a FxHashMap<Atom, AccessorAggregate>,
     static_string_index: &'a Option<IndexSignature>,
     static_number_index: &'a Option<IndexSignature>,
+    static_symbol_index: &'a Option<IndexSignature>,
     /// Property being injected mid-pass, before it has a cached type entry.
     extra_property: Option<PropertyInfo>,
     inherited_static_props: &'a [PropertyInfo],
@@ -405,6 +406,7 @@ impl<'a> CheckerState<'a> {
             FxHashMap::with_capacity_and_hasher(4, Default::default());
         let mut static_string_index: Option<IndexSignature> = None;
         let mut static_number_index: Option<IndexSignature> = None;
+        let mut static_symbol_index: Option<IndexSignature> = None;
         let mut has_static_late_bound_members = false;
 
         // Pre-scan all static member names so that partial constructor types
@@ -587,6 +589,7 @@ impl<'a> CheckerState<'a> {
                             properties: Vec::new(),
                             string_index: None,
                             number_index: None,
+                            symbol_index: None,
                             symbol: None,
                             is_abstract: false,
                         });
@@ -804,6 +807,7 @@ impl<'a> CheckerState<'a> {
                                 accessors: &accessors,
                                 static_string_index: &static_string_index,
                                 static_number_index: &static_number_index,
+                                static_symbol_index: &static_symbol_index,
                                 extra_property: Some(PropertyInfo {
                                     name: name_atom,
                                     type_id: TypeId::ANY,
@@ -924,6 +928,7 @@ impl<'a> CheckerState<'a> {
                                 accessors: &accessors,
                                 static_string_index: &static_string_index,
                                 static_number_index: &static_number_index,
+                                static_symbol_index: &static_symbol_index,
                                 extra_property: Some(PropertyInfo {
                                     name: name_atom,
                                     type_id: TypeId::ANY,
@@ -1040,6 +1045,7 @@ impl<'a> CheckerState<'a> {
                                 accessors: &accessors,
                                 static_string_index: &static_string_index,
                                 static_number_index: &static_number_index,
+                                static_symbol_index: &static_symbol_index,
                                 extra_property: None,
                                 inherited_static_props: &inherited_static_props,
                                 all_static_member_names: &all_static_member_names,
@@ -1073,6 +1079,7 @@ impl<'a> CheckerState<'a> {
                         properties: Vec::new(),
                         string_index: None,
                         number_index: None,
+                        symbol_index: None,
                         symbol: None,
                         is_abstract: false,
                     });
@@ -1153,6 +1160,7 @@ impl<'a> CheckerState<'a> {
                                         accessors: &accessors,
                                         static_string_index: &static_string_index,
                                         static_number_index: &static_number_index,
+                                        static_symbol_index: &static_symbol_index,
                                         extra_property: None,
                                         inherited_static_props: &inherited_static_props,
                                         all_static_member_names: &all_static_member_names,
@@ -1268,6 +1276,8 @@ impl<'a> CheckerState<'a> {
                     if is_valid_index_type {
                         if key_type == TypeId::NUMBER {
                             static_number_index = Some(idx_sig);
+                        } else if key_type == TypeId::SYMBOL {
+                            static_symbol_index = Some(idx_sig);
                         } else {
                             static_string_index = Some(idx_sig);
                         }
@@ -1325,6 +1335,7 @@ impl<'a> CheckerState<'a> {
                 properties: Vec::new(),
                 string_index: None,
                 number_index: None,
+                symbol_index: None,
                 symbol: None,
                 is_abstract: false,
             });
@@ -1453,6 +1464,7 @@ impl<'a> CheckerState<'a> {
                     properties: partial_ctor_props,
                     string_index: static_string_index,
                     number_index: static_number_index,
+                    symbol_index: static_symbol_index,
                     symbol: current_sym,
                     is_abstract: false,
                 });
@@ -2060,6 +2072,7 @@ impl<'a> CheckerState<'a> {
             properties,
             string_index: effective_string_index,
             number_index: static_number_index,
+            symbol_index: static_symbol_index,
             symbol: class_symbol,
             is_abstract: is_abstract_class,
         });
@@ -2143,6 +2156,7 @@ impl<'a> CheckerState<'a> {
             accessors,
             static_string_index,
             static_number_index,
+            static_symbol_index,
             extra_property,
             inherited_static_props,
             all_static_member_names,
@@ -2174,6 +2188,7 @@ impl<'a> CheckerState<'a> {
                 properties: Vec::new(),
                 string_index: None,
                 number_index: None,
+                symbol_index: None,
                 symbol: None,
                 is_abstract: false,
             });
@@ -2261,6 +2276,7 @@ impl<'a> CheckerState<'a> {
             properties: partial_ctor_props,
             string_index: *static_string_index,
             number_index: *static_number_index,
+            symbol_index: *static_symbol_index,
             symbol: current_sym,
             is_abstract: false,
         })

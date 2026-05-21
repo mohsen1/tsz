@@ -25,6 +25,7 @@ fn make_callable_with_construct_sig(
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     };
@@ -50,6 +51,7 @@ fn make_callable_with_call_sig(interner: &TypeInterner, return_type: TypeId) -> 
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     };
@@ -296,6 +298,7 @@ fn test_construct_return_type_for_type() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -371,6 +374,7 @@ fn test_is_constructor_like_type() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -468,6 +472,7 @@ fn test_get_overload_call_signatures() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -489,6 +494,7 @@ fn test_get_overload_call_signatures() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -525,6 +531,7 @@ fn test_get_object_symbol() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(sym),
     });
     assert_eq!(get_object_symbol(&interner, obj_with_sym), Some(sym));

@@ -205,6 +205,7 @@ impl<'a> CheckerState<'a> {
         let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
         let mut string_index: Option<IndexSignature> = None;
         let mut number_index: Option<IndexSignature> = None;
+        let mut symbol_index: Option<IndexSignature> = None;
         let mut member_order: u32 = 0;
 
         // Track method overloads: group call signatures by method name.
@@ -572,6 +573,11 @@ impl<'a> CheckerState<'a> {
                 if is_valid_index_type || is_valid_via_alias {
                     if key_type == TypeId::NUMBER {
                         Self::merge_index_signature(&mut number_index, info);
+                    } else if key_type == TypeId::SYMBOL {
+                        // Symbol-keyed signatures live in their own slot so a shape
+                        // carrying both `[k: string]: V` and `[k: symbol]: W` keeps
+                        // each signature's key/value precision intact.
+                        Self::merge_index_signature(&mut symbol_index, info);
                     } else {
                         match string_index.as_mut() {
                             None => string_index = Some(info),
@@ -614,6 +620,7 @@ impl<'a> CheckerState<'a> {
                     properties: Vec::new(),
                     string_index: None,
                     number_index: None,
+                    symbol_index: None,
                     symbol: None,
                     is_abstract: false,
                 };
@@ -674,15 +681,17 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 symbol: interface_symbol,
                 is_abstract: false,
             };
             factory.callable(shape)
-        } else if string_index.is_some() || number_index.is_some() {
+        } else if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
             factory.object_with_index(ObjectShape {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 symbol: interface_symbol,
                 ..ObjectShape::default()
             })
@@ -1052,6 +1061,9 @@ impl<'a> CheckerState<'a> {
                     number_index: derived_shape
                         .number_index
                         .or_else(|| base_shape.number_index),
+                    symbol_index: derived_shape
+                        .symbol_index
+                        .or_else(|| base_shape.symbol_index),
                     symbol: derived_shape.symbol,
                     is_abstract: derived_shape.is_abstract || base_shape.is_abstract,
                 })
@@ -1070,6 +1082,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: derived_shape.string_index,
                     number_index: derived_shape.number_index,
+                    symbol_index: derived_shape.symbol_index,
                     symbol: derived_shape.symbol,
                     is_abstract: derived_shape.is_abstract,
                 })
@@ -1092,6 +1105,9 @@ impl<'a> CheckerState<'a> {
                     number_index: derived_shape
                         .number_index
                         .or_else(|| base_shape.number_index),
+                    symbol_index: derived_shape
+                        .symbol_index
+                        .or_else(|| base_shape.symbol_index),
                     symbol: derived_shape.symbol,
                     is_abstract: derived_shape.is_abstract,
                 })
@@ -1110,6 +1126,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: base_shape.string_index,
                     number_index: base_shape.number_index,
+                    symbol_index: base_shape.symbol_index,
                     symbol: derived_shape.symbol,
                     is_abstract: base_shape.is_abstract,
                 })
@@ -1132,6 +1149,9 @@ impl<'a> CheckerState<'a> {
                     number_index: derived_shape
                         .number_index
                         .or_else(|| base_shape.number_index),
+                    symbol_index: derived_shape
+                        .symbol_index
+                        .or_else(|| base_shape.symbol_index),
                     symbol: derived_shape.symbol,
                     is_abstract: base_shape.is_abstract,
                 })
@@ -1165,6 +1185,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: base_shape.string_index,
                     number_index: base_shape.number_index,
+                    symbol_index: base_shape.symbol_index,
                     symbol: derived_shape.symbol,
                     ..ObjectShape::default()
                 });
@@ -1183,6 +1204,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index: derived_shape.string_index,
                     number_index: derived_shape.number_index,
+                    symbol_index: derived_shape.symbol_index,
                     symbol: derived_shape.symbol,
                     ..ObjectShape::default()
                 })
@@ -1203,6 +1225,9 @@ impl<'a> CheckerState<'a> {
                     number_index: derived_shape
                         .number_index
                         .or_else(|| base_shape.number_index),
+                    symbol_index: derived_shape
+                        .symbol_index
+                        .or_else(|| base_shape.symbol_index),
                     symbol: derived_shape.symbol,
                     ..ObjectShape::default()
                 })

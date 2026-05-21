@@ -549,6 +549,7 @@ fn async_iterable_object_with_index_returns_object_shape() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     };
     let obj_idx = interner.object_with_index(shape);

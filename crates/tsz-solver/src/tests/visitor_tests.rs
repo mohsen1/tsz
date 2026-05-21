@@ -545,6 +545,7 @@ fn test_object_shape_extractors() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
     assert!(object_shape_id(&interner, obj_with_index).is_none());
     assert!(object_with_index_shape_id(&interner, obj_with_index).is_some());
@@ -781,6 +782,7 @@ fn test_function_and_callable_extractors() {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
     let callable_id = callable_shape_id(&interner, callable).expect("expected callable shape id");
     let callable_shape = interner.callable_shape(callable_id);

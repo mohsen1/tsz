@@ -375,14 +375,23 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                 } => {
-                    if !properties.is_empty() || string_index.is_some() || number_index.is_some() {
-                        let merged_type = if string_index.is_some() || number_index.is_some() {
+                    if !properties.is_empty()
+                        || string_index.is_some()
+                        || number_index.is_some()
+                        || symbol_index.is_some()
+                    {
+                        let merged_type = if string_index.is_some()
+                            || number_index.is_some()
+                            || symbol_index.is_some()
+                        {
                             self.checker.interner.object_with_index(ObjectShape {
                                 flags: ObjectFlags::empty(),
                                 properties,
                                 string_index,
                                 number_index,
+                                symbol_index,
                                 symbol: None,
                             })
                         } else {
@@ -433,25 +442,28 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             }
 
             if !call_signatures.is_empty() || !construct_signatures.is_empty() {
-                let (properties, string_index, number_index) = match collect_properties(
-                    self.source,
-                    self.checker.interner,
-                    self.checker.resolver,
-                ) {
-                    PropertyCollectionResult::Any => return SubtypeResult::True,
-                    PropertyCollectionResult::Properties {
-                        properties,
-                        string_index,
-                        number_index,
-                    } => (properties, string_index, number_index),
-                    PropertyCollectionResult::NonObject => (Vec::new(), None, None),
-                };
+                let (properties, string_index, number_index, symbol_index) =
+                    match collect_properties(
+                        self.source,
+                        self.checker.interner,
+                        self.checker.resolver,
+                    ) {
+                        PropertyCollectionResult::Any => return SubtypeResult::True,
+                        PropertyCollectionResult::Properties {
+                            properties,
+                            string_index,
+                            number_index,
+                            symbol_index,
+                        } => (properties, string_index, number_index, symbol_index),
+                        PropertyCollectionResult::NonObject => (Vec::new(), None, None, None),
+                    };
                 let s_callable = CallableShape {
                     call_signatures,
                     construct_signatures,
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                     symbol: None,
                     is_abstract: false,
                 };
@@ -828,6 +840,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 properties: s_callable.properties.clone(),
                 string_index: s_callable.string_index,
                 number_index: s_callable.number_index,
+                symbol_index: s_callable.symbol_index,
                 symbol: s_callable.symbol,
             };
             self.checker.check_object_subtype(
@@ -851,6 +864,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 properties: s_callable.properties.clone(),
                 string_index: s_callable.string_index,
                 number_index: s_callable.number_index,
+                symbol_index: s_callable.symbol_index,
                 symbol: s_callable.symbol,
             };
             self.checker.check_object_to_indexed(

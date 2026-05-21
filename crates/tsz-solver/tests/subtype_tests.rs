@@ -330,6 +330,7 @@ fn test_template_literal_number_index_subtyping() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
     let mismatch = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -342,6 +343,7 @@ fn test_template_literal_number_index_subtyping() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(checker.is_subtype_of(template, target));
@@ -420,6 +422,7 @@ fn test_generic_function_mapped_apparent_constraint_not_erased_by_alpha_rename()
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -532,6 +535,7 @@ fn test_apparent_string_number_index_subtyping() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
     let mismatch = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -544,6 +548,7 @@ fn test_apparent_string_number_index_subtyping() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(checker.is_subtype_of(TypeId::STRING, target));
@@ -1319,6 +1324,7 @@ fn test_no_unchecked_object_index_signature_subtyping() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let index_access = interner.intern(TypeData::IndexAccess(indexed, TypeId::NUMBER));
@@ -1348,6 +1354,7 @@ fn test_no_unchecked_indexed_access_string_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let index_access = interner.intern(TypeData::IndexAccess(indexed, TypeId::STRING));
@@ -1377,6 +1384,7 @@ fn test_no_unchecked_indexed_access_union_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let index_type = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -2961,6 +2969,7 @@ fn test_number_index_signature_numeric_property() {
             param_name: None,
         }),
         string_index: None,
+        symbol_index: None,
     };
     let target = interner.object_with_index(target_shape);
 
@@ -2993,6 +3002,7 @@ fn test_number_index_signature_type_mismatch() {
             param_name: None,
         }),
         string_index: None,
+        symbol_index: None,
     };
     let target = interner.object_with_index(target_shape);
 
@@ -3023,6 +3033,7 @@ fn test_anonymous_number_index_signature_vacuously_compatible_with_no_numeric_ke
             param_name: None,
         }),
         string_index: None,
+        symbol_index: None,
     };
     let target = interner.object_with_index(target_shape);
 
@@ -3054,6 +3065,7 @@ fn test_named_object_without_number_index_does_not_satisfy_number_index_target()
             param_name: None,
         }),
         string_index: None,
+        symbol_index: None,
     };
     let target = interner.object_with_index(target_shape);
 
@@ -3125,6 +3137,7 @@ fn test_number_index_signature_method_bivariant_property() {
             param_name: None,
         }),
         string_index: None,
+        symbol_index: None,
     };
     let target = interner.object_with_index(target_shape);
 
@@ -3167,6 +3180,7 @@ fn test_named_class_not_assignable_to_string_indexed_without_explicit_index_sig(
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::UNKNOWN,
@@ -3203,6 +3217,7 @@ fn test_namespace_object_can_satisfy_string_index_structurally() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::UNKNOWN,
@@ -3271,6 +3286,7 @@ fn test_string_index_signature_method_bivariant_property() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: wide_fn,
@@ -3310,6 +3326,7 @@ fn test_number_index_signature_multiple_numeric_props() {
             param_name: None,
         }),
         string_index: None,
+        symbol_index: None,
     };
     let target = interner.object_with_index(target_shape);
 
@@ -3347,6 +3364,7 @@ fn test_number_and_string_index_signatures() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     };
     let target = interner.object_with_index(target_shape);
 
@@ -3375,6 +3393,7 @@ fn test_index_signature_consistency_number_vs_string_index() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let target = interner.object_with_index(ObjectShape {
@@ -3393,6 +3412,7 @@ fn test_index_signature_consistency_number_vs_string_index() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(!checker.is_subtype_of(source, target));
@@ -3408,6 +3428,7 @@ fn test_readonly_index_signature_subtyping() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -3421,6 +3442,7 @@ fn test_readonly_index_signature_subtyping() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -3434,6 +3456,7 @@ fn test_readonly_index_signature_subtyping() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -3463,6 +3486,7 @@ fn test_readonly_property_with_mutable_index_signature() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -3476,6 +3500,7 @@ fn test_readonly_property_with_mutable_index_signature() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -3515,6 +3540,7 @@ fn test_object_with_index_properties_match_target_index() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let target = interner.object_with_index(ObjectShape {
@@ -3533,6 +3559,7 @@ fn test_object_with_index_properties_match_target_index() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(checker.is_subtype_of(source, target));
@@ -3551,6 +3578,7 @@ fn test_object_with_index_property_mismatch_string_index() {
             TypeId::STRING,
         )],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -3564,6 +3592,7 @@ fn test_object_with_index_property_mismatch_string_index() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -3594,6 +3623,7 @@ fn test_object_with_index_property_mismatch_number_index() {
             param_name: None,
         }),
         string_index: None,
+        symbol_index: None,
     });
 
     let target = interner.object_with_index(ObjectShape {
@@ -3607,6 +3637,7 @@ fn test_object_with_index_property_mismatch_number_index() {
             param_name: None,
         }),
         string_index: None,
+        symbol_index: None,
     });
 
     assert!(!checker.is_subtype_of(source, target));
@@ -3622,6 +3653,7 @@ fn test_object_with_index_satisfies_named_property_string_index() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -3649,6 +3681,7 @@ fn test_object_with_index_named_property_mismatch_string_index() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -3680,6 +3713,7 @@ fn test_object_to_indexed_property_mismatch_string_index() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -3707,6 +3741,7 @@ fn test_object_with_index_satisfies_numeric_property_number_index() {
             param_name: None,
         }),
         string_index: None,
+        symbol_index: None,
     });
 
     let target = interner.object(vec![PropertyInfo::new(
@@ -3917,6 +3952,7 @@ fn test_object_with_index_noncanonical_numeric_property_fails() {
             param_name: None,
         }),
         string_index: None,
+        symbol_index: None,
     });
 
     let target = interner.object(vec![PropertyInfo::new(
@@ -3937,6 +3973,7 @@ fn test_object_with_index_readonly_index_to_mutable_property_fails() {
         flags: ObjectFlags::empty(),
         properties: vec![],
         number_index: None,
+        symbol_index: None,
         string_index: Some(IndexSignature {
             key_type: TypeId::STRING,
             value_type: TypeId::NUMBER,
@@ -4317,6 +4354,7 @@ fn test_callable_rest_parameter_contravariance() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let target = interner.callable(CallableShape {
@@ -4347,6 +4385,7 @@ fn test_callable_rest_parameter_contravariance() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(!checker.is_subtype_of(source, target));
@@ -6171,6 +6210,7 @@ fn test_keyof_union_index_signature_contravariant() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
     let number_index = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -6183,6 +6223,7 @@ fn test_keyof_union_index_signature_contravariant() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let union = interner.union(vec![string_index, number_index]);
@@ -6208,6 +6249,7 @@ fn test_keyof_union_string_index_and_literal_narrows() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
     let key_a = interner.intern_string("a");
     let obj_a = interner.object(vec![PropertyInfo::new(key_a, TypeId::NUMBER)]);
@@ -6503,6 +6545,7 @@ fn test_mapped_type_over_string_keys_number_index_subtyping() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
     let mismatch = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -6515,6 +6558,7 @@ fn test_mapped_type_over_string_keys_number_index_subtyping() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(checker.is_subtype_of(mapped, number_index));
@@ -11403,6 +11447,7 @@ fn test_index_signature_string_basic() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let indexed_string = interner.object_with_index(ObjectShape {
@@ -11416,6 +11461,7 @@ fn test_index_signature_string_basic() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Different value types - not subtypes
@@ -11442,6 +11488,7 @@ fn test_index_signature_covariant_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let indexed_string = interner.object_with_index(ObjectShape {
@@ -11455,6 +11502,7 @@ fn test_index_signature_covariant_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Literal value type is subtype of wider value type
@@ -11480,6 +11528,7 @@ fn test_index_signature_with_known_property() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let indexed_only = interner.object_with_index(ObjectShape {
@@ -11493,6 +11542,7 @@ fn test_index_signature_with_known_property() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Object with known property and index signature is subtype
@@ -11516,6 +11566,7 @@ fn test_index_signature_number_index() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let string_indexed = interner.object_with_index(ObjectShape {
@@ -11529,6 +11580,7 @@ fn test_index_signature_number_index() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Number index and string index are different
@@ -11555,6 +11607,7 @@ fn test_index_signature_union_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let indexed_string = interner.object_with_index(ObjectShape {
@@ -11568,6 +11621,7 @@ fn test_index_signature_union_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // string is subtype of string | number
@@ -11600,6 +11654,7 @@ fn test_index_signature_object_to_indexed() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Object with matching property types is subtype of index signature
@@ -14454,6 +14509,7 @@ fn test_interface_vs_type_alias_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let type_t = interner.object_with_index(ObjectShape {
@@ -14467,6 +14523,7 @@ fn test_interface_vs_type_alias_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Same structure
@@ -15819,6 +15876,7 @@ fn test_index_signature_string_to_string() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let obj_b = interner.object_with_index(ObjectShape {
@@ -15832,6 +15890,7 @@ fn test_index_signature_string_to_string() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(checker.is_subtype_of(obj_a, obj_b));
@@ -15854,6 +15913,7 @@ fn test_index_signature_number_to_number() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let obj_b = interner.object_with_index(ObjectShape {
@@ -15867,6 +15927,7 @@ fn test_index_signature_number_to_number() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(checker.is_subtype_of(obj_a, obj_b));
@@ -15894,6 +15955,7 @@ fn test_index_signature_covariant_value_type() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let obj_general = interner.object_with_index(ObjectShape {
@@ -15907,6 +15969,7 @@ fn test_index_signature_covariant_value_type() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(checker.is_subtype_of(obj_specific, obj_general));
@@ -15935,6 +15998,7 @@ fn test_index_signature_both_string_and_number() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let obj_string_only = interner.object_with_index(ObjectShape {
@@ -15948,6 +16012,7 @@ fn test_index_signature_both_string_and_number() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Object with both is subtype of object with just string
@@ -15977,6 +16042,7 @@ fn test_index_signature_number_subtype_of_string() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     // This should be valid - string is subtype of any
@@ -16000,6 +16066,7 @@ fn test_index_signature_intersection_combines() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let obj_b = interner.object_with_index(ObjectShape {
@@ -16013,6 +16080,7 @@ fn test_index_signature_intersection_combines() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
@@ -16044,6 +16112,7 @@ fn test_index_signature_with_properties() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Object has both property and index signature
@@ -16071,6 +16140,7 @@ fn test_index_signature_property_must_match_index() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(obj_valid != TypeId::ERROR);
@@ -16093,6 +16163,7 @@ fn test_index_signature_readonly_to_mutable() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let obj_mutable = interner.object_with_index(ObjectShape {
@@ -16106,6 +16177,7 @@ fn test_index_signature_readonly_to_mutable() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Per tsc behavior, readonly on index signatures does NOT affect assignability.
@@ -16130,6 +16202,7 @@ fn test_index_signature_mutable_to_readonly() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let obj_readonly = interner.object_with_index(ObjectShape {
@@ -16143,6 +16216,7 @@ fn test_index_signature_mutable_to_readonly() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Mutable is assignable to readonly (can read)
@@ -16168,6 +16242,7 @@ fn test_index_signature_union_value_subtyping() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let obj_string = interner.object_with_index(ObjectShape {
@@ -16181,6 +16256,7 @@ fn test_index_signature_union_value_subtyping() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // { [k: string]: string } is subtype of { [k: string]: string | number }
@@ -16216,6 +16292,7 @@ fn test_index_signature_intersection_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Object with intersection value type
@@ -16241,6 +16318,7 @@ fn test_index_signature_empty_object_to_indexed() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Empty object may not be subtype of indexed object
@@ -16273,6 +16351,7 @@ fn test_index_signature_object_with_extra_props() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(checker.is_subtype_of(obj_with_props, indexed_obj));
@@ -16300,6 +16379,7 @@ fn test_index_signature_numeric_string_key() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     // Numeric string properties should be compatible
@@ -16323,6 +16403,7 @@ fn test_index_signature_any_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let obj_with_props = interner.object(vec![PropertyInfo::new(
@@ -16354,6 +16435,7 @@ fn test_object_with_named_props_satisfies_number_index_any() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(checker.is_subtype_of(source, target));
@@ -16376,6 +16458,7 @@ fn test_string_is_not_subtype_of_string_index_any() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(!checker.is_subtype_of(TypeId::STRING, target));
@@ -16401,6 +16484,7 @@ fn test_boolean_is_not_subtype_of_number_index_any() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(!checker.is_subtype_of(TypeId::BOOLEAN, target));
@@ -16427,6 +16511,7 @@ fn test_index_signature_unknown_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let indexed_string = interner.object_with_index(ObjectShape {
@@ -16440,6 +16525,7 @@ fn test_index_signature_unknown_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // { [k: string]: string } is subtype of { [k: string]: unknown }
@@ -16463,6 +16549,7 @@ fn test_index_signature_never_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Empty object might be subtype of { [k: string]: never }
@@ -16499,6 +16586,7 @@ fn test_index_signature_function_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(indexed_fn != TypeId::ERROR);
@@ -16523,6 +16611,7 @@ fn test_index_signature_array_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(indexed_array != TypeId::ERROR);
@@ -16560,6 +16649,7 @@ fn test_index_signature_tuple_value() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(indexed_tuple != TypeId::ERROR);
@@ -16587,6 +16677,7 @@ fn test_index_signature_nested_object_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(indexed_nested != TypeId::ERROR);
@@ -16609,6 +16700,7 @@ fn test_index_signature_intersection_objects() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let prop_obj = interner.object(vec![PropertyInfo::new(
@@ -17099,6 +17191,7 @@ fn test_variance_method_bivariant_params() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Object with method taking wide param
@@ -17137,6 +17230,7 @@ fn test_variance_method_bivariant_params() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Methods are bivariant - both directions should work
@@ -17359,6 +17453,7 @@ fn test_recursive_promise_then_assignable_to_promise_like() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let onfulfilled_promise = interner.function(FunctionShape {
@@ -17396,6 +17491,7 @@ fn test_recursive_promise_then_assignable_to_promise_like() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let promise_like_body = interner.object(vec![PropertyInfo::method(
@@ -17523,6 +17619,7 @@ fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let then_promise = interner.callable(CallableShape {
@@ -17553,6 +17650,7 @@ fn test_recursive_promise_then_actual_lib_shape_assignable_to_promise_like() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let promise_like_body = interner.object(vec![PropertyInfo::method(
@@ -17723,6 +17821,7 @@ fn test_variance_constructor_param_bivariant() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let ctor_wide = interner.callable(CallableShape {
@@ -17745,6 +17844,7 @@ fn test_variance_constructor_param_bivariant() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Both directions work (bivariant for construct signatures)
@@ -17882,6 +17982,7 @@ fn test_overload_single_signature_subtype() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Function <: callable with same signature
@@ -17929,6 +18030,7 @@ fn test_overload_multiple_to_single() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let single_overload = interner.callable(CallableShape {
@@ -17951,6 +18053,7 @@ fn test_overload_multiple_to_single() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Multi-overload <: single overload (has matching signature)
@@ -17998,6 +18101,7 @@ fn test_overload_order_independent_matching() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let overloads_ba = interner.callable(CallableShape {
@@ -18035,6 +18139,7 @@ fn test_overload_order_independent_matching() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Order shouldn't matter for subtype relationship
@@ -18068,6 +18173,7 @@ fn test_overload_missing_signature_not_subtype() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let two_overloads = interner.callable(CallableShape {
@@ -18105,6 +18211,7 @@ fn test_overload_missing_signature_not_subtype() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Single overload should not be subtype of callable requiring two overloads
@@ -18139,6 +18246,7 @@ fn test_overload_wider_param_satisfies_target() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let narrow_overload = interner.callable(CallableShape {
@@ -18161,6 +18269,7 @@ fn test_overload_wider_param_satisfies_target() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Wide param <: narrow param (contravariance)
@@ -18208,6 +18317,7 @@ fn test_overload_constructor_subtype() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let single_ctor = interner.callable(CallableShape {
@@ -18230,6 +18340,7 @@ fn test_overload_constructor_subtype() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Multi-constructor <: single constructor (has matching)
@@ -18293,6 +18404,7 @@ fn test_overload_with_different_arity() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let no_args = interner.callable(CallableShape {
@@ -18310,6 +18422,7 @@ fn test_overload_with_different_arity() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Multi-arity should satisfy no-args target
@@ -18485,6 +18598,7 @@ fn test_this_parameter_in_callable_method() {
         )],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Plain method without this
@@ -18509,6 +18623,7 @@ fn test_this_parameter_in_callable_method() {
         )],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Both should be compatible (methods are bivariant)
@@ -18642,6 +18757,7 @@ fn test_overload_with_call_and_construct() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let call_only = interner.callable(CallableShape {
@@ -18664,6 +18780,7 @@ fn test_overload_with_call_and_construct() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Dual callable <: call-only (has matching call signature)
@@ -18698,6 +18815,7 @@ fn test_overload_rest_vs_multiple_params() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let two_params = interner.callable(CallableShape {
@@ -18728,6 +18846,7 @@ fn test_overload_rest_vs_multiple_params() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Rest params can satisfy fixed params
@@ -18760,6 +18879,7 @@ fn test_this_in_overload_signature() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let overload_no_this = interner.callable(CallableShape {
@@ -18777,6 +18897,7 @@ fn test_this_in_overload_signature() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // No-this is compatible with with-this (no-this is more general)
@@ -19973,6 +20094,7 @@ fn test_intersection_index_signature_with_properties() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let prop_obj = interner.object(vec![PropertyInfo::new(x_name, TypeId::NUMBER)]);
@@ -20004,6 +20126,7 @@ fn test_intersection_two_index_signatures() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let index_literal = interner.object_with_index(ObjectShape {
@@ -20017,6 +20140,7 @@ fn test_intersection_two_index_signatures() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let intersection = interner.intersection(vec![index_number, index_literal]);
@@ -20642,6 +20766,7 @@ fn test_keyof_with_index_signature_includes_string() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let keyof_indexed = interner.intern(TypeData::KeyOf(indexed_obj));
@@ -20667,6 +20792,7 @@ fn test_keyof_with_number_index_signature() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let keyof_indexed = interner.intern(TypeData::KeyOf(indexed_obj));
@@ -20956,6 +21082,7 @@ fn test_constructor_callable_with_construct_signature() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable_with_new != TypeId::ERROR);
@@ -20993,6 +21120,7 @@ fn test_constructor_with_call_and_construct() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable_both != TypeId::ERROR);
@@ -21200,6 +21328,7 @@ fn test_constructor_overload_signatures() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(overloaded_ctor != TypeId::ERROR);
@@ -21287,6 +21416,7 @@ fn test_constructor_abstract_pattern() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Concrete constructor
@@ -21352,6 +21482,7 @@ fn test_constructor_with_static_properties() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(ctor_with_static != TypeId::ERROR);
@@ -21542,6 +21673,7 @@ fn test_constructor_multiple_construct_signatures_subtype() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let double_sig = interner.callable(CallableShape {
@@ -21574,6 +21706,7 @@ fn test_constructor_multiple_construct_signatures_subtype() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Double signature is more specific (has additional overload)
@@ -22672,6 +22805,7 @@ fn test_readonly_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(readonly_index != TypeId::ERROR);
@@ -22694,6 +22828,7 @@ fn test_readonly_index_vs_mutable() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let mutable_index = interner.object_with_index(ObjectShape {
@@ -22707,6 +22842,7 @@ fn test_readonly_index_vs_mutable() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Mutable index is subtype of readonly index
@@ -22894,6 +23030,7 @@ fn test_readonly_with_number_index() {
             readonly: true,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(readonly_number_index != TypeId::ERROR);
@@ -23163,6 +23300,7 @@ fn test_overload_basic_two_signatures() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -23228,6 +23366,7 @@ fn test_overload_by_argument_count() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -23275,6 +23414,7 @@ fn test_overload_subtype_more_signatures_to_fewer() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // One signature: (string) => number
@@ -23298,6 +23438,7 @@ fn test_overload_subtype_more_signatures_to_fewer() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // More overloads should be subtype of fewer (can be used anywhere fewer is expected)
@@ -23346,6 +23487,7 @@ fn test_overload_subtype_fewer_not_subtype_of_more() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // One signature only
@@ -23369,6 +23511,7 @@ fn test_overload_subtype_fewer_not_subtype_of_more() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Fewer cannot substitute for more - missing the (number) => string overload
@@ -23430,6 +23573,7 @@ fn test_overload_generic_identity() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -23502,6 +23646,7 @@ fn test_overload_generic_with_constraint() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -23552,6 +23697,7 @@ fn test_overload_with_rest_parameter() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -23608,6 +23754,7 @@ fn test_overload_with_optional_parameters() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -23653,6 +23800,7 @@ fn test_overload_mixed_call_and_construct() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -23719,6 +23867,7 @@ fn test_overload_return_type_union() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -23767,6 +23916,7 @@ fn test_overload_subtype_signature_order_matters() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Order: general first, then specific
@@ -23805,6 +23955,7 @@ fn test_overload_subtype_signature_order_matters() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // These should be different types due to signature order
@@ -23909,6 +24060,7 @@ fn test_overload_generic_multiple_type_params() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -23955,6 +24107,7 @@ fn test_overload_reflexivity() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(checker.is_subtype_of(callable, callable));
@@ -23989,6 +24142,7 @@ fn test_overload_covariant_return_types() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Returns string
@@ -24012,6 +24166,7 @@ fn test_overload_covariant_return_types() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // More specific return is subtype (covariance)
@@ -24048,6 +24203,7 @@ fn test_overload_contravariant_parameters() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Accepts only "hello"
@@ -24071,6 +24227,7 @@ fn test_overload_contravariant_parameters() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // More general param is subtype (contravariance)
@@ -24110,6 +24267,7 @@ fn test_overload_construct_signature_subtyping() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Returns {x}
@@ -24128,6 +24286,7 @@ fn test_overload_construct_signature_subtyping() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // More specific instance type is subtype
@@ -24187,6 +24346,7 @@ fn test_overload_with_this_type() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -24241,6 +24401,7 @@ fn test_overload_with_properties() {
         ],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -24285,6 +24446,7 @@ fn test_overload_generic_default_type() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(callable != TypeId::ERROR);
@@ -24598,6 +24760,7 @@ fn test_overload_event_handler_pattern() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let event_target = interner.object(vec![PropertyInfo::method(
@@ -24737,6 +24900,7 @@ fn test_overload_promise_then_pattern() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(then_method != TypeId::ERROR);
@@ -24875,6 +25039,7 @@ fn test_overload_constructor_overloads() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(date_constructor != TypeId::ERROR);
@@ -26894,6 +27059,7 @@ fn test_enum_namespace_satisfies_string_index_target() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Enum namespace should satisfy string index target via implicit index
@@ -26936,6 +27102,7 @@ fn test_enum_namespace_rejects_incompatible_string_index() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(
@@ -26971,6 +27138,7 @@ fn test_regular_named_object_still_rejects_number_index() {
             param_name: None,
         }),
         string_index: None,
+        symbol_index: None,
     });
 
     assert!(

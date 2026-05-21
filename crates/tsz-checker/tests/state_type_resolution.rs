@@ -12,6 +12,7 @@ fn classifies_resolution_and_signature_paths() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });

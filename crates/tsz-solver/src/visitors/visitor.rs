@@ -1404,10 +1404,23 @@ impl<'a> ConstAssertionVisitor<'a> {
                             param_name: idx.param_name,
                         });
 
+                let symbol_index =
+                    shape
+                        .symbol_index
+                        .as_ref()
+                        .map(|idx| crate::types::IndexSignature {
+                            key_type: idx.key_type,
+                            value_type: self
+                                .apply_const_assertion_to_index_signature_value(idx.value_type),
+                            readonly: true,
+                            param_name: idx.param_name,
+                        });
+
                 let mut new_shape = (*shape).clone();
                 new_shape.properties = new_props;
                 new_shape.string_index = string_index;
                 new_shape.number_index = number_index;
+                new_shape.symbol_index = symbol_index;
 
                 self.db.object_with_index(new_shape)
             }

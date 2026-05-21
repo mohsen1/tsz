@@ -359,6 +359,10 @@ impl<'a> CheckerState<'a> {
             || shape
                 .number_index
                 .as_ref()
+                .is_some_and(|index| index.readonly)
+            || shape
+                .symbol_index
+                .as_ref()
                 .is_some_and(|index| index.readonly);
         let display_props = self.ctx.types.get_display_properties(ty);
         let has_readonly_display_property = display_props
@@ -377,6 +381,9 @@ impl<'a> CheckerState<'a> {
             index.readonly = false;
         }
         if let Some(index) = normalized.number_index.as_mut() {
+            index.readonly = false;
+        }
+        if let Some(index) = normalized.symbol_index.as_mut() {
             index.readonly = false;
         }
 

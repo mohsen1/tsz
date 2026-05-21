@@ -536,6 +536,7 @@ impl<'a> CheckerState<'a> {
             properties,
             string_index: shape.string_index,
             number_index: shape.number_index,
+            symbol_index: shape.symbol_index,
             symbol: None,
             is_abstract: false,
         })
@@ -588,6 +589,7 @@ impl<'a> CheckerState<'a> {
             properties,
             string_index: shape.string_index,
             number_index: shape.number_index,
+            symbol_index: shape.symbol_index,
             symbol: None,
             is_abstract: false,
         });

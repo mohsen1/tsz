@@ -774,6 +774,7 @@ impl<'a> CheckerState<'a> {
                     properties: merged_props,
                     string_index: shape.string_index,
                     number_index: shape.number_index,
+                    symbol_index: shape.symbol_index,
                     symbol: shape.symbol,
                 });
             }
@@ -835,6 +836,7 @@ impl<'a> CheckerState<'a> {
                     properties: Vec::new(),
                     string_index: None,
                     number_index: None,
+                    symbol_index: None,
                     symbol,
                     is_abstract: false,
                 });

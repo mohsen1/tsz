@@ -1184,6 +1184,7 @@ fn test_eopt_preserves_explicit_undefined_in_index_signature_inference() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let func = interner.function(FunctionShape {
@@ -1260,6 +1261,7 @@ fn test_no_eopt_preserves_explicit_undefined_in_index_signature_inference() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let func = interner.function(FunctionShape {
@@ -1532,6 +1534,7 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
             param_name: Some(s_name),
         }),
         number_index: None,
+        symbol_index: None,
     });
     // Simulate ArrayLike<T>: { readonly length: number; readonly [n: number]: T }
     let n_name = interner.intern_string("n");
@@ -1549,6 +1552,7 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
             readonly: true,
             param_name: Some(n_name),
         }),
+        symbol_index: None,
     });
     // { [s: string]: T } | ArrayLike<T>
     let index_sig_obj = interner.union(vec![str_index_obj, array_like_t]);
@@ -1735,6 +1739,7 @@ fn test_any_arg_index_sig_t_infers_unknown() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let func = interner.function(FunctionShape {

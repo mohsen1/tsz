@@ -1185,6 +1185,7 @@ pub(crate) fn get_merged_object_shape_for_type(
     let mut merged_props: Vec<PropertyInfo> = base_shape.properties.to_vec();
     let mut has_string_index = base_shape.string_index.is_some();
     let mut has_number_index = base_shape.number_index.is_some();
+    let mut has_symbol_index = base_shape.symbol_index.is_some();
 
     // Add properties from intersection members
     if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id) {
@@ -1198,6 +1199,7 @@ pub(crate) fn get_merged_object_shape_for_type(
                 }
                 has_string_index = has_string_index || member_shape.string_index.is_some();
                 has_number_index = has_number_index || member_shape.number_index.is_some();
+                has_symbol_index = has_symbol_index || member_shape.symbol_index.is_some();
             }
         }
     }
@@ -1215,6 +1217,11 @@ pub(crate) fn get_merged_object_shape_for_type(
         },
         number_index: if has_number_index {
             base_shape.number_index
+        } else {
+            None
+        },
+        symbol_index: if has_symbol_index {
+            base_shape.symbol_index
         } else {
             None
         },

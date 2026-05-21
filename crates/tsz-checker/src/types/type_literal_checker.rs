@@ -1102,6 +1102,7 @@ impl<'a> CheckerState<'a> {
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
+        let mut symbol_index: Option<tsz_solver::IndexSignature> = None;
         let mut extra_number_indices = Vec::new();
         let mut has_abstract_construct_sig = false;
         let mut has_late_bound_members = false;
@@ -1431,6 +1432,18 @@ impl<'a> CheckerState<'a> {
                         } else {
                             extra_number_indices.push(info);
                         }
+                    } else if key_type == TypeId::SYMBOL {
+                        // Symbol-keyed signatures live in their own slot so a
+                        // type literal carrying both `[k: string]: V` and
+                        // `[k: symbol]: W` keeps each value type intact.
+                        match symbol_index.as_mut() {
+                            None => symbol_index = Some(info),
+                            Some(existing) => {
+                                super::interface_type::merge_string_index_by_union(
+                                    existing, info, factory,
+                                );
+                            }
+                        }
                     } else {
                         match string_index.as_mut() {
                             None => string_index = Some(info),
@@ -1636,6 +1649,7 @@ impl<'a> CheckerState<'a> {
                         properties: Vec::new(),
                         string_index: None,
                         number_index: None,
+                        symbol_index: None,
                         symbol: None,
                         is_abstract: false,
                     })
@@ -1665,6 +1679,7 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 symbol: None,
                 is_abstract: has_abstract_construct_sig,
             });
@@ -1678,11 +1693,12 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        if string_index.is_some() || number_index.is_some() {
+        if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
             let mut shape = ObjectShape {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 ..ObjectShape::default()
             };
             if has_late_bound_members {

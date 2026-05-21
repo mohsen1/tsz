@@ -314,6 +314,7 @@ pub fn get_callable_shape_for_type(
             properties: Vec::new(),
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
             is_abstract: false,
         }));

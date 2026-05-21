@@ -22,6 +22,7 @@ fn test_string_index_to_string_index() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let target = interner.object_with_index(ObjectShape {
@@ -35,6 +36,7 @@ fn test_string_index_to_string_index() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(is_subtype_of(&interner, source, target));
@@ -58,6 +60,7 @@ fn test_string_index_covariant_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let target = interner.object_with_index(ObjectShape {
@@ -71,6 +74,7 @@ fn test_string_index_covariant_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(is_subtype_of(&interner, source, target));
@@ -92,6 +96,7 @@ fn test_string_index_not_subtype_incompatible_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let target = interner.object_with_index(ObjectShape {
@@ -105,6 +110,7 @@ fn test_string_index_not_subtype_incompatible_value() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(!is_subtype_of(&interner, source, target));
@@ -131,6 +137,7 @@ fn test_object_with_props_to_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(is_subtype_of(&interner, source, target));
@@ -157,6 +164,7 @@ fn test_object_with_incompatible_props_not_subtype() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(!is_subtype_of(&interner, source, target));
@@ -181,6 +189,7 @@ fn test_index_with_props_to_simple_object() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let target = interner.object(vec![PropertyInfo::new(
@@ -207,6 +216,7 @@ fn test_number_index_to_number_index() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let target = interner.object_with_index(ObjectShape {
@@ -220,6 +230,7 @@ fn test_number_index_to_number_index() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(is_subtype_of(&interner, source, target));
@@ -247,6 +258,7 @@ fn test_string_and_number_index() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let target = interner.object_with_index(ObjectShape {
@@ -260,6 +272,7 @@ fn test_string_and_number_index() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(is_subtype_of(&interner, source, target));
@@ -284,6 +297,7 @@ fn test_index_signature_with_named_property() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let target = interner.object_with_index(ObjectShape {
@@ -300,6 +314,7 @@ fn test_index_signature_with_named_property() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(is_subtype_of(&interner, source, target));
@@ -324,6 +339,7 @@ fn test_index_signature_source_property_mismatch() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let target = interner.object_with_index(ObjectShape {
@@ -337,6 +353,7 @@ fn test_index_signature_source_property_mismatch() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(!is_subtype_of(&interner, source, target));
@@ -361,6 +378,7 @@ fn test_number_index_signature_source_property_mismatch() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let target = interner.object_with_index(ObjectShape {
@@ -374,6 +392,7 @@ fn test_number_index_signature_source_property_mismatch() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(!is_subtype_of(&interner, source, target));
@@ -397,6 +416,7 @@ fn test_empty_object_to_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Empty object satisfies any index signature (no properties to violate it)
@@ -449,6 +469,7 @@ fn test_classify_element_indexable_preserves_union_members() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Create union: member1 | member2
@@ -504,6 +525,7 @@ fn test_object_with_string_props_assignable_to_dual_index_target() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Target: { [x: string]: string; [x: number]: string }
@@ -523,6 +545,7 @@ fn test_object_with_string_props_assignable_to_dual_index_target() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(
@@ -555,6 +578,7 @@ fn test_empty_object_assignable_to_dual_index_target() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(
@@ -600,6 +624,7 @@ fn test_named_source_assignable_to_string_index_any_target() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     // Target: anonymous `{ [x: string]: any }`.
@@ -614,6 +639,7 @@ fn test_named_source_assignable_to_string_index_any_target() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(
@@ -670,6 +696,7 @@ fn test_named_source_with_props_assignable_to_dual_any_index_named_target() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(
@@ -721,6 +748,7 @@ fn test_anonymous_dual_any_index_target_still_rejects_named_source() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(
@@ -765,6 +793,7 @@ fn test_named_source_still_rejected_by_number_only_any_target() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(
@@ -806,6 +835,7 @@ fn test_named_class_plain_object_not_assignable_to_string_indexed_target() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(
@@ -845,6 +875,7 @@ fn test_named_class_plain_object_not_assignable_to_string_indexed_target_alt_nam
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(
@@ -877,6 +908,7 @@ fn test_anonymous_plain_object_still_assignable_to_string_indexed_target_when_co
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(

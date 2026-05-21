@@ -42,6 +42,13 @@ impl<'a> CheckerState<'a> {
             index.value_type = evaluated;
             index
         });
+        let evaluated_symbol_index = shape.symbol_index.map(|mut index| {
+            let evaluated = self
+                .evaluate_awaited_application_for_assignability_inner(index.value_type, depth + 1);
+            changed |= evaluated != index.value_type;
+            index.value_type = evaluated;
+            index
+        });
 
         changed.then(|| {
             self.ctx
@@ -51,6 +58,7 @@ impl<'a> CheckerState<'a> {
                     properties: evaluated_properties,
                     string_index: evaluated_string_index,
                     number_index: evaluated_number_index,
+                    symbol_index: evaluated_symbol_index,
                     ..(*shape).clone()
                 })
         })

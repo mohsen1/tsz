@@ -1445,14 +1445,8 @@ fn shape_index_signature_accepts_property(
     shape: &ObjectShape,
     source_prop: &PropertyInfo,
 ) -> bool {
-    let string_index = shape
-        .string_index
-        .as_ref()
-        .filter(|idx| idx.key_type != TypeId::SYMBOL);
-    let symbol_index = shape
-        .string_index
-        .as_ref()
-        .filter(|idx| idx.key_type == TypeId::SYMBOL);
+    let string_index = shape.string_index.as_ref();
+    let symbol_index = shape.symbol_index.as_ref();
 
     if source_prop.is_symbol_named {
         return symbol_index.is_some()

@@ -566,6 +566,7 @@ impl TypeInterner {
         let mut properties: Vec<PropertyInfo> = Vec::with_capacity(members.len());
         let mut string_index: Option<IndexSignature> = None;
         let mut number_index: Option<IndexSignature> = None;
+        let mut symbol_index: Option<IndexSignature> = None;
         let mut is_abstract = false;
 
         // Collect all call/construct signatures and properties.
@@ -648,6 +649,19 @@ impl TypeInterner {
                         }
                         _ => {}
                     }
+                    match (&callable.symbol_index, &symbol_index) {
+                        (Some(idx), None) => symbol_index = Some(*idx),
+                        (Some(idx), Some(existing)) => {
+                            symbol_index = Some(IndexSignature {
+                                key_type: existing.key_type,
+                                value_type: self
+                                    .intersect_types_raw2(existing.value_type, idx.value_type),
+                                readonly: existing.readonly && idx.readonly,
+                                param_name: None,
+                            });
+                        }
+                        _ => {}
+                    }
                 }
                 _ => return None, // Not all callables, can't merge
             }
@@ -666,6 +680,7 @@ impl TypeInterner {
             properties,
             string_index,
             number_index,
+            symbol_index,
             symbol: None,
             is_abstract,
         };
@@ -696,6 +711,7 @@ impl TypeInterner {
         let mut prop_index: rustc_hash::FxHashMap<Atom, usize> = rustc_hash::FxHashMap::default();
         let mut merged_string_index: Option<IndexSignature> = None;
         let mut merged_number_index: Option<IndexSignature> = None;
+        let mut merged_symbol_index: Option<IndexSignature> = None;
         let mut merged_fresh = true;
 
         for obj in &objects {
@@ -814,6 +830,26 @@ impl TypeInterner {
                 }
                 _ => {}
             }
+
+            match (&obj.symbol_index, &merged_symbol_index) {
+                (Some(idx), None) => {
+                    merged_symbol_index = Some(IndexSignature {
+                        key_type: idx.key_type,
+                        value_type: idx.value_type,
+                        readonly: idx.readonly,
+                        param_name: None,
+                    });
+                }
+                (Some(idx), Some(existing)) => {
+                    merged_symbol_index = Some(IndexSignature {
+                        key_type: existing.key_type,
+                        value_type: self.intersect_types_raw2(existing.value_type, idx.value_type),
+                        readonly: existing.readonly && idx.readonly,
+                        param_name: None,
+                    });
+                }
+                _ => {}
+            }
         }
 
         // Sort properties by name for consistent hashing
@@ -830,12 +866,14 @@ impl TypeInterner {
             properties: merged_props,
             string_index: merged_string_index,
             number_index: merged_number_index,
+            symbol_index: merged_symbol_index,
             symbol: None,
         };
 
         let shape_id = self.intern_object_shape(shape);
         let result = if self.object_shape(shape_id).string_index.is_some()
             || self.object_shape(shape_id).number_index.is_some()
+            || self.object_shape(shape_id).symbol_index.is_some()
         {
             self.intern(TypeData::ObjectWithIndex(shape_id))
         } else {

@@ -490,6 +490,7 @@ fn format_union_named_construct_callable_without_parentheses() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(sym_id),
         is_abstract: false,
     });
@@ -698,6 +699,7 @@ fn format_intersection_drops_redundant_index_signature_member() {
         ],
         string_index: None,
         number_index: Some(index_sig),
+        symbol_index: Some(index_sig),
         symbol: None,
         flags: Default::default(),
     });
@@ -705,6 +707,7 @@ fn format_intersection_drops_redundant_index_signature_member() {
         properties: vec![],
         string_index: None,
         number_index: Some(index_sig),
+        symbol_index: Some(index_sig),
         symbol: None,
         flags: Default::default(),
     });
@@ -950,6 +953,7 @@ fn format_object_with_string_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -978,6 +982,7 @@ fn format_object_with_index_hides_duplicate_internal_default_alias() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1014,6 +1019,7 @@ fn format_object_with_number_index_signature() {
         }),
         symbol: None,
         flags: Default::default(),
+        symbol_index: None,
     };
     let obj = db.object_with_index(shape);
     let result = fmt.format(obj);
@@ -1039,6 +1045,7 @@ fn format_object_with_readonly_number_index_signature() {
         }),
         symbol: None,
         flags: Default::default(),
+        symbol_index: None,
     };
     let obj = db.object_with_index(shape);
     let result = fmt.format(obj);
@@ -1062,6 +1069,7 @@ fn format_object_with_readonly_string_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1090,6 +1098,7 @@ fn format_object_with_symbol_index_signature() {
                 param_name: param_name.map(|n| db.intern_string(n)),
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
             flags: Default::default(),
         };
@@ -1135,6 +1144,7 @@ fn format_object_with_index_many_properties_truncated() {
         }),
         symbol: None,
         flags: Default::default(),
+        symbol_index: None,
     };
     let obj = db.object_with_index(shape);
     let result = fmt.format(obj);
@@ -1178,6 +1188,7 @@ fn format_object_with_index_prefers_symbol_tail_over_later_string_member() {
         }),
         symbol: None,
         flags: Default::default(),
+        symbol_index: None,
     };
     let obj = db.object_with_index(shape);
     let result = fmt.format(obj);
@@ -1212,6 +1223,7 @@ fn format_object_with_symbol_index_signature_renders_symbol_key_type() {
             param_name: Some(db.intern_string("key")),
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
         flags: Default::default(),
     };
@@ -1261,6 +1273,7 @@ fn format_array_like_object_with_index_expands_to_locale_string_overload_display
         }),
         symbol: None,
         flags: Default::default(),
+        symbol_index: None,
     };
     let obj = db.object_with_index(shape);
     let result = fmt.format(obj);
@@ -1307,6 +1320,7 @@ fn format_array_like_object_without_symbol_tail_preserves_array_display_shape() 
         }),
         symbol: None,
         flags: Default::default(),
+        symbol_index: None,
     };
     let obj = db.object_with_index(shape);
     let result = fmt.format(obj);
@@ -3446,6 +3460,7 @@ fn format_callable_single_call_signature() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -3487,6 +3502,7 @@ fn format_callable_generic_single_call_signature_arrow_syntax() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -3554,6 +3570,7 @@ fn format_callable_single_construct_signature() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -3609,6 +3626,7 @@ fn format_callable_multiple_call_signatures() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -3653,6 +3671,7 @@ fn format_callable_displays_zero_arg_overload_first() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -3688,6 +3707,7 @@ fn format_construct_only_interface_callable_uses_type_name() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(sym_id),
         is_abstract: false,
     });

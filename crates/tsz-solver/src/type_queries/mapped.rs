@@ -983,6 +983,7 @@ pub fn evaluate_identity_mapped_passthrough(
                     readonly: false,
                     param_name: None,
                 }),
+                symbol_index: None,
                 symbol: None,
             }));
         }

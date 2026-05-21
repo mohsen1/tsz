@@ -174,6 +174,7 @@ impl<'a> CheckerState<'a> {
                 properties: vec![],
                 string_index: None,
                 number_index: None,
+                symbol_index: None,
                 symbol: None,
                 is_abstract: false,
             };
@@ -219,6 +220,7 @@ impl<'a> CheckerState<'a> {
                     properties: shape.properties.clone(),
                     string_index: shape.string_index,
                     number_index: shape.number_index,
+                    symbol_index: shape.symbol_index,
                     symbol: None,
                     is_abstract: false,
                 };
@@ -277,6 +279,7 @@ impl<'a> CheckerState<'a> {
             properties: shape.properties.clone(),
             string_index: shape.string_index,
             number_index: shape.number_index,
+            symbol_index: shape.symbol_index,
             symbol: None,
             is_abstract: false,
         };
@@ -1034,6 +1037,7 @@ impl<'a> CheckerState<'a> {
         properties: &mut rustc_hash::FxHashMap<Atom, tsz_solver::PropertyInfo>,
         string_index: &mut Option<tsz_solver::IndexSignature>,
         number_index: &mut Option<tsz_solver::IndexSignature>,
+        symbol_index: &mut Option<tsz_solver::IndexSignature>,
     ) {
         use rustc_hash::FxHashSet;
 
@@ -1043,6 +1047,7 @@ impl<'a> CheckerState<'a> {
             properties,
             string_index,
             number_index,
+            symbol_index,
             &mut visited,
         );
     }
@@ -1053,6 +1058,7 @@ impl<'a> CheckerState<'a> {
         properties: &mut rustc_hash::FxHashMap<Atom, tsz_solver::PropertyInfo>,
         string_index: &mut Option<tsz_solver::IndexSignature>,
         number_index: &mut Option<tsz_solver::IndexSignature>,
+        symbol_index: &mut Option<tsz_solver::IndexSignature>,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
         let base_instance_type = self.normalize_base_instance_type_for_merge(base_instance_type);
@@ -1074,6 +1080,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(ref idx) = base_shape.number_index {
                     Self::merge_index_signature(number_index, *idx);
                 }
+                if let Some(ref idx) = base_shape.symbol_index {
+                    Self::merge_index_signature(symbol_index, *idx);
+                }
             }
             query::BaseInstanceMergeKind::Intersection(members) => {
                 for member in members {
@@ -1082,6 +1091,7 @@ impl<'a> CheckerState<'a> {
                         properties,
                         string_index,
                         number_index,
+                        symbol_index,
                         visited,
                     );
                 }
@@ -1091,12 +1101,14 @@ impl<'a> CheckerState<'a> {
                 let mut common_props: Option<FxHashMap<Atom, tsz_solver::PropertyInfo>> = None;
                 let mut common_string_index: Option<tsz_solver::IndexSignature> = None;
                 let mut common_number_index: Option<tsz_solver::IndexSignature> = None;
+                let mut common_symbol_index: Option<tsz_solver::IndexSignature> = None;
 
                 for member in members {
                     let mut member_props: FxHashMap<Atom, tsz_solver::PropertyInfo> =
                         FxHashMap::default();
                     let mut member_string_index = None;
                     let mut member_number_index = None;
+                    let mut member_symbol_index = None;
                     let mut member_visited = rustc_hash::FxHashSet::default();
                     member_visited.insert(base_instance_type);
 
@@ -1105,6 +1117,7 @@ impl<'a> CheckerState<'a> {
                         &mut member_props,
                         &mut member_string_index,
                         &mut member_number_index,
+                        &mut member_symbol_index,
                         &mut member_visited,
                     );
 
@@ -1112,6 +1125,7 @@ impl<'a> CheckerState<'a> {
                         common_props = Some(member_props);
                         common_string_index = member_string_index;
                         common_number_index = member_number_index;
+                        common_symbol_index = member_symbol_index;
                         continue;
                     }
 
@@ -1122,6 +1136,7 @@ impl<'a> CheckerState<'a> {
                             common_props = Some(member_props);
                             common_string_index = member_string_index;
                             common_number_index = member_number_index;
+                            common_symbol_index = member_symbol_index;
                             continue;
                         }
                     };
@@ -1172,12 +1187,24 @@ impl<'a> CheckerState<'a> {
                         }
                         _ => None,
                     };
+                    common_symbol_index = match (common_symbol_index.take(), member_symbol_index) {
+                        (Some(mut left), Some(right)) => {
+                            if left.value_type != right.value_type {
+                                left.value_type =
+                                    self.ctx.types.union2(left.value_type, right.value_type);
+                            }
+                            left.readonly &= right.readonly;
+                            Some(left)
+                        }
+                        _ => None,
+                    };
 
                     if common_props
                         .as_ref()
                         .is_none_or(std::collections::HashMap::is_empty)
                         && common_string_index.is_none()
                         && common_number_index.is_none()
+                        && common_symbol_index.is_none()
                     {
                         break;
                     }
@@ -1190,6 +1217,9 @@ impl<'a> CheckerState<'a> {
                 }
                 if let Some(idx) = common_string_index {
                     Self::merge_index_signature(string_index, idx);
+                }
+                if let Some(idx) = common_symbol_index {
+                    Self::merge_index_signature(symbol_index, idx);
                 }
                 if let Some(idx) = common_number_index {
                     Self::merge_index_signature(number_index, idx);

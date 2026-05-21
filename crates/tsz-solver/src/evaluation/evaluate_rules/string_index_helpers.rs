@@ -94,6 +94,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
 

@@ -169,16 +169,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
             } => {
                 let shape = ObjectShape {
                     flags: ObjectFlags::empty(),
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                     symbol: None,
                 };
 
-                if shape.string_index.is_some() || shape.number_index.is_some() {
+                if shape.string_index.is_some()
+                    || shape.number_index.is_some()
+                    || shape.symbol_index.is_some()
+                {
                     Some(self.interner.object_with_index(shape))
                 } else {
                     Some(self.interner.object(shape.properties))
@@ -569,6 +574,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index: _,
             } => (properties, string_index, number_index),
             PropertyCollectionResult::Any => return Some(TypeId::ANY),
             PropertyCollectionResult::NonObject => {
@@ -581,6 +587,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         properties,
                         string_index,
                         number_index,
+                        symbol_index: _,
                     } => (properties, string_index, number_index),
                     PropertyCollectionResult::Any => return Some(TypeId::ANY),
                     PropertyCollectionResult::NonObject => return None,

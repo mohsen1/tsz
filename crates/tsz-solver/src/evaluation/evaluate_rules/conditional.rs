@@ -50,11 +50,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .number_index
             .as_ref()
             .map(|idx| self.evaluate(idx.value_type));
+        let sym_val = shape
+            .symbol_index
+            .as_ref()
+            .map(|idx| self.evaluate(idx.value_type));
         let mut any_changed = str_val
             .zip(shape.string_index.as_ref())
             .is_some_and(|(v, idx)| v != idx.value_type)
             || num_val
                 .zip(shape.number_index.as_ref())
+                .is_some_and(|(v, idx)| v != idx.value_type)
+            || sym_val
+                .zip(shape.symbol_index.as_ref())
                 .is_some_and(|(v, idx)| v != idx.value_type);
         for prop in shape.properties.iter() {
             let rt = self.evaluate(prop.type_id);
@@ -86,12 +93,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             index.value_type = v;
         }
 
+        let mut symbol_index = shape.symbol_index;
+        if let (Some(index), Some(v)) = (symbol_index.as_mut(), sym_val) {
+            index.value_type = v;
+        }
+
         if with_index {
             self.interner().object_with_index(ObjectShape {
                 flags,
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 symbol,
             })
         } else {

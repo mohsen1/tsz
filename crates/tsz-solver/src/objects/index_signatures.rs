@@ -265,6 +265,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: None,
             number_index: None,
+            symbol_index: None,
         }
     }
 
@@ -272,6 +273,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: None,
             number_index: None,
+            symbol_index: None,
         }
     }
 
@@ -280,6 +282,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: shape.string_index,
             number_index: shape.number_index,
+            symbol_index: shape.symbol_index,
         }
     }
 
@@ -288,6 +291,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: shape.string_index,
             number_index: shape.number_index,
+            symbol_index: shape.symbol_index,
         }
     }
 
@@ -300,6 +304,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
         }
     }
 
@@ -312,6 +317,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
         }
     }
 
@@ -324,6 +330,9 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         if let Some(idx) = &mut info.number_index {
             idx.readonly = true;
         }
+        if let Some(idx) = &mut info.symbol_index {
+            idx.readonly = true;
+        }
         info
     }
 
@@ -332,6 +341,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: None,
             number_index: None,
+            symbol_index: None,
         }
     }
 
@@ -339,6 +349,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: None,
             number_index: None,
+            symbol_index: None,
         }
     }
 
@@ -370,6 +381,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: None,
             number_index: None,
+            symbol_index: None,
         }
     }
 }

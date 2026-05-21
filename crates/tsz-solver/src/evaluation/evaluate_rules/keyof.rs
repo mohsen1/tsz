@@ -23,33 +23,31 @@ use super::super::evaluate::{
 
 /// Append the keyof key-types contributed by an object's index signatures.
 ///
-/// `ObjectShape.string_index` is reused for both string- and symbol-keyed
-/// signatures (discriminated by `key_type`), so a naive "if `string_index` is
-/// Some -> push string|number" classification mis-reports the keyof for
-/// objects whose only index signature is symbol-keyed. The keyof of
-/// `{ [k: symbol]: V }` is `symbol`, not `string | number`.
-///
-/// - Symbol-keyed signature: contributes `symbol`.
+/// Each slot contributes its own keyof bit independently:
 /// - String-keyed signature: contributes `string | number` (string indexes
 ///   are implicitly numeric-key-compatible in TS).
 /// - Number-keyed signature (only when no string-slot signature is present):
 ///   contributes `number`, except for enum namespace types where tsc excludes
 ///   the implicit `[index: number]: string` from `keyof typeof E`.
+/// - Symbol-keyed signature: contributes `symbol`.
+///
+/// Symbol and string slots are independent — a shape with both `[k: string]: V`
+/// and `[k: symbol]: W` yields `keyof = string | number | symbol`.
 fn extend_keyof_with_index_signature_keys(
     key_types: &mut Vec<TypeId>,
-    string_or_symbol_index: Option<&IndexSignature>,
+    string_index: Option<&IndexSignature>,
     number_index: Option<&IndexSignature>,
+    symbol_index: Option<&IndexSignature>,
     is_enum_namespace: bool,
 ) {
-    if let Some(idx) = string_or_symbol_index {
-        if idx.key_type == TypeId::SYMBOL {
-            key_types.push(TypeId::SYMBOL);
-        } else {
-            key_types.push(TypeId::STRING);
-            key_types.push(TypeId::NUMBER);
-        }
+    if string_index.is_some() {
+        key_types.push(TypeId::STRING);
+        key_types.push(TypeId::NUMBER);
     } else if number_index.is_some() && !is_enum_namespace {
         key_types.push(TypeId::NUMBER);
+    }
+    if symbol_index.is_some() {
+        key_types.push(TypeId::SYMBOL);
     }
 }
 
@@ -195,6 +193,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     properties,
                     string_index,
                     number_index,
+                    symbol_index: _,
                 } => {
                     for prop in properties {
                         let source_key = self.property_name_to_key_type(&prop);
@@ -478,6 +477,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &mut key_types,
                         shape.string_index.as_ref(),
                         shape.number_index.as_ref(),
+                        shape.symbol_index.as_ref(),
                         shape.flags.contains(ObjectFlags::ENUM_NAMESPACE),
                     );
 
@@ -504,6 +504,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &mut key_types,
                         shape.string_index.as_ref(),
                         shape.number_index.as_ref(),
+                        shape.symbol_index.as_ref(),
                         false,
                     );
 

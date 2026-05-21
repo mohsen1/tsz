@@ -1293,6 +1293,7 @@ fn test_classify_callable_overloaded() {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -1509,6 +1510,7 @@ fn test_get_property_string_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let any_prop = interner.intern_string("anything");
@@ -1671,6 +1673,7 @@ fn test_object_with_string_index_is_subtype() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // An object with specific number-typed properties should be a subtype
@@ -1718,6 +1721,7 @@ fn test_function_is_not_subtype_of_number_index_target() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(

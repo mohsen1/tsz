@@ -2400,6 +2400,7 @@ mod tests {
             }],
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
             is_abstract: false,
         });
@@ -2443,6 +2444,7 @@ mod tests {
             properties: vec![],
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
             is_abstract: false,
         });
@@ -2517,6 +2519,7 @@ mod tests {
             }],
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
             is_abstract: false,
         });
@@ -2598,6 +2601,7 @@ mod tests {
             }],
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
             is_abstract: false,
         });
@@ -2664,6 +2668,7 @@ mod tests {
                 }],
                 string_index: None,
                 number_index: None,
+                symbol_index: None,
                 symbol: None,
                 is_abstract: false,
             });
@@ -2729,6 +2734,7 @@ mod tests {
             }],
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
             is_abstract: false,
         });

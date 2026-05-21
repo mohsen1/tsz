@@ -600,6 +600,7 @@ fn test_find_def_by_shape_via_register() {
         properties: props,
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     };
 
@@ -622,6 +623,7 @@ fn test_find_def_by_shape_no_match() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     };
     assert_eq!(store.find_def_by_shape(&empty_shape), None);
@@ -679,6 +681,7 @@ fn test_find_def_by_shape_via_set_instance_shape() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     };
 
@@ -706,6 +709,7 @@ fn test_find_def_by_shape_cleared() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     };
 
@@ -870,6 +874,7 @@ fn test_invalidate_file_cleans_shape_index() {
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     };
 

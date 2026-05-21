@@ -1234,6 +1234,7 @@ mod lawyer_strict_mode_tests {
             properties: Vec::new(),
             string_index: Some(string_index_any),
             number_index: None,
+            symbol_index: None,
         });
         let obj_number = interner.object_with_index(ObjectShape {
             symbol: None,
@@ -1241,6 +1242,7 @@ mod lawyer_strict_mode_tests {
             properties: Vec::new(),
             string_index: Some(string_index_number),
             number_index: None,
+            symbol_index: None,
         });
 
         assert!(!checker.is_assignable(obj_any, obj_number));
@@ -1272,6 +1274,7 @@ mod lawyer_strict_mode_tests {
             properties: Vec::new(),
             string_index: Some(string_index_any),
             number_index: None,
+            symbol_index: None,
         });
         let obj_number = interner.object_with_index(ObjectShape {
             symbol: None,
@@ -1279,6 +1282,7 @@ mod lawyer_strict_mode_tests {
             properties: Vec::new(),
             string_index: Some(string_index_number),
             number_index: None,
+            symbol_index: None,
         });
 
         assert!(checker.is_assignable(obj_any, obj_number));
@@ -1522,6 +1526,7 @@ mod property_access_conformance_tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
         });
 
         let result = crate::operations::property::PropertyAccessEvaluator::new(&interner)

@@ -462,26 +462,6 @@ impl<'a> CheckerState<'a> {
                     None
                 };
 
-                // `ObjectShape` only has one "string_index" slot, used for both
-                // string-keyed and symbol-keyed index signatures (discriminated
-                // by `key_type`). When both a string and a symbol index were
-                // synthesized, merge them by unioning the key and value types,
-                // matching what type-literal lowering does for
-                // `{ [k: string]: V1; [s: symbol]: V2 }`.
-                let string_index = match (string_index, symbol_index) {
-                    (Some(mut s), Some(sym)) => {
-                        crate::interface_type::merge_string_index_by_union(
-                            &mut s,
-                            sym,
-                            self.ctx.types.factory(),
-                        );
-                        Some(s)
-                    }
-                    (Some(s), None) => Some(s),
-                    (None, Some(sym)) => Some(sym),
-                    (None, None) => None,
-                };
-
                 let number_index = if !number_index_types.is_empty() {
                     let value_type = if self.ctx.in_const_assertion {
                         order_preserving_union(self.ctx.types.factory(), number_index_types)
@@ -502,6 +482,7 @@ impl<'a> CheckerState<'a> {
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                     ..ObjectShape::default()
                 };
                 if !has_spread {

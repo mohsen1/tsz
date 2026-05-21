@@ -187,6 +187,7 @@ fn test_index_access_with_string_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let any_string_key = interner.literal_string("anyKey");
@@ -208,13 +209,14 @@ fn test_symbol_index_signature_accepts_symbol_keys_only() {
         symbol: None,
         flags: crate::types::ObjectFlags::empty(),
         properties: vec![],
-        string_index: Some(crate::types::IndexSignature {
+        string_index: None,
+        number_index: None,
+        symbol_index: Some(crate::types::IndexSignature {
             key_type: TypeId::SYMBOL,
             value_type: TypeId::BOOLEAN,
             readonly: false,
             param_name: None,
         }),
-        number_index: None,
     });
 
     let unique_key = interner.unique_symbol(crate::types::SymbolRef(7));
@@ -255,6 +257,7 @@ fn test_symbol_named_properties_do_not_satisfy_string_index_signatures() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(
@@ -276,13 +279,14 @@ fn test_symbol_index_signatures_check_symbol_named_properties() {
         symbol: None,
         flags: crate::types::ObjectFlags::empty(),
         properties: vec![],
-        string_index: Some(crate::types::IndexSignature {
+        string_index: None,
+        number_index: None,
+        symbol_index: Some(crate::types::IndexSignature {
             key_type: TypeId::SYMBOL,
             value_type: TypeId::STRING,
             readonly: false,
             param_name: None,
         }),
-        number_index: None,
     });
 
     assert!(

@@ -203,17 +203,11 @@ impl<'a> CheckerState<'a> {
         // vs from another merged body of the same interface.
         let has_extends_clause = self.container_has_extends_clause(container_node);
 
-        // The solver's ObjectShape only has string_index/number_index fields,
-        // so symbol index signatures get misclassified into string_index with
-        // key_type=SYMBOL.  Extract any inherited symbol index from string_index
-        // so we can check symbol-keyed properties against it.
-        let mut inherited_symbol_value_type: Option<TypeId> = None;
-        if let Some(ref si) = index_info.string_index
-            && si.key_type == TypeId::SYMBOL
-        {
-            inherited_symbol_value_type = Some(si.value_type);
-            index_info.string_index = None;
-        }
+        // Pull the inherited symbol index from the dedicated `symbol_index` slot
+        // (separate from the string-keyed slot) so we can check symbol-keyed
+        // properties against it.
+        let inherited_symbol_value_type: Option<TypeId> =
+            index_info.symbol_index.as_ref().map(|si| si.value_type);
 
         // Scan members for own index signatures and detect duplicates (TS2374)
         // Static and instance index signatures are tracked separately --
@@ -1075,18 +1069,8 @@ impl<'a> CheckerState<'a> {
         }
         let evaluated_type = self.evaluate_type_for_assignability(iface_type);
 
-        // The solver's IndexInfo may store a symbol index signature in the
-        // string_index slot with key_type=SYMBOL. Extract it so symbol-keyed
-        // inherited properties are checked against the correct index kind.
-        let symbol_value_type = if let Some(ref si) = index_info.string_index
-            && si.key_type == TypeId::SYMBOL
-        {
-            let vt = si.value_type;
-            index_info.string_index = None;
-            Some(vt)
-        } else {
-            None
-        };
+        // Pull symbol-keyed value type from the dedicated `symbol_index` slot.
+        let symbol_value_type = index_info.symbol_index.as_ref().map(|si| si.value_type);
         let symbol_index_sig_node = string_index_sig_node;
 
         if index_info.string_index.is_none()

@@ -423,6 +423,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index: _,
             } => (properties, string_index, number_index),
         };
 
@@ -432,6 +433,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index: _,
             } => (properties, string_index, number_index),
         };
 

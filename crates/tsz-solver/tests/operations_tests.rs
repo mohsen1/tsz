@@ -2011,6 +2011,7 @@ fn make_array_test_env(
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     let array_interface = interner.object(vec![
@@ -2349,6 +2350,7 @@ fn test_property_access_callable_array_indexof_preserves_nullable_element_type()
         )],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
     interner.set_array_base_type(array_callable, vec![t_param]);
 
@@ -2427,6 +2429,7 @@ fn test_property_access_index_signature_no_unchecked() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let result = evaluator.resolve_property_access(obj, "anything");
@@ -2478,6 +2481,7 @@ fn test_property_access_object_with_index_optional_property() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let result = evaluator.resolve_property_access(obj, "x");
@@ -5923,6 +5927,7 @@ fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
                     param_name: None,
                 }),
                 number_index: None,
+                symbol_index: None,
             }),
             optional: false,
             rest: false,
@@ -5948,6 +5953,7 @@ fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
@@ -5983,6 +5989,7 @@ fn test_infer_generic_readonly_index_signature_mismatch() {
                     param_name: None,
                 }),
                 number_index: None,
+                symbol_index: None,
             }),
             optional: false,
             rest: false,
@@ -6005,6 +6012,7 @@ fn test_infer_generic_readonly_index_signature_mismatch() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
@@ -6041,6 +6049,7 @@ fn test_infer_generic_readonly_number_index_signature_mismatch() {
                     readonly: false,
                     param_name: None,
                 }),
+                symbol_index: None,
             }),
             optional: false,
             rest: false,
@@ -6063,6 +6072,7 @@ fn test_infer_generic_readonly_number_index_signature_mismatch() {
             readonly: true,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
@@ -6565,6 +6575,7 @@ fn test_infer_generic_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -6593,6 +6604,7 @@ fn test_infer_generic_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[indexed_number]);
@@ -6623,6 +6635,7 @@ fn test_infer_generic_index_signature_from_object_literal() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -6673,6 +6686,7 @@ fn test_infer_generic_index_signature_from_optional_property() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -6725,6 +6739,7 @@ fn test_infer_generic_number_index_from_optional_property() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -6783,6 +6798,7 @@ fn test_infer_generic_number_index_from_numeric_property() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -6833,6 +6849,7 @@ fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -6885,6 +6902,7 @@ fn test_infer_generic_number_index_ignores_negative_zero_property() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -6937,6 +6955,7 @@ fn test_infer_generic_number_index_from_nan_property() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -6987,6 +7006,7 @@ fn test_infer_generic_number_index_from_exponent_property() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -7037,6 +7057,7 @@ fn test_infer_generic_number_index_from_negative_infinity_property() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -7099,6 +7120,7 @@ fn test_infer_generic_index_signatures_from_mixed_properties() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -7189,6 +7211,7 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let func = FunctionShape {
@@ -7270,6 +7293,7 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let func = FunctionShape {

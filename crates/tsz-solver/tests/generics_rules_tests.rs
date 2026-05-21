@@ -80,6 +80,7 @@ fn test_try_get_keyof_keys_object_with_index_returns_properties() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let keys = checker
@@ -1404,6 +1405,7 @@ fn test_t_subtype_of_partial_t_with_constraint() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -1852,6 +1854,7 @@ fn test_evaluated_callable_assignable_to_all_any_application_via_display_alias()
         properties: vec![],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });

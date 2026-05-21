@@ -1054,6 +1054,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
+        let mut symbol_index: Option<tsz_solver::IndexSignature> = None;
 
         for &member_idx in &data.members.nodes {
             let Some(member) = self.ctx.arena.get(member_idx) else {
@@ -1327,6 +1328,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 if is_valid_index_type || is_valid_via_ast {
                     if key_type == TypeId::NUMBER {
                         number_index = Some(info);
+                    } else if key_type == TypeId::SYMBOL {
+                        symbol_index = Some(info);
                     } else {
                         string_index = Some(info);
                     }
@@ -1415,18 +1418,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 symbol: None,
                 is_abstract: false,
             });
         }
 
-        if string_index.is_some() || number_index.is_some() {
+        if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
             let factory = self.ctx.types.factory();
 
             return factory.object_with_index(ObjectShape {
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 ..ObjectShape::default()
             });
         }

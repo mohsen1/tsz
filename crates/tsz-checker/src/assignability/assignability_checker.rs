@@ -540,6 +540,7 @@ impl<'a> CheckerState<'a> {
                         properties: shape.properties.clone(),
                         string_index: shape.string_index,
                         number_index: shape.number_index,
+                        symbol_index: shape.symbol_index,
                         symbol: shape.symbol,
                         is_abstract: shape.is_abstract,
                     })

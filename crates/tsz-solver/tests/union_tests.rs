@@ -627,6 +627,7 @@ fn test_union_to_object_with_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Standard union check should apply - each member must be assignable
@@ -701,6 +702,7 @@ fn test_bypass_evaluation_resolves_lazy_index_value_types() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let obj_b = interner.object_with_index(ObjectShape {
@@ -714,6 +716,7 @@ fn test_bypass_evaluation_resolves_lazy_index_value_types() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // With bypass_evaluation=true and a resolver, the Lazy types should be

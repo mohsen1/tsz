@@ -713,13 +713,18 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                 } => {
-                    let merged = if string_index.is_some() || number_index.is_some() {
+                    let merged = if string_index.is_some()
+                        || number_index.is_some()
+                        || symbol_index.is_some()
+                    {
                         let shape = ObjectShape {
                             flags: crate::types::ObjectFlags::empty(),
                             properties,
                             string_index,
                             number_index,
+                            symbol_index,
                             symbol: None,
                         };
                         self.evaluator.interner().object_with_index(shape)
@@ -1927,14 +1932,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         shape: &ObjectShape,
         index_type: TypeId,
     ) -> TypeId {
-        let string_index = shape
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type != TypeId::SYMBOL);
-        let symbol_index = shape
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type == TypeId::SYMBOL);
+        let string_index = shape.string_index.as_ref();
+        let symbol_index = shape.symbol_index.as_ref();
 
         // If index is a union, evaluate each member
         if let Some(members) = union_list_id(self.interner(), index_type) {
@@ -2049,14 +2048,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         shape: &CallableShape,
         index_type: TypeId,
     ) -> TypeId {
-        let string_index = shape
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type != TypeId::SYMBOL);
-        let symbol_index = shape
-            .string_index
-            .as_ref()
-            .filter(|idx| idx.key_type == TypeId::SYMBOL);
+        let string_index = shape.string_index.as_ref();
+        let symbol_index = shape.symbol_index.as_ref();
 
         // If index is a union, evaluate each member
         if let Some(members) = union_list_id(self.interner(), index_type) {

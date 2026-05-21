@@ -405,6 +405,7 @@ fn test_keyof_object_with_string_index_includes_string_and_number() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let keyof_obj = interner.keyof(obj_with_index);
@@ -426,6 +427,126 @@ fn test_keyof_object_with_string_index_includes_string_and_number() {
     }
 }
 
+// Regression: `keyof` over a shape that carries both a string-keyed and a
+// symbol-keyed index signature must include `string | number | symbol`, not
+// drop the symbol bit because both signatures landed in the same `string_index`
+// slot. See tsz issue #9772.
+#[test]
+fn test_keyof_mixed_string_and_symbol_index_signatures_includes_symbol() {
+    let interner = TypeInterner::new();
+    let obj = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    let result = evaluate_type(&interner, interner.keyof(obj));
+    let Some(TypeData::Union(members)) = interner.lookup(result) else {
+        panic!("expected union for keyof of mixed string+symbol index");
+    };
+    let member_list = interner.type_list(members);
+    assert!(
+        member_list.contains(&TypeId::STRING),
+        "keyof should include string"
+    );
+    assert!(
+        member_list.contains(&TypeId::NUMBER),
+        "keyof should include number (string indexes are also numeric-key compatible)"
+    );
+    assert!(
+        member_list.contains(&TypeId::SYMBOL),
+        "keyof must include symbol when the shape carries a [k: symbol]: V signature"
+    );
+}
+
+// Regression: a renamed iteration variable must not change the answer — proves
+// the fix is structural, not keyed on identifier spelling.
+#[test]
+fn test_keyof_mixed_string_and_symbol_index_signatures_renamed_params() {
+    let interner = TypeInterner::new();
+    let obj = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: Some(interner.intern_string("anyName")),
+        }),
+        number_index: None,
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: Some(interner.intern_string("anotherName")),
+        }),
+    });
+    let result = evaluate_type(&interner, interner.keyof(obj));
+    let Some(TypeData::Union(members)) = interner.lookup(result) else {
+        panic!("expected union for keyof of mixed string+symbol index");
+    };
+    let member_list = interner.type_list(members);
+    assert!(member_list.contains(&TypeId::STRING));
+    assert!(member_list.contains(&TypeId::NUMBER));
+    assert!(member_list.contains(&TypeId::SYMBOL));
+}
+
+// Regression: when both indexes carry distinct value types, neither side's
+// value type should leak through `keyof`. Only the key shape changes.
+#[test]
+fn test_keyof_mixed_indexes_preserves_value_type_independence() {
+    let interner = TypeInterner::new();
+    let obj = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+    // Indexed access through symbol must yield the symbol-index value type
+    // (STRING), not the unioned `number | string` produced by smudging both
+    // signatures into one slot.
+    let by_symbol = evaluate_type(&interner, interner.index_access(obj, TypeId::SYMBOL));
+    assert_eq!(
+        by_symbol,
+        TypeId::STRING,
+        "obj[symbol] should be the symbol-index value type (string), got {by_symbol:?}"
+    );
+
+    // Indexed access through string must yield the string-index value type.
+    let by_string = evaluate_type(&interner, interner.index_access(obj, TypeId::STRING));
+    assert_eq!(
+        by_string,
+        TypeId::NUMBER,
+        "obj[string] should be the string-index value type (number), got {by_string:?}"
+    );
+}
+
 #[test]
 fn test_keyof_object_with_number_index_includes_number() {
     let interner = TypeInterner::new();
@@ -440,6 +561,7 @@ fn test_keyof_object_with_number_index_includes_number() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let keyof_obj = interner.keyof(obj_with_index);

@@ -244,6 +244,7 @@ fn test_interface_with_string_index() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     if let Some(TypeData::ObjectWithIndex(shape_id)) = interner.lookup(interface) {
@@ -269,6 +270,7 @@ fn test_interface_with_number_index() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     if let Some(TypeData::ObjectWithIndex(shape_id)) = interner.lookup(interface) {

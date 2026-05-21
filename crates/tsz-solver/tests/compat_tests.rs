@@ -1776,6 +1776,7 @@ fn test_no_unchecked_indexed_access_toggle() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let index_access = interner.intern(TypeData::IndexAccess(indexed, TypeId::STRING));
@@ -1838,6 +1839,7 @@ fn test_no_unchecked_object_index_signature_assignable() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let index_access = interner.intern(TypeData::IndexAccess(indexed, TypeId::NUMBER));
@@ -2606,6 +2608,7 @@ fn test_apparent_string_number_index_assignable() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     assert!(checker.is_assignable(TypeId::STRING, target));
@@ -2627,6 +2630,7 @@ fn test_apparent_string_rejects_string_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(!checker.is_assignable(TypeId::STRING, target));
@@ -2745,6 +2749,7 @@ fn test_optional_property_rejects_string_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // In tsc, optional properties are compatible with index signatures that don't
@@ -2774,6 +2779,7 @@ fn test_template_literal_index_signature_tracks_excess_properties() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let good = interner.object_fresh(vec![PropertyInfo::new(
@@ -2864,6 +2870,7 @@ fn test_exact_optional_property_allows_string_index_signature() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     assert!(checker.is_assignable(source, target));
@@ -3173,6 +3180,7 @@ fn test_keyof_union_index_signature_assignable() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
     let number_index = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -3185,6 +3193,7 @@ fn test_keyof_union_index_signature_assignable() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let union = interner.union(vec![string_index, number_index]);
@@ -3323,6 +3332,7 @@ fn test_weak_type_with_index_signature_not_weak() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Source with no overlapping properties - should be accepted due to index signature
@@ -4306,6 +4316,7 @@ fn test_compiler_options_independent_toggles() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
     let index_access = interner.intern(TypeData::IndexAccess(indexed, TypeId::STRING));
 
@@ -4368,6 +4379,7 @@ fn test_function_intrinsic_accepts_callable() {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     // Function intrinsic should accept callable types
@@ -5559,6 +5571,7 @@ fn test_explain_object_to_tuple_missing_property() {
         string_index: None,
         flags: ObjectFlags::empty(),
         symbol: None,
+        symbol_index: None,
     });
 
     // Target: tuple [number, number, number] — has required element at index 2
@@ -6492,6 +6505,7 @@ fn test_explain_function_to_callable_with_properties_produces_missing_properties
         ],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });

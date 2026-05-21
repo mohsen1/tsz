@@ -979,13 +979,18 @@ impl<'a> CheckerState<'a> {
                         || self.target_is_or_displays_type_application(candidate)
                 });
 
-            // When the target has a string index signature, outer property names are
-            // valid only when they are accepted by the index key type. Broad
-            // `[k: string]` accepts every string key, while template-literal
-            // index keys such as `` `data-${string}` `` only accept matching
-            // property names. We still check nested object literals against the
-            // applicable index signature VALUE type for excess properties.
-            if let Some(ref idx_sig) = target_shape.string_index {
+            // When the target has a string or symbol index signature, outer property
+            // names are valid only when they are accepted by the index key type. Broad
+            // `[k: string]` accepts every string key, `[k: symbol]` accepts every
+            // symbol-named key, while template-literal index keys such as
+            // `` `data-${string}` `` only accept matching property names. We still
+            // check nested object literals against the applicable index signature
+            // VALUE type for excess properties.
+            if let Some(ref idx_sig) = target_shape
+                .string_index
+                .as_ref()
+                .or(target_shape.symbol_index.as_ref())
+            {
                 if self.try_union_index_signature_value_check(
                     source_props,
                     idx,
@@ -1707,6 +1712,7 @@ impl<'a> CheckerState<'a> {
                 properties,
                 string_index,
                 number_index,
+                symbol_index: _,
             } => Some(std::sync::Arc::new(tsz_solver::ObjectShape {
                 properties,
                 string_index,
@@ -1768,6 +1774,20 @@ impl<'a> CheckerState<'a> {
                     }
                     applicable_index_value_types.push(string_index.value_type);
                     if self.is_assignable_to(source_prop.type_id, string_index.value_type) {
+                        accepted_by_index = true;
+                        break;
+                    }
+                }
+
+                if source_prop.is_symbol_named
+                    && let Some(symbol_index) = &shape.symbol_index
+                {
+                    if Self::index_value_type_is_deferred(self.ctx.types, symbol_index.value_type) {
+                        has_deferred_index_value_type = true;
+                        continue;
+                    }
+                    applicable_index_value_types.push(symbol_index.value_type);
+                    if self.is_assignable_to(source_prop.type_id, symbol_index.value_type) {
                         accepted_by_index = true;
                         break;
                     }

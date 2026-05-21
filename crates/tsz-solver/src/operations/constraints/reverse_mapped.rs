@@ -401,6 +401,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // reverse through the template to build the inferred T's index signature.
         let mut reverse_string_index = None;
         let mut reverse_number_index = None;
+        let reverse_symbol_index: Option<crate::types::IndexSignature> = None;
 
         if let Some(ref sig) = source_obj.string_index
             && let Some(reversed_value) =
@@ -451,6 +452,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 properties: reverse_properties,
                 string_index: reverse_string_index,
                 number_index: reverse_number_index,
+                symbol_index: reverse_symbol_index,
                 symbol: None,
             })
         } else {
@@ -1043,6 +1045,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // dictionary-like sources.
                 let mut reverse_string_index = None;
                 let mut reverse_number_index = None;
+                let reverse_symbol_index: Option<crate::types::IndexSignature> = None;
 
                 if let Some(ref sig) = source_string_idx
                     && let Some(reversed_value) = self.reverse_infer_through_template(
@@ -1095,6 +1098,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             properties: reverse_properties,
                             string_index: reverse_string_index,
                             number_index: reverse_number_index,
+                            symbol_index: reverse_symbol_index,
                             symbol: None,
                         }));
                     }

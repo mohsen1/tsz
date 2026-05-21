@@ -124,6 +124,10 @@ pub(super) struct InterfaceParts {
     /// in `finish_interface_parts`, where the type interner is available.
     pub(super) extra_string_indices: Vec<IndexSignature>,
     pub(super) number_index: Option<IndexSignature>,
+    /// Symbol-keyed index signature: `[k: symbol]: V`. Tracked separately from
+    /// `string_index` so a shape that carries both keeps each signature's
+    /// key/value precision instead of unioning them.
+    pub(super) symbol_index: Option<IndexSignature>,
     /// True when at least one member has a computed property name that could not
     /// be resolved to a literal string/symbol key (e.g. `[sym]` where `sym` has
     /// type `symbol` rather than a unique-symbol type).  The resulting object
@@ -171,6 +175,7 @@ impl InterfaceParts {
             string_index: None,
             extra_string_indices: Vec::new(),
             number_index: None,
+            symbol_index: None,
             has_late_bound_members: false,
             current_pass_base: 0,
             pass_local_counter: 0,
@@ -326,6 +331,21 @@ impl InterfaceParts {
                 }
             } else {
                 self.number_index = Some(index);
+            }
+            return;
+        }
+
+        if index.key_type == TypeId::SYMBOL {
+            // Symbol-keyed signatures land in their own slot so a shape that
+            // declares both `[k: string]: V` and `[k: symbol]: W` keeps each
+            // signature's key/value precision instead of unioning them.
+            if let Some(existing) = self.symbol_index.as_mut() {
+                if existing.value_type != index.value_type || existing.readonly != index.readonly {
+                    existing.value_type = TypeId::ERROR;
+                    existing.readonly = false;
+                }
+            } else {
+                self.symbol_index = Some(index);
             }
             return;
         }
@@ -1600,6 +1620,7 @@ impl<'a> TypeLowering<'a> {
             let mut construct_signatures = Vec::new();
             let mut string_index = None;
             let mut number_index = None;
+            let mut symbol_index = None;
             let mut has_late_bound_members = false;
 
             for &idx in &data.members.nodes {
@@ -1660,6 +1681,8 @@ impl<'a> TypeLowering<'a> {
                 {
                     if index_info.key_type == TypeId::NUMBER {
                         number_index = Some(index_info);
+                    } else if index_info.key_type == TypeId::SYMBOL {
+                        symbol_index = Some(index_info);
                     } else {
                         string_index = Some(index_info);
                     }
@@ -1743,6 +1766,7 @@ impl<'a> TypeLowering<'a> {
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                     symbol: None,
                     is_abstract: false,
                 });
@@ -1754,7 +1778,7 @@ impl<'a> TypeLowering<'a> {
                 ObjectFlags::empty()
             };
 
-            if string_index.is_some() || number_index.is_some() {
+            if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
                 if !self.index_signature_properties_compatible(
                     &properties,
                     string_index.as_ref(),
@@ -1766,6 +1790,7 @@ impl<'a> TypeLowering<'a> {
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                     flags,
                     ..ObjectShape::default()
                 });
@@ -2297,6 +2322,7 @@ impl<'a> TypeLowering<'a> {
                 properties,
                 string_index: parts.string_index,
                 number_index: parts.number_index,
+                symbol_index: parts.symbol_index,
                 symbol: symbol_id,
                 is_abstract: false,
             });
@@ -2308,7 +2334,10 @@ impl<'a> TypeLowering<'a> {
             ObjectFlags::empty()
         };
 
-        if parts.string_index.is_some() || parts.number_index.is_some() {
+        if parts.string_index.is_some()
+            || parts.number_index.is_some()
+            || parts.symbol_index.is_some()
+        {
             if !self.index_signature_properties_compatible(
                 &properties,
                 parts.string_index.as_ref(),
@@ -2320,6 +2349,7 @@ impl<'a> TypeLowering<'a> {
                 properties,
                 string_index: parts.string_index,
                 number_index: parts.number_index,
+                symbol_index: parts.symbol_index,
                 symbol: symbol_id,
                 flags,
             });

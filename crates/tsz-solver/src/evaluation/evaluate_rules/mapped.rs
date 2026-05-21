@@ -39,6 +39,10 @@ pub(crate) struct MappedKeys {
     pub keys: Vec<MappedKey>,
     pub has_string: bool,
     pub has_number: bool,
+    /// True when the mapped-key constraint includes the `symbol` primitive
+    /// (as opposed to specific unique-symbol keys collected in `symbol_keys`).
+    /// Drives whether the lowered object carries a `[k: symbol]: V` index signature.
+    pub has_symbol: bool,
     /// Template literal types used as mapped-type key constraints (e.g. `` `on${string}` ``).
     /// When non-empty and `has_string` is false, the object gets a template-literal index
     /// signature instead of a plain string index signature.
@@ -232,6 +236,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 keys: Vec::new(),
                 has_string: true,
                 has_number: true,
+                has_symbol: true,
                 template_literals: Vec::new(),
                 symbol_keys: Vec::new(),
             }
@@ -787,6 +792,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None
         };
 
+        let symbol_index = if key_set.has_symbol {
+            match self.remap_key_type_for_mapped(mapped, TypeId::SYMBOL) {
+                Ok(Some(remapped)) => {
+                    if remapped != TypeId::SYMBOL {
+                        return self.interner().mapped(*mapped);
+                    }
+                    Some(self.build_index_signature_for_mapped(
+                        *mapped,
+                        TypeId::SYMBOL,
+                        is_homomorphic,
+                        source_object,
+                        empty_atom,
+                    ))
+                }
+                Ok(None) => None,
+                Err(()) => return self.interner().mapped(*mapped),
+            }
+        } else {
+            None
+        };
+
         let string_index = if string_index.is_none() && !key_set.template_literals.is_empty() {
             let key_type =
                 crate::utils::union_or_single(self.interner(), key_set.template_literals);
@@ -801,12 +827,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             string_index
         };
 
-        if string_index.is_some() || number_index.is_some() {
+        if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
             self.interner().object_with_index(ObjectShape {
                 flags: ObjectFlags::empty(),
                 properties,
                 string_index,
                 number_index,
+                symbol_index,
                 symbol: None,
             })
         } else {
@@ -1423,6 +1450,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             keys: Vec::new(),
             has_string: false,
             has_number: false,
+            has_symbol: false,
             template_literals: Vec::new(),
             symbol_keys: Vec::new(),
         };
@@ -1449,14 +1477,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         properties,
                         string_index,
                         number_index,
+                        symbol_index,
                     } => {
                         self.collect_props_into_keys(&mut keys, properties);
                         keys.has_string = string_index.is_some();
                         keys.has_number = number_index.is_some();
+                        keys.has_symbol = symbol_index.is_some();
                         tracing::trace!(
                             keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
                             has_string = keys.has_string,
                             has_number = keys.has_number,
+                            has_symbol = keys.has_symbol,
                             symbol_keys_len = keys.symbol_keys.len(),
                             "extract_mapped_keys: extracted keys from KeyOf"
                         );
@@ -1465,6 +1496,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     PropertyCollectionResult::Any => {
                         keys.has_string = true;
                         keys.has_number = true;
+                        keys.has_symbol = true;
                         tracing::trace!("extract_mapped_keys: KeyOf is Any type");
                         Some(keys)
                     }
@@ -1481,10 +1513,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     properties,
                                     string_index,
                                     number_index,
+                                    symbol_index,
                                 } => {
                                     self.collect_props_into_keys(&mut keys, properties);
                                     keys.has_string = string_index.is_some();
                                     keys.has_number = number_index.is_some();
+                                    keys.has_symbol = symbol_index.is_some();
                                     tracing::trace!(
                                         keys = ?keys.keys.iter().map(|k| k.name).collect::<Vec<_>>(),
                                         "extract_mapped_keys: extracted keys from evaluated KeyOf operand"
@@ -1494,6 +1528,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 PropertyCollectionResult::Any => {
                                     keys.has_string = true;
                                     keys.has_number = true;
+                                    keys.has_symbol = true;
                                     return Some(keys);
                                 }
                                 PropertyCollectionResult::NonObject => {}
@@ -1547,6 +1582,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         properties,
                         string_index,
                         number_index,
+                        symbol_index: _,
                     } => {
                         let mut members = Vec::new();
 
@@ -1600,7 +1636,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         continue;
                     }
                     if member == TypeId::SYMBOL {
-                        // Generic `symbol` type — no concrete index to track.
+                        // Generic `symbol` constraint — record the symbol index slot
+                        // so the lowered object carries a `[k: symbol]: V` signature.
+                        keys.has_symbol = true;
                         continue;
                     }
                     if matches!(
@@ -1620,12 +1658,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         keys.keys.extend(inner_keys.keys);
                         keys.has_string |= inner_keys.has_string;
                         keys.has_number |= inner_keys.has_number;
+                        keys.has_symbol |= inner_keys.has_symbol;
                         keys.template_literals.extend(inner_keys.template_literals);
                         keys.symbol_keys.extend(inner_keys.symbol_keys);
                     }
                 }
                 if !keys.has_string
                     && !keys.has_number
+                    && !keys.has_symbol
                     && keys.keys.is_empty()
                     && keys.template_literals.is_empty()
                     && keys.symbol_keys.is_empty()
@@ -1640,6 +1680,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Intrinsic(IntrinsicKind::Number) => {
                 keys.has_number = true;
+                Some(keys)
+            }
+            TypeData::Intrinsic(IntrinsicKind::Symbol) => {
+                keys.has_symbol = true;
                 Some(keys)
             }
             TypeData::Intrinsic(IntrinsicKind::Never) => {

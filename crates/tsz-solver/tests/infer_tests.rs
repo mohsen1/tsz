@@ -1302,6 +1302,7 @@ fn test_resolve_bounds_object_with_index_subtype() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let lower = interner.object_with_index(ObjectShape {
@@ -1315,6 +1316,7 @@ fn test_resolve_bounds_object_with_index_subtype() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower);
@@ -1343,6 +1345,7 @@ fn test_resolve_bounds_string_index_property_mismatch() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let lower = interner.object(vec![PropertyInfo::new(name_a, TypeId::NUMBER)]);
@@ -1380,6 +1383,7 @@ fn test_resolve_bounds_index_readonly_property_mismatch() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let lower = interner.object(vec![PropertyInfo::readonly(name_a, TypeId::NUMBER)]);
@@ -1416,6 +1420,7 @@ fn test_resolve_bounds_index_readonly_signature_mismatch() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let lower = interner.object_with_index(ObjectShape {
@@ -1429,6 +1434,7 @@ fn test_resolve_bounds_index_readonly_signature_mismatch() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower);
@@ -1463,6 +1469,7 @@ fn test_resolve_bounds_index_readonly_signature_allows_mutable_source() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let lower = interner.object_with_index(ObjectShape {
@@ -1476,6 +1483,7 @@ fn test_resolve_bounds_index_readonly_signature_allows_mutable_source() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower);
@@ -1504,6 +1512,7 @@ fn test_resolve_bounds_number_index_allows_non_numeric_property() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower = interner.object_with_index(ObjectShape {
@@ -1512,6 +1521,7 @@ fn test_resolve_bounds_number_index_allows_non_numeric_property() {
         properties: vec![PropertyInfo::new(name_a, TypeId::STRING)],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower);
@@ -1540,6 +1550,7 @@ fn test_resolve_bounds_number_index_numeric_property_mismatch() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -1548,6 +1559,7 @@ fn test_resolve_bounds_number_index_numeric_property_mismatch() {
         properties: vec![PropertyInfo::new(name_zero, TypeId::STRING)],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -1583,6 +1595,7 @@ fn test_resolve_bounds_number_index_readonly_property_mismatch() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object(vec![PropertyInfo::readonly(name_zero, TypeId::NUMBER)]);
@@ -1619,6 +1632,7 @@ fn test_resolve_bounds_number_index_readonly_signature_mismatch() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -1632,6 +1646,7 @@ fn test_resolve_bounds_number_index_readonly_signature_mismatch() {
             readonly: true,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -1666,6 +1681,7 @@ fn test_resolve_bounds_number_index_readonly_signature_allows_mutable_source() {
             readonly: true,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -1679,6 +1695,7 @@ fn test_resolve_bounds_number_index_readonly_signature_allows_mutable_source() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -1707,6 +1724,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_numeric_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -1729,6 +1747,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_numeric_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -1757,6 +1776,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -1779,6 +1799,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -1814,6 +1835,7 @@ fn test_resolve_bounds_number_index_accepts_infinity_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -1836,6 +1858,7 @@ fn test_resolve_bounds_number_index_accepts_infinity_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -1871,6 +1894,7 @@ fn test_resolve_bounds_number_index_accepts_nan_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -1893,6 +1917,7 @@ fn test_resolve_bounds_number_index_accepts_nan_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -1928,6 +1953,7 @@ fn test_resolve_bounds_number_index_accepts_negative_infinity_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -1950,6 +1976,7 @@ fn test_resolve_bounds_number_index_accepts_negative_infinity_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -1985,6 +2012,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2007,6 +2035,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2035,6 +2064,7 @@ fn test_resolve_bounds_number_index_ignores_negative_zero_property() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object(vec![PropertyInfo {
@@ -2079,6 +2109,7 @@ fn test_resolve_bounds_number_index_accepts_decimal_boundary_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2101,6 +2132,7 @@ fn test_resolve_bounds_number_index_accepts_decimal_boundary_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2136,6 +2168,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_boundary_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2158,6 +2191,7 @@ fn test_resolve_bounds_number_index_accepts_exponent_boundary_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2193,6 +2227,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_exponent_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2215,6 +2250,7 @@ fn test_resolve_bounds_number_index_ignores_non_canonical_exponent_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2243,6 +2279,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2265,6 +2302,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2293,6 +2331,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2315,6 +2354,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2343,6 +2383,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2365,6 +2406,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2393,6 +2435,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_zer
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2415,6 +2458,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_zer
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2443,6 +2487,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_wit
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2465,6 +2510,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_leading_zeros_wit
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2493,6 +2539,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_negative_leading_
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2515,6 +2562,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_negative_leading_
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2543,6 +2591,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2565,6 +2614,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2593,6 +2643,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_with_sign() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2615,6 +2666,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_with_sign() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2643,6 +2695,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_digits()
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2665,6 +2718,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_digits()
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2693,6 +2747,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign_with
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2715,6 +2770,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_sign_with
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2743,6 +2799,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2765,6 +2822,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2793,6 +2851,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_with_lowercase_e(
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2815,6 +2874,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_with_lowercase_e(
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2843,6 +2903,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_minus() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2865,6 +2926,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_minus() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2893,6 +2955,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_plus_minus() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2915,6 +2978,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_plus_minus() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2943,6 +3007,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_minus_plus() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -2965,6 +3030,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_minus_plus() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -2993,6 +3059,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_sign() 
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3015,6 +3082,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_sign() 
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3043,6 +3111,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_minus()
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3065,6 +3134,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_minus()
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3093,6 +3163,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_double_
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3115,6 +3186,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_trailing_double_
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3143,6 +3215,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros() 
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3165,6 +3238,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros() 
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3193,6 +3267,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros_wi
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3215,6 +3290,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_leading_zeros_wi
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3243,6 +3319,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_sign_wit
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3265,6 +3342,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_missing_sign_wit
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3293,6 +3371,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_negative_exponent_zero() 
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3315,6 +3394,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_negative_exponent_zero() 
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3343,6 +3423,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_positive_zero() 
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3365,6 +3446,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_positive_zero() 
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3393,6 +3475,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_zero_without_sig
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3415,6 +3498,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_zero_without_sig
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3443,6 +3527,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign_trai
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3465,6 +3550,7 @@ fn test_resolve_bounds_number_index_ignores_mixed_case_exponent_double_sign_trai
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3493,6 +3579,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_digits() 
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3515,6 +3602,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_missing_digits() 
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3543,6 +3631,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_minus_missing_dig
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3565,6 +3654,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_minus_missing_dig
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3593,6 +3683,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_sign() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3615,6 +3706,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_sign() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3643,6 +3735,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_minus() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3665,6 +3758,7 @@ fn test_resolve_bounds_number_index_ignores_uppercase_exponent_double_minus() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3693,6 +3787,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_negative() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3715,6 +3810,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_negative() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3743,6 +3839,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_positive() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3765,6 +3862,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_positive() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3793,6 +3891,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_without_sign(
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3815,6 +3914,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zeros_without_sign(
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3843,6 +3943,7 @@ fn test_resolve_bounds_number_index_ignores_missing_exponent_sign() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3865,6 +3966,7 @@ fn test_resolve_bounds_number_index_ignores_missing_exponent_sign() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3893,6 +3995,7 @@ fn test_resolve_bounds_number_index_ignores_leading_zero_decimal_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3915,6 +4018,7 @@ fn test_resolve_bounds_number_index_ignores_leading_zero_decimal_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3943,6 +4047,7 @@ fn test_resolve_bounds_number_index_ignores_hex_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -3965,6 +4070,7 @@ fn test_resolve_bounds_number_index_ignores_hex_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -3993,6 +4099,7 @@ fn test_resolve_bounds_number_index_ignores_binary_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4015,6 +4122,7 @@ fn test_resolve_bounds_number_index_ignores_binary_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4043,6 +4151,7 @@ fn test_resolve_bounds_number_index_ignores_octal_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4065,6 +4174,7 @@ fn test_resolve_bounds_number_index_ignores_octal_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4093,6 +4203,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zero_mantissa() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4115,6 +4226,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_leading_zero_mantissa() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4143,6 +4255,7 @@ fn test_resolve_bounds_number_index_ignores_leading_dot_decimal_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4165,6 +4278,7 @@ fn test_resolve_bounds_number_index_ignores_leading_dot_decimal_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4193,6 +4307,7 @@ fn test_resolve_bounds_number_index_ignores_multiple_leading_zeros() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4215,6 +4330,7 @@ fn test_resolve_bounds_number_index_ignores_multiple_leading_zeros() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4243,6 +4359,7 @@ fn test_resolve_bounds_number_index_ignores_negative_hex_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4265,6 +4382,7 @@ fn test_resolve_bounds_number_index_ignores_negative_hex_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4293,6 +4411,7 @@ fn test_resolve_bounds_number_index_ignores_negative_binary_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4315,6 +4434,7 @@ fn test_resolve_bounds_number_index_ignores_negative_binary_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4343,6 +4463,7 @@ fn test_resolve_bounds_number_index_ignores_negative_octal_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4365,6 +4486,7 @@ fn test_resolve_bounds_number_index_ignores_negative_octal_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4393,6 +4515,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_sign() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4415,6 +4538,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_sign() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4443,6 +4567,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_minus() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4465,6 +4590,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_double_minus() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4493,6 +4619,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_missing_digits() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4515,6 +4642,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_missing_digits() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4543,6 +4671,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_minus_missing_digits() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4565,6 +4694,7 @@ fn test_resolve_bounds_number_index_ignores_exponent_minus_missing_digits() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4593,6 +4723,7 @@ fn test_resolve_bounds_number_index_ignores_negative_exponent_zero() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4615,6 +4746,7 @@ fn test_resolve_bounds_number_index_ignores_negative_exponent_zero() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4643,6 +4775,7 @@ fn test_resolve_bounds_number_index_ignores_positive_exponent_zero() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4665,6 +4798,7 @@ fn test_resolve_bounds_number_index_ignores_positive_exponent_zero() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4693,6 +4827,7 @@ fn test_resolve_bounds_number_index_accepts_negative_decimal_boundary_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4715,6 +4850,7 @@ fn test_resolve_bounds_number_index_accepts_negative_decimal_boundary_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4750,6 +4886,7 @@ fn test_resolve_bounds_number_index_ignores_trailing_decimal_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4772,6 +4909,7 @@ fn test_resolve_bounds_number_index_ignores_trailing_decimal_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4800,6 +4938,7 @@ fn test_resolve_bounds_number_index_ignores_leading_plus_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4822,6 +4961,7 @@ fn test_resolve_bounds_number_index_ignores_leading_plus_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4850,6 +4990,7 @@ fn test_resolve_bounds_number_index_ignores_numeric_separator_name() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4872,6 +5013,7 @@ fn test_resolve_bounds_number_index_ignores_numeric_separator_name() {
         }],
         string_index: None,
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4899,6 +5041,7 @@ fn test_resolve_bounds_inconsistent_index_signatures() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4917,6 +5060,7 @@ fn test_resolve_bounds_inconsistent_index_signatures() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);
@@ -4951,6 +5095,7 @@ fn test_resolve_bounds_object_with_index_mismatch() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let lower_type = interner.object_with_index(ObjectShape {
@@ -4964,6 +5109,7 @@ fn test_resolve_bounds_object_with_index_mismatch() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     ctx.add_lower_bound(var, lower_type);

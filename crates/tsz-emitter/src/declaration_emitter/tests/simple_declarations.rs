@@ -1911,6 +1911,7 @@ export const ExampleFunctionalComponent = ({ "data-testid": dataTestId, [dynProp
         ],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
     let func_type = interner.function(FunctionShape::new(
@@ -5301,6 +5302,7 @@ exports.K = NS.K;
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
         is_abstract: false,
     });
@@ -6762,6 +6764,7 @@ const obj = {
             param_name: Some(interner.intern_string("x")),
         }),
         symbol: None,
+        symbol_index: None,
     });
 
     let mut type_cache = crate::type_cache_view::TypeCacheView::default();
@@ -6833,6 +6836,7 @@ const obj = {
             param_name: Some(interner.intern_string("x")),
         }),
         symbol: None,
+        symbol_index: None,
     });
 
     let mut type_cache = crate::type_cache_view::TypeCacheView::default();
@@ -6899,6 +6903,7 @@ const obj = {
             param_name: Some(interner.intern_string("x")),
         }),
         symbol: None,
+        symbol_index: None,
     });
 
     let mut type_cache = crate::type_cache_view::TypeCacheView::default();
@@ -7005,6 +7010,7 @@ export const Baa = {
         properties: vec![PropertyInfo::new(banana_atom, TypeId::NUMBER)],
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: None,
     });
 
@@ -7421,6 +7427,7 @@ var e = new E(1);
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(c_sym),
     });
     let d_type = interner.object_with_index(ObjectShape {
@@ -7428,6 +7435,7 @@ var e = new E(1);
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(d_sym),
     });
     let e_type = interner.object_with_index(ObjectShape {
@@ -7435,6 +7443,7 @@ var e = new E(1);
         properties: Vec::new(),
         string_index: None,
         number_index: None,
+        symbol_index: None,
         symbol: Some(e_sym),
     });
 

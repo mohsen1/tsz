@@ -18,6 +18,7 @@ fn test_resolve_string_index() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let resolver = IndexSignatureResolver::new(&db);
@@ -41,6 +42,7 @@ fn test_resolve_number_index() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let resolver = IndexSignatureResolver::new(&db);
@@ -64,6 +66,7 @@ fn test_is_readonly() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     // Mutable string index
@@ -78,6 +81,7 @@ fn test_is_readonly() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let resolver = IndexSignatureResolver::new(&db);
@@ -139,6 +143,7 @@ fn test_has_index_signature_with_string_index() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
     });
 
     let resolver = IndexSignatureResolver::new(&db);
@@ -173,6 +178,7 @@ fn test_has_index_signature_with_both_indexes() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let resolver = IndexSignatureResolver::new(&db);
@@ -193,6 +199,7 @@ fn test_callable_string_index_resolution() {
             param_name: None,
         }),
         number_index: None,
+        symbol_index: None,
         ..CallableShape::default()
     });
 
@@ -417,6 +424,7 @@ fn test_numeric_key_prefers_number_index_over_string_index() {
             readonly: false,
             param_name: None,
         }),
+        symbol_index: None,
     });
 
     let evaluator = PropertyAccessEvaluator::new(&db);

@@ -1216,6 +1216,7 @@ impl<'a> CheckerState<'a> {
                     properties: merged_properties,
                     string_index: base_shape.string_index,
                     number_index: base_shape.number_index,
+                    symbol_index: base_shape.symbol_index,
                     ..ObjectShape::default()
                 })
             }
@@ -1245,6 +1246,7 @@ impl<'a> CheckerState<'a> {
                         properties,
                         string_index: base_shape.string_index,
                         number_index: base_shape.number_index,
+                        symbol_index: base_shape.symbol_index,
                         symbol: None,
                         is_abstract: false,
                     })
@@ -1259,6 +1261,7 @@ impl<'a> CheckerState<'a> {
                         properties: merged_properties,
                         string_index: base_shape.string_index,
                         number_index: base_shape.number_index,
+                        symbol_index: base_shape.symbol_index,
                         symbol: None,
                         is_abstract: false,
                     })

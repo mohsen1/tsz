@@ -493,12 +493,20 @@ pub fn rewrite_function_error_slots_to_any(db: &dyn TypeDatabase, type_id: TypeI
                     index.value_type = value_type;
                     index
                 });
+                let symbol_index = shape.symbol_index.map(|mut index| {
+                    let value_type =
+                        rewrite_error_to_any_in_display_type(db, index.value_type, seen);
+                    changed |= value_type != index.value_type;
+                    index.value_type = value_type;
+                    index
+                });
                 if changed {
                     db.object_with_index(crate::types::ObjectShape {
                         flags: shape.flags,
                         properties,
                         string_index,
                         number_index,
+                        symbol_index,
                         symbol: shape.symbol,
                     })
                 } else {

@@ -1177,13 +1177,15 @@ fn hash_index_signature_display<H: std::hash::Hasher>(
 }
 
 /// Combined index signature information for a type
-/// Provides convenient access to both string and number index signatures
+/// Provides convenient access to string, number, and symbol index signatures.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct IndexInfo {
     /// String index signature: { [key: string]: T }
     pub string_index: Option<IndexSignature>,
     /// Number index signature: { [key: number]: T }
     pub number_index: Option<IndexSignature>,
+    /// Symbol index signature: { [key: symbol]: T }
+    pub symbol_index: Option<IndexSignature>,
 }
 
 bitflags::bitflags! {
@@ -1234,9 +1236,16 @@ pub struct ObjectShape {
     /// Named properties (sorted by name for consistent hashing)
     pub properties: Vec<PropertyInfo>,
     /// String index signature: { [key: string]: T }
+    ///
+    /// Holds string-keyed signatures and template-literal-keyed signatures.
+    /// Symbol-keyed signatures live in `symbol_index` so a shape that carries
+    /// both `[k: string]: V` and `[k: symbol]: W` keeps each signature's
+    /// key/value precision instead of unioning them into a single slot.
     pub string_index: Option<IndexSignature>,
     /// Number index signature: { [key: number]: T }
     pub number_index: Option<IndexSignature>,
+    /// Symbol index signature: { [key: symbol]: T }
+    pub symbol_index: Option<IndexSignature>,
     /// Nominal identity for class instance types (prevents structural interning of distinct classes)
     pub symbol: Option<tsz_binder::SymbolId>,
 }
@@ -1255,6 +1264,7 @@ impl PartialEq for ObjectShape {
                     .all(|(left, right)| left.declaration_order == right.declaration_order))
             && index_signature_display_eq(&self.string_index, &other.string_index)
             && index_signature_display_eq(&self.number_index, &other.number_index)
+            && index_signature_display_eq(&self.symbol_index, &other.symbol_index)
             && self.symbol == other.symbol
     }
 }
@@ -1274,6 +1284,7 @@ impl std::hash::Hash for ObjectShape {
         }
         hash_index_signature_display(&self.string_index, state);
         hash_index_signature_display(&self.number_index, state);
+        hash_index_signature_display(&self.symbol_index, state);
         self.symbol.hash(state);
     }
 }
@@ -1326,6 +1337,7 @@ impl Default for ObjectShape {
             properties: Vec::new(),
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         }
     }
@@ -1453,10 +1465,15 @@ pub struct CallableShape {
     pub construct_signatures: Vec<CallSignature>,
     /// Optional properties on the callable (e.g., Function.prototype)
     pub properties: Vec<PropertyInfo>,
-    /// String index signature (for static index signatures on classes)
+    /// String index signature (for static index signatures on classes).
+    ///
+    /// Holds string-keyed and template-literal-keyed signatures; symbol-keyed
+    /// signatures live in `symbol_index`.
     pub string_index: Option<IndexSignature>,
     /// Number index signature (for static index signatures on classes)
     pub number_index: Option<IndexSignature>,
+    /// Symbol index signature (for static index signatures on classes)
+    pub symbol_index: Option<IndexSignature>,
     /// Nominal identity for class constructors (prevents structural interning of distinct classes)
     pub symbol: Option<tsz_binder::SymbolId>,
     /// Whether this callable represents an abstract constructor type.
@@ -1488,6 +1505,7 @@ impl PartialEq for CallableShape {
             && self.properties == other.properties
             && index_signature_display_eq(&self.string_index, &other.string_index)
             && index_signature_display_eq(&self.number_index, &other.number_index)
+            && index_signature_display_eq(&self.symbol_index, &other.symbol_index)
             && self.symbol == other.symbol
             && self.is_abstract == other.is_abstract
     }
@@ -1504,6 +1522,7 @@ impl std::hash::Hash for CallableShape {
         self.properties.hash(state);
         hash_index_signature_display(&self.string_index, state);
         hash_index_signature_display(&self.number_index, state);
+        hash_index_signature_display(&self.symbol_index, state);
         self.symbol.hash(state);
         self.is_abstract.hash(state);
     }

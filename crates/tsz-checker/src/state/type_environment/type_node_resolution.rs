@@ -709,6 +709,7 @@ impl<'a> CheckerState<'a> {
             properties,
             string_index: shape.string_index,
             number_index: shape.number_index,
+            symbol_index: shape.symbol_index,
             symbol: shape.symbol.or(Some(sym_id)),
         })
     }
@@ -877,6 +878,7 @@ impl<'a> CheckerState<'a> {
                     properties: Vec::new(),
                     string_index: None,
                     number_index: None,
+                    symbol_index: None,
                     symbol: Some(sym_id),
                     is_abstract: false,
                 },

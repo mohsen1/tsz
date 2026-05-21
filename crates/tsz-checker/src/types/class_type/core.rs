@@ -313,6 +313,7 @@ impl<'a> CheckerState<'a> {
             FxHashMap::with_capacity_and_hasher(4, Default::default());
         let mut string_index: Option<IndexSignature> = None;
         let mut number_index: Option<IndexSignature> = None;
+        let mut symbol_index: Option<IndexSignature> = None;
         let mut has_nominal_members = false;
         let mut has_late_bound_members = false;
         let mut merged_interface_type_for_class: Option<TypeId> = None;
@@ -438,6 +439,7 @@ impl<'a> CheckerState<'a> {
                                 properties: Vec::new(),
                                 string_index: None,
                                 number_index: None,
+                                symbol_index: None,
                                 symbol: None,
                                 is_abstract: false,
                             })
@@ -1007,6 +1009,8 @@ impl<'a> CheckerState<'a> {
                     if is_valid_index_type {
                         if key_type == TypeId::NUMBER {
                             Self::merge_index_signature(&mut number_index, index);
+                        } else if key_type == TypeId::SYMBOL {
+                            Self::merge_index_signature(&mut symbol_index, index);
                         } else {
                             Self::merge_index_signature(&mut string_index, index);
                         }
@@ -1061,6 +1065,7 @@ impl<'a> CheckerState<'a> {
             let mut partial_method_props = properties.clone();
             let mut partial_method_string_index = string_index;
             let mut partial_method_number_index = number_index;
+            let mut partial_method_symbol_index = symbol_index;
 
             // Method body inference needs inherited `this` members up front.
             // Without the base instance surface here, overrides like
@@ -1102,6 +1107,7 @@ impl<'a> CheckerState<'a> {
                             &mut partial_method_props,
                             &mut partial_method_string_index,
                             &mut partial_method_number_index,
+                            &mut partial_method_symbol_index,
                         );
                     }
                     break;
@@ -1158,6 +1164,7 @@ impl<'a> CheckerState<'a> {
                             properties: Vec::new(),
                             string_index: None,
                             number_index: None,
+                            symbol_index: None,
                             symbol: None,
                             is_abstract: false,
                         });
@@ -1202,6 +1209,7 @@ impl<'a> CheckerState<'a> {
                 properties: partial_props,
                 string_index: partial_method_string_index,
                 number_index: partial_method_number_index,
+                symbol_index: partial_method_symbol_index,
                 symbol: current_sym,
                 ..ObjectShape::default()
             });
@@ -1287,6 +1295,7 @@ impl<'a> CheckerState<'a> {
                     properties: Vec::new(),
                     string_index: None,
                     number_index: None,
+                    symbol_index: None,
                     symbol: None,
                     is_abstract: false,
                 });
@@ -1308,6 +1317,7 @@ impl<'a> CheckerState<'a> {
                             callable_or_undefined,
                             &mut string_index,
                             &mut number_index,
+                            &mut symbol_index,
                         );
                     }
                     continue;
@@ -1353,6 +1363,7 @@ impl<'a> CheckerState<'a> {
                     properties: Vec::new(),
                     string_index: None,
                     number_index: None,
+                    symbol_index: None,
                     symbol: None,
                     is_abstract: false,
                 });
@@ -1539,6 +1550,7 @@ impl<'a> CheckerState<'a> {
                 properties: Vec::new(),
                 string_index: None,
                 number_index: None,
+                symbol_index: None,
                 symbol: None,
                 is_abstract: false,
             });
@@ -1642,6 +1654,7 @@ impl<'a> CheckerState<'a> {
                                 &mut properties,
                                 &mut string_index,
                                 &mut number_index,
+                                &mut symbol_index,
                             );
                         } else {
                             tracing::debug!(
@@ -1697,6 +1710,7 @@ impl<'a> CheckerState<'a> {
                                     &mut properties,
                                     &mut string_index,
                                     &mut number_index,
+                                    &mut symbol_index,
                                 );
                             } else if let Some(base_node) = self.ctx.arena.get(base_class_idx)
                                 && let Some(base_class) = self.ctx.arena.get_class(base_node)
@@ -1712,6 +1726,7 @@ impl<'a> CheckerState<'a> {
                                         &mut properties,
                                         &mut string_index,
                                         &mut number_index,
+                                        &mut symbol_index,
                                     );
                                 }
                             }
@@ -1741,6 +1756,7 @@ impl<'a> CheckerState<'a> {
                             &mut properties,
                             &mut string_index,
                             &mut number_index,
+                            &mut symbol_index,
                         );
                     }
                     break;
@@ -2250,6 +2266,7 @@ impl<'a> CheckerState<'a> {
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
+        let mut symbol_index = None;
         let mut symbol = None;
         let mut result_is_callable = false;
 
@@ -2260,12 +2277,16 @@ impl<'a> CheckerState<'a> {
                     symbol = shape.symbol;
                     string_index = shape.string_index;
                     number_index = shape.number_index;
+                    symbol_index = shape.symbol_index;
                 } else {
                     if string_index.is_none() {
                         string_index = shape.string_index;
                     }
                     if number_index.is_none() {
                         number_index = shape.number_index;
+                    }
+                    if symbol_index.is_none() {
+                        symbol_index = shape.symbol_index;
                     }
                 }
                 call_signatures.extend(shape.call_signatures.iter().cloned());
@@ -2281,12 +2302,16 @@ impl<'a> CheckerState<'a> {
                     symbol = shape.symbol;
                     string_index = shape.string_index;
                     number_index = shape.number_index;
+                    symbol_index = shape.symbol_index;
                 } else {
                     if string_index.is_none() {
                         string_index = shape.string_index;
                     }
                     if number_index.is_none() {
                         number_index = shape.number_index;
+                    }
+                    if symbol_index.is_none() {
+                        symbol_index = shape.symbol_index;
                     }
                 }
                 for prop in &shape.properties {
@@ -2305,6 +2330,7 @@ impl<'a> CheckerState<'a> {
                 properties: properties.into_values().collect(),
                 string_index,
                 number_index,
+                symbol_index,
                 symbol,
                 is_abstract: false,
             });
@@ -2314,6 +2340,7 @@ impl<'a> CheckerState<'a> {
             properties: properties.into_values().collect(),
             string_index,
             number_index,
+            symbol_index,
             symbol,
             ..ObjectShape::default()
         };
@@ -2353,6 +2380,7 @@ impl<'a> CheckerState<'a> {
         value_type: TypeId,
         string_index: &mut Option<IndexSignature>,
         number_index: &mut Option<IndexSignature>,
+        _symbol_index: &mut Option<IndexSignature>,
     ) {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return;

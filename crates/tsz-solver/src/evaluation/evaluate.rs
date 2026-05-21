@@ -1267,6 +1267,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     readonly: false,
                     param_name: None,
                 }),
+                symbol_index: None,
                 symbol: None,
             });
             self.insert_application_eval_cache_if_some(

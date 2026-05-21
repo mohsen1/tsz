@@ -963,15 +963,21 @@ impl<'a> TypeInstantiator<'a> {
                     .number_index
                     .as_ref()
                     .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
+                let instantiated_symbol_idx = shape
+                    .symbol_index
+                    .as_ref()
+                    .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
                 if instantiated_props.is_some()
                     || instantiated_string_idx.is_some()
                     || instantiated_number_idx.is_some()
+                    || instantiated_symbol_idx.is_some()
                 {
                     self.interner.object_with_index(ObjectShape {
                         flags: shape.flags,
                         properties: instantiated_props.unwrap_or_else(|| shape.properties.clone()),
                         string_index: instantiated_string_idx.or(shape.string_index),
                         number_index: instantiated_number_idx.or(shape.number_index),
+                        symbol_index: instantiated_symbol_idx.or(shape.symbol_index),
                         symbol: shape.symbol,
                     })
                 } else {
@@ -1147,6 +1153,7 @@ impl<'a> TypeInstantiator<'a> {
                             properties: shape.properties.clone(),
                             string_index: shape.string_index,
                             number_index: shape.number_index,
+                            symbol_index: shape.symbol_index,
                             symbol: shape.symbol,
                             is_abstract: shape.is_abstract,
                         });
@@ -1167,12 +1174,17 @@ impl<'a> TypeInstantiator<'a> {
                     .number_index
                     .as_ref()
                     .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
+                let instantiated_symbol_idx = shape
+                    .symbol_index
+                    .as_ref()
+                    .and_then(|idx| self.instantiate_index_signature_if_changed(idx));
 
                 if instantiated_call.is_some()
                     || instantiated_construct.is_some()
                     || instantiated_props.is_some()
                     || instantiated_string_idx.is_some()
                     || instantiated_number_idx.is_some()
+                    || instantiated_symbol_idx.is_some()
                 {
                     self.interner.callable(CallableShape {
                         call_signatures: instantiated_call
@@ -1182,6 +1194,7 @@ impl<'a> TypeInstantiator<'a> {
                         properties: instantiated_props.unwrap_or_else(|| shape.properties.clone()),
                         string_index: instantiated_string_idx.or(shape.string_index),
                         number_index: instantiated_number_idx.or(shape.number_index),
+                        symbol_index: instantiated_symbol_idx.or(shape.symbol_index),
                         symbol: shape.symbol,
                         is_abstract: shape.is_abstract,
                     })

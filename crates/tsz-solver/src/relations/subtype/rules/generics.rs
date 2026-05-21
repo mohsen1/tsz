@@ -1108,20 +1108,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 properties,
                 string_index,
                 number_index,
-            } if !properties.is_empty() || string_index.is_some() || number_index.is_some() => {
+                symbol_index,
+            } if !properties.is_empty()
+                || string_index.is_some()
+                || number_index.is_some()
+                || symbol_index.is_some() =>
+            {
                 let target_shape = crate::types::ObjectShape {
                     flags: crate::types::ObjectFlags::empty(),
                     properties,
                     string_index,
                     number_index,
+                    symbol_index,
                     symbol: None,
                 };
-                let target_object =
-                    if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
-                        self.interner.object_with_index(target_shape)
-                    } else {
-                        self.interner.object(target_shape.properties)
-                    };
+                let target_object = if target_shape.string_index.is_some()
+                    || target_shape.number_index.is_some()
+                    || target_shape.symbol_index.is_some()
+                {
+                    self.interner.object_with_index(target_shape)
+                } else {
+                    self.interner.object(target_shape.properties)
+                };
                 Some(self.check_subtype(source, target_object))
             }
             PropertyCollectionResult::Any => Some(self.check_subtype(source, TypeId::ANY)),
