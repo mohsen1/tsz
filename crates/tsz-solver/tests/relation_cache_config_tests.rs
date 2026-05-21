@@ -355,8 +355,8 @@ fn strict_subtype_checking_slot_does_not_collide_with_non_sound_slot() {
 #[test]
 fn disable_method_bivariance_slot_does_not_collide_with_bivariant_slot() {
     // `DISABLE_METHOD_BIVARIANCE` is packed into the relation flags and is
-    // directly set on `SubtypeChecker` via `apply_flags`. Results computed
-    // with bivariance enabled must not be served to checks with it disabled.
+    // projected through `RelationPolicy`. Results computed with bivariance
+    // enabled must not be served to checks with it disabled.
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
@@ -531,6 +531,44 @@ fn policy_cache_config_preserves_all_assigned_packed_bits() {
         config.flags, all_flags,
         "explicit packed-bit projection must preserve every assigned relation flag",
     );
+}
+
+#[test]
+fn relation_policy_typed_accessors_preserve_packed_relation_bits() {
+    let packed = RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+        | RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES
+        | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES
+        | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS
+        | RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE
+        | RelationCacheKey::FLAG_ALLOW_VOID_RETURN
+        | RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST
+        | RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT
+        | RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY
+        | RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16;
+    let enabled = RelationPolicy::from_flags(packed);
+    let disabled = RelationPolicy::from_flags(0);
+
+    assert!(enabled.strict_null_checks());
+    assert!(enabled.strict_function_types());
+    assert!(enabled.exact_optional_property_types());
+    assert!(enabled.no_unchecked_indexed_access());
+    assert!(enabled.disable_method_bivariance());
+    assert!(enabled.allow_void_return());
+    assert!(enabled.allow_bivariant_rest());
+    assert!(enabled.allow_bivariant_param_count());
+    assert!(enabled.allow_erased_generic_signature_retry());
+    assert!(enabled.strict_readonly_identity());
+
+    assert!(!disabled.strict_null_checks());
+    assert!(!disabled.strict_function_types());
+    assert!(!disabled.exact_optional_property_types());
+    assert!(!disabled.no_unchecked_indexed_access());
+    assert!(!disabled.disable_method_bivariance());
+    assert!(!disabled.allow_void_return());
+    assert!(!disabled.allow_bivariant_rest());
+    assert!(!disabled.allow_bivariant_param_count());
+    assert!(!disabled.allow_erased_generic_signature_retry());
+    assert!(!disabled.strict_readonly_identity());
 }
 
 #[test]

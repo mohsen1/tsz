@@ -745,58 +745,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
     }
 
-    /// Apply compiler options from a bitmask flags value.
-    ///
-    /// Applies the `RelationCacheKey` bits that still have direct setters on
-    /// this legacy checker:
-    /// - bit 0: `strict_null_checks`
-    /// - bit 1: `strict_function_types`
-    /// - bit 2: `exact_optional_property_types`
-    /// - bit 3: `no_unchecked_indexed_access`
-    /// - bit 4: `disable_method_bivariance`
-    /// - bit 5: `subtype.allow_void_return`
-    /// - bit 6: `subtype.allow_bivariant_rest`
-    /// - bit 7: `subtype.allow_bivariant_param_count`
-    /// - bit 13: `subtype.allow_erased_generic_signature_retry`
-    ///
-    /// Other `RelationFlags` bits intentionally are not applied here:
-    /// `NO_ERASE_GENERICS`, `STRICT_SUBTYPE_CHECKING`,
-    /// `STRICT_ANY_PROPAGATION`, `SKIP_WEAK_TYPE_CHECKS`,
-    /// `ASSUME_RELATED_ON_CYCLE`, and `IN_CALLBACK_PARAM_CHECK` are routed
-    /// through newer policy/query paths.
-    ///
-    /// This legacy helper only applies the subset that maps directly onto this
-    /// checker instance. Higher-level relation query paths should prefer
-    /// `RelationPolicy`, whose `cache_config()` is the canonical
-    /// cache-partitioning surface for policy-affecting knobs.
-    pub fn apply_flags(&mut self, flags: u16) {
-        // Apply flags to CompatChecker's own fields
-        let strict_null_checks = (flags & (1 << 0)) != 0;
-        let strict_function_types = (flags & (1 << 1)) != 0;
-        let exact_optional_property_types = (flags & (1 << 2)) != 0;
-        let no_unchecked_indexed_access = (flags & (1 << 3)) != 0;
-        let disable_method_bivariance = (flags & (1 << 4)) != 0;
-
-        self.set_strict_null_checks(strict_null_checks);
-        self.set_strict_function_types(strict_function_types);
-        self.set_exact_optional_property_types(exact_optional_property_types);
-        self.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
-        self.set_strict_subtype_checking(disable_method_bivariance);
-
-        // Also apply flags to the internal SubtypeChecker
-        // We do this directly since apply_flags() uses a builder pattern
-        self.subtype.strict_null_checks = strict_null_checks;
-        self.subtype.strict_function_types = strict_function_types;
-        self.subtype.exact_optional_property_types = exact_optional_property_types;
-        self.subtype.no_unchecked_indexed_access = no_unchecked_indexed_access;
-        self.subtype.disable_method_bivariance = disable_method_bivariance;
-        self.subtype.allow_void_return = (flags & (1 << 5)) != 0;
-        self.subtype.allow_bivariant_rest = (flags & (1 << 6)) != 0;
-        self.subtype.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
-        self.subtype.allow_erased_generic_signature_retry =
-            (flags & crate::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY) != 0;
-    }
-
     ///
     /// When strict mode is enabled, `any` does NOT silence structural mismatches.
     /// This means the type checker will still report errors even when `any` is involved,
@@ -1791,8 +1739,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         use crate::types::MappedModifier;
         use crate::visitor::mapped_type_id;
 
-        // Try the flattened chain approach first: this handles nested homomorphic
-        // mapped types like Partial<Readonly<T>> vs Readonly<Partial<T>>.
+        // Fast path: flatten nested homomorphic chains (e.g. Partial<Readonly<T>>).
+        // `flatten_mapped_chain` returns None for any mapped type that has a
+        // name_type (`as` clause), so name-type compatibility is implicit here.
         if let (Some(s_flat), Some(t_flat)) = (
             flatten_mapped_chain(self.interner, s_mapped_id),
             flatten_mapped_chain(self.interner, t_mapped_id),
@@ -1819,12 +1768,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let s_mapped = self.interner.get_mapped(s_mapped_id);
         let t_mapped = self.interner.get_mapped(t_mapped_id);
 
+        // Name-type compatibility is always required: a source with no `as`
+        // clause cannot be compatible with a target that renames its keys (and
+        // vice-versa), regardless of how the raw key constraints relate.
+        let name_types_ok = self.mapped_name_types_compatible(&s_mapped, &t_mapped);
+
         // Both must have the same constraint (e.g., both `keyof T`).
         // First try identity, then evaluate to normalize (e.g., keyof(Readonly<T>) → keyof(T)).
-        let constraints_match = self
-            .mapped_key_constraint_covers(s_mapped.constraint, t_mapped.constraint)
-            || (self.mapped_name_types_compatible(&s_mapped, &t_mapped)
-                && self
+        let constraints_match = name_types_ok
+            && (self.mapped_key_constraint_covers(s_mapped.constraint, t_mapped.constraint)
+                || self
                     .subtype
                     .is_subtype_of(t_mapped.constraint, s_mapped.constraint));
 
@@ -1891,15 +1844,36 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         Some(result)
     }
 
+    /// Returns whether the `as` clause is the identity — the bare iteration
+    /// variable itself (`as K`). Such clauses are structurally equivalent to
+    /// having no `as` clause at all.
+    fn is_identity_name_type(&self, mapped: &MappedType) -> bool {
+        let Some(name) = mapped.name_type else {
+            return true;
+        };
+        type_param_info(self.interner, name).is_some_and(|p| p.name == mapped.type_param.name)
+    }
+
     fn mapped_name_types_compatible(
         &mut self,
         source_mapped: &MappedType,
         target_mapped: &MappedType,
     ) -> bool {
-        let (Some(source_name), Some(target_name)) =
-            (source_mapped.name_type, target_mapped.name_type)
-        else {
-            return source_mapped.name_type == target_mapped.name_type;
+        // Normalize: `as K` where K is the bare iteration variable is semantically
+        // equivalent to no `as` clause. Treat identity clauses as None.
+        let source_name = if self.is_identity_name_type(source_mapped) {
+            None
+        } else {
+            source_mapped.name_type
+        };
+        let target_name_type = if self.is_identity_name_type(target_mapped) {
+            None
+        } else {
+            target_mapped.name_type
+        };
+
+        let (Some(source_name), Some(target_name)) = (source_name, target_name_type) else {
+            return source_name == target_name_type;
         };
 
         let source_param = self.interner.type_param(source_mapped.type_param);
