@@ -157,3 +157,23 @@ let b = new B();
         "regression: concrete subclass instantiation must not emit TS2511"
     );
 }
+
+/// Self-referential constraint `T extends T` — must not crash and must not emit TS2511.
+/// Regression guard for the cycle in `type_node_contains_abstract_constructor`.
+#[test]
+fn self_referential_constraint_no_crash_no_ts2511() {
+    assert!(
+        no_code(
+            r#"
+class A<T extends T> {
+    foo() {
+        var x: T;
+        var b = new x(123);
+    }
+}
+"#,
+            2511
+        ),
+        "must NOT emit TS2511 (or crash) for self-referential T extends T"
+    );
+}
