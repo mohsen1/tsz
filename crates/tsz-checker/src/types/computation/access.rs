@@ -19,7 +19,9 @@ pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
             || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
         {
             if let Some(access) = arena.get_access_expr(node) {
-                access.question_dot_token
+                // Parentheses break the chain (fall through to `_ => false`),
+                // so `(o?.a).b` is not a continuation.
+                access.question_dot_token || is_optional_chain(arena, access.expression)
             } else {
                 false
             }
@@ -221,15 +223,15 @@ impl<'a> CheckerState<'a> {
             )
         };
 
-        // Handle optional chain continuations: for `o?.b["c"]`, when processing `["c"]`,
-        // the object type from `o?.b` includes `undefined`. Strip nullish types when this
-        // element access is a continuation of an optional chain.
-        let object_type =
+        // Strip nullish from the object type when this element access continues
+        // an optional chain (e.g., the `["c"]` in `o?.b["c"]`). Track whether
+        // stripping occurred so we can add `| undefined` back to the result.
+        let (object_type, is_chain_continuation) =
             if !access.question_dot_token && is_optional_chain(self.ctx.arena, access.expression) {
-                let (non_nullish, _) = self.split_nullish_type(object_type);
-                non_nullish.unwrap_or(object_type)
+                let (non_nullish, stripped) = self.split_nullish_type(object_type);
+                (non_nullish.unwrap_or(object_type), stripped.is_some())
             } else {
-                object_type
+                (object_type, false)
             };
         let object_type = if !skip_flow_narrowing
             && self
@@ -1908,6 +1910,18 @@ impl<'a> CheckerState<'a> {
             } else if !report_no_index {
                 self.report_possibly_nullish_object(access.expression, cause);
             }
+        }
+
+        // The chain can short-circuit at the `?.`; add back the `| undefined`
+        // that was stripped when resolving the element access.
+        if is_chain_continuation
+            && !crate::query_boundaries::common::type_contains_undefined(
+                self.ctx.types,
+                result_type,
+            )
+        {
+            result_type =
+                crate::query_boundaries::common::union_with_undefined(self.ctx.types, result_type);
         }
 
         let result_type = if skip_flow_narrowing {
