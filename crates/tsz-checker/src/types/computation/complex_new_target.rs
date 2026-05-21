@@ -58,6 +58,26 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
 
+            if symbol.has_any_flags(symbol_flags::TYPE_PARAMETER) {
+                // Type params delegate abstract-ness to their constraint syntax node.
+                // Don't touch visited_aliases — type parameters have no alias cycles.
+                for &decl_idx in &symbol.declarations {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    if let Some(tp_data) = self.ctx.arena.get_type_parameter(decl_node)
+                        && tp_data.constraint.is_some()
+                        && self.type_node_contains_abstract_constructor(
+                            tp_data.constraint,
+                            visited_aliases,
+                        )
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
                 return false;
             }

@@ -539,3 +539,81 @@ fn test_parameter_property_visibility_conflict_with_base() {
         2415,
     );
 }
+
+// TS2511: Type parameter constrained to `typeof AbstractClass`
+// Rule: when a new expression target is a type parameter T whose constraint resolves
+// to an abstract construct signature, tsc emits TS2511. This set of tests verifies
+// that the type-level check (via type_contains_abstract_class) propagates through
+// type parameter constraints, matching tsc's behavior exactly.
+
+/// Type parameter constrained to `typeof AbstractClass` — reported repro.
+#[test]
+fn test_ts2511_type_param_constrained_to_typeof_abstract_basic() {
+    test_constructor_accessibility(
+        r#"
+        abstract class A {}
+        function f<T extends typeof A>(ctor: T) { return new ctor(); }
+        "#,
+        2511,
+    );
+}
+
+/// Renamed abstract class and factory — confirms the rule is not name-specific.
+#[test]
+fn test_ts2511_type_param_constrained_to_typeof_abstract_renamed() {
+    test_constructor_accessibility(
+        r#"
+        abstract class Animal { abstract speak(): void; }
+        function factory<T extends typeof Animal>(ctor: T) { return new ctor(); }
+        "#,
+        2511,
+    );
+}
+
+/// Non-abstract base via the same generic factory — must NOT emit TS2511.
+#[test]
+fn test_ts2511_type_param_constrained_to_typeof_concrete_no_error() {
+    test_no_errors(
+        r#"
+        class Concrete {}
+        function factory<T extends typeof Concrete>(ctor: T) { return new ctor(); }
+        "#,
+    );
+}
+
+/// Constructible non-abstract constraint — exercises TypeParam with no abstract constraint.
+#[test]
+fn test_ts2511_type_param_constructible_no_error() {
+    test_no_specific_error(
+        r#"
+        function f<T extends new() => object>(ctor: T) { return new ctor(); }
+        "#,
+        2511,
+    );
+}
+
+/// Type alias wrapping `typeof AbstractClass` as constraint — alias indirection case.
+#[test]
+fn test_ts2511_type_param_via_type_alias_constraint() {
+    test_constructor_accessibility(
+        r#"
+        abstract class Base {}
+        type AbstractCtor = typeof Base;
+        function make<T extends AbstractCtor>(ctor: T) { return new ctor(); }
+        "#,
+        2511,
+    );
+}
+
+/// Union constraint where both branches are abstract — still TS2511.
+#[test]
+fn test_ts2511_type_param_union_constraint_both_abstract() {
+    test_constructor_accessibility(
+        r#"
+        abstract class A {}
+        abstract class B {}
+        function f<T extends typeof A | typeof B>(ctor: T) { return new ctor(); }
+        "#,
+        2511,
+    );
+}

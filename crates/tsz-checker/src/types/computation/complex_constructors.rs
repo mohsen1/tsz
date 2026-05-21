@@ -1489,6 +1489,9 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .all(|&member| self.type_contains_abstract_class_inner(member, visited))
             }
+            query::AbstractClassCheckKind::TypeParam(constraint) => {
+                constraint.is_some_and(|c| self.type_contains_abstract_class_inner(c, visited))
+            }
             query::AbstractClassCheckKind::NotAbstract => {
                 if let Some(callable_shape) =
                     query::callable_shape_for_type(self.ctx.types, type_id)
