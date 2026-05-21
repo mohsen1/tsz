@@ -416,6 +416,92 @@ mod tests {
         );
     }
 
+    #[test]
+    fn binary_continuation_operator_preserves_left_line_comment() {
+        let source = r#"function foo(x: string | number | boolean) {
+    return typeof x !== "string" // string | number | boolean
+        && typeof x !== "number" // number | boolean
+        && x; // boolean
+}
+"#;
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+        let lines: Vec<&str> = output.lines().collect();
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.trim_end().ends_with("// string | number | boolean")),
+            "The first `&&` should remain on the continuation line after the left operand comment.\nOutput:\n{output}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.trim_start().starts_with("&& typeof")),
+            "The first `&&` should start the continuation line.\nOutput:\n{output}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.trim_end().ends_with("// number | boolean")),
+            "Line comments before continuation operators should stay on the operand line.\nOutput:\n{output}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.trim_start().starts_with("&& x;")),
+            "The second `&&` should start the continuation line.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn binary_or_continuation_operator_preserves_left_line_comment() {
+        let source = r#"function foo(x: string | number | boolean) {
+    return typeof x === "string" // string | number | boolean
+        || typeof x === "number" // number | boolean
+        || x; // boolean
+}
+"#;
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+        let lines: Vec<&str> = output.lines().collect();
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.trim_end().ends_with("// string | number | boolean")),
+            "The first `||` should remain on the continuation line after the left operand comment.\nOutput:\n{output}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.trim_start().starts_with("|| typeof")),
+            "The first `||` should start the continuation line.\nOutput:\n{output}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.trim_end().ends_with("// number | boolean")),
+            "Line comments before `||` continuation operators should stay on the operand line.\nOutput:\n{output}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.trim_start().starts_with("|| x;")),
+            "The second `||` should start the continuation line.\nOutput:\n{output}"
+        );
+    }
+
     /// Type assertion around a call expression should strip parens:
     /// `(<any>a.b()).c` → `a.b().c` (not `(a.b()).c`).
     #[test]
