@@ -69,6 +69,100 @@ fn is_substantive_inference_candidate(
         && !crate::type_queries::contains_infer_types_db(interner, ty)
 }
 
+/// Does `constraint` reach a `keyof <X>` where `X` transitively
+/// references a `TypeParameter` that defaulted in `final_subst`
+/// (mapped to `unknown` or `never` because no inference candidate
+/// was found)?
+///
+/// This detects the "degenerate sibling default" pattern: a callee
+/// constraint like `EI extends keyof TI`, `keyof TI & string`,
+/// `keyof Rec[SI] & string`, etc. — where the sibling `TI` / `SI` had
+/// no inference source. After instantiation that `keyof <…>` evaluates
+/// to `never`, so the constraint check against the substituted form
+/// degenerates. Accepting the inferred argument lets the downstream
+/// argument-vs-instantiated-parameter check catch any real mismatch
+/// instead of falling back to the constraint type and reporting a
+/// spurious TS2345.
+///
+/// Walks intersections at the top level (to handle `keyof X & string`
+/// shapes) and recurses inside any `keyof` to handle nested index-access
+/// patterns like `keyof Rec[SI]`.
+fn constraint_references_defaulted_keyof(
+    interner: &dyn crate::construction::TypeDatabase,
+    constraint: TypeId,
+    final_subst: &TypeSubstitution,
+) -> bool {
+    if constraint.is_intrinsic() {
+        return false;
+    }
+    match interner.lookup(constraint) {
+        Some(TypeData::KeyOf(operand)) => {
+            let mut visited = FxHashSet::default();
+            type_references_defaulted_type_param(interner, operand, final_subst, &mut visited)
+        }
+        Some(TypeData::Intersection(list_id)) => {
+            let members = interner.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| constraint_references_defaulted_keyof(interner, m, final_subst))
+        }
+        _ => false,
+    }
+}
+
+/// Walks `ty` looking for any `TypeParameter` whose name is bound in
+/// `final_subst`. Used to detect that a `keyof <ty>` is an artifact of
+/// the call's substitution rather than an explicit `keyof never` /
+/// `keyof <concrete>` written by the user — the actual substituted
+/// value doesn't matter, only that the keyof's operand depends on the
+/// call's type-parameter bindings. Combined with the
+/// `constraint_ty == never` gate, this distinguishes "degenerate
+/// result from substitution" (accept) from "user-authored never
+/// constraint" (reject and fall through).
+fn type_references_defaulted_type_param(
+    interner: &dyn crate::construction::TypeDatabase,
+    ty: TypeId,
+    final_subst: &TypeSubstitution,
+    visited: &mut FxHashSet<TypeId>,
+) -> bool {
+    if ty.is_intrinsic() {
+        return false;
+    }
+    if !visited.insert(ty) {
+        return false;
+    }
+    match interner.lookup(ty) {
+        Some(TypeData::TypeParameter(info)) => final_subst.get(info.name).is_some(),
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            let members = interner.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| type_references_defaulted_type_param(interner, m, final_subst, visited))
+        }
+        Some(TypeData::Array(elem) | TypeData::ReadonlyType(elem) | TypeData::KeyOf(elem)) => {
+            type_references_defaulted_type_param(interner, elem, final_subst, visited)
+        }
+        Some(TypeData::IndexAccess(obj, idx)) => {
+            type_references_defaulted_type_param(interner, obj, final_subst, visited)
+                || type_references_defaulted_type_param(interner, idx, final_subst, visited)
+        }
+        Some(TypeData::Application(app_id)) => {
+            let app = interner.type_application(app_id);
+            type_references_defaulted_type_param(interner, app.base, final_subst, visited)
+                || app.args.iter().any(|&a| {
+                    type_references_defaulted_type_param(interner, a, final_subst, visited)
+                })
+        }
+        Some(TypeData::Tuple(list_id)) => {
+            let elements = interner.tuple_list(list_id);
+            elements.iter().any(|elem| {
+                type_references_defaulted_type_param(interner, elem.type_id, final_subst, visited)
+            })
+        }
+        _ => false,
+    }
+}
+
 use super::{
     constraint_contains_primitive_constrained_type_param,
     constraint_is_primitive_type_with_resolver, instantiate_call_type, type_implies_literals_deep,
@@ -2538,6 +2632,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     final_subst.insert(tp.name, ty);
                     continue;
                 }
+                // Degenerate sibling-default carve-out. When a callee type
+                // parameter `EI` declares `extends keyof TI` (or
+                // `extends keyof TI & string` / `& number` / similar literal
+                // narrowings) and TI had no inference candidate, TI defaults
+                // to `unknown` in `final_subst`; instantiating `keyof TI`
+                // against that substitution eagerly evaluates to `never`,
+                // so both `constraint_ty` and `constraint_ty_raw` are NEVER
+                // and the surface form is lost. The constraint check against
+                // that `never` is meaningless — there is nothing concrete to
+                // verify — so detect the pattern on the *uninstantiated*
+                // constraint and accept the inferred argument, letting
+                // downstream argument-vs-instantiated-parameter checks catch
+                // any real mismatch. Mirrors the deferred
+                // `keyof <TypeParameter>` path immediately above for the
+                // post-default shape.
+                if constraint_ty == TypeId::NEVER
+                    && constraint_references_defaulted_keyof(
+                        self.interner,
+                        constraint,
+                        &final_subst,
+                    )
+                {
+                    final_subst.insert(tp.name, ty);
+                    continue;
+                }
                 // Strip freshness before constraint check: inferred types should not
                 // trigger excess property checking against type parameter constraints.
                 let ty_for_check = crate::relations::freshness::widen_freshness(self.interner, ty);
@@ -2581,19 +2700,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             final_subst.insert(tp.name, ty_for_check);
                             continue;
                         }
-                        // When the inferred type is a TypeParameter from an outer
-                        // scope, its constraint is guaranteed to be at least as
-                        // specific as the function's type parameter constraint
-                        // (the inference already validated upper bounds during
-                        // resolution). Accept the TypeParameter to preserve the
-                        // more specific type information instead of collapsing
-                        // to the constraint. This handles cases like:
+                        // Catch-all for TypeParameter sources whose constraint is
+                        // structurally compatible with `constraint_ty` but didn't
+                        // match the two early shapes above (direct TypeId equality,
+                        // or `keyof <SameNamedParam>`). Handles cases like:
                         //   U extends MessageList<T>, MessageList<T> extends Message
                         //   → U satisfies V extends Message
                         // where structural comparison may fail due to `this` types
                         // or unresolved Application types in the constraint chain.
-                        final_subst.insert(tp.name, ty_for_check);
-                        continue;
+                        //
+                        // Gated on `is_assignable_to(tp_constraint, constraint_ty)`:
+                        // the previous unconditional accept assumed the inference
+                        // engine had validated upper bounds, but the instantiator
+                        // now preserves outer-scope TypeParameters that bypass
+                        // that gate (so a `<OO extends "a"|"b">` source could be
+                        // accepted against a disjoint `<II extends "x"|"y">`
+                        // target without this check).
+                        if self.checker.is_assignable_to(tp_constraint, constraint_ty) {
+                            final_subst.insert(tp.name, ty_for_check);
+                            continue;
+                        }
+                        // Otherwise fall through to the constraint-fallback path
+                        // below so the argument check can emit TS2345.
                     }
                     // Lazy(DefId) from contextual return inference may fail structural
                     // constraint checks due to evaluation differences in complex
