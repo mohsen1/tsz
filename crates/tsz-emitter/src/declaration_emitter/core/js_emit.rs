@@ -525,6 +525,11 @@ impl<'a> DeclarationEmitter<'a> {
             if self.is_js_export_equals_name(decl.name) {
                 continue;
             }
+            if self.jsdoc_type_text_for_node(decl_idx).is_some()
+                || self.jsdoc_type_text_for_node(decl.name).is_some()
+            {
+                continue;
+            }
             if self.is_js_object_literal_namespace_candidate(decl.name, decl.initializer) {
                 return true;
             }

@@ -2486,11 +2486,15 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                         continue;
                     }
-                    if self.emit_js_object_literal_namespace_if_possible(
-                        decl.name,
-                        decl.initializer,
-                        is_exported,
-                    ) {
+                    let has_jsdoc_type = self.jsdoc_type_text_for_node(decl_idx).is_some()
+                        || self.jsdoc_type_text_for_node(decl.name).is_some();
+                    if !has_jsdoc_type
+                        && self.emit_js_object_literal_namespace_if_possible(
+                            decl.name,
+                            decl.initializer,
+                            is_exported,
+                        )
+                    {
                         if let Some(dn) = self.arena.get(decl_idx) {
                             let skip_end =
                                 self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);
