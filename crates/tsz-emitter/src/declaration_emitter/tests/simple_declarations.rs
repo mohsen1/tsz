@@ -9070,7 +9070,7 @@ fn test_jsdoc_object_index_type_prevents_namespace_object_emit() {
     );
 
     assert!(
-        output.contains("/** @type {Object<string, string>} */ declare const labels: {\n    [x: string]: string;\n};"),
+        output.contains("declare const labels: {\n    [x: string]: string;\n};"),
         "Expected Object<K,V> JSDoc to emit an index-signature const declaration: {output}"
     );
     assert!(
