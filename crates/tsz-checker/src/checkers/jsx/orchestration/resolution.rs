@@ -773,6 +773,17 @@ impl<'a> CheckerState<'a> {
                     // `evaluate_type_with_env` so true aliasing isn't missed. When
                     // `JSX.LibraryManagedAttributes` projects props into `Defaultize<...>`,
                     // the two diverge structurally; keep the LMA display in that case.
+                    //
+                    // The takeover is narrowed to the exact `react16.d.ts` shape — a class
+                    // whose `.props` field is structurally a `Readonly<P> & Readonly<{
+                    // children?: ... }>` intersection. That is the shape `tsc`'s printer
+                    // abbreviates to `Readonly<...> & Readonly<...>`, and which `tsz`'s
+                    // pre-fix path rendered as the bare constructor parameter alias.
+                    // For non-`Readonly`-wrapped class.props (plain `P & { children?:
+                    // ... }` etc.) tsz already matches tsc through the legacy display
+                    // path; broadening the takeover beyond `Readonly`-wrapped class.props
+                    // surfaces edge-case fingerprint drift in adjacent JSX class tests,
+                    // so the gate restricts to the structural shape this PR is fixing.
                     let class_props_display_target = class_props_from_construct
                         .filter(|&class_props| {
                             class_props != props_type
@@ -781,6 +792,7 @@ impl<'a> CheckerState<'a> {
                                         || self.evaluate_type_with_env(ctor_param)
                                             == self.evaluate_type_with_env(props_type)
                                 })
+                                && self.jsx_class_props_is_readonly_wrapper(class_props)
                         })
                         .map(|class_props| {
                             Self::compact_jsx_readonly_display(self.build_jsx_display_target(
