@@ -393,12 +393,17 @@ impl<'a> CheckerState<'a> {
     /// Apply literal widening to a single return expression's inferred type,
     /// matching tsc's `getReturnTypeFromBody` widening rules per-contribution:
     ///
-    /// - When the contextual return type *pins* the literal
-    ///   (`isLiteralOfContextualType`), do not widen. A contextual return that
-    ///   does not pin it (`unknown`, `any`, a base primitive, an object/function
-    ///   type — as in `() => 1 satisfies () => unknown`) widens the fresh literal
-    ///   just like the no-context case, per tsc's
-    ///   `getWidenedLiteralLikeTypeForContextualType`.
+    /// - When the function has a contextual return type, do not widen — except
+    ///   inside a `satisfies` operand. A `satisfies` type only *validates* the
+    ///   operand; it does not pin the body literal unless it actually contains
+    ///   that literal (`isLiteralOfContextualType`). So in a `satisfies` operand
+    ///   a non-pinning contextual return (`unknown`, `any`, a base primitive, an
+    ///   object/function type — as in `() => 1 satisfies () => unknown`) widens
+    ///   the fresh literal just like the no-context case, per tsc's
+    ///   `getWidenedLiteralLikeTypeForContextualType`, while a literal/literal
+    ///   union (`satisfies () => 1`) keeps it. Outside `satisfies` the contextual
+    ///   return is a genuine contextual position that already shaped the literal,
+    ///   so it is preserved unchanged.
     /// - When the outer scope requested literal preservation
     ///   (`preserve_literal_types`), do not widen.
     /// - When the return expression is wrapped in a const assertion
@@ -415,7 +420,8 @@ impl<'a> CheckerState<'a> {
         return_context: Option<TypeId>,
     ) -> TypeId {
         if let Some(ctx_type) = return_context
-            && self.contextual_type_allows_literal(ctx_type, type_id)
+            && (!self.ctx.in_satisfies_operand
+                || self.contextual_type_allows_literal(ctx_type, type_id))
         {
             return type_id;
         }
