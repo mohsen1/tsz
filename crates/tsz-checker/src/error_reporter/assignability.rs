@@ -146,12 +146,16 @@ impl<'a> CheckerState<'a> {
         }
 
         let read_ok = if source_prop.is_method || target_prop.is_method {
-            self.is_assignable_to_bivariant(source_prop.type_id, target_prop.type_id)
+            self.diagnostic_relation_boolean_guard_bivariant(
+                source_prop.type_id,
+                target_prop.type_id,
+            )
         } else {
-            self.is_assignable_to(source_prop.type_id, target_prop.type_id)
+            self.diagnostic_relation_boolean_guard(source_prop.type_id, target_prop.type_id)
         };
         let write_ok = target_prop.readonly
-            || self.is_assignable_to(target_prop.write_type, source_prop.write_type);
+            || self
+                .diagnostic_relation_boolean_guard(target_prop.write_type, source_prop.write_type);
 
         read_ok && write_ok
     }
@@ -930,7 +934,7 @@ impl<'a> CheckerState<'a> {
         let mismatched: Vec<TypeId> = members
             .iter()
             .copied()
-            .filter(|&m| !self.is_assignable_to(m, target_eval))
+            .filter(|&m| !self.diagnostic_relation_boolean_guard(m, target_eval))
             .collect();
         if mismatched.len() == members.len()
             && members.len() == 2

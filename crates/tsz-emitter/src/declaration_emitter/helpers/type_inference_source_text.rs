@@ -214,8 +214,9 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
-        // Peel redundant parens: `X<(<T>() => T)>` and `X< <T>() => T >` are
-        // equivalent — the PARENTHESIZED_TYPE handler strips them on emit.
+        // Peel parens to inspect the structural kind: `X<(<T>() => T)>` and
+        // `X< <T>() => T >` both have a generic function type argument.
+        // The caller guards with `!already_has_parens` to avoid double-wrapping.
         let peeled = self.peel_paren(type_arg_idx);
         self.arena
             .get(peeled)

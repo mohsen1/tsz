@@ -26,17 +26,26 @@ scripts/agents/list-owned-work.sh Studio-C
 - Issue context: `#8755`, `#8754`, `#8752`, `#8751`, `#8750`, `#8737`,
   `#8734`, `#8731`, `#8516`, `#8515`, `#8511`, `#8510`, `#8509`, `#8507`,
   `#8506`.
-- Related PRs to inspect: `#9287`, `#9308`, `#9303`, `#9299`, `#9111`.
+- Related PRs already drained: `#9287`, `#9308`, `#9303`, `#9299`, `#9111`,
+  `#9579`, `#9625`.
 - Track: roadmap Track 9.
-- Next concrete step: drain ready emit PR `#9287` if still open, then pick one
-  JS emit family and reduce one baseline class through a transform-layer fix.
+- Next concrete step: pick a low-overlap JS emit family and reduce one baseline
+  class through a transform-layer fix. Avoid active draft overlap in
+  async/generator, module/import/export, class/decorator, and DTS lanes.
+- Fresh probes from 2026-05-21:
+  - `optionalChainingInLoop`, `newTarget`, and `tslib` are green on current
+    `origin/main` despite stale checked-in snapshot entries.
+  - `reserved` is still 48/51 JS passing, but the remaining cases are
+    parser-recovery-heavy (`reservedNamesInAliases`, `reservedWords2`,
+    `reservedWords3`).
+  - `unicodeEscapesInNames02(target=es5)` and
+    `jsxNamespacePrefixInName*` remain parser-recovery-heavy; only take them
+    with focused parser diagnostics coverage.
 
 ## Existing Work To Inspect First
 
-- `#9308` computed-key temps outside ES5 class IIFEs.
-- `#9303` native destructuring in non-ES5 parameter prologues.
-- `#9299` concise arrow comment placement.
-- `#9111` parser recovery for trailing decimal emit behavior.
+- No open Studio-C PRs at last refresh. Confirm with
+  `scripts/agents/list-owned-work.sh Studio-C` each cycle.
 
 ## Non-Overlap Rules
 

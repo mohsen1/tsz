@@ -623,6 +623,12 @@ pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option
     if has_symbol_key {
         key_types.push(TypeId::SYMBOL);
     }
+    if let Some(index) = shape.string_index.as_ref()
+        && index.key_type == TypeId::SYMBOL
+        && !key_types.contains(&TypeId::SYMBOL)
+    {
+        key_types.push(TypeId::SYMBOL);
+    }
     if key_types.is_empty() {
         return Some(TypeId::NEVER);
     }

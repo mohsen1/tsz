@@ -50,8 +50,8 @@ artifacts on 2026-05-17, and GitHub coordination audit on 2026-05-20.
 | Surface | Current |
 | --- | ---: |
 | Diagnostic conformance | `100.0%` exact (`12,582 / 12,582`) |
-| JavaScript emit | `94.8%` (`12,820 / 13,530` in `README.md`; `12,828 / 13,530` in local snapshot) |
-| Declaration emit | `91.7%` (`1,531 / 1,669` in `README.md`; `1,527 / 1,669` in local snapshot) |
+| JavaScript emit | `94.8%` (`12,820 / 13,530` in `README.md`; `13,094 / 13,530` in latest local snapshot) |
+| Declaration emit | `91.7%` (`1,531 / 1,669` in `README.md`; `1,606 / 1,669` in latest local snapshot) |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
@@ -71,11 +71,13 @@ cleanup as complete.
 This section is intentionally short and current. Replace it when a fresher audit
 changes the picture.
 
-1. Active PR state is the immediate runway risk. The 2026-05-20 GitHub audit
-   found `254` open PRs: `246` drafts, `8` ready PRs, `235` PRs with `WIP`,
-   and `9` stacked children. This is now a coordination problem as much as an
-   implementation problem; ready PRs and stale WIP drafts must be drained before
-   agents start overlapping work in the same lane.
+1. Active PR state is still a runway risk, but the first drain pass changed the
+   shape. The 2026-05-20 GitHub audit found `254` open PRs: `246` drafts, `8`
+   ready PRs, `235` PRs with `WIP`, and `9` stacked children. A 2026-05-21
+   follow-up found `59` open PRs: `50` drafts, `9` ready PRs, `0` PRs with
+   `WIP`, and `3` stacked children. The remaining risk is blocked ready PRs,
+   stale draft ownership, and noncanonical agent labels rather than raw WIP
+   volume.
 2. Multi-computer coordination is now explicit. Fourteen implementation-session
    labels exist:
    `agent:M1-A` through `agent:M1-D`, `agent:M4-A` through `agent:M4-D`, and
@@ -83,7 +85,10 @@ changes the picture.
    `agent:*` labels to PRs only; issues are context until the open PR runway is
    drained. A labelled PR has exactly one next-step owner.
    `agent:Reviewer` is a standing review lane that comments on PRs but does not
-   own implementation.
+   own implementation. Claude Code and other runner-backed agents are valid
+   contributors inside these lanes, but generated runner names such as
+   `agent:claude-sonnet-*`, `agent:dreamy-*`, machine/model aliases, and typo
+   labels such as `agnet:*` are not ownership lanes.
 3. Open issue language is concentrated around recursive conditionals, mapped
    and indexed access, inference/session state, unique-symbol identity,
    module/lib identity, relation false positives, and benchmark-project
@@ -104,11 +109,11 @@ changes the picture.
    `scripts/bench/bench-vs-tsgo.sh` and `scripts/ci/project-compile-guard.sh`.
    Unifying or generating those definitions is now quality work, not benchmark
    polish.
-7. Emit remains the largest numeric parity gap and a real architecture risk.
-   Local snapshots show roughly `702` JavaScript emit failures and `142`
-   declaration emit failures. DTS still needs to move away from late semantic
-   discovery during printing toward a precomputed declaration/public-API
-   summary.
+7. Emit remains the largest numeric parity gap and a real architecture risk,
+   but the latest local snapshot is materially ahead of the README numbers:
+   JavaScript emit is `13,094 / 13,530` and declaration emit is
+   `1,606 / 1,669`. DTS still needs to move away from late semantic discovery
+   during printing toward a precomputed declaration/public-API summary.
 8. Conformance is no longer the dominant progress signal but it remains a hard
    regression gate. The current diagnostic gap is zero tests; broad
    checker/solver changes must preserve that floor while moving project rows
@@ -125,7 +130,9 @@ changes the picture.
 GitHub is the coordination surface.
 
 1. Pick a stable `AgentName` and include it in every PR body and substantive PR
-   comment.
+   comment. If a runner such as Claude Code generates its own model/session
+   nickname, treat that as runner metadata unless it was explicitly assigned as
+   the canonical lane.
 2. Check open draft PRs and recent merged PRs for overlap before starting.
 3. A GitHub issue is optional. A draft PR with a clear title/body is enough to
    claim active work.
@@ -137,26 +144,29 @@ GitHub is the coordination surface.
    their own PRs.
 7. Agents coordinate through PR comments, review comments, and PR descriptions.
    Address other agents by `AgentName` when coordination matters.
-8. Never merge work that is still draft, labeled `WIP`, titled with `[WIP]`, or
+8. Use only canonical ownership labels from `docs/plan/agents/README.md`.
+   Replace generated runner labels or `agnet:*` typos with the correct lane
+   before marking a PR ready or enabling auto-merge.
+9. Never merge work that is still draft, labeled `WIP`, titled with `[WIP]`, or
    described as not ready.
-9. Treat `ready` plus a `WIP` label as WIP. Remove the label before merge.
-10. When ready, remove `WIP` labeling/title text, update the PR body with final
+10. Treat `ready` plus a `WIP` label as WIP. Remove the label before merge.
+11. When ready, remove `WIP` labeling/title text, update the PR body with final
    scope and verification, mark ready, and let heavy CI run.
-11. If a track is abandoned, close the draft PR with the reason and any useful
+12. If a track is abandoned, close the draft PR with the reason and any useful
     findings.
-12. For the multi-computer launch, sessions read their editable goal files from
+13. For the multi-computer launch, sessions read their editable goal files from
     `docs/plan/agents/<AgentName>.md`. Each goal file is a remote-control
     surface for that lane; update it when lane ownership or next steps change
     durably enough that future sessions need to inherit the change.
-13. Worktree reuse is preferred. The TypeScript submodule and Cargo build
+14. Worktree reuse is preferred. The TypeScript submodule and Cargo build
     caches are expensive to recreate, so agents should reuse inactive sibling
     worktrees, use `scripts/setup/link-ts-submodule.sh` in worktrees, and clean
     with cache-preserving scripts before creating new worktrees.
-14. The `Reviewer` lane is intentionally ongoing. It reviews open PRs for
+15. The `Reviewer` lane is intentionally ongoing. It reviews open PRs for
     roadmap fit, architecture boundaries, parity risk, duplicate work, tests,
     and readiness; when no PRs are reviewable, it waits for new PRs instead of
     marking the goal complete.
-15. Initial launch priority is to land, close, or clearly hand off existing
+16. Initial launch priority is to land, close, or clearly hand off existing
     PRs before claiming issue backlog. Use issues to understand context, not as
     the first ownership surface.
 
