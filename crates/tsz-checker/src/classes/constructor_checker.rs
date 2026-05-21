@@ -1255,6 +1255,34 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Variant of [`Self::constructor_accessibility_mismatch_for_var_decl`] that
+    /// accepts the name, annotation, and initializer `NodeIndex` fields directly
+    /// instead of a `VariableDeclarationData` reference.  Used by the extracted
+    /// `compute_variable_decl_type` policy method, which holds the fields as
+    /// cheaply-copyable `VarDeclFacts` rather than a live arena borrow.
+    pub(crate) fn constructor_accessibility_mismatch_for_var_decl_by_nodes(
+        &self,
+        _name: tsz_parser::parser::NodeIndex,
+        annotation: tsz_parser::parser::NodeIndex,
+        initializer: tsz_parser::parser::NodeIndex,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        if initializer.is_none() {
+            return None;
+        }
+        let source_sym = self.class_symbol_from_expression(initializer)?;
+        let target_sym = self.class_symbol_from_type_annotation(annotation)?;
+        let source_level = self.class_constructor_access_level(source_sym);
+        let target_level = self.class_constructor_access_level(target_sym);
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level)
+        {
+            return Some((source_level, target_level));
+        }
+        None
+    }
+
     // =========================================================================
     // Helper Methods
     // =========================================================================
