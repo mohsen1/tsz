@@ -316,8 +316,7 @@ fn source_map_panics_on_generated_column_overflow() {
     let mut smg = SourceMapGenerator::new("out.js".to_string());
     let _ = smg.add_source("in.ts".to_string());
 
-    #[allow(clippy::cast_sign_loss)]
-    let too_large = (i32::MAX as u32) + 1;
+    let too_large: u32 = i32::MAX.unsigned_abs() + 1;
     smg.add_simple_mapping(0, too_large, 0, 0, 0);
 
     let _ = smg.generate();
@@ -329,8 +328,7 @@ fn source_map_panics_on_source_index_overflow() {
     let mut smg = SourceMapGenerator::new("out.js".to_string());
     let _ = smg.add_source("in.ts".to_string());
 
-    #[allow(clippy::cast_sign_loss)]
-    let too_large = (i32::MAX as u32) + 1;
+    let too_large: u32 = i32::MAX.unsigned_abs() + 1;
     smg.add_simple_mapping(0, 0, too_large, 0, 0);
 
     let _ = smg.generate();
@@ -342,8 +340,7 @@ fn source_map_panics_on_original_line_overflow() {
     let mut smg = SourceMapGenerator::new("out.js".to_string());
     let _ = smg.add_source("in.ts".to_string());
 
-    #[allow(clippy::cast_sign_loss)]
-    let too_large = (i32::MAX as u32) + 1;
+    let too_large: u32 = i32::MAX.unsigned_abs() + 1;
     smg.add_simple_mapping(0, 0, 0, too_large, 0);
 
     let _ = smg.generate();
@@ -355,8 +352,7 @@ fn source_map_panics_on_original_column_overflow() {
     let mut smg = SourceMapGenerator::new("out.js".to_string());
     let _ = smg.add_source("in.ts".to_string());
 
-    #[allow(clippy::cast_sign_loss)]
-    let too_large = (i32::MAX as u32) + 1;
+    let too_large: u32 = i32::MAX.unsigned_abs() + 1;
     smg.add_simple_mapping(0, 0, 0, 0, too_large);
 
     let _ = smg.generate();
@@ -368,8 +364,7 @@ fn source_map_panics_on_name_index_overflow() {
     let mut smg = SourceMapGenerator::new("out.js".to_string());
     let _ = smg.add_source("in.ts".to_string());
 
-    #[allow(clippy::cast_sign_loss)]
-    let too_large = (i32::MAX as u32) + 1;
+    let too_large: u32 = i32::MAX.unsigned_abs() + 1;
     smg.add_mapping(0, 0, 0, 0, 0, Some(too_large));
 
     let _ = smg.generate();

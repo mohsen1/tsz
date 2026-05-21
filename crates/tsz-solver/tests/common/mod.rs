@@ -1,8 +1,8 @@
-//! Shared test fixtures for `tsz-solver` integration tests.
-//!
-//! This module is loaded into multiple test binaries via `#[path = "common/mod.rs"]`,
-//! so consumers vary in which items they actually use. All items carry
-//! `#[allow(dead_code)]` to keep cross-binary unused-warning noise quiet.
+// Shared test fixtures for `tsz-solver` integration tests.
+//
+// This module is included into multiple test modules via `include!("common/mod.rs")`.
+// Consumers vary in which items they actually use; all items carry
+// `#[allow(dead_code)]` to keep cross-module unused-warning noise quiet.
 
 use crate::construction::TypeInterner;
 use crate::relations::judge::{DefaultJudge, JudgeConfig};

@@ -86,11 +86,10 @@ fn node_index_into_option_max_minus_one_returns_some() {
 // =====================================================================
 
 #[test]
-#[allow(clippy::clone_on_copy)] // Intentional: verify Copy + Clone both compile
 fn node_index_is_copy_and_clone() {
     let a = NodeIndex(42);
     let b = a; // copy
-    let c = a.clone(); // explicit clone
+    let c = Clone::clone(&a); // explicit trait call verifies Clone is implemented
     assert_eq!(a, b);
     assert_eq!(a, c);
 }
@@ -285,11 +284,10 @@ fn text_range_new_pos_can_equal_end() {
 }
 
 #[test]
-#[allow(clippy::clone_on_copy)] // Intentional: verify Copy + Clone both compile
 fn text_range_is_copy_and_clone() {
     let a = TextRange::new(1, 4);
     let b = a; // copy
-    let c = a.clone(); // explicit clone
+    let c = Clone::clone(&a); // explicit trait call verifies Clone is implemented
     assert_eq!(a.pos, b.pos);
     assert_eq!(a.end, b.end);
     assert_eq!(a.pos, c.pos);
