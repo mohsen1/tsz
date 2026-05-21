@@ -82,6 +82,40 @@ impl KeyofKeySet {
     }
 }
 
+/// Append the keyof contribution(s) of an `ObjectShape.string_index` (or
+/// `CallableShape.string_index`) slot. The slot is polymorphic: its `key_type`
+/// can be the string intrinsic, the symbol intrinsic, a template-literal-
+/// restricted string subtype, or a union of those. The keyof set must reflect
+/// what is actually indexable:
+///
+/// - `symbol` → `symbol`
+/// - any string subtype (string intrinsic or template-literal) → `string` and
+///   `number` (matching `tsc`'s `getIndexInfosOfType`)
+/// - union → recurse over members
+fn push_string_index_keyof_contributions(
+    db: &dyn TypeDatabase,
+    key_type: TypeId,
+    key_types: &mut Vec<TypeId>,
+) {
+    if key_type == TypeId::SYMBOL {
+        if !key_types.contains(&TypeId::SYMBOL) {
+            key_types.push(TypeId::SYMBOL);
+        }
+        return;
+    }
+    if let Some(TypeData::Union(list_id)) = db.lookup(key_type) {
+        for member in db.type_list(list_id).to_vec() {
+            push_string_index_keyof_contributions(db, member, key_types);
+        }
+        return;
+    }
+    for default in [TypeId::STRING, TypeId::NUMBER] {
+        if !key_types.contains(&default) {
+            key_types.push(default);
+        }
+    }
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn unique_symbol_ref_from_synthetic_atom(&self, name: Atom) -> Option<SymbolRef> {
         let name_text = self.interner().resolve_atom_ref(name);
@@ -442,9 +476,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .map(|p| self.property_name_to_key_type(p))
                         .collect();
 
-                    if shape.string_index.is_some() {
-                        key_types.push(TypeId::STRING);
-                        key_types.push(TypeId::NUMBER);
+                    if let Some(string_index) = shape.string_index.as_ref() {
+                        push_string_index_keyof_contributions(
+                            self.interner(),
+                            string_index.key_type,
+                            &mut key_types,
+                        );
                     } else if shape.number_index.is_some()
                         // Enum namespace types carry `[index: number]: string` only for
                         // reverse-lookup bracket access (E[0]). tsc excludes this from
@@ -473,9 +510,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .map(|p| self.property_name_to_key_type(p))
                         .collect();
 
-                    if shape.string_index.is_some() {
-                        key_types.push(TypeId::STRING);
-                        key_types.push(TypeId::NUMBER);
+                    if let Some(string_index) = shape.string_index.as_ref() {
+                        push_string_index_keyof_contributions(
+                            self.interner(),
+                            string_index.key_type,
+                            &mut key_types,
+                        );
                     } else if shape.number_index.is_some() {
                         key_types.push(TypeId::NUMBER);
                     }

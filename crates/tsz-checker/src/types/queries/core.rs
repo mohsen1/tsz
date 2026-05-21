@@ -153,6 +153,43 @@ impl<'a> CheckerState<'a> {
         Some(format!("__symbol_{}_{}", file_idx, sym_id.0))
     }
 
+    /// Returns `true` when `name_idx` is a computed property name whose key
+    /// expression has the wide `symbol` intrinsic type — meaning, per `tsc`,
+    /// the property contributes to a `[s: symbol]: T` index signature on the
+    /// constructed object literal type rather than to a named member.
+    ///
+    /// Excludes:
+    /// - `unique symbol` keys (different `TypeData` — kept as named members).
+    /// - Well-known `Symbol.foo` access (syntactic or via a binding initialised
+    ///   to/annotated `typeof Symbol.foo`) — these carry a stable `[Symbol.foo]`
+    ///   identity and stay as named members for parity with `tsc`.
+    pub(crate) fn object_literal_computed_key_is_wide_symbol_index(
+        &mut self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        // Require exactly the wide intrinsic. Do NOT evaluate further: eager
+        // `evaluate_type_with_env` on a `UniqueSymbol` could widen through its
+        // apparent base and break the unique-symbol boundary.
+        if self.get_type_of_node(computed.expression) != TypeId::SYMBOL {
+            return false;
+        }
+        // Anything resolvable to a stable `[Symbol.foo]` identity stays named.
+        self.get_symbol_property_name_from_expr(computed.expression)
+            .is_none()
+            && self
+                .resolve_computed_symbol_property_name(computed.expression)
+                .is_none()
+    }
+
     // =========================================================================
     // Section 27: Modifier and Member Access Utilities
     // =========================================================================

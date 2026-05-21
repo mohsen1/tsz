@@ -16,6 +16,11 @@ pub(crate) struct ObjectLiteralFinalizeCtx {
     pub(crate) string_index_types: Vec<TypeId>,
     /// Value types for number index signatures collected from spreads.
     pub(crate) number_index_types: Vec<TypeId>,
+    /// Value types contributed by computed property names whose key type is
+    /// the wide `symbol` intrinsic. When non-empty, the resulting object type
+    /// gains a `[s: symbol]: union<values>` index signature (parity with tsc's
+    /// inference for `{ [sym]: 1 }` where `sym: symbol`).
+    pub(crate) symbol_index_types: Vec<TypeId>,
     /// Parameter name atom for the string index signature, if present.
     pub(crate) string_index_param_name: Option<Atom>,
     /// Parameter name atom for the number index signature, if present.
@@ -321,6 +326,7 @@ impl<'a> CheckerState<'a> {
             display_type_overrides,
             mut string_index_types,
             number_index_types,
+            symbol_index_types,
             string_index_param_name,
             number_index_param_name,
             has_spread,
@@ -362,7 +368,10 @@ impl<'a> CheckerState<'a> {
             let mut properties: Vec<PropertyInfo> = properties.into_values().collect();
             properties.sort_by_key(|p| p.declaration_order);
 
-            if string_index_types.is_empty() && number_index_types.is_empty() {
+            if string_index_types.is_empty()
+                && number_index_types.is_empty()
+                && symbol_index_types.is_empty()
+            {
                 if has_spread {
                     let mut display_props = properties.clone();
                     crate::query_boundaries::common::normalize_display_property_order(
@@ -422,20 +431,47 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let string_index = if !string_index_types.is_empty() {
-                    let value_type = if self.ctx.in_const_assertion {
-                        order_preserving_union(self.ctx.types.factory(), string_index_types)
+                // The `ObjectShape.string_index` slot is polymorphic: its
+                // `key_type` discriminates ordinary string-keyed signatures
+                // (`STRING`), symbol-keyed signatures (`SYMBOL`), and
+                // template-literal-restricted string subtypes. When an object
+                // literal has both string-typed *and* wide-symbol-typed
+                // computed keys, we merge them via a union — the same
+                // convention `interface_type::merge_string_index_by_union`
+                // uses for interfaces declaring both `[s: string]` and
+                // `[s: symbol]` signatures.
+                let in_const_assertion = self.ctx.in_const_assertion;
+                let union_value_type = |types: Vec<TypeId>| {
+                    let factory = self.ctx.types.factory();
+                    if in_const_assertion {
+                        order_preserving_union(factory, types)
                     } else {
-                        self.ctx.types.factory().union(string_index_types)
-                    };
-                    Some(IndexSignature {
-                        key_type: TypeId::STRING,
-                        value_type,
-                        readonly: false,
-                        param_name: string_index_param_name,
-                    })
-                } else {
-                    None
+                        factory.union(types)
+                    }
+                };
+                let string_part = (!string_index_types.is_empty())
+                    .then(|| (TypeId::STRING, union_value_type(string_index_types)));
+                let symbol_part = (!symbol_index_types.is_empty())
+                    .then(|| (TypeId::SYMBOL, union_value_type(symbol_index_types)));
+                let string_index = match (string_part, symbol_part) {
+                    (None, None) => None,
+                    (Some((key, value)), None) | (None, Some((key, value))) => {
+                        Some(IndexSignature {
+                            key_type: key,
+                            value_type: value,
+                            readonly: false,
+                            param_name: string_index_param_name,
+                        })
+                    }
+                    (Some((_, str_value)), Some((_, sym_value))) => {
+                        let factory = self.ctx.types.factory();
+                        Some(IndexSignature {
+                            key_type: factory.union2(TypeId::STRING, TypeId::SYMBOL),
+                            value_type: factory.union2(str_value, sym_value),
+                            readonly: false,
+                            param_name: string_index_param_name,
+                        })
+                    }
                 };
 
                 let number_index = if !number_index_types.is_empty() {

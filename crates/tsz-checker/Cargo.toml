@@ -1246,6 +1246,10 @@ name = "non_unique_symbol_late_bound_member_tests"
 path = "tests/non_unique_symbol_late_bound_member_tests.rs"
 
 [[test]]
+name = "object_literal_wide_symbol_index_tests"
+path = "tests/object_literal_wide_symbol_index_tests.rs"
+
+[[test]]
 name = "ts2855_static_super_field_tests"
 path = "tests/ts2855_static_super_field_tests.rs"
 

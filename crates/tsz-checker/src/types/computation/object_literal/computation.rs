@@ -539,6 +539,12 @@ impl<'a> CheckerState<'a> {
         let mut display_type_overrides: FxHashMap<Atom, TypeId> = FxHashMap::default();
         let mut string_index_types: Vec<TypeId> = Vec::new();
         let mut number_index_types: Vec<TypeId> = Vec::new();
+        // Value types contributed by computed property names whose key type is
+        // the wide `symbol` intrinsic. These become a single `[s: symbol]: V`
+        // index signature on the resulting object literal type — matching tsc's
+        // late-bound symbol-key inference (`{ [sym]: 1 }` with `sym: symbol`
+        // yields `{ [s: symbol]: number }`).
+        let mut symbol_index_types: Vec<TypeId> = Vec::new();
         // Index signatures inherited from spread sources (kept separate because
         // they should only be included when the literal has no explicit properties —
         // tsc drops spread index signatures when explicit properties exist).
@@ -686,7 +692,15 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|computed| {
                         self.get_type_of_node(computed.expression) == TypeId::ERROR
                     });
-                let name_opt = if computed_key_is_error {
+                // A computed key whose expression has the wide `symbol` intrinsic
+                // contributes to a `[s: symbol]: V` index signature on the
+                // object literal type, not a named member. Detect this *before*
+                // dispatching to `get_property_name_resolved` (which would
+                // otherwise pin it under a `__symbol_<file>_<sym>` synthetic
+                // named key, breaking `(typeof o)[symbol]` and `keyof typeof o`).
+                let is_wide_symbol_index_key = !computed_key_is_error
+                    && self.object_literal_computed_key_is_wide_symbol_index(prop.name);
+                let name_opt = if computed_key_is_error || is_wide_symbol_index_key {
                     None
                 } else {
                     self.get_property_name_resolved(prop.name)
@@ -1420,7 +1434,9 @@ impl<'a> CheckerState<'a> {
                         value_type = literal_type;
                     }
 
-                    if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
+                    if is_wide_symbol_index_key {
+                        symbol_index_types.push(value_type);
+                    } else if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
                         number_index_types.push(value_type);
                     } else if self.is_assignable_to(prop_name_type, TypeId::STRING)
                         || self.is_assignable_to(prop_name_type, TypeId::ANY)
@@ -1726,7 +1742,13 @@ impl<'a> CheckerState<'a> {
                 {
                     self.get_type_of_node(computed.expression);
                 }
-                let name_opt = self.get_property_name_resolved(method.name);
+                let method_is_wide_symbol_index_key =
+                    self.object_literal_computed_key_is_wide_symbol_index(method.name);
+                let name_opt = if method_is_wide_symbol_index_key {
+                    None
+                } else {
+                    self.get_property_name_resolved(method.name)
+                };
                 if let Some(name) = name_opt.clone() {
                     // Set contextual type for method
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
@@ -2153,7 +2175,9 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
+                    if method_is_wide_symbol_index_key {
+                        symbol_index_types.push(method_type);
+                    } else if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
                         number_index_types.push(method_type);
                     } else if self.is_assignable_to(prop_name_type, TypeId::STRING)
                         || self.is_assignable_to(prop_name_type, TypeId::ANY)
@@ -2236,7 +2260,13 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let name_opt = self.get_property_name_resolved(accessor.name);
+                let accessor_is_wide_symbol_index_key =
+                    self.object_literal_computed_key_is_wide_symbol_index(accessor.name);
+                let name_opt = if accessor_is_wide_symbol_index_key {
+                    None
+                } else {
+                    self.get_property_name_resolved(accessor.name)
+                };
                 if let Some(name) = name_opt.clone() {
                     // For non-contextual object literals, TypeScript treats `this` inside
                     // accessors as the object literal under construction. Provide a
@@ -2580,7 +2610,9 @@ impl<'a> CheckerState<'a> {
                             .unwrap_or(TypeId::ANY)
                     };
 
-                    if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
+                    if accessor_is_wide_symbol_index_key {
+                        symbol_index_types.push(accessor_type);
+                    } else if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
                         number_index_types.push(accessor_type);
                     } else if self.is_assignable_to(prop_name_type, TypeId::STRING)
                         || self.is_assignable_to(prop_name_type, TypeId::ANY)
@@ -3052,6 +3084,7 @@ impl<'a> CheckerState<'a> {
                 display_type_overrides,
                 string_index_types,
                 number_index_types,
+                symbol_index_types,
                 string_index_param_name,
                 number_index_param_name,
                 has_spread,

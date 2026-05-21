@@ -623,6 +623,15 @@ pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option
     if has_symbol_key {
         key_types.push(TypeId::SYMBOL);
     }
+    // A symbol-keyed index signature (stored in the `string_index` slot with
+    // `key_type == SYMBOL`) also contributes `symbol` to keyof — matching
+    // tsc's `getIndexInfosOfType` symbol-key projection.
+    if let Some(string_index) = shape.string_index.as_ref()
+        && string_index.key_type == TypeId::SYMBOL
+        && !key_types.contains(&TypeId::SYMBOL)
+    {
+        key_types.push(TypeId::SYMBOL);
+    }
     if key_types.is_empty() {
         return Some(TypeId::NEVER);
     }
