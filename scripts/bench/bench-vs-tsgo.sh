@@ -3434,10 +3434,12 @@ main() {
         run_benchmark "DeepPartial optional-chain N=400" "$file"
         echo
 
-        file="$TEMP_DIR/recursive_utility_alias_240.ts"
-        generate_recursive_utility_alias_file 240 "$file"
-        run_benchmark "Recursive utility aliases N=240" "$file"
-        echo
+        for count in 120 240; do
+            file="$TEMP_DIR/recursive_utility_alias_${count}.ts"
+            generate_recursive_utility_alias_file "$count" "$file"
+            run_benchmark "Recursive utility aliases N=$count" "$file"
+            echo
+        done
 
         file="$TEMP_DIR/shallow_optional_400.ts"
         generate_shallow_optional_chain_file 400 "$file"

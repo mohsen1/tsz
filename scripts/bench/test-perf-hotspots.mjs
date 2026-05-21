@@ -35,9 +35,11 @@ for (const [name, filter] of [
 
 assert.equal(fullFilter.test("DeepPartial optional-chain N=400"), true);
 assert.equal(quickFilter.test("DeepPartial optional-chain N=50"), true);
+assert.equal(fullFilter.test("Recursive utility aliases N=120"), true);
 assert.equal(fullFilter.test("Recursive utility aliases N=240"), true);
 assert.equal(quickFilter.test("Recursive utility aliases N=30"), true);
 assert.equal(fullFilter.test("Recursive utility aliases N=30"), false);
+assert.equal(quickFilter.test("Recursive utility aliases N=120"), false);
 assert.equal(quickFilter.test("Recursive utility aliases N=240"), false);
 
 assert.match(
