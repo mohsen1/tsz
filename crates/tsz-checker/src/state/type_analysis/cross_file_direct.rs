@@ -1073,7 +1073,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_node_is_generic_scope_independent(
+    pub(super) fn source_file_type_node_is_generic_scope_independent(
         arena: &NodeArena,
         node_idx: NodeIndex,
         type_param_names: &[String],
@@ -1222,7 +1222,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn type_alias_type_param_names(arena: &NodeArena, type_alias: &TypeAliasData) -> Vec<String> {
+    pub(super) fn type_alias_type_param_names(
+        arena: &NodeArena,
+        type_alias: &TypeAliasData,
+    ) -> Vec<String> {
         type_alias
             .type_parameters
             .as_ref()
@@ -1238,7 +1241,11 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
-    fn collect_infer_type_param_names(arena: &NodeArena, root: NodeIndex, names: &mut Vec<String>) {
+    pub(super) fn collect_infer_type_param_names(
+        arena: &NodeArena,
+        root: NodeIndex,
+        names: &mut Vec<String>,
+    ) {
         let mut stack = vec![root];
         while let Some(idx) = stack.pop() {
             let Some(node) = arena.get(idx) else {
@@ -1540,6 +1547,13 @@ impl<'a> CheckerState<'a> {
                         delegate_binder,
                         type_alias.type_node,
                     ))
+        } else if direct_source_file_arena {
+            Self::source_file_type_node_is_generic_local_alias_application_lowerable(
+                symbol_arena,
+                delegate_binder,
+                type_alias.type_node,
+                &type_param_names,
+            )
         } else {
             Self::source_file_type_node_is_generic_scope_independent(
                 symbol_arena,
@@ -1567,6 +1581,13 @@ impl<'a> CheckerState<'a> {
         ) {
             return None;
         }
+
+        self.prime_source_file_alias_application_targets(
+            symbol_arena,
+            delegate_binder,
+            type_alias.type_node,
+            &mut Vec::new(),
+        );
 
         let (alias_type, params) = self.lower_cross_arena_type_alias_declaration(
             sym_id,
@@ -1597,6 +1618,74 @@ impl<'a> CheckerState<'a> {
             .register_type_to_def(alias_type, def_id);
 
         Some((alias_type, params))
+    }
+
+    fn prime_source_file_alias_application_targets(
+        &mut self,
+        symbol_arena: &NodeArena,
+        delegate_binder: &BinderState,
+        root: NodeIndex,
+        seen: &mut Vec<SymbolId>,
+    ) {
+        let Some(node) = symbol_arena.get(root) else {
+            return;
+        };
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = symbol_arena.get_type_ref(node)
+            && let Some(args) = type_ref.type_arguments.as_ref()
+            && !args.nodes.is_empty()
+            && let Some(name) = symbol_arena
+                .get(type_ref.type_name)
+                .and_then(|name_node| symbol_arena.get_identifier(name_node))
+                .map(|ident| ident.escaped_text.as_str())
+            && let Some(sym_id) = delegate_binder.file_locals.get(name)
+            && !seen.contains(&sym_id)
+            && let Some(symbol) = delegate_binder.get_symbol(sym_id)
+            && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+            && symbol.flags
+                & (symbol_flags::VALUE
+                    | symbol_flags::CLASS
+                    | symbol_flags::VALUE_MODULE
+                    | symbol_flags::NAMESPACE_MODULE)
+                == 0
+            && symbol.declarations.len() == 1
+            && let Some(decl_idx) = symbol.declarations.first().copied()
+            && Self::lib_type_alias_declaration_name_matches(symbol_arena, decl_idx, name)
+            && let Some(decl_node) = symbol_arena.get(decl_idx)
+            && let Some(type_alias) = symbol_arena.get_type_alias(decl_node)
+        {
+            seen.push(sym_id);
+            self.prime_source_file_alias_application_targets(
+                symbol_arena,
+                delegate_binder,
+                type_alias.type_node,
+                seen,
+            );
+            let (alias_type, params) = self.lower_cross_arena_type_alias_declaration(
+                sym_id,
+                decl_idx,
+                symbol_arena,
+                type_alias,
+            );
+            if alias_type != TypeId::UNKNOWN && alias_type != TypeId::ERROR {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                self.ctx
+                    .register_def_auto_params_in_envs(def_id, alias_type, params);
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(alias_type, def_id);
+            }
+            seen.pop();
+        }
+
+        for child in symbol_arena.get_children(root) {
+            self.prime_source_file_alias_application_targets(
+                symbol_arena,
+                delegate_binder,
+                child,
+                seen,
+            );
+        }
     }
 
     pub(super) fn direct_cross_file_interface_lowering(
