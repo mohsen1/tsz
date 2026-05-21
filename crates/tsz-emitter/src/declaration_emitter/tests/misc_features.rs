@@ -1790,23 +1790,23 @@ const stringOrBooleanOrNumber = stringOrBoolean || number;
 "#,
     );
 
+    // When the left operand of `||` is an always-truthy literal type (non-empty string),
+    // tsc gives just the left type — the right operand is unreachable.
     assert!(
-        output.contains("declare const stringOrNumber: \"string\" | \"number\";"),
-        "Expected `||` over literal-typed consts to preserve both arms: {output}"
+        output.contains("declare const stringOrNumber: \"string\";"),
+        "Expected `||` with always-truthy left literal to produce left type only: {output}"
     );
     assert!(
-        output.contains("declare const stringOrBoolean: \"string\" | \"boolean\";"),
-        "Expected `||` to preserve string and boolean literal arms: {output}"
+        output.contains("declare const stringOrBoolean: \"string\";"),
+        "Expected `||` with always-truthy left literal to produce left type only: {output}"
     );
     assert!(
-        output.contains("declare const booleanOrNumber: \"number\" | \"boolean\";"),
-        "Expected `||` to preserve source declaration order for operands: {output}"
+        output.contains("declare const booleanOrNumber: \"number\";"),
+        "Expected `||` with always-truthy left literal to produce left type only: {output}"
     );
     assert!(
-        output.contains(
-            "declare const stringOrBooleanOrNumber: \"string\" | \"number\" | \"boolean\";"
-        ),
-        "Expected chained `||` to merge prior literal unions in declaration order: {output}"
+        output.contains("declare const stringOrBooleanOrNumber: \"string\";"),
+        "Expected chained `||` with always-truthy left to produce left type only: {output}"
     );
 }
 
