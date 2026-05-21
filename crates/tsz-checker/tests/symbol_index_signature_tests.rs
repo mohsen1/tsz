@@ -532,6 +532,28 @@ const _v: boolean = ({} as V);
 }
 
 #[test]
+fn object_literal_wide_symbol_parameter_key_produces_symbol_index() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+function readField(fieldKey: symbol) {
+    const record = { [fieldKey]: 123 };
+    type V = (typeof record)[symbol];
+    const value: number = ({} as V);
+    return value;
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE),
+        "wide-symbol parameter key should yield a symbol-indexable object, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "(typeof record)[symbol] should resolve to the parameter-keyed value type, got {codes:?}",
+    );
+}
+
+#[test]
 fn object_literal_wide_symbol_method_key_produces_symbol_index_method_type() {
     let codes = diagnostic_codes_for_ts(
         r#"
