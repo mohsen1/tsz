@@ -326,10 +326,8 @@ pub(super) fn collect_local_var_names(
                     for &decl_idx in &decl_list.declarations.nodes {
                         if let Some(decl_node) = arena.get(decl_idx)
                             && let Some(decl) = arena.get_variable_declaration(decl_node)
-                            && let Some(name_node) = arena.get(decl.name)
-                            && let Some(ident) = arena.get_identifier(name_node)
                         {
-                            names.insert(ident.escaped_text.clone());
+                            collect_binding_names(arena, decl.name, &mut names);
                         }
                     }
                 }
@@ -337,6 +335,164 @@ pub(super) fn collect_local_var_names(
         }
     }
     names
+}
+
+/// Collect identifier references that live directly in a namespace IIFE body.
+///
+/// Nested blocks are intentionally skipped: their block-scoped declarations
+/// are the names that may need renaming, while references in sibling statements
+/// are what those lowered `var` declarations must not capture.
+pub(super) fn collect_namespace_function_scope_reference_names(
+    arena: &NodeArena,
+    body_idx: NodeIndex,
+) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+
+    let Some(body_node) = arena.get(body_idx) else {
+        return names;
+    };
+    let Some(block_data) = arena.get_module_block(body_node) else {
+        return names;
+    };
+    let Some(stmts) = block_data.statements.as_ref() else {
+        return names;
+    };
+
+    for &stmt_idx in &stmts.nodes {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        if stmt_node.kind == syntax_kind_ext::BLOCK {
+            continue;
+        }
+        collect_identifier_references_outside_blocks(arena, stmt_idx, &mut names);
+    }
+
+    names
+}
+
+fn collect_identifier_references_outside_blocks(
+    arena: &NodeArena,
+    idx: NodeIndex,
+    names: &mut std::collections::HashSet<String>,
+) {
+    if idx.is_none() {
+        return;
+    }
+
+    let Some(node) = arena.get(idx) else {
+        return;
+    };
+
+    match node.kind {
+        k if k == SyntaxKind::Identifier as u16 => {
+            if let Some(ident) = arena.get_identifier(node) {
+                names.insert(ident.escaped_text.clone());
+            }
+        }
+        k if k == syntax_kind_ext::BLOCK
+            || k == syntax_kind_ext::FUNCTION_DECLARATION
+            || k == syntax_kind_ext::FUNCTION_EXPRESSION
+            || k == syntax_kind_ext::ARROW_FUNCTION
+            || k == syntax_kind_ext::CLASS_DECLARATION
+            || k == syntax_kind_ext::CLASS_EXPRESSION
+            || k == syntax_kind_ext::MODULE_DECLARATION => {}
+        k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+            if let Some(decl) = arena.get_variable_declaration(node) {
+                collect_identifier_references_outside_blocks(arena, decl.initializer, names);
+            }
+        }
+        k if k == syntax_kind_ext::BINDING_ELEMENT => {
+            if let Some(elem) = arena.get_binding_element(node) {
+                collect_identifier_references_outside_blocks(arena, elem.initializer, names);
+            }
+        }
+        k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+            if let Some(access) = arena.get_access_expr(node) {
+                collect_identifier_references_outside_blocks(arena, access.expression, names);
+            }
+        }
+        k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+            if let Some(access) = arena.get_access_expr(node) {
+                collect_identifier_references_outside_blocks(arena, access.expression, names);
+                collect_identifier_references_outside_blocks(arena, access.name_or_argument, names);
+            }
+        }
+        k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+            if let Some(prop) = arena.get_property_assignment(node) {
+                collect_identifier_references_outside_blocks(arena, prop.initializer, names);
+            }
+        }
+        k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+            if let Some(prop) = arena.get_shorthand_property(node) {
+                collect_identifier_references_outside_blocks(arena, prop.name, names);
+                collect_identifier_references_outside_blocks(
+                    arena,
+                    prop.object_assignment_initializer,
+                    names,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+            if let Some(stmt) = arena.get_expression_statement(node) {
+                collect_identifier_references_outside_blocks(arena, stmt.expression, names);
+            }
+        }
+        k if k == syntax_kind_ext::CALL_EXPRESSION => {
+            if let Some(call) = arena.get_call_expr(node) {
+                collect_identifier_references_outside_blocks(arena, call.expression, names);
+                if let Some(args) = call.arguments.as_ref() {
+                    for &arg_idx in &args.nodes {
+                        collect_identifier_references_outside_blocks(arena, arg_idx, names);
+                    }
+                }
+            }
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+            if let Some(paren) = arena.get_parenthesized(node) {
+                collect_identifier_references_outside_blocks(arena, paren.expression, names);
+            }
+        }
+        k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+            if let Some(binary) = arena.get_binary_expr(node) {
+                collect_identifier_references_outside_blocks(arena, binary.left, names);
+                collect_identifier_references_outside_blocks(arena, binary.right, names);
+            }
+        }
+        k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION =>
+        {
+            if let Some(literal) = arena.get_literal_expr(node) {
+                for &elem_idx in &literal.elements.nodes {
+                    collect_identifier_references_outside_blocks(arena, elem_idx, names);
+                }
+            }
+        }
+        k if k == syntax_kind_ext::IF_STATEMENT => {
+            if let Some(stmt) = arena.get_if_statement(node) {
+                collect_identifier_references_outside_blocks(arena, stmt.expression, names);
+                collect_identifier_references_outside_blocks(arena, stmt.then_statement, names);
+                collect_identifier_references_outside_blocks(arena, stmt.else_statement, names);
+            }
+        }
+        k if k == syntax_kind_ext::FOR_STATEMENT
+            || k == syntax_kind_ext::WHILE_STATEMENT
+            || k == syntax_kind_ext::DO_STATEMENT =>
+        {
+            if let Some(loop_data) = arena.get_loop(node) {
+                collect_identifier_references_outside_blocks(arena, loop_data.initializer, names);
+                collect_identifier_references_outside_blocks(arena, loop_data.condition, names);
+                collect_identifier_references_outside_blocks(arena, loop_data.incrementor, names);
+                collect_identifier_references_outside_blocks(arena, loop_data.statement, names);
+            }
+        }
+        k if k == syntax_kind_ext::RETURN_STATEMENT => {
+            if let Some(ret) = arena.get_return_statement(node) {
+                collect_identifier_references_outside_blocks(arena, ret.expression, names);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Convert exported variable declarations directly to namespace property assignments.

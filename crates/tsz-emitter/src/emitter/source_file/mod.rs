@@ -2110,6 +2110,46 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn es5_namespace_blocks_share_block_scope_rename_state() {
+        let source = "declare function use(value: any): void;\nvar x: any;\nvar y: any;\nvar z: any;\nfunction first() {\n    {\n        let x = 1;\n        let [y] = [1];\n        let { a: z } = { a: 1 };\n    }\n}\nnamespace N {\n    {\n        let x = 2;\n        use(x);\n        let [y] = [2];\n        use(y);\n        let { a: z } = { a: 2 };\n        use(z);\n    }\n    use(x);\n    use(y);\n    use(z);\n}\nnamespace Local {\n    let [y] = [1];\n    use(y);\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var x_1 = 1;"),
+            "The first nested block should reserve the first suffix for `x`.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var x_2 = 2;") && output.contains("use(x_2);"),
+            "Namespace nested blocks should inherit prior suffix reservations and rewrite references.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var y_2 = [2][0];") && output.contains("use(y_2);"),
+            "Namespace array binding declarations should use the inherited suffix sequence.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var z_2 = { a: 2 }.a;") && output.contains("use(z_2);"),
+            "Namespace object binding declarations should use the inherited suffix sequence.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var y = [1][0];\n    use(y);") && !output.contains("use(Local.y);"),
+            "Function-level namespace destructuring locals should shadow namespace exports without qualification.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_single_leaf_nested_destructuring_inlines_access_path() {
         let source = "var z1: any, z3: any;\n{\n    const [{ a: z1 }] = [{ a: 1 }];\n    use(z1);\n    const { a: { b: z3 } } = { a: { b: 1 } };\n    use(z3);\n}\n";
 

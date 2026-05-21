@@ -57,6 +57,13 @@ impl<'a> Printer<'a> {
             es5_emitter.set_module_kind(self.ctx.outer_module_kind());
             es5_emitter.set_target_es5(self.ctx.target_es5);
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            es5_emitter.set_transforms(self.transforms.clone());
+            es5_emitter.set_block_scope_shadowed_names(
+                self.ctx.block_scope_state.visible_original_names(),
+            );
+            es5_emitter.set_block_scope_reserved_names(
+                self.ctx.block_scope_state.visible_reserved_names(),
+            );
             es5_emitter.set_const_enum_facts(
                 self.const_enum_values.clone(),
                 self.const_enum_import_aliases.clone(),
@@ -105,6 +112,9 @@ impl<'a> Printer<'a> {
             } else {
                 es5_emitter.emit_namespace(idx)
             };
+            self.ctx
+                .block_scope_state
+                .reserve_names(es5_emitter.block_scope_reserved_names());
 
             // Write the namespace output line by line, letting the writer handle indentation.
             // IRPrinter generates relative indentation (nested constructs indented relative
@@ -1261,10 +1271,10 @@ impl<'a> Printer<'a> {
                         for &decl_idx in &decl_list.declarations.nodes {
                             if let Some(decl_node) = self.arena.get(decl_idx)
                                 && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                                && let Some(name_node) = self.arena.get(decl.name)
-                                && let Some(ident) = self.arena.get_identifier(name_node)
                             {
-                                names.insert(ident.escaped_text.clone());
+                                let mut binding_names = Vec::new();
+                                self.collect_binding_names(decl.name, &mut binding_names);
+                                names.extend(binding_names);
                             }
                         }
                     }
