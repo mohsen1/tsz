@@ -869,6 +869,127 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         true
     }
 
+    /// Match the residual source slice of a tuple pattern against the pattern's
+    /// rest slot. The residual is what remains after positional prefix/suffix
+    /// matching, and may include source rest elements (variadic tuple tails).
+    ///
+    /// Dispatches on the pattern rest's shape:
+    /// - `Array(P)` (and `ReadonlyType(Array(P))`): each residual element's
+    ///   value type must satisfy `P`. Source spread elements contribute their
+    ///   inner element type (e.g., `...number[]` contributes `number` against
+    ///   `any`).
+    /// - Anything else (typically `infer R`, a type-parameter spread, or a
+    ///   structural tuple pattern): reify the residual as a tuple-or-array type
+    ///   preserving `rest`/`optional` flags, then recurse via
+    ///   `match_infer_pattern`.
+    fn match_residual_against_pattern_rest(
+        &self,
+        residual: &[TupleElement],
+        pattern_rest_type: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        if let Some(array_elem_type) = self.unwrap_array_element_for_residual(pattern_rest_type) {
+            return self.match_residual_against_array_element(
+                residual,
+                array_elem_type,
+                bindings,
+                visited,
+                checker,
+            );
+        }
+
+        // A residual of exactly one non-optional rest element is structurally
+        // identical to its inner spread type: tsc treats `[...T[]]` as `T[]`,
+        // `[...[A, B]]` as `[A, B]`, and `[...T]` (T extending an array) as
+        // `T`. Returning the inner type directly keeps `infer R` bindings in
+        // the canonical form tsc would produce, so identity probes such as
+        // `Equal<RestOf<...>, T[]>` resolve to `true`.
+        let residual_type = if residual.len() == 1 && residual[0].rest && !residual[0].optional {
+            residual[0].type_id
+        } else {
+            self.interner().tuple(residual.to_vec())
+        };
+        self.match_infer_pattern(residual_type, pattern_rest_type, bindings, visited, checker)
+    }
+
+    /// Unwrap `Array(E)` (possibly under one `ReadonlyType` layer) and return
+    /// the element type `E`. Returns `None` for non-array shapes such as
+    /// `infer R` or a structural tuple pattern.
+    fn unwrap_array_element_for_residual(&self, ty: TypeId) -> Option<TypeId> {
+        match self.interner().lookup(ty)? {
+            TypeData::Array(elem) => Some(elem),
+            TypeData::ReadonlyType(inner) => {
+                if let Some(TypeData::Array(elem)) = self.interner().lookup(inner) {
+                    Some(elem)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Match each residual source element's value type against `target_elem`.
+    ///
+    /// Source spread elements (`rest: true`) contribute their inner element
+    /// type — `Array(SE)` contributes `SE`; nested tuple spreads recurse so
+    /// every flattened inner element is checked; other spread types
+    /// (e.g., a type-parameter spread `...T`) fall back to matching the spread
+    /// type itself against the array element pattern.
+    fn match_residual_against_array_element(
+        &self,
+        residual: &[TupleElement],
+        target_elem: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        for source_elem in residual {
+            if source_elem.rest {
+                // Flatten nested tuple spreads (`...[A, B]`) so each inner slot
+                // is checked individually against `target_elem`.
+                if let Some(TypeData::Tuple(inner_id)) = self.interner().lookup(source_elem.type_id)
+                {
+                    let inner = self.interner().tuple_list(inner_id);
+                    if !self.match_residual_against_array_element(
+                        &inner,
+                        target_elem,
+                        bindings,
+                        visited,
+                        checker,
+                    ) {
+                        return false;
+                    }
+                    continue;
+                }
+                // Array-shaped spread (`...E[]` / `...readonly E[]`): match
+                // the element type `E` against `target_elem`. Other shapes
+                // (e.g., a type-parameter spread `...T`) fall through and
+                // match the spread type itself.
+                let spread_inner = self
+                    .unwrap_array_element_for_residual(source_elem.type_id)
+                    .unwrap_or(source_elem.type_id);
+                if !self.match_infer_pattern(spread_inner, target_elem, bindings, visited, checker)
+                {
+                    return false;
+                }
+            } else {
+                let source_type = if source_elem.optional {
+                    self.interner()
+                        .union2(source_elem.type_id, TypeId::UNDEFINED)
+                } else {
+                    source_elem.type_id
+                };
+                if !self.match_infer_pattern(source_type, target_elem, bindings, visited, checker) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     /// Match tuple elements against a pattern, extracting infer bindings.
     pub(crate) fn match_tuple_elements(
         &self,
@@ -954,50 +1075,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
 
-            if let Some(TypeData::Array(rest_elem_type)) =
-                self.interner().lookup(pattern_elems[rest_index].type_id)
-            {
-                for source_elem in &source_elems[prefix_len..rest_source_end] {
-                    if source_elem.rest {
-                        return false;
-                    }
-                    let source_type = if source_elem.optional {
-                        self.interner()
-                            .union2(source_elem.type_id, TypeId::UNDEFINED)
-                    } else {
-                        source_elem.type_id
-                    };
-                    if !self.match_infer_pattern(
-                        source_type,
-                        rest_elem_type,
-                        bindings,
-                        visited,
-                        checker,
-                    ) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-
-            // Collect middle elements (between prefix and suffix) into the rest tuple
-            let mut rest_elems = Vec::new();
-            for source_elem in &source_elems[prefix_len..rest_source_end] {
-                if source_elem.rest {
-                    return false;
-                }
-                rest_elems.push(TupleElement {
-                    type_id: source_elem.type_id,
-                    name: source_elem.name,
-                    optional: source_elem.optional,
-                    rest: false,
-                });
-            }
-
-            let rest_tuple = self.interner().tuple(rest_elems);
-            return self.match_infer_pattern(
-                rest_tuple,
-                pattern_elems[rest_index].type_id,
+            // Match the residual source slice against the pattern's rest slot.
+            // The residual may itself contain rest elements (when the source is
+            // a variadic tuple like `[a, ...b[]]`), so the helpers preserve
+            // each source element's `rest`/`optional` flags and structurally
+            // simplify a single-rest-non-optional residual (`[...X[]]` -> `X[]`)
+            // so that `infer R` binds to the array form tsc treats as identical.
+            let residual = &source_elems[prefix_len..rest_source_end];
+            let pattern_rest_type = pattern_elems[rest_index].type_id;
+            return self.match_residual_against_pattern_rest(
+                residual,
+                pattern_rest_type,
                 bindings,
                 visited,
                 checker,
@@ -1294,6 +1382,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Array(pattern_elem) => match self.interner().lookup(source) {
                 Some(TypeData::Array(source_elem)) => {
                     self.match_infer_pattern(source_elem, pattern_elem, bindings, visited, checker)
+                }
+                Some(TypeData::Tuple(source_elems)) => {
+                    // A tuple source matched against an array pattern `X[]` is
+                    // a structural projection: every fixed element's type and
+                    // every spread element's inner element type must satisfy
+                    // `X`. Mirrors the residual matcher used by
+                    // `match_tuple_elements`, so a tuple like
+                    // `[boolean, ...number[]]` produced by residual reification
+                    // can still pattern-match against `any[]`.
+                    let source_elems = self.interner().tuple_list(source_elems);
+                    self.match_residual_against_array_element(
+                        &source_elems,
+                        pattern_elem,
+                        bindings,
+                        visited,
+                        checker,
+                    )
                 }
                 Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
