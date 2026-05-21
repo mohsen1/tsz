@@ -2618,14 +2618,12 @@ impl<'a> DeclarationEmitter<'a> {
                                         self.js_named_export_names.contains(&name)
                                     })
                                 });
-                        let has_jsdoc = regular_decls[group_start..group_end].iter().any(
-                            |(_, decl_idx, _, decl)| {
-                                self.jsdoc_name_like_type_expr_for_node(*decl_idx).is_some()
-                                    || self.jsdoc_name_like_type_expr_for_node(decl.name).is_some()
-                            },
-                        ) || self
-                            .jsdoc_name_like_type_expr_for_pos(stmt_node.pos)
-                            .is_some();
+                        let has_jsdoc = self.jsdoc_preserves_js_var_keyword(
+                            stmt_node.pos,
+                            regular_decls[group_start..group_end]
+                                .iter()
+                                .map(|(_, decl_idx, _, decl)| (*decl_idx, decl.name)),
+                        );
                         if has_jsdoc || is_named_js_export || has_bundled_duplicate_global_var {
                             "var"
                         } else {

@@ -1763,11 +1763,15 @@ const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumbe
 "#,
     );
 
+    // When the left operand has an explicitly-annotated non-empty string literal type,
+    // it is always truthy, so tsc gives just the left type (right is unreachable).
     for expected in [
-        r#"declare const explicitStringOrNumber: "string" | "number";"#,
-        r#"declare const explicitStringOrBoolean: "string" | "boolean";"#,
-        r#"declare const explicitBooleanOrNumber: "number" | "boolean";"#,
-        r#"declare const explicitStringOrBooleanOrNumber: "string" | "number" | "boolean";"#,
+        r#"declare const explicitStringOrNumber: "string";"#,
+        r#"declare const explicitStringOrBoolean: "string";"#,
+        r#"declare const explicitBooleanOrNumber: "number";"#,
+        r#"declare const explicitStringOrBooleanOrNumber: "string";"#,
+        // Inferred const literals are widened intentionally in short-circuit operand
+        // position (matching the tsc DTS surface for mutable bindings built from them).
         "declare const inferredStringOrNumber: string;",
         "declare const inferredStringOrBoolean: string;",
         "declare const inferredBooleanOrNumber: string;",
@@ -1778,6 +1782,59 @@ const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumbe
             "expected short-circuit operand type `{expected}`: {output}"
         );
     }
+}
+
+#[test]
+fn fix_generic_rest_identity_preserves_parameters_tuple_labels() {
+    let output = emit_dts_with_usage_analysis_and_parameters_lib(
+        r#"
+declare function f<T extends any[]>(...x: T): T;
+declare function g(elem: object, index: number): object;
+declare function overloaded(seed: string): string;
+declare function overloaded(elem: object, index: number): object;
+declare function getArgsForInjection<T extends (...args: any[]) => any>(x: T): Parameters<T>;
+declare function getArgsRenamed<Fn extends (...args: any[]) => any>(x: Fn): Parameters<Fn>;
+type ArgsOf<Fn extends (...args: any[]) => any> = Parameters<Fn>;
+declare function getArgsAlias<Fn extends (...args: any[]) => any>(x: Fn): ArgsOf<Fn>;
+
+export const argumentsOfGAsFirstArgument = f(getArgsForInjection(g));
+export const argumentsOfG = f(...getArgsForInjection(g));
+export const argumentsOfGRenamed = f(...getArgsRenamed(g));
+export const argumentsOfGAlias = f(...getArgsAlias(g));
+export const argumentsOfOverload = f(...getArgsForInjection(overloaded));
+"#,
+    );
+
+    for expected in [
+        "export declare const argumentsOfGAsFirstArgument: [[elem: object, index: number]];",
+        "export declare const argumentsOfG: [elem: object, index: number];",
+        "export declare const argumentsOfGRenamed: [elem: object, index: number];",
+        "export declare const argumentsOfGAlias: [elem: object, index: number];",
+        "export declare const argumentsOfOverload: [elem: object, index: number];",
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected labeled Parameters tuple `{expected}`: {output}"
+        );
+    }
+
+    let shadowed_output = emit_dts_with_usage_analysis_and_parameters_lib(
+        r#"
+type Parameters<T> = T;
+declare function f<T extends any[]>(...x: T): T;
+declare function g(elem: object, index: number): object;
+declare function getArgsShadowed<Fn extends (...args: any[]) => any>(x: Fn): Parameters<Fn>;
+
+export const argumentsOfShadowedParameters = f(...getArgsShadowed(g));
+"#,
+    );
+
+    assert!(
+        !shadowed_output.contains(
+            "export declare const argumentsOfShadowedParameters: [elem: object, index: number];"
+        ),
+        "shadowed Parameters must not trigger built-in tuple recovery: {shadowed_output}"
+    );
 }
 
 #[test]

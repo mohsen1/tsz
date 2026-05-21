@@ -224,7 +224,8 @@ impl<'a> HoverProvider<'a> {
         } else {
             String::new()
         };
-        let formatted_doc = self.format_jsdoc_for_hover(&raw_documentation);
+        let doc_anchor = decl_node_idx.into_option().unwrap_or(node_idx);
+        let formatted_doc = self.format_jsdoc_for_hover(&raw_documentation, root, doc_anchor);
         let documentation_text = self.extract_plain_documentation(&raw_documentation);
 
         // 9. Build response
@@ -1852,21 +1853,29 @@ impl<'a> HoverProvider<'a> {
         }
     }
 
-    fn format_jsdoc_for_hover(&self, doc: &str) -> Option<String> {
+    fn format_jsdoc_for_hover(
+        &self,
+        doc: &str,
+        root: NodeIndex,
+        anchor: NodeIndex,
+    ) -> Option<String> {
         if doc.is_empty() {
             return None;
         }
 
+        let resolve = |name: &str| self.resolve_jsdoc_link_uri(root, anchor, name);
         let parsed = parse_jsdoc(doc);
         if parsed.is_empty() {
-            return Some(inline_links::expand_to_markdown_escaped(doc));
+            return Some(inline_links::expand_to_markdown_with_resolver(doc, resolve));
         }
 
         let mut sections = Vec::new();
         if let Some(summary) = parsed.summary.as_ref()
             && !summary.is_empty()
         {
-            sections.push(inline_links::expand_to_markdown_escaped(summary));
+            sections.push(inline_links::expand_to_markdown_with_resolver(
+                summary, resolve,
+            ));
         }
 
         if !parsed.params.is_empty() {
@@ -1882,7 +1891,7 @@ impl<'a> HoverProvider<'a> {
                 } else {
                     lines.push(format!(
                         "- {name_code} {}",
-                        inline_links::expand_to_markdown_escaped(desc)
+                        inline_links::expand_to_markdown_with_resolver(desc, resolve)
                     ));
                 }
             }
@@ -1895,7 +1904,7 @@ impl<'a> HoverProvider<'a> {
                 "returns" if !tag.text.is_empty() => {
                     sections.push(format!(
                         "Returns: {}",
-                        inline_links::expand_to_markdown_escaped(&tag.text)
+                        inline_links::expand_to_markdown_with_resolver(&tag.text, resolve)
                     ));
                 }
                 "example" => {
@@ -1915,26 +1924,26 @@ impl<'a> HoverProvider<'a> {
                     } else {
                         sections.push(format!(
                             "**@deprecated** {}",
-                            inline_links::expand_to_markdown_escaped(&tag.text)
+                            inline_links::expand_to_markdown_with_resolver(&tag.text, resolve)
                         ));
                     }
                 }
                 "see" if !tag.text.is_empty() => {
                     sections.push(format!(
                         "See: {}",
-                        inline_links::expand_to_markdown_escaped(&tag.text)
+                        inline_links::expand_to_markdown_with_resolver(&tag.text, resolve)
                     ));
                 }
                 "throws" | "exception" if !tag.text.is_empty() => {
                     sections.push(format!(
                         "Throws: {}",
-                        inline_links::expand_to_markdown_escaped(&tag.text)
+                        inline_links::expand_to_markdown_with_resolver(&tag.text, resolve)
                     ));
                 }
                 "since" if !tag.text.is_empty() => {
                     sections.push(format!(
                         "Since: {}",
-                        inline_links::expand_to_markdown_escaped(&tag.text)
+                        inline_links::expand_to_markdown_with_resolver(&tag.text, resolve)
                     ));
                 }
                 _ => {}
@@ -1943,9 +1952,65 @@ impl<'a> HoverProvider<'a> {
 
         let formatted = sections.join("\n\n");
         if formatted.is_empty() {
-            Some(inline_links::expand_to_markdown_escaped(doc))
+            Some(inline_links::expand_to_markdown_with_resolver(doc, resolve))
         } else {
             Some(formatted)
+        }
+    }
+
+    fn resolve_jsdoc_link_uri(
+        &self,
+        root: NodeIndex,
+        anchor: NodeIndex,
+        name: &str,
+    ) -> Option<String> {
+        let mut walker = ScopeWalker::new(self.arena, self.binder);
+        let symbol_id = walker.resolve_name_at(root, anchor, name)?;
+        let symbol = self.binder.symbols.get(symbol_id)?;
+        let decl_idx = symbol.primary_declaration()?;
+        if !self.declaration_belongs_to_current_arena(symbol_id, decl_idx) {
+            return None;
+        }
+        let decl_node = self.arena.get(decl_idx)?;
+        let source_len = self.source_text.len() as u32;
+        if decl_node.pos > source_len
+            || decl_node.end > source_len
+            || decl_node.pos == decl_node.end
+        {
+            return None;
+        }
+
+        let pos = self
+            .line_map
+            .offset_to_position(decl_node.pos, self.source_text);
+        Some(format!(
+            "{}#L{},{}",
+            self.markdown_file_uri(),
+            pos.line.saturating_add(1),
+            pos.character.saturating_add(1)
+        ))
+    }
+
+    fn declaration_belongs_to_current_arena(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        self.binder
+            .declaration_arenas
+            .get(&(symbol_id, decl_idx))
+            .is_none_or(|arenas| {
+                arenas
+                    .iter()
+                    .any(|arena| std::ptr::eq(std::sync::Arc::as_ptr(arena), self.arena))
+            })
+    }
+
+    fn markdown_file_uri(&self) -> String {
+        if self.file_name.starts_with("file://") {
+            self.file_name.clone()
+        } else {
+            format!("file://{}", self.file_name)
         }
     }
 }

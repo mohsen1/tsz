@@ -14,6 +14,31 @@ use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
 
+/// Pre-classified modifier flags for a single class member, computed in one
+/// pass through the combined decorator + keyword-modifier list.
+///
+/// Constructed once by `scan_class_member_modifier_phase` so that all
+/// downstream dispatch in `parse_class_member` reads named boolean fields
+/// instead of performing repeated linear scans over the modifier node list.
+pub(crate) struct ClassMemberModifierSet {
+    /// Combined decorators + keyword modifiers in source order.
+    /// Retained for AST construction and diagnostic-position lookups.
+    pub(crate) modifiers: Option<NodeList>,
+    /// `true` when at least one decorator was present.
+    pub(crate) has_decorators: bool,
+    /// `var` or `let` appeared as a modifier (invalid; triggers specific recovery).
+    pub(crate) has_var_let: bool,
+    pub(crate) has_static: bool,
+    pub(crate) has_export: bool,
+    pub(crate) has_declare: bool,
+    pub(crate) has_accessor: bool,
+    pub(crate) has_async: bool,
+    /// Diagnostic-list length captured just before modifier parsing, used to
+    /// selectively roll back modifier-ordering diagnostics when a static block
+    /// is discovered after modifiers were already parsed.
+    pub(crate) diag_len_before_modifiers: usize,
+}
+
 impl ParserState {
     /// Parse class member modifiers (static, public, private, protected, readonly, abstract, override)
     pub(crate) fn parse_class_member_modifiers(&mut self) -> Option<NodeList> {
@@ -915,6 +940,91 @@ impl ParserState {
         }
     }
 
+    /// Modifier scan + classification phase.
+    ///
+    /// Parses keyword modifiers, combines them with any already-parsed
+    /// decorators, handles a misplaced `@` after keywords, and returns a
+    /// [`ClassMemberModifierSet`] whose boolean fields let `construct_class_member`
+    /// branch on named flags instead of repeated linear scans over the node list.
+    fn scan_class_member_modifier_phase(
+        &mut self,
+        decorators: Option<NodeList>,
+    ) -> ClassMemberModifierSet {
+        let has_decorators = decorators.is_some();
+        let diag_len_before_modifiers = self.parse_diagnostics.len();
+        let parsed_modifiers = self.parse_class_member_modifiers();
+        let had_keyword_modifiers = parsed_modifiers.is_some();
+
+        let mut combined = match (decorators, parsed_modifiers) {
+            (Some(dec), Some(kw)) => {
+                let mut nodes = dec.nodes;
+                nodes.extend(kw.nodes);
+                Some(NodeList {
+                    nodes,
+                    pos: dec.pos,
+                    end: kw.end,
+                    has_trailing_comma: false,
+                })
+            }
+            (Some(dec), None) => Some(dec),
+            (None, Some(kw)) => Some(kw),
+            (None, None) => None,
+        };
+
+        // TS1436: `@` appearing after keyword modifiers (e.g., `public @dec prop`).
+        if had_keyword_modifiers && self.is_token(SyntaxKind::AtToken) {
+            self.parse_error_at_current_token(
+                "Decorators must precede the name and all keywords of property declarations.",
+                diagnostic_codes::DECORATORS_MUST_PRECEDE_THE_NAME_AND_ALL_KEYWORDS_OF_PROPERTY_DECLARATIONS,
+            );
+            if let Some(late_decs) = self.parse_decorators() {
+                match combined {
+                    Some(ref mut mods) => {
+                        mods.nodes.extend(late_decs.nodes);
+                        mods.end = late_decs.end;
+                    }
+                    None => combined = Some(late_decs),
+                }
+            }
+        }
+
+        let mut has_var_let = false;
+        let mut has_static = false;
+        let mut has_export = false;
+        let mut has_declare = false;
+        let mut has_accessor = false;
+        let mut has_async = false;
+        if let Some(ref mods) = combined {
+            for &idx in &mods.nodes {
+                if let Some(node) = self.arena.get(idx)
+                    && let Some(kind) = SyntaxKind::try_from_u16(node.kind)
+                {
+                    match kind {
+                        SyntaxKind::VarKeyword | SyntaxKind::LetKeyword => has_var_let = true,
+                        SyntaxKind::StaticKeyword => has_static = true,
+                        SyntaxKind::ExportKeyword => has_export = true,
+                        SyntaxKind::DeclareKeyword => has_declare = true,
+                        SyntaxKind::AccessorKeyword => has_accessor = true,
+                        SyntaxKind::AsyncKeyword => has_async = true,
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        ClassMemberModifierSet {
+            modifiers: combined,
+            has_decorators,
+            has_var_let,
+            has_static,
+            has_export,
+            has_declare,
+            has_accessor,
+            has_async,
+            diag_len_before_modifiers,
+        }
+    }
+
     /// Parse set accessor with modifiers: static set foo(value) { }
     pub(crate) fn parse_set_accessor_with_modifiers(
         &mut self,
@@ -1166,8 +1276,6 @@ impl ParserState {
         use tsz_common::diagnostics::diagnostic_codes;
         let start_pos = self.token_pos();
 
-        // Handle empty statement (semicolon) in class body - this is valid TypeScript/JavaScript
-        // A standalone semicolon in a class body is a SemicolonClassElement
         if self.is_token(SyntaxKind::SemicolonToken) {
             let end_pos = self.token_end();
             self.next_token();
@@ -1222,9 +1330,7 @@ impl ParserState {
             self.current_token = rescanned;
         }
 
-        // Parse decorators if present
         let decorators = self.parse_decorators();
-        let has_decorators = decorators.is_some();
 
         // If decorators were found before a static block, emit TS1206
         // TSC anchors this error at the decorator position, not the `static` keyword.
@@ -1272,58 +1378,17 @@ impl ParserState {
             return NodeIndex::NONE;
         }
 
-        // Parse modifiers (static, public, private, protected, readonly, abstract, override)
-        let diag_len_before_modifiers = self.parse_diagnostics.len();
-        let parsed_modifiers = self.parse_class_member_modifiers();
-        let had_keyword_modifiers = parsed_modifiers.is_some();
-
-        // Combine decorators and modifiers into a single modifiers list
-        // TypeScript stores decorators as part of the modifiers array
-        let mut modifiers = match (decorators, parsed_modifiers) {
-            (Some(dec), Some(mods)) => {
-                // Combine: decorators come first, then regular modifiers
-                let mut combined = dec.nodes;
-                combined.extend(mods.nodes);
-                Some(crate::parser::NodeList {
-                    nodes: combined,
-                    pos: dec.pos,
-                    end: mods.end,
-                    has_trailing_comma: false,
-                })
-            }
-            (Some(dec), None) => Some(dec),
-            (None, Some(mods)) => Some(mods),
-            (None, None) => None,
-        };
-
-        // TS1436: Decorators must precede the name and all keywords of property declarations.
-        // Detect `@` appearing after keyword modifiers (e.g., `public @dec prop`).
-        // Emit the specific diagnostic, then parse and consume the misplaced decorators
-        // so the rest of the member can be parsed normally for recovery.
-        if had_keyword_modifiers && self.is_token(SyntaxKind::AtToken) {
-            self.parse_error_at_current_token(
-                "Decorators must precede the name and all keywords of property declarations.",
-                diagnostic_codes::DECORATORS_MUST_PRECEDE_THE_NAME_AND_ALL_KEYWORDS_OF_PROPERTY_DECLARATIONS,
-            );
-            // Parse the misplaced decorators to consume them
-            if let Some(late_decs) = self.parse_decorators() {
-                if let Some(ref mut mods) = modifiers {
-                    mods.nodes.extend(late_decs.nodes);
-                    mods.end = late_decs.end;
-                } else {
-                    modifiers = Some(late_decs);
-                }
-            }
-        }
+        let mods = self.scan_class_member_modifier_phase(decorators);
 
         // Handle static block after modifiers: { ... }
         // Case 1: `static` not yet consumed (no preceding modifiers or only decorators)
         if self.is_token(SyntaxKind::StaticKeyword) && self.look_ahead_is_static_block() {
-            if let Some(ref mods) = modifiers {
+            if let Some(ref ml) = mods.modifiers {
                 // Truncate modifier-ordering diagnostics (TS1028/TS1029) emitted
                 // during parse_class_member_modifiers — tsc only emits TS1184 here.
-                self.parse_diagnostics.truncate(diag_len_before_modifiers);
-                if let Some(first_node) = self.arena.get(mods.nodes[0]) {
+                self.parse_diagnostics
+                    .truncate(mods.diag_len_before_modifiers);
+                if let Some(first_node) = self.arena.get(ml.nodes[0]) {
                     self.parse_error_at(
                         first_node.pos,
                         first_node.end - first_node.pos,
@@ -1338,18 +1403,19 @@ impl ParserState {
         // The last modifier is `static` and current token is `{` — this is a static block
         // with invalid preceding modifiers.
         if self.is_token(SyntaxKind::OpenBraceToken)
-            && let Some(ref mods) = modifiers
+            && let Some(ref ml) = mods.modifiers
         {
-            let last_is_static = mods
+            let last_is_static = ml
                 .nodes
                 .last()
                 .and_then(|&idx| self.arena.get(idx))
                 .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16);
             if last_is_static {
                 // Truncate modifier-ordering diagnostics — tsc only emits TS1184.
-                self.parse_diagnostics.truncate(diag_len_before_modifiers);
+                self.parse_diagnostics
+                    .truncate(mods.diag_len_before_modifiers);
                 // Emit TS1184 at the first modifier's position (matches tsc).
-                if let Some(first_node) = self.arena.get(mods.nodes[0]) {
+                if let Some(first_node) = self.arena.get(ml.nodes[0]) {
                     self.parse_error_at(
                         first_node.pos,
                         first_node.end - first_node.pos,
@@ -1361,56 +1427,25 @@ impl ParserState {
             }
         }
 
-        // Handle constructor
-        // But not if var/let is in modifiers - that's an invalid pattern
-        let has_var_let_modifier = modifiers.as_ref().is_some_and(|mods| {
-            mods.nodes.iter().any(|&idx| {
-                self.arena.nodes.get(idx.0 as usize).is_some_and(|node| {
-                    node.kind == SyntaxKind::VarKeyword as u16
-                        || node.kind == SyntaxKind::LetKeyword as u16
-                })
-            })
-        });
+        // ── Member construction ───────────────────────────────────────────────
+        self.construct_class_member(start_pos, mods)
+    }
 
-        let has_static_modifier = modifiers.as_ref().is_some_and(|mods| {
-            mods.nodes.iter().any(|&idx| {
-                self.arena
-                    .nodes
-                    .get(idx.0 as usize)
-                    .is_some_and(|node| node.kind == SyntaxKind::StaticKeyword as u16)
-            })
-        });
+    /// Construct a class member after modifiers have been scanned and classified.
+    ///
+    /// Dispatches to constructor, get/set accessor, index signature, mapped-type
+    /// member, and ordinary method/property declaration paths.
+    fn construct_class_member(
+        &mut self,
+        start_pos: u32,
+        mods: ClassMemberModifierSet,
+    ) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
 
-        let has_export_modifier = modifiers.as_ref().is_some_and(|mods| {
-            mods.nodes.iter().any(|&idx| {
-                self.arena
-                    .nodes
-                    .get(idx.0 as usize)
-                    .is_some_and(|node| node.kind == SyntaxKind::ExportKeyword as u16)
-            })
-        });
-
-        let has_declare_modifier = modifiers.as_ref().is_some_and(|mods| {
-            mods.nodes.iter().any(|&idx| {
-                self.arena
-                    .nodes
-                    .get(idx.0 as usize)
-                    .is_some_and(|node| node.kind == SyntaxKind::DeclareKeyword as u16)
-            })
-        });
-
-        let has_accessor_modifier = modifiers.as_ref().is_some_and(|mods| {
-            mods.nodes.iter().any(|&idx| {
-                self.arena
-                    .nodes
-                    .get(idx.0 as usize)
-                    .is_some_and(|node| node.kind == SyntaxKind::AccessorKeyword as u16)
-            })
-        });
-
-        if self.is_token(SyntaxKind::ConstructorKeyword) && !has_var_let_modifier {
-            // TS1206: Decorators are not valid on constructors
-            if has_decorators {
+        // Handle constructor — but not when var/let is in modifiers (invalid pattern).
+        if self.is_token(SyntaxKind::ConstructorKeyword) && !mods.has_var_let {
+            // TS1206: Decorators are not valid on constructors.
+            if mods.has_decorators {
                 self.parse_error_at(
                     start_pos,
                     0,
@@ -1419,11 +1454,9 @@ impl ParserState {
                 );
             }
 
-            use tsz_common::diagnostics::diagnostic_codes;
-
-            if has_static_modifier {
+            if mods.has_static {
                 self.emit_modifier_error_on_constructor(
-                    &modifiers,
+                    &mods.modifiers,
                     SyntaxKind::StaticKeyword,
                     "'static' modifier cannot appear on a constructor declaration.",
                     diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
@@ -1431,16 +1464,16 @@ impl ParserState {
             }
 
             // TS1031: tsc anchors at the modifier keyword via grammarErrorOnNode(modifier)
-            if has_export_modifier {
+            if mods.has_export {
                 self.emit_modifier_error_on_constructor(
-                    &modifiers,
+                    &mods.modifiers,
                     SyntaxKind::ExportKeyword,
                     "'export' modifier cannot appear on class elements of this kind.",
                     diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
                 );
-            } else if has_declare_modifier {
+            } else if mods.has_declare {
                 self.emit_modifier_error_on_constructor(
-                    &modifiers,
+                    &mods.modifiers,
                     SyntaxKind::DeclareKeyword,
                     "'declare' modifier cannot appear on class elements of this kind.",
                     diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
@@ -1448,11 +1481,11 @@ impl ParserState {
             }
 
             // TS1275: 'accessor' modifier can only appear on a property declaration.
-            if has_accessor_modifier {
-                self.emit_accessor_modifier_only_on_property_error(&modifiers);
+            if mods.has_accessor {
+                self.emit_accessor_modifier_only_on_property_error(&mods.modifiers);
             }
 
-            return self.parse_constructor_with_modifiers(modifiers);
+            return self.parse_constructor_with_modifiers(mods.modifiers);
         }
 
         // Handle generator methods: *foo() or async *#bar()
@@ -1462,16 +1495,16 @@ impl ParserState {
         if !asterisk_token && self.is_token(SyntaxKind::GetKeyword) && self.look_ahead_is_accessor()
         {
             // TS1031: 'declare' modifier cannot appear on class elements of this kind
-            if has_declare_modifier {
-                self.emit_declare_on_non_property_error(&modifiers);
+            if mods.has_declare {
+                self.emit_declare_on_non_property_error(&mods.modifiers);
             }
             // TS1275: 'accessor' modifier can only appear on a property declaration.
-            if has_accessor_modifier {
-                self.emit_accessor_modifier_only_on_property_error(&modifiers);
+            if mods.has_accessor {
+                self.emit_accessor_modifier_only_on_property_error(&mods.modifiers);
             }
             let saved_member_flags = self.context_flags;
             self.context_flags |= CONTEXT_FLAG_CLASS_MEMBER_NAME;
-            let accessor = self.parse_get_accessor_with_modifiers(modifiers, start_pos);
+            let accessor = self.parse_get_accessor_with_modifiers(mods.modifiers, start_pos);
             self.context_flags = saved_member_flags;
             return accessor;
         }
@@ -1480,31 +1513,30 @@ impl ParserState {
         if !asterisk_token && self.is_token(SyntaxKind::SetKeyword) && self.look_ahead_is_accessor()
         {
             // TS1031: 'declare' modifier cannot appear on class elements of this kind
-            if has_declare_modifier {
-                self.emit_declare_on_non_property_error(&modifiers);
+            if mods.has_declare {
+                self.emit_declare_on_non_property_error(&mods.modifiers);
             }
             // TS1275: 'accessor' modifier can only appear on a property declaration.
-            if has_accessor_modifier {
-                self.emit_accessor_modifier_only_on_property_error(&modifiers);
+            if mods.has_accessor {
+                self.emit_accessor_modifier_only_on_property_error(&mods.modifiers);
             }
             let saved_member_flags = self.context_flags;
             self.context_flags |= CONTEXT_FLAG_CLASS_MEMBER_NAME;
-            let accessor = self.parse_set_accessor_with_modifiers(modifiers, start_pos);
+            let accessor = self.parse_set_accessor_with_modifiers(mods.modifiers, start_pos);
             self.context_flags = saved_member_flags;
             return accessor;
         }
 
         // Handle index signatures: [key: Type]: ValueType
         if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_index_signature() {
-            let sig = self.parse_index_signature_with_modifiers(modifiers, start_pos);
+            let sig = self.parse_index_signature_with_modifiers(mods.modifiers, start_pos);
             self.parse_semicolon();
             return sig;
         }
 
         // Handle mapped type member in class body: [P in K]: T (TS 4.1+)
         if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_mapped_type_start() {
-            let member = self.parse_mapped_type_member();
-            return member;
+            return self.parse_mapped_type_member();
         }
 
         // `function foo() {}` inside a class body is handled by
@@ -1513,25 +1545,20 @@ impl ParserState {
         // Keep `function` as a potential member name here for valid forms like
         // `function() {}` or `function;`.
 
-        // Recovery: Handle 'const'/'let'/'var' used as modifiers in class members
-        // Distinguish between: `const x = 1` (invalid, error) vs `const() {}` (valid method name)
+        // `const x = 1` is invalid; `const() {}` is a valid method name. Trigger only when
+        // an identifier/bracket follows on the same line (no ASI), indicating a modifier misuse.
         if matches!(
             self.token(),
             SyntaxKind::ConstKeyword | SyntaxKind::LetKeyword | SyntaxKind::VarKeyword
         ) {
-            // Look ahead to determine if this is being used as a modifier or as a name
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
-            self.next_token(); // skip const/let/var
+            self.next_token();
             let next_token = self.token();
             let has_line_break = self.scanner.has_preceding_line_break();
             self.scanner.restore_state(snapshot);
             self.current_token = current;
 
-            // If followed by `(`, it's a method name (e.g., `const() {}`), which is valid
-            // If followed by `;`, `}`, `=`, `!`, `?`, or newline (ASI), treat as property name
-            // If followed by identifier ON THE SAME LINE, it's being used as a modifier (invalid: `const x = 1`)
-            // If there's a line break before the next token, ASI applies and the keyword is a property name
             if !has_line_break
                 && matches!(
                     next_token,
@@ -1540,113 +1567,71 @@ impl ParserState {
                         | SyntaxKind::OpenBracketToken
                 )
             {
-                // This is likely being used as a modifier, emit error and recover
                 self.parse_error_at_current_token(
                     "A class member cannot have the 'const', 'let', or 'var' keyword.",
                     diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
                 );
-                // Consume the invalid keyword and continue parsing
-                // The next identifier will be treated as the property/method name
                 self.next_token();
             }
         }
 
-        // Recovery: Handle `try` keyword misplaced in class body.
-        // `try { ... }` is not a valid class member, even after modifiers like
-        // `public`. When followed by `{` on the same line, emit TS1068 to match tsc
-        // rather than parsing `try` as a property name and cascading into TS1434/TS1435.
-        if self.is_token(SyntaxKind::TryKeyword) {
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
-            self.next_token();
-            let next_is_open_brace = self.is_token(SyntaxKind::OpenBraceToken)
-                && !self.scanner.has_preceding_line_break();
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
-            if next_is_open_brace {
-                self.parse_error_at_current_token(
-                    "Unexpected token. A constructor, method, accessor, or property was expected.",
-                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
-                );
-            }
+        // `try { ... }` is not a valid class member even after modifiers like `public`. Emit
+        // TS1068 rather than cascading into TS1434/TS1435. Unlike const/let/var, `try` is a
+        // valid property name so we only emit the diagnostic and let it continue as a name.
+        if self.is_token(SyntaxKind::TryKeyword) && self.look_ahead_is_try_block_same_line() {
+            self.parse_error_at_current_token(
+                "Unexpected token. A constructor, method, accessor, or property was expected.",
+                diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+            );
         }
 
-        // Recovery: Handle `class`/`enum` keywords that are misplaced declarations in a class body.
-        // `class D {}` or `enum E {}` inside a class body are invalid, even after
-        // modifiers like `public`. But `class;` or `class(){}` remain valid property
-        // and method names, so only trigger when an identifier follows on the same line.
+        // `class D {}` / `enum E {}` are invalid class members even after modifiers like `public`.
+        // `class;` and `class(){}` are valid property/method names — only trigger when an
+        // identifier follows on the same line (distinguishes declaration from member name).
         if matches!(
             self.token(),
             SyntaxKind::ClassKeyword | SyntaxKind::EnumKeyword
-        ) {
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
-            self.next_token();
-            let next_is_identifier =
-                self.is_identifier_or_keyword() && !self.scanner.has_preceding_line_break();
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
-
-            if next_is_identifier {
-                // Misplaced class/enum declaration. Emit TS1068 at the keyword position.
-                self.parse_error_at_current_token(
-                    "Unexpected token. A constructor, method, accessor, or property was expected.",
-                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
-                );
-                // Skip keyword + name. If `{` follows, skip the block body but leave
-                // the matching `}` for the outer class when the inner block has exactly
-                // one level of braces and the outer class brace is pending.
-                self.next_token(); // skip class/enum keyword
-                self.next_token(); // skip the identifier name
-                // Skip extends/implements clauses if present (e.g., `class D extends E {`)
-                while self.is_identifier_or_keyword()
-                    && !self.is_token(SyntaxKind::OpenBraceToken)
-                    && !self.is_token(SyntaxKind::CloseBraceToken)
-                    && !self.is_token(SyntaxKind::SemicolonToken)
-                    && !self.is_token(SyntaxKind::EndOfFileToken)
-                {
+        ) && self.look_ahead_next_is_identifier_or_keyword_on_same_line()
+        {
+            self.parse_error_at_current_token(
+                "Unexpected token. A constructor, method, accessor, or property was expected.",
+                diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+            );
+            self.next_token(); // skip class/enum keyword
+            self.next_token(); // skip the identifier name
+            // Skip extends/implements clauses (e.g., `class D extends E {`).
+            while self.is_identifier_or_keyword()
+                && !self.is_token(SyntaxKind::OpenBraceToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                self.next_token();
+                if self.is_token(SyntaxKind::CommaToken) {
                     self.next_token();
-                    // Skip comma-separated items
-                    if self.is_token(SyntaxKind::CommaToken) {
-                        self.next_token();
-                    }
                 }
-                if self.is_token(SyntaxKind::OpenBraceToken) {
-                    // Skip tokens inside the block body until we find the matching }.
-                    // DON'T consume the final } — leave it for the outer class body
-                    // to use as its closing brace (error recovery behavior matching TSC).
-                    let mut depth = 1u32;
-                    self.next_token(); // consume {
-                    while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
-                        if self.is_token(SyntaxKind::OpenBraceToken) {
-                            depth += 1;
-                        } else if self.is_token(SyntaxKind::CloseBraceToken) {
-                            depth -= 1;
-                            if depth == 0 {
-                                // Leave the } for the outer class to consume
-                                break;
-                            }
-                        }
-                        self.next_token();
-                    }
-                }
-                return NodeIndex::NONE;
             }
+            if self.is_token(SyntaxKind::OpenBraceToken) {
+                // DON'T consume the final `}` — leave it for the outer class body to use
+                // as its closing brace (tsc error recovery behavior).
+                let mut depth = 1u32;
+                self.next_token(); // consume `{`
+                while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
+                    if self.is_token(SyntaxKind::OpenBraceToken) {
+                        depth += 1;
+                    } else if self.is_token(SyntaxKind::CloseBraceToken) {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    self.next_token();
+                }
+            }
+            return NodeIndex::NONE;
         }
 
-        // Whether this is an async method; needed while parsing parameters.
-        let is_async = modifiers.as_ref().is_some_and(|mods| {
-            mods.nodes.iter().any(|&idx| {
-                self.arena
-                    .nodes
-                    .get(idx.0 as usize)
-                    .is_some_and(|node| node.kind == SyntaxKind::AsyncKeyword as u16)
-            })
-        });
-
-        // Handle methods and properties
-        // For now, just parse name and check for ( for methods
-        // Note: Many reserved keywords can be used as property names (const, class, etc.)
+        // Parse member name
         let name_saved_flags = self.context_flags;
         self.context_flags |= CONTEXT_FLAG_CLASS_MEMBER_NAME;
         // Note: Do NOT set CONTEXT_FLAG_GENERATOR or CONTEXT_FLAG_ASYNC here.
@@ -1654,14 +1639,14 @@ impl ParserState {
         // (parameters + block), not during property name parsing.  Otherwise
         // `yield` inside a computed property name like `async * [yield]()`
         // would be parsed as a YieldExpression instead of an Identifier.
-        // The generator/async flags are correctly set later (lines ~3970-3974).
+        // The generator/async flags are correctly set later (inside construct_class_member_method).
         // However, track the generator asterisk so we can suppress TS1213
         // for `yield` in computed property names of generator methods — tsc
         // does not emit TS1213 in this position.
         if asterisk_token {
             self.context_flags |= CONTEXT_FLAG_GENERATOR_MEMBER_NAME;
         }
-        let has_modifiers = modifiers.is_some();
+        let has_modifiers = mods.modifiers.is_some();
         let name = if self.is_property_name() {
             self.parse_property_name()
         } else if has_modifiers
@@ -1776,7 +1761,7 @@ impl ParserState {
         let method_saved_flags = self.context_flags;
         self.context_flags &=
             !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_STATIC_BLOCK);
-        if is_async {
+        if mods.has_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }
         if asterisk_token {
@@ -1788,7 +1773,7 @@ impl ParserState {
         // Method: foo() or foo<T>().
         // `async *` members always require a member body/parameter list form, so treat
         // asterisk forms as methods even when '(' is missing (for recovery).
-        let is_method_like = !has_var_let_modifier
+        let is_method_like = !mods.has_var_let
             && (asterisk_token
                 || self.is_token(SyntaxKind::OpenParenToken)
                 || self.is_token(SyntaxKind::LessThanToken));
@@ -1796,7 +1781,7 @@ impl ParserState {
         // TS1276: An 'accessor' property cannot be declared optional.
         // tsc anchors at the `?` token for properties only; accessor methods
         // report TS1275 instead.
-        if !is_method_like && question_token && has_accessor_modifier {
+        if !is_method_like && question_token && mods.has_accessor {
             self.parse_error_at(
                 question_token_pos,
                 question_token_end - question_token_pos,
@@ -1806,93 +1791,15 @@ impl ParserState {
         }
 
         if is_method_like {
-            // TS1031: 'declare' modifier cannot appear on class elements of this kind
-            // (methods cannot be declared, only properties can)
-            if has_declare_modifier {
-                self.emit_declare_on_non_property_error(&modifiers);
-            }
-            // TS1275: 'accessor' modifier can only appear on a property declaration.
-            if has_accessor_modifier {
-                self.emit_accessor_modifier_only_on_property_error(&modifiers);
-            }
-
-            // Parse optional type parameters: foo<T, U>()
-            let type_parameters = self
-                .is_token(SyntaxKind::LessThanToken)
-                .then(|| self.parse_type_parameters());
-
-            // Method
-            let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
-            let mut body_already_consumed_by_recovery = false;
-            let parameters = if has_open_paren {
-                let parameters = self.parse_parameter_list();
-                self.parse_expected(SyntaxKind::CloseParenToken);
-                parameters
-            } else if asterisk_token {
-                // `async *` members must be methods. Missing `(` here should emit one
-                // TS1005 and recover without producing a declaration node, so we avoid
-                // downstream errors like TS2391 on malformed members.
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
-                self.recover_from_missing_method_open_paren();
-                self.context_flags = method_saved_flags;
-                return NodeIndex::NONE;
-            } else {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
-                body_already_consumed_by_recovery = self.recover_from_missing_method_open_paren();
-                self.make_node_list(vec![])
-            };
-
-            // Optional return type (supports type predicates: param is T)
-            let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-                self.parse_return_type()
-            } else {
-                NodeIndex::NONE
-            };
-
-            // Parse body
-            self.push_label_scope();
-            let body = if body_already_consumed_by_recovery {
-                NodeIndex::NONE
-            } else if self.is_token(SyntaxKind::OpenBraceToken) {
-                self.parse_block()
-            } else {
-                // Consume the semicolon if present (method signature).
-                // Use can_parse_semicolon() which handles ASI: a preceding line break
-                // acts as an implicit semicolon (matching tsc's parseFunctionBlockOrSemicolon).
-                if self.can_parse_semicolon() {
-                    self.parse_semicolon();
-                } else {
-                    // TS1144: '{' or ';' expected — unexpected token after method signature
-                    self.parse_error_at_current_token(
-                        "'{' or ';' expected.",
-                        tsz_common::diagnostics::diagnostic_codes::OR_EXPECTED,
-                    );
-                }
-                NodeIndex::NONE
-            };
-            self.pop_label_scope();
-
-            self.context_flags = method_saved_flags;
-
-            let end_pos = self.token_end();
-            self.arena.add_method_decl(
-                syntax_kind_ext::METHOD_DECLARATION,
+            self.construct_class_member_method(
                 start_pos,
-                end_pos,
-                crate::parser::node::MethodDeclData {
-                    modifiers,
-                    asterisk_token,
-                    name,
-                    question_token,
-                    type_parameters,
-                    parameters,
-                    type_annotation,
-                    body,
-                },
+                mods,
+                asterisk_token,
+                name,
+                question_token,
+                method_saved_flags,
             )
-        } else if has_var_let_modifier
+        } else if mods.has_var_let
             && (self.is_token(SyntaxKind::OpenParenToken)
                 || self.is_token(SyntaxKind::LessThanToken))
         {
@@ -1934,153 +1841,266 @@ impl ParserState {
             // Return NONE to indicate this is not a valid member
             NodeIndex::NONE
         } else {
-            // Property - parse optional type and initializer
-            self.context_flags = method_saved_flags;
-            let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-                self.parse_type()
-            } else {
-                NodeIndex::NONE
-            };
-
-            // TS1442: Expected '=' for property initializer.
-            // When a class property has a type annotation and the next token is
-            // an expression start (not '=', ';', '}', or EOF), emit TS1442 and
-            // treat the expression as the initializer for recovery.
-            let init_saved_flags = self.context_flags;
-            self.context_flags &=
-                !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_STATIC_BLOCK);
-            self.context_flags |= crate::parser::state::CONTEXT_FLAG_CLASS_FIELD_INITIALIZER;
-
-            let has_equals_initializer = self.parse_optional(SyntaxKind::EqualsToken);
-            let initializer = if has_equals_initializer {
-                self.parse_assignment_expression()
-            } else if type_annotation != NodeIndex::NONE
-                && !self.is_token(SyntaxKind::SemicolonToken)
-                && !self.is_token(SyntaxKind::CloseBraceToken)
-                && !self.is_token(SyntaxKind::EndOfFileToken)
-                && (((self.is_token(SyntaxKind::StringLiteral)
-                    || self.is_token(SyntaxKind::NumericLiteral)
-                    || self.is_token(SyntaxKind::BigIntLiteral))
-                    // Don't treat string/numeric/bigint literals as initializers if they look
-                    // like the next class member property name (followed by `:` or `?`).
-                    // e.g., `"d": string; "e": number;` — `"e"` is a property name.
-                    && !self.look_ahead_is_next_class_member_property_name())
-                    // TS1442 for `.` after a type annotation: `a: this.foo;`.
-                    || self.is_token(SyntaxKind::DotToken))
-            {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    "Expected '=' for property initializer.",
-                    diagnostic_codes::EXPECTED_FOR_PROPERTY_INITIALIZER,
-                );
-                self.parse_assignment_expression()
-            } else {
-                NodeIndex::NONE
-            };
-
-            self.context_flags = init_saved_flags;
-
-            if has_equals_initializer
-                && self.is_token(SyntaxKind::CommaToken)
-                && !self.scanner.has_preceding_line_break()
-            {
-                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
-            }
-
-            // When a property with an initializer is followed by a line break and
-            // a continuation token (`[`, `(`, `.`), report a missing semicolon.
-            // Exception: if the property has a computed name, no type annotation,
-            // and the next line starts with `[`, treat `[` as a new computed
-            // property (ASI), not element access on the initializer.
-            // tsc only treats `[` as a continuation when there IS a type
-            // annotation (e.g., `[e]: number = 0\n[e2]` → TS1005), but not
-            // when there's only an initializer (e.g., `[e] = "A"\n[e2] = "B"`).
-            let is_computed_name = self
-                .arena
-                .get(name)
-                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
-            if initializer != NodeIndex::NONE
-                && !self.is_token(SyntaxKind::SemicolonToken)
-                && self.scanner.has_preceding_line_break()
-                && self.class_member_initializer_continues_on_next_line()
-                && !(is_computed_name
-                    && type_annotation == NodeIndex::NONE
-                    && self.is_token(SyntaxKind::OpenBracketToken)
-                    && !self.look_ahead_is_invalid_class_member_method_like_continuation())
-            {
-                self.report_missing_semicolon_after_class_field_initializer();
-                self.recover_invalid_class_member_initializer_continuation();
-            }
-
-            // TS1442: when a property has a type annotation but no initializer
-            // and the next token cannot end the declaration (not `;`, `}`, EOF,
-            // and no preceding line break), emit "Expected '=' for property
-            // initializer." — matching tsc's parseSemicolonAfterPropertyName.
-            if type_annotation != NodeIndex::NONE
-                && initializer == NodeIndex::NONE
-                && !late_property_name_decorator
-                && !self.can_parse_semicolon()
-            {
-                use tsz_common::diagnostics::diagnostic_codes;
-                let (message, code) = if self.is_token(SyntaxKind::OpenParenToken) {
-                    (
-                        "Cannot start a function call in a type annotation.",
-                        diagnostic_codes::CANNOT_START_A_FUNCTION_CALL_IN_A_TYPE_ANNOTATION,
-                    )
-                } else {
-                    (
-                        "Expected '=' for property initializer.",
-                        diagnostic_codes::EXPECTED_FOR_PROPERTY_INITIALIZER,
-                    )
-                };
-                self.parse_error_at_current_token(message, code);
-            }
-
-            // Match tsc's parseSemicolonAfterPropertyName: when a property has
-            // no type annotation and no initializer and no semicolon follows,
-            // use keyword-aware semicolon error (TS1434/TS1435) instead of
-            // the generic "';' expected". This produces "Unexpected keyword or
-            // identifier" for bare identifiers like `NoMove` in class bodies.
-            if !has_var_let_modifier
-                && type_annotation == NodeIndex::NONE
-                && initializer == NodeIndex::NONE
-                && !late_property_name_decorator
-                && !self.is_token(SyntaxKind::SemicolonToken)
-                && !self.can_parse_semicolon()
-            {
-                let name_is_identifier = self
-                    .arena
-                    .get(name)
-                    .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16);
-                if !name_is_identifier
-                    && matches!(
-                        self.token(),
-                        SyntaxKind::CommaToken
-                            | SyntaxKind::CloseBracketToken
-                            | SyntaxKind::CloseParenToken
-                    )
-                {
-                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
-                } else {
-                    self.parse_error_for_missing_semicolon_after(name);
-                }
-            }
-
-            let end_pos = self.token_end();
-            self.arena.add_property_decl(
-                syntax_kind_ext::PROPERTY_DECLARATION,
+            self.construct_class_member_property(
                 start_pos,
-                end_pos,
-                crate::parser::node::PropertyDeclData {
-                    modifiers,
-                    name,
-                    question_token,
-                    exclamation_token,
-                    type_annotation,
-                    initializer,
-                },
+                mods,
+                name,
+                question_token,
+                exclamation_token,
+                late_property_name_decorator,
+                method_saved_flags,
             )
         }
+    }
+
+    /// Construct the body of a method class member: parse type params, parameter
+    /// list, return-type annotation, and method body.
+    fn construct_class_member_method(
+        &mut self,
+        start_pos: u32,
+        mods: ClassMemberModifierSet,
+        asterisk_token: bool,
+        name: NodeIndex,
+        question_token: bool,
+        method_saved_flags: u32,
+    ) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        // TS1031: 'declare' modifier cannot appear on class elements of this kind
+        // (methods cannot be declared, only properties can)
+        if mods.has_declare {
+            self.emit_declare_on_non_property_error(&mods.modifiers);
+        }
+        // TS1275: 'accessor' modifier can only appear on a property declaration.
+        if mods.has_accessor {
+            self.emit_accessor_modifier_only_on_property_error(&mods.modifiers);
+        }
+
+        // Parse optional type parameters: foo<T, U>()
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
+
+        let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
+        let mut body_already_consumed_by_recovery = false;
+        let parameters = if has_open_paren {
+            let parameters = self.parse_parameter_list();
+            self.parse_expected(SyntaxKind::CloseParenToken);
+            parameters
+        } else if asterisk_token {
+            // `async *` members must be methods. Missing `(` here should emit one
+            // TS1005 and recover without producing a declaration node, so we avoid
+            // downstream errors like TS2391 on malformed members.
+            self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+            self.recover_from_missing_method_open_paren();
+            self.context_flags = method_saved_flags;
+            return NodeIndex::NONE;
+        } else {
+            self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+            body_already_consumed_by_recovery = self.recover_from_missing_method_open_paren();
+            self.make_node_list(vec![])
+        };
+
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_return_type()
+        } else {
+            NodeIndex::NONE
+        };
+
+        self.push_label_scope();
+        let body = if body_already_consumed_by_recovery {
+            NodeIndex::NONE
+        } else if self.is_token(SyntaxKind::OpenBraceToken) {
+            self.parse_block()
+        } else {
+            // Consume the semicolon if present (method signature).
+            // Use can_parse_semicolon() which handles ASI: a preceding line break
+            // acts as an implicit semicolon (matching tsc's parseFunctionBlockOrSemicolon).
+            if self.can_parse_semicolon() {
+                self.parse_semicolon();
+            } else {
+                // TS1144: '{' or ';' expected — unexpected token after method signature
+                self.parse_error_at_current_token(
+                    "'{' or ';' expected.",
+                    tsz_common::diagnostics::diagnostic_codes::OR_EXPECTED,
+                );
+            }
+            NodeIndex::NONE
+        };
+        self.pop_label_scope();
+
+        self.context_flags = method_saved_flags;
+
+        let end_pos = self.token_end();
+        self.arena.add_method_decl(
+            syntax_kind_ext::METHOD_DECLARATION,
+            start_pos,
+            end_pos,
+            crate::parser::node::MethodDeclData {
+                modifiers: mods.modifiers,
+                asterisk_token,
+                name,
+                question_token,
+                type_parameters,
+                parameters,
+                type_annotation,
+                body,
+            },
+        )
+    }
+
+    /// Construct the body of a property class member: parse type annotation,
+    /// optional/definite tokens, and initializer expression.
+    fn construct_class_member_property(
+        &mut self,
+        start_pos: u32,
+        mods: ClassMemberModifierSet,
+        name: NodeIndex,
+        question_token: bool,
+        exclamation_token: bool,
+        late_property_name_decorator: bool,
+        method_saved_flags: u32,
+    ) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        // Property - parse optional type and initializer
+        self.context_flags = method_saved_flags;
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
+
+        let init_saved_flags = self.context_flags;
+        self.context_flags &=
+            !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_STATIC_BLOCK);
+        self.context_flags |= crate::parser::state::CONTEXT_FLAG_CLASS_FIELD_INITIALIZER;
+
+        let has_equals_initializer = self.parse_optional(SyntaxKind::EqualsToken);
+        let initializer = if has_equals_initializer {
+            self.parse_assignment_expression()
+        } else if type_annotation != NodeIndex::NONE
+            && !self.is_token(SyntaxKind::SemicolonToken)
+            && !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+            && (((self.is_token(SyntaxKind::StringLiteral)
+                || self.is_token(SyntaxKind::NumericLiteral)
+                || self.is_token(SyntaxKind::BigIntLiteral))
+                // A literal that looks like the next member's property name (followed by
+                // `:` or `?`) starts the next member, not an initializer for this one.
+                && !self.look_ahead_is_next_class_member_property_name())
+                || self.is_token(SyntaxKind::DotToken))
+        {
+            self.parse_error_at_current_token(
+                "Expected '=' for property initializer.",
+                diagnostic_codes::EXPECTED_FOR_PROPERTY_INITIALIZER,
+            );
+            self.parse_assignment_expression()
+        } else {
+            NodeIndex::NONE
+        };
+
+        self.context_flags = init_saved_flags;
+
+        if has_equals_initializer
+            && self.is_token(SyntaxKind::CommaToken)
+            && !self.scanner.has_preceding_line_break()
+        {
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+        }
+
+        // When a property with an initializer is followed by a line break and
+        // a continuation token (`[`, `(`, `.`), report a missing semicolon.
+        // Exception: if the property has a computed name, no type annotation,
+        // and the next line starts with `[`, treat `[` as a new computed
+        // property (ASI), not element access on the initializer.
+        // tsc only treats `[` as a continuation when there IS a type
+        // annotation (e.g., `[e]: number = 0\n[e2]` → TS1005), but not
+        // when there's only an initializer (e.g., `[e] = "A"\n[e2] = "B"`).
+        let is_computed_name = self
+            .arena
+            .get(name)
+            .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+        if initializer != NodeIndex::NONE
+            && !self.is_token(SyntaxKind::SemicolonToken)
+            && self.scanner.has_preceding_line_break()
+            && self.class_member_initializer_continues_on_next_line()
+            && !(is_computed_name
+                && type_annotation == NodeIndex::NONE
+                && self.is_token(SyntaxKind::OpenBracketToken)
+                && !self.look_ahead_is_invalid_class_member_method_like_continuation())
+        {
+            self.report_missing_semicolon_after_class_field_initializer();
+            self.recover_invalid_class_member_initializer_continuation();
+        }
+
+        // TS1442: when a property has a type annotation but no initializer
+        // and the next token cannot end the declaration (not `;`, `}`, EOF,
+        // and no preceding line break), emit "Expected '=' for property
+        // initializer." — matching tsc's parseSemicolonAfterPropertyName.
+        if type_annotation != NodeIndex::NONE
+            && initializer == NodeIndex::NONE
+            && !late_property_name_decorator
+            && !self.can_parse_semicolon()
+        {
+            let (message, code) = if self.is_token(SyntaxKind::OpenParenToken) {
+                (
+                    "Cannot start a function call in a type annotation.",
+                    diagnostic_codes::CANNOT_START_A_FUNCTION_CALL_IN_A_TYPE_ANNOTATION,
+                )
+            } else {
+                (
+                    "Expected '=' for property initializer.",
+                    diagnostic_codes::EXPECTED_FOR_PROPERTY_INITIALIZER,
+                )
+            };
+            self.parse_error_at_current_token(message, code);
+        }
+
+        // Match tsc's parseSemicolonAfterPropertyName: when a property has
+        // no type annotation and no initializer and no semicolon follows,
+        // use keyword-aware semicolon error (TS1434/TS1435) instead of
+        // the generic "';' expected". This produces "Unexpected keyword or
+        // identifier" for bare identifiers like `NoMove` in class bodies.
+        if !mods.has_var_let
+            && type_annotation == NodeIndex::NONE
+            && initializer == NodeIndex::NONE
+            && !late_property_name_decorator
+            && !self.is_token(SyntaxKind::SemicolonToken)
+            && !self.can_parse_semicolon()
+        {
+            let name_is_identifier = self
+                .arena
+                .get(name)
+                .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16);
+            if !name_is_identifier
+                && matches!(
+                    self.token(),
+                    SyntaxKind::CommaToken
+                        | SyntaxKind::CloseBracketToken
+                        | SyntaxKind::CloseParenToken
+                )
+            {
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            } else {
+                self.parse_error_for_missing_semicolon_after(name);
+            }
+        }
+
+        let end_pos = self.token_end();
+        self.arena.add_property_decl(
+            syntax_kind_ext::PROPERTY_DECLARATION,
+            start_pos,
+            end_pos,
+            crate::parser::node::PropertyDeclData {
+                modifiers: mods.modifiers,
+                name,
+                question_token,
+                exclamation_token,
+                type_annotation,
+                initializer,
+            },
+        )
     }
 
     fn recover_invalid_module_like_class_member(&mut self) {

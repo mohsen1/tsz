@@ -861,6 +861,8 @@ impl<'a> Printer<'a> {
         &mut self,
         es5_emitter: &mut ClassES5Emitter<'a>,
     ) {
+        es5_emitter
+            .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         es5_emitter
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
@@ -920,7 +922,7 @@ impl<'a> Printer<'a> {
         {
             let class_name = self.get_identifier_text_idx(class_data.name);
             let externally_hoisted_decls =
-                self.es5_computed_auto_accessor_hoisted_decls(class_node, &class_name);
+                self.es5_class_externally_hoisted_decls(class_node, &class_name);
             if !externally_hoisted_decls.is_empty() {
                 for decl in &externally_hoisted_decls {
                     if !self.hoisted_assignment_temps.contains(decl) {

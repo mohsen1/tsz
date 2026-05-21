@@ -35,6 +35,20 @@ struct AccessorAggregate {
     visibility: Visibility,
 }
 
+struct StaticMemberBuildData<'a> {
+    current_sym: Option<tsz_binder::SymbolId>,
+    properties: &'a FxHashMap<Atom, PropertyInfo>,
+    methods: &'a FxHashMap<Atom, MethodAggregate>,
+    accessors: &'a FxHashMap<Atom, AccessorAggregate>,
+    static_string_index: &'a Option<IndexSignature>,
+    static_number_index: &'a Option<IndexSignature>,
+    /// Property being injected mid-pass, before it has a cached type entry.
+    extra_property: Option<PropertyInfo>,
+    inherited_static_props: &'a [PropertyInfo],
+    all_static_member_names: &'a [Atom],
+    construct_signatures: &'a [CallSignature],
+}
+
 impl<'a> CheckerState<'a> {
     fn merge_static_late_bound_index_value(
         &self,
@@ -782,32 +796,33 @@ impl<'a> CheckerState<'a> {
                             .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
                         let prev_name_sym_cached = class_name_sym
                             .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
-                        let partial_ctor = self.build_partial_static_constructor_type(
-                            current_sym,
-                            &properties,
-                            &methods,
-                            &accessors,
-                            &static_string_index,
-                            &static_number_index,
-                            Some(PropertyInfo {
-                                name: name_atom,
-                                type_id: TypeId::ANY,
-                                write_type: TypeId::ANY,
-                                optional: prop.question_token,
-                                readonly,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility,
-                                parent_id: current_sym,
-                                declaration_order: 0,
-                                is_string_named: false,
-                                is_symbol_named: false,
-                                single_quoted_name: false,
-                            }),
-                            &inherited_static_props,
-                            &all_static_member_names,
-                            &rough_construct_signatures,
-                        );
+                        let partial_ctor =
+                            self.build_partial_static_constructor_type(StaticMemberBuildData {
+                                current_sym,
+                                properties: &properties,
+                                methods: &methods,
+                                accessors: &accessors,
+                                static_string_index: &static_string_index,
+                                static_number_index: &static_number_index,
+                                extra_property: Some(PropertyInfo {
+                                    name: name_atom,
+                                    type_id: TypeId::ANY,
+                                    write_type: TypeId::ANY,
+                                    optional: prop.question_token,
+                                    readonly,
+                                    is_method: false,
+                                    is_class_prototype: false,
+                                    visibility,
+                                    parent_id: current_sym,
+                                    declaration_order: 0,
+                                    is_string_named: false,
+                                    is_symbol_named: false,
+                                    single_quoted_name: false,
+                                }),
+                                inherited_static_props: &inherited_static_props,
+                                all_static_member_names: &all_static_member_names,
+                                construct_signatures: &rough_construct_signatures,
+                            });
                         if let Some(sym_id) = current_sym {
                             self.ctx.symbol_types.insert(sym_id, partial_ctor);
                             // For `export default class Foo`, the class node symbol is the
@@ -901,32 +916,33 @@ impl<'a> CheckerState<'a> {
                             .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
                         let prev_name_sym_cached_acc = class_name_sym
                             .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
-                        let partial_ctor_acc = self.build_partial_static_constructor_type(
-                            current_sym,
-                            &properties,
-                            &methods,
-                            &accessors,
-                            &static_string_index,
-                            &static_number_index,
-                            Some(PropertyInfo {
-                                name: name_atom,
-                                type_id: TypeId::ANY,
-                                write_type: TypeId::ANY,
-                                optional: prop.question_token,
-                                readonly,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility,
-                                parent_id: current_sym,
-                                declaration_order: 0,
-                                is_string_named: false,
-                                is_symbol_named: false,
-                                single_quoted_name: false,
-                            }),
-                            &inherited_static_props,
-                            &all_static_member_names,
-                            &rough_construct_signatures,
-                        );
+                        let partial_ctor_acc =
+                            self.build_partial_static_constructor_type(StaticMemberBuildData {
+                                current_sym,
+                                properties: &properties,
+                                methods: &methods,
+                                accessors: &accessors,
+                                static_string_index: &static_string_index,
+                                static_number_index: &static_number_index,
+                                extra_property: Some(PropertyInfo {
+                                    name: name_atom,
+                                    type_id: TypeId::ANY,
+                                    write_type: TypeId::ANY,
+                                    optional: prop.question_token,
+                                    readonly,
+                                    is_method: false,
+                                    is_class_prototype: false,
+                                    visibility,
+                                    parent_id: current_sym,
+                                    declaration_order: 0,
+                                    is_string_named: false,
+                                    is_symbol_named: false,
+                                    single_quoted_name: false,
+                                }),
+                                inherited_static_props: &inherited_static_props,
+                                all_static_member_names: &all_static_member_names,
+                                construct_signatures: &rough_construct_signatures,
+                            });
                         if let Some(sym_id) = current_sym {
                             self.ctx.symbol_types.insert(sym_id, partial_ctor_acc);
                             if let Some(name_sym) = class_name_sym {
@@ -1016,18 +1032,19 @@ impl<'a> CheckerState<'a> {
                     let prev_sym_cached =
                         current_sym.and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
                     if let Some(sym_id) = current_sym {
-                        let partial_ctor = self.build_partial_static_constructor_type(
-                            current_sym,
-                            &properties,
-                            &methods,
-                            &accessors,
-                            &static_string_index,
-                            &static_number_index,
-                            None,
-                            &inherited_static_props,
-                            &all_static_member_names,
-                            &rough_construct_signatures,
-                        );
+                        let partial_ctor =
+                            self.build_partial_static_constructor_type(StaticMemberBuildData {
+                                current_sym,
+                                properties: &properties,
+                                methods: &methods,
+                                accessors: &accessors,
+                                static_string_index: &static_string_index,
+                                static_number_index: &static_number_index,
+                                extra_property: None,
+                                inherited_static_props: &inherited_static_props,
+                                all_static_member_names: &all_static_member_names,
+                                construct_signatures: &rough_construct_signatures,
+                            });
                         self.ctx.symbol_types.insert(sym_id, partial_ctor);
                     }
                     let static_this_type = current_sym
@@ -1129,16 +1146,18 @@ impl<'a> CheckerState<'a> {
                                 .and_then(|sym_id| self.ctx.symbol_types.get(&sym_id).copied());
                             if let Some(sym_id) = current_sym {
                                 let partial_ctor = self.build_partial_static_constructor_type(
-                                    current_sym,
-                                    &properties,
-                                    &methods,
-                                    &accessors,
-                                    &static_string_index,
-                                    &static_number_index,
-                                    None,
-                                    &inherited_static_props,
-                                    &all_static_member_names,
-                                    &rough_construct_signatures,
+                                    StaticMemberBuildData {
+                                        current_sym,
+                                        properties: &properties,
+                                        methods: &methods,
+                                        accessors: &accessors,
+                                        static_string_index: &static_string_index,
+                                        static_number_index: &static_number_index,
+                                        extra_property: None,
+                                        inherited_static_props: &inherited_static_props,
+                                        all_static_member_names: &all_static_member_names,
+                                        construct_signatures: &rough_construct_signatures,
+                                    },
                                 );
                                 self.ctx.symbol_types.insert(sym_id, partial_ctor);
                             }
@@ -2116,20 +2135,19 @@ impl<'a> CheckerState<'a> {
         base_props
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn build_partial_static_constructor_type(
-        &self,
-        current_sym: Option<tsz_binder::SymbolId>,
-        properties: &FxHashMap<Atom, PropertyInfo>,
-        methods: &FxHashMap<Atom, MethodAggregate>,
-        accessors: &FxHashMap<Atom, AccessorAggregate>,
-        static_string_index: &Option<IndexSignature>,
-        static_number_index: &Option<IndexSignature>,
-        extra_property: Option<PropertyInfo>,
-        inherited_static_props: &[PropertyInfo],
-        all_static_member_names: &[Atom],
-        construct_signatures: &[CallSignature],
-    ) -> TypeId {
+    fn build_partial_static_constructor_type(&self, data: StaticMemberBuildData<'_>) -> TypeId {
+        let StaticMemberBuildData {
+            current_sym,
+            properties,
+            methods,
+            accessors,
+            static_string_index,
+            static_number_index,
+            extra_property,
+            inherited_static_props,
+            all_static_member_names,
+            construct_signatures,
+        } = data;
         let factory = self.ctx.types.factory();
         let estimated_cap = properties.len()
             + methods.len()

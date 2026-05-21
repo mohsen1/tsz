@@ -527,7 +527,11 @@ impl<'a> TypePrinter<'a> {
                 return false;
             };
             if symbol.escaped_name == root {
-                return symbol.parent == SymbolId::NONE;
+                // parent == NONE is necessary but not sufficient: top-level module
+                // declarations also lack a binder parent; the module-path check
+                // distinguishes truly global symbols from private module-level ones.
+                return symbol.parent == SymbolId::NONE
+                    && self.resolve_symbol_module_path(current).is_none();
             }
             current = symbol.parent;
         }
@@ -1396,6 +1400,88 @@ mod tests {
                 .print_named_symbol_reference(module_b, false)
                 .as_deref(),
             Some(r#"import("pkg").A.B"#)
+        );
+    }
+
+    // When a top-level type alias in a module has parent == SymbolId::NONE (no binder
+    // parent assigned), it must NOT be treated as globally accessible. The printer must
+    // produce `import("./module").TypeName` so that TS7056 detection can find it.
+    #[test]
+    fn top_level_module_type_with_none_parent_uses_import_qualifier() {
+        let interner = TypeInterner::new();
+        let mut arena = SymbolArena::new();
+
+        // Simulates `type TPromise<T, E> = ...` in http-client.ts
+        // parent stays SymbolId::NONE (as tsz binder sets for top-level decls)
+        let t_promise = arena.alloc(symbol_flags::TYPE_ALIAS, "TPromise".to_string());
+
+        let module_path =
+            |sym_id: SymbolId| (sym_id == t_promise).then(|| "./http-client".to_string());
+
+        let printer = TypePrinter::new(&interner)
+            .with_symbols(&arena)
+            .with_module_path_resolver(&module_path);
+
+        assert_eq!(
+            printer
+                .print_named_symbol_reference(t_promise, false)
+                .as_deref(),
+            Some(r#"import("./http-client").TPromise"#),
+            "private type alias with None parent must use import() qualifier, not bare name"
+        );
+    }
+
+    // Same requirement under a different name: structural rule must not depend on
+    // the specific identifier spelling.
+    #[test]
+    fn top_level_module_type_different_name_uses_import_qualifier() {
+        let interner = TypeInterner::new();
+        let mut arena = SymbolArena::new();
+
+        let request_state = arena.alloc(symbol_flags::TYPE_ALIAS, "RequestState".to_string());
+
+        let module_path =
+            |sym_id: SymbolId| (sym_id == request_state).then(|| "./client".to_string());
+
+        let printer = TypePrinter::new(&interner)
+            .with_symbols(&arena)
+            .with_module_path_resolver(&module_path);
+
+        assert_eq!(
+            printer
+                .print_named_symbol_reference(request_state, false)
+                .as_deref(),
+            Some(r#"import("./client").RequestState"#),
+        );
+    }
+
+    // A truly global symbol (parent == NONE, no module path) must still be
+    // printable by bare name when encountered as the root of a qualified ref.
+    #[test]
+    fn truly_global_root_allows_bare_qualified_name() {
+        let interner = TypeInterner::new();
+        let mut arena = SymbolArena::new();
+
+        // Global namespace NS (parent stays NONE, no module path)
+        let ns = arena.alloc(symbol_flags::NAMESPACE, "NS".to_string());
+        // NS.T is exported from some module but NS itself is global
+        let t = arena.alloc(symbol_flags::INTERFACE, "T".to_string());
+        arena.get_mut(t).unwrap().parent = ns;
+        arena.get_mut(t).unwrap().is_exported = true;
+
+        // T has a module path but NS (the root) does not
+        let module_path = |sym_id: SymbolId| (sym_id == t).then(|| "./lib".to_string());
+
+        let printer = TypePrinter::new(&interner)
+            .with_symbols(&arena)
+            .with_module_path_resolver(&module_path);
+
+        // NS has no module path → qualified_name_has_non_module_global_root returns true
+        // → printer uses bare "NS.T"
+        assert_eq!(
+            printer.print_named_symbol_reference(t, false).as_deref(),
+            Some("NS.T"),
+            "when the root is a true global (no module path), bare qualified name is allowed"
         );
     }
 }

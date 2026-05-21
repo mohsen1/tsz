@@ -5,23 +5,49 @@ use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// Parameters for a property access on a possibly-nullish receiver.
+pub(crate) struct NullishAccessSite<'a> {
+    /// The node index of the full access expression.
+    pub(crate) idx: NodeIndex,
+    /// The receiver expression node.
+    pub(crate) expression: NodeIndex,
+    /// The property name or element-access argument node.
+    pub(crate) name_or_argument: NodeIndex,
+    /// Whether a `?.` optional-chain token is present.
+    pub(crate) question_dot_token: bool,
+    /// The resolved property type on the non-nullish slice, if any.
+    pub(crate) property_type: Option<TypeId>,
+    /// The nullish cause type (`null`, `undefined`, or `null | undefined`).
+    pub(crate) cause: TypeId,
+    /// The full object type being accessed (including the nullish component).
+    pub(crate) object_type_for_access: TypeId,
+    /// The property name string used for diagnostics.
+    pub(crate) property_name: &'a str,
+    /// Whether flow narrowing should be skipped for the result.
+    pub(crate) skip_flow_narrowing: bool,
+    /// Whether the receiver already has a destructuring-assignment error.
+    pub(crate) receiver_has_daa_error: bool,
+}
+
 impl<'a> CheckerState<'a> {
     /// Handles the `PossiblyNullOrUndefined` result from property access resolution.
     /// Emits appropriate diagnostics (TS18047/18048/18049/18050) and returns the resolved type.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_possibly_null_or_undefined_access(
         &mut self,
-        idx: NodeIndex,
-        expression: NodeIndex,
-        name_or_argument: NodeIndex,
-        question_dot_token: bool,
-        property_type: Option<TypeId>,
-        cause: TypeId,
-        object_type_for_access: TypeId,
-        property_name: &str,
-        skip_flow_narrowing: bool,
-        receiver_has_daa_error: bool,
+        site: NullishAccessSite<'_>,
     ) -> TypeId {
+        let NullishAccessSite {
+            idx,
+            expression,
+            name_or_argument,
+            question_dot_token,
+            property_type,
+            cause,
+            object_type_for_access,
+            property_name,
+            skip_flow_narrowing,
+            receiver_has_daa_error,
+        } = site;
         use crate::query_boundaries::common::PropertyAccessResult;
 
         let factory = self.ctx.types.factory();

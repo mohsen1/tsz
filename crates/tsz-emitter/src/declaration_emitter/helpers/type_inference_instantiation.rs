@@ -34,6 +34,10 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
+        if self.short_circuit_left_operand_skips_right(operator, binary.left) {
+            return self.short_circuit_operand_type_parts(binary.left, depth + 1);
+        }
+
         let mut left_parts = self.short_circuit_operand_type_parts(binary.left, depth + 1)?;
         if operator == SyntaxKind::BarBarToken as u16
             && self.short_circuit_operand_is_syntactically_truthy(binary.left, depth + 1)
@@ -42,21 +46,143 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(left_parts);
         }
 
-        let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
-
-        if operator == SyntaxKind::BarBarToken as u16 {
-            left_parts.retain(|part| !Self::short_circuit_or_excludes_left_type(&part.text));
-        } else {
-            left_parts.retain(|part| !Self::short_circuit_nullish_excludes_left_type(&part.text));
+        // When every component of the left type is semantically always truthy (e.g. a
+        // non-empty string literal, non-zero number literal, or `true`), the right operand
+        // of `||` is unreachable — mirrors tsc's evaluate_logical returning `left` when
+        // narrow_to_falsy(left) == never.  The `!left_parts.is_empty()` guard is required
+        // because `.all(…)` on an empty iterator is vacuously true.
+        if operator == SyntaxKind::BarBarToken as u16
+            && !left_parts.is_empty()
+            && left_parts
+                .iter()
+                .all(|part| Self::short_circuit_part_is_always_truthy(&part.text))
+        {
+            Self::dedupe_and_sort_short_circuit_type_parts(&mut left_parts);
+            return Some(left_parts);
         }
 
+        let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
+
+        let include_right_parts = if operator == SyntaxKind::BarBarToken as u16 {
+            Self::filter_short_circuit_or_left_parts(&mut left_parts, &right_parts)
+        } else {
+            let include_right_parts = left_parts
+                .iter()
+                .any(|part| Self::short_circuit_nullish_excludes_left_type(&part.text));
+            left_parts.retain(|part| !Self::short_circuit_nullish_excludes_left_type(&part.text));
+            include_right_parts
+        };
+
         let mut parts = left_parts;
-        parts.extend(right_parts);
+        if include_right_parts {
+            parts.extend(right_parts);
+        }
         Self::dedupe_and_sort_short_circuit_type_parts(&mut parts);
         if parts.is_empty() {
             return None;
         }
         Some(parts)
+    }
+
+    fn short_circuit_left_operand_skips_right(&self, operator: u16, left_idx: NodeIndex) -> bool {
+        let Some(left_idx) = self.skip_outer_truthiness_expressions(left_idx) else {
+            return false;
+        };
+
+        match operator {
+            op if op == SyntaxKind::BarBarToken as u16 => {
+                self.expression_result_is_syntactically_always_truthy_for_declaration(left_idx, 0)
+            }
+            op if op == SyntaxKind::QuestionQuestionToken as u16 => {
+                self.expression_result_is_syntactically_non_nullish_for_declaration(left_idx, 0)
+            }
+            _ => false,
+        }
+    }
+
+    fn expression_result_is_syntactically_always_truthy_for_declaration(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let Some(expr_idx) = self.skip_outer_truthiness_expressions(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        if self.short_circuit_operand_is_syntactically_truthy(expr_idx, depth + 1) {
+            return true;
+        }
+
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        match binary.operator_token {
+            op if op == SyntaxKind::BarBarToken as u16 => {
+                self.expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ) || self.expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.right,
+                    depth + 1,
+                )
+            }
+            op if op == SyntaxKind::QuestionQuestionToken as u16 => self
+                .expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ),
+            _ => false,
+        }
+    }
+
+    fn expression_result_is_syntactically_non_nullish_for_declaration(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let Some(expr_idx) = self.skip_outer_truthiness_expressions(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if self.expression_is_syntactically_non_nullish_for_declaration(expr_idx, expr_node) {
+            return true;
+        }
+
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        match binary.operator_token {
+            op if op == SyntaxKind::BarBarToken as u16 => {
+                self.expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ) || self.expression_result_is_syntactically_non_nullish_for_declaration(
+                    binary.right,
+                    depth + 1,
+                )
+            }
+            op if op == SyntaxKind::QuestionQuestionToken as u16 => {
+                self.expression_result_is_syntactically_non_nullish_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ) || self.expression_result_is_syntactically_non_nullish_for_declaration(
+                    binary.right,
+                    depth + 1,
+                )
+            }
+            _ => false,
+        }
     }
 
     fn short_circuit_operand_is_syntactically_truthy(
@@ -119,6 +245,23 @@ impl<'a> DeclarationEmitter<'a> {
                 }),
             _ => false,
         }
+    }
+
+    fn expression_is_syntactically_non_nullish_for_declaration(
+        &self,
+        expr_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.short_circuit_operand_is_syntactically_truthy(expr_idx, 0)
+            || matches!(
+                node.kind,
+                k if k == SyntaxKind::NumericLiteral as u16
+                    || k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    || k == SyntaxKind::TrueKeyword as u16
+                    || k == SyntaxKind::FalseKeyword as u16
+                    || k == SyntaxKind::BigIntLiteral as u16
+            )
     }
 
     fn skip_outer_truthiness_expressions(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
@@ -221,6 +364,64 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena.get(expr_idx).map(|node| node.pos)
     }
 
+    fn filter_short_circuit_or_left_parts(
+        left_parts: &mut Vec<ShortCircuitTypePart>,
+        right_parts: &[ShortCircuitTypePart],
+    ) -> bool {
+        let mut include_right_parts = false;
+        let mut retained = Vec::with_capacity(left_parts.len());
+
+        for mut part in left_parts.drain(..) {
+            let trimmed = part.text.trim();
+            if Self::short_circuit_or_excludes_left_type(trimmed) {
+                include_right_parts = true;
+                continue;
+            }
+
+            if trimmed == "boolean" {
+                part.text = "true".to_string();
+                include_right_parts = true;
+            } else if Self::short_circuit_or_broad_primitive_needs_right(trimmed, right_parts) {
+                include_right_parts = true;
+            }
+
+            retained.push(part);
+        }
+
+        *left_parts = retained;
+        include_right_parts
+    }
+
+    fn short_circuit_or_broad_primitive_needs_right(
+        type_text: &str,
+        right_parts: &[ShortCircuitTypePart],
+    ) -> bool {
+        match type_text {
+            "string" => !right_parts
+                .iter()
+                .all(|part| Self::short_circuit_string_covers(part.text.trim())),
+            "number" => !right_parts
+                .iter()
+                .all(|part| Self::short_circuit_number_covers(part.text.trim())),
+            "bigint" => !right_parts
+                .iter()
+                .all(|part| Self::short_circuit_bigint_covers(part.text.trim())),
+            _ => false,
+        }
+    }
+
+    fn short_circuit_string_covers(type_text: &str) -> bool {
+        type_text == "string" || Self::is_short_circuit_string_literal_type(type_text)
+    }
+
+    fn short_circuit_number_covers(type_text: &str) -> bool {
+        type_text == "number" || Self::is_short_circuit_number_literal_type(type_text)
+    }
+
+    fn short_circuit_bigint_covers(type_text: &str) -> bool {
+        type_text == "bigint" || Self::is_short_circuit_bigint_literal_type(type_text)
+    }
+
     fn short_circuit_or_excludes_left_type(type_text: &str) -> bool {
         let trimmed = type_text.trim();
         Self::short_circuit_nullish_excludes_left_type(trimmed)
@@ -234,6 +435,25 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn short_circuit_nullish_excludes_left_type(type_text: &str) -> bool {
         matches!(type_text.trim(), "null" | "undefined" | "void")
+    }
+
+    fn short_circuit_part_is_always_truthy(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        // Mixed-truthiness primitives — can be empty string, zero, false, etc.
+        if matches!(
+            trimmed,
+            "string" | "number" | "boolean" | "bigint" | "any" | "unknown" | "object" | "never"
+        ) {
+            return false;
+        }
+        // Delegates to the canonical falsy-set (null/undefined/void/false/0/-0/0n/""/''
+        // as tracked by `short_circuit_or_excludes_left_type`).
+        if Self::short_circuit_or_excludes_left_type(trimmed) {
+            return false;
+        }
+        Self::is_short_circuit_string_literal_type(trimmed)
+            || Self::is_short_circuit_number_literal_type(trimmed)
+            || trimmed == "true"
     }
 
     fn dedupe_and_sort_short_circuit_type_parts(parts: &mut Vec<ShortCircuitTypePart>) {

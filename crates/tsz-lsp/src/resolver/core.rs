@@ -280,6 +280,17 @@ impl<'a> ScopeWalker<'a> {
         symbol_id
     }
 
+    /// Resolve a plain identifier name in the scope chain active at `target`.
+    pub fn resolve_name_at(
+        &mut self,
+        root: NodeIndex,
+        target: NodeIndex,
+        name: &str,
+    ) -> Option<SymbolId> {
+        let scopes = self.get_scope_chain(root, target);
+        Self::resolve_name_in_scopes(&scopes, name)
+    }
+
     /// Walk the AST to find a target node, building scope context.
     ///
     /// Returns the symbol ID if the target is an identifier that can be resolved.

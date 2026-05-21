@@ -2,6 +2,85 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
+/// Facts extracted from a class component's construct signature in one walk:
+/// the instance `.props` field type and the first constructor parameter type.
+/// Used by the JSX target-display takeover to decide whether to render the
+/// `.props` wrapper or the LMA-projected constructor parameter.
+#[derive(Default, Clone, Copy)]
+pub(in crate::checkers_domain::jsx) struct JsxClassComponentConstructFacts {
+    pub(in crate::checkers_domain::jsx) props_field: Option<TypeId>,
+    pub(in crate::checkers_domain::jsx) first_param: Option<TypeId>,
+}
+
+impl<'a> CheckerState<'a> {
+    pub(in crate::checkers_domain::jsx) fn get_class_component_props_from_construct_return(
+        &mut self,
+        component_type: TypeId,
+    ) -> Option<TypeId> {
+        self.jsx_class_component_construct_return_facts(component_type)
+            .props_field
+    }
+
+    /// Walk the construct signatures of `component_type` and return both the
+    /// instance `.props` field type and the first constructor parameter type
+    /// from the same chosen signature. Folding them into one walk avoids
+    /// walking construct signatures twice per JSX element on the hot path.
+    pub(in crate::checkers_domain::jsx) fn jsx_class_component_construct_return_facts(
+        &mut self,
+        component_type: TypeId,
+    ) -> JsxClassComponentConstructFacts {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        let mut facts = JsxClassComponentConstructFacts::default();
+
+        let evaluated_component_type = self.evaluate_type_with_env(component_type);
+        let Some(sigs) =
+            crate::query_boundaries::checkers::jsx::construct_signatures_with_env_fallback(
+                self.ctx.types,
+                component_type,
+                evaluated_component_type,
+            )
+        else {
+            return facts;
+        };
+
+        for sig in sigs.iter().filter(|sig| !sig.params.is_empty()) {
+            let instance_type = sig.return_type;
+            let evaluated_instance = self.evaluate_type_with_env(instance_type);
+            let props_access = match self.resolve_property_access_with_env(instance_type, "props") {
+                success @ PropertyAccessResult::Success { .. } => success,
+                _ => self.resolve_property_access_with_env(evaluated_instance, "props"),
+            };
+            if let PropertyAccessResult::Success { type_id, .. } = props_access
+                && !matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
+            {
+                facts.props_field = Some(type_id);
+                facts.first_param = sig.params.first().map(|p| p.type_id);
+                return facts;
+            }
+        }
+
+        facts
+    }
+
+    /// Thin orchestrator over the JSX-boundary helper. The structural
+    /// `Readonly`-wrapper detection lives in `query_boundaries::checkers::jsx`
+    /// (`class_props_is_readonly_wrapper_intersection`) so the
+    /// checker-side call site keeps a single direct dependency on the
+    /// boundary surface rather than three on `query_boundaries::common`
+    /// (#8225 quarantine-budget rule).
+    pub(in crate::checkers_domain::jsx) fn jsx_class_props_is_readonly_wrapper(
+        &self,
+        class_props: TypeId,
+    ) -> bool {
+        crate::query_boundaries::checkers::jsx::class_props_is_readonly_wrapper_intersection(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            class_props,
+        )
+    }
+}
+
 impl<'a> CheckerState<'a> {
     pub(super) fn strip_implicit_jsx_children_from_props_fallback(
         &mut self,

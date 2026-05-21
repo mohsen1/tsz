@@ -120,6 +120,23 @@ fn public_named_import_rewrite_preserves_foreign_default_type_arguments() {
 }
 
 #[test]
+fn jsdoc_type_text_rewrites_relative_imports_inside_ambient_bundle_module() {
+    let (parser, _) = parse_test_source("");
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.current_ambient_module_specifier = Some("pkg/index".to_string());
+
+    assert_eq!(
+        emitter.jsdoc_type_text_for_declaration_emit(r#"(typeof import("./folder/mod1"))[]"#),
+        r#"(typeof import("pkg/folder/mod1"))[]"#
+    );
+    assert_eq!(
+        emitter
+            .jsdoc_type_text_for_declaration_emit(r#"Promise<typeof import("../shared/model")>"#),
+        r#"Promise<typeof import("shared/model")>"#
+    );
+}
+
+#[test]
 fn test_type_printer_deduplicates_identical_rendered_union_members() {
     let interner = TypeInterner::new();
     let x = interner.intern_string("x");

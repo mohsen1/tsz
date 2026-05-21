@@ -8,6 +8,30 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, TypeParamInfo};
 
+/// Context for TS2366/TS2355/TS7030 function return completeness checks.
+pub(crate) struct FunctionReturnCheckCtx {
+    /// Whether this is a function declaration (checked separately).
+    pub(crate) is_function_declaration: bool,
+    /// The function body node.
+    pub(crate) body: NodeIndex,
+    /// The function node itself.
+    pub(crate) func_idx: NodeIndex,
+    /// The annotated return type, if any.
+    pub(crate) annotated_return_type: Option<TypeId>,
+    /// The inferred or annotated return type.
+    pub(crate) return_type: TypeId,
+    /// Whether an explicit return type annotation is present.
+    pub(crate) has_type_annotation: bool,
+    /// The type annotation node (used as error anchor).
+    pub(crate) type_annotation: NodeIndex,
+    /// Whether this function is a generator.
+    pub(crate) function_is_generator: bool,
+    /// Optional name node for TS7030 (implicit return) anchoring.
+    pub(crate) name_node: Option<NodeIndex>,
+    /// The overall expression/declaration index used for diagnostics.
+    pub(crate) idx: NodeIndex,
+}
+
 impl<'a> CheckerState<'a> {
     /// Extract a type predicate from JSDoc `@returns {x is Type}` / `@return {this is Entry}`.
     ///
@@ -835,20 +859,19 @@ impl<'a> CheckerState<'a> {
 
     /// TS2366/TS2355/TS7030: Check that all code paths return a value when required.
     /// For function expressions and arrow functions with return type annotations.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn check_function_return_completeness(
-        &mut self,
-        is_function_declaration: bool,
-        body: NodeIndex,
-        func_idx: NodeIndex,
-        annotated_return_type: Option<TypeId>,
-        return_type: TypeId,
-        has_type_annotation: bool,
-        type_annotation: NodeIndex,
-        function_is_generator: bool,
-        name_node: Option<NodeIndex>,
-        idx: NodeIndex,
-    ) {
+    pub(crate) fn check_function_return_completeness(&mut self, ctx: FunctionReturnCheckCtx) {
+        let FunctionReturnCheckCtx {
+            is_function_declaration,
+            body,
+            func_idx,
+            annotated_return_type,
+            return_type,
+            has_type_annotation,
+            type_annotation,
+            function_is_generator,
+            name_node,
+            idx,
+        } = ctx;
         if is_function_declaration || body.is_none() {
             return;
         }

@@ -1,6 +1,7 @@
 //! Declaration emitter - import, module, parameter, and heritage clause emission.
 
 use super::super::DeclarationEmitter;
+use crate::transforms::emit_utils::string_literal_text;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -519,6 +520,12 @@ impl<'a> DeclarationEmitter<'a> {
             // Inside a declare namespace, don't emit 'declare' keyword for members
             let prev_inside_declare_namespace = self.inside_declare_namespace;
             self.inside_declare_namespace = true;
+            let prev_ambient_module_specifier = self.current_ambient_module_specifier.clone();
+            if use_module_keyword
+                && let Some(specifier) = string_literal_text(self.arena, module.name)
+            {
+                self.current_ambient_module_specifier = Some(specifier);
+            }
             // Track innermost namespace symbol for context-relative type names
             let prev_enclosing_ns = self.enclosing_namespace_symbol;
             if let Some(binder) = self.binder
@@ -655,6 +662,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.public_api_scope_depth = prev_public_api_scope_depth;
             self.inside_non_ambient_namespace = prev_inside_non_ambient_namespace;
             self.inside_declare_namespace = prev_inside_declare_namespace;
+            self.current_ambient_module_specifier = prev_ambient_module_specifier;
             self.enclosing_namespace_symbol = prev_enclosing_ns;
             self.decrease_indent();
             self.write_indent();
